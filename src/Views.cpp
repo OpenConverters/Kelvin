@@ -344,4 +344,115 @@ std::optional<ControllerRow> extract_controller(const json& env) {
     return r;
 }
 
+// ---- Phase 5 extractors ----------------------------------------------------
+namespace {
+// Shared semiconductor-envelope descent to (electrical, part, manufacturerInfo) for igbt/bjt.
+struct SemiRefs {
+    const json* mi;
+    const json* elec;
+    const json* part;
+};
+std::optional<SemiRefs> semi_refs(const json& env, const char* kind, const json& empty) {
+    const json* semi = obj_get(env, "semiconductor");
+    if (!semi) return std::nullopt;
+    const json* node = obj_get(*semi, kind);
+    if (!node) return std::nullopt;
+    const json* mi = obj_get(*node, "manufacturerInfo");
+    if (!mi) return std::nullopt;
+    const json* di = obj_get(*mi, "datasheetInfo");
+    if (!di) return std::nullopt;
+    const json* elec = obj_get(*di, "electrical");
+    if (!elec) return std::nullopt;
+    const json* part = obj_get(*di, "part");
+    if (!part) part = &empty;
+    return SemiRefs{mi, elec, part};
+}
+}  // namespace
+
+std::optional<IgbtRow> extract_igbt(const json& env) {
+    const json empty = json::object();
+    auto refs = semi_refs(env, "igbt", empty);
+    if (!refs) return std::nullopt;
+    auto mpn = get_str(*refs->mi, "reference");
+    auto manuf = get_str(*refs->mi, "name");
+    if (!mpn || !manuf) return std::nullopt;
+    auto vces = get_num(*refs->elec, "collectorEmitterVoltage");
+    auto ic = get_num(*refs->elec, "continuousCollectorCurrent");
+    if (!pos(vces) || !pos(ic)) return std::nullopt;
+    IgbtRow r;
+    r.mpn = *mpn;
+    r.manufacturer = *manuf;
+    r.vces_rated = *vces;
+    r.ic_continuous = *ic;
+    r.vce_sat = get_num(*refs->elec, "collectorEmitterSaturation").value_or(0.0);
+    r.technology = get_str(*refs->part, "technology").value_or("");
+    auto st = get_str(*refs->mi, "status");
+    r.is_production = st && *st == "production";
+    const json* dinfo = obj_get(*refs->mi, "datasheetInfo");
+    const json* thermal = dinfo ? obj_get(*dinfo, "thermal") : nullptr;
+    if (thermal) {
+        auto tj = get_num(*thermal, "junctionTemperatureMax");
+        if (tj) r.tj_max = *tj;
+        auto rjc = get_num(*thermal, "thermalResistanceJunctionCase");
+        if (rjc && *rjc > 0) r.rth_jc = *rjc;
+    }
+    return r;
+}
+
+std::optional<BjtRow> extract_bjt(const json& env) {
+    const json empty = json::object();
+    auto refs = semi_refs(env, "bjt", empty);
+    if (!refs) return std::nullopt;
+    auto mpn = get_str(*refs->mi, "reference");
+    auto manuf = get_str(*refs->mi, "name");
+    if (!mpn || !manuf) return std::nullopt;
+    auto vceo = get_num(*refs->elec, "collectorEmitterVoltage");
+    auto ic = get_num(*refs->elec, "collectorCurrent");
+    if (!pos(vceo) || !pos(ic)) return std::nullopt;
+    BjtRow r;
+    r.mpn = *mpn;
+    r.manufacturer = *manuf;
+    r.vceo_rated = *vceo;
+    r.ic_continuous = *ic;
+    // dcCurrentGain: {minimum,maximum} or scalar -> the guaranteed MINIMUM gain.
+    r.hfe_min = resolve_field(*refs->elec, "dcCurrentGain", PEAS::DimensionalValues::MINIMUM)
+                    .value_or(0.0);
+    r.power_dissipation = get_num(*refs->elec, "powerDissipation").value_or(0.0);
+    r.technology = get_str(*refs->part, "technology").value_or("");
+    auto st = get_str(*refs->mi, "status");
+    r.is_production = st && *st == "production";
+    return r;
+}
+
+std::optional<VaristorRow> extract_varistor(const json& env) {
+    const json empty = json::object();
+    const json* v = obj_get(env, "varistor");
+    if (!v) return std::nullopt;
+    const json* mi = obj_get(*v, "manufacturerInfo");
+    if (!mi) return std::nullopt;
+    const json* di = obj_get(*mi, "datasheetInfo");
+    if (!di) return std::nullopt;
+    const json* elec = obj_get(*di, "electrical");
+    if (!elec) return std::nullopt;
+    const json* part = obj_get(*di, "part");
+    if (!part) part = &empty;
+    auto mpn = get_str(*mi, "reference");
+    auto manuf = get_str(*mi, "name");
+    if (!mpn || !manuf) return std::nullopt;
+    auto vnom = resolve_field(*elec, "varistorVoltage");
+    if (!pos(vnom)) return std::nullopt;
+    VaristorRow r;
+    r.mpn = *mpn;
+    r.manufacturer = *manuf;
+    r.varistor_voltage = *vnom;
+    r.clamping_voltage = get_num(*elec, "clampingVoltage").value_or(0.0);
+    r.peak_surge_current = get_num(*elec, "peakSurgeCurrent").value_or(0.0);
+    r.max_continuous_dc_voltage = get_num(*elec, "maxContinuousDcVoltage").value_or(0.0);
+    r.capacitance = get_num(*elec, "capacitance").value_or(0.0);
+    r.technology = get_str(*part, "technology").value_or("");
+    auto st = get_str(*mi, "status");
+    r.is_production = st && *st == "production";
+    return r;
+}
+
 }  // namespace kelvin

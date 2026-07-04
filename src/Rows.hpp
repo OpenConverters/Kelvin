@@ -22,6 +22,10 @@ enum class Family : uint32_t {
     Capacitor = 3,
     Resistor = 4,
     Controller = 5,
+    // Phase 5 — new selectors (no HS reference; review-gated, physics-sensible bounds).
+    Igbt = 6,
+    Bjt = 7,
+    Varistor = 8,
 };
 
 inline const char* family_name(Family f) {
@@ -31,6 +35,9 @@ inline const char* family_name(Family f) {
         case Family::Capacitor: return "capacitor";
         case Family::Resistor: return "resistor";
         case Family::Controller: return "controller";
+        case Family::Igbt: return "igbt";
+        case Family::Bjt: return "bjt";
+        case Family::Varistor: return "varistor";
     }
     return "unknown";
 }
@@ -42,6 +49,9 @@ inline const char* family_file(Family f) {
         case Family::Capacitor: return "capacitors.ndjson";
         case Family::Resistor: return "resistors.ndjson";
         case Family::Controller: return "controllers.ndjson";
+        case Family::Igbt: return "igbts.ndjson";
+        case Family::Bjt: return "bjts.ndjson";
+        case Family::Varistor: return "varistors.ndjson";
     }
     return "";
 }
@@ -89,6 +99,29 @@ struct CapacitorRow : RowBase {
 struct ResistorRow : RowBase {
     double resistance = 0, tolerance = 0, power_rating = 0;
     bool is_production = false;  // not filtered on today, carried for completeness/evidence
+};
+
+struct IgbtRow : RowBase {
+    double vces_rated = 0, ic_continuous = 0, vce_sat = 0;
+    double rth_jc = kNaN(), tj_max = kNaN();
+    std::string technology;  // Si / SiC (part.technology)
+    bool is_production = false;
+    bool no_thermal() const { return !present(tj_max); }
+};
+
+struct BjtRow : RowBase {
+    double vceo_rated = 0, ic_continuous = 0, hfe_min = 0, power_dissipation = 0;
+    double tj_max = kNaN();
+    std::string technology;
+    bool is_production = false;
+    bool no_thermal() const { return !present(tj_max); }
+};
+
+struct VaristorRow : RowBase {
+    double varistor_voltage = 0, clamping_voltage = 0, peak_surge_current = 0;
+    double max_continuous_dc_voltage = 0, capacitance = 0;
+    std::string technology;
+    bool is_production = false;
 };
 
 struct ControllerRow : RowBase {

@@ -376,4 +376,173 @@ json select_resistor(const Shard<ResistorRow>& shard, const ResistorConstraints&
     return result;
 }
 
+// ---- Phase 5 selectors -----------------------------------------------------
+json select_igbt(const Shard<IgbtRow>& shard, const IgbtConstraints& c, IgbtTiebreaker tb,
+                 size_t max_candidates, RecordFetcher* fetcher) {
+    c.validate();
+    std::map<std::string, uint64_t> rej;
+    rej["unreadable_row"] = shard.meta.unreadable_row_count;
+    std::vector<const IgbtRow*> passing;
+    for (const auto& g : shard.rows) {
+        if (c.exclude_discontinued && !g.is_production) { rej["discontinued"]++; continue; }
+        if (g.vces_rated < c.vces_min) { rej["vces_low"]++; continue; }
+        if (g.ic_continuous < c.ic_min) { rej["ic_low"]++; continue; }
+        if (c.vce_sat_max.has_value() && g.vce_sat > *c.vce_sat_max) { rej["vce_sat_high"]++; continue; }
+        passing.push_back(&g);
+    }
+    if (passing.empty())
+        throw NoCandidates("IgbtConstraints", emit_rejections(rej), shard.meta.source_line_count);
+    auto metric = [&](const IgbtRow* g) -> double {
+        switch (tb) {
+            case IgbtTiebreaker::LowestVceSat: return g->vce_sat;
+            case IgbtTiebreaker::HighestVcesMargin: return -g->vces_rated / c.vces_min;
+            case IgbtTiebreaker::HighestIcMargin: return -g->ic_continuous / c.ic_min;
+        }
+        return 0;
+    };
+    std::sort(passing.begin(), passing.end(), [&](const IgbtRow* a, const IgbtRow* b) {
+        return std::make_tuple(a->no_thermal() ? 1 : 0, metric(a), a->lineno) <
+               std::make_tuple(b->no_thermal() ? 1 : 0, metric(b), b->lineno);
+    });
+    json result;
+    result["category"] = "igbt";
+    result["tiebreaker"] = to_string(tb);
+    result["totalRowsConsidered"] = shard.meta.source_line_count;
+    result["alternativesConsidered"] = passing.size();
+    result["rejections"] = emit_rejections(rej);
+    json cands = json::array();
+    size_t n = std::min(max_candidates, passing.size());
+    for (size_t i = 0; i < n; ++i) {
+        const IgbtRow* g = passing[i];
+        json cd = base_candidate(g, fetcher);
+        cd["margins"] = {{"vces_margin", g->vces_rated / c.vces_min},
+                         {"ic_margin", g->ic_continuous / c.ic_min},
+                         {"vce_sat_headroom",
+                          (c.vce_sat_max && g->vce_sat > 0) ? num_or_null(*c.vce_sat_max / g->vce_sat)
+                                                            : json(nullptr)}};
+        cd["evidence"] = {{"thermalPresent", !g->no_thermal()}};
+        cd["sortKey"] = {{"metric", to_string(tb)}, {"value", metric(g)}};
+        cands.push_back(std::move(cd));
+    }
+    result["candidates"] = std::move(cands);
+    return result;
+}
+
+json select_bjt(const Shard<BjtRow>& shard, const BjtConstraints& c, BjtTiebreaker tb,
+                size_t max_candidates, RecordFetcher* fetcher) {
+    c.validate();
+    std::map<std::string, uint64_t> rej;
+    rej["unreadable_row"] = shard.meta.unreadable_row_count;
+    std::vector<const BjtRow*> passing;
+    for (const auto& b : shard.rows) {
+        if (c.exclude_discontinued && !b.is_production) { rej["discontinued"]++; continue; }
+        if (b.vceo_rated < c.vceo_min) { rej["vceo_low"]++; continue; }
+        if (b.ic_continuous < c.ic_min) { rej["ic_low"]++; continue; }
+        if (c.hfe_min.has_value() && b.hfe_min < *c.hfe_min) { rej["hfe_low"]++; continue; }
+        passing.push_back(&b);
+    }
+    if (passing.empty())
+        throw NoCandidates("BjtConstraints", emit_rejections(rej), shard.meta.source_line_count);
+    auto metric = [&](const BjtRow* b) -> double {
+        switch (tb) {
+            case BjtTiebreaker::HighestHfe: return -b->hfe_min;
+            case BjtTiebreaker::HighestVceoMargin: return -b->vceo_rated / c.vceo_min;
+            case BjtTiebreaker::HighestIcMargin: return -b->ic_continuous / c.ic_min;
+        }
+        return 0;
+    };
+    std::sort(passing.begin(), passing.end(), [&](const BjtRow* a, const BjtRow* b) {
+        return std::make_tuple(a->no_thermal() ? 1 : 0, metric(a), a->lineno) <
+               std::make_tuple(b->no_thermal() ? 1 : 0, metric(b), b->lineno);
+    });
+    json result;
+    result["category"] = "bjt";
+    result["tiebreaker"] = to_string(tb);
+    result["totalRowsConsidered"] = shard.meta.source_line_count;
+    result["alternativesConsidered"] = passing.size();
+    result["rejections"] = emit_rejections(rej);
+    json cands = json::array();
+    size_t n = std::min(max_candidates, passing.size());
+    for (size_t i = 0; i < n; ++i) {
+        const BjtRow* b = passing[i];
+        json cd = base_candidate(b, fetcher);
+        cd["margins"] = {{"vceo_margin", b->vceo_rated / c.vceo_min},
+                         {"ic_margin", b->ic_continuous / c.ic_min},
+                         {"hfe", b->hfe_min}};
+        cd["sortKey"] = {{"metric", to_string(tb)}, {"value", metric(b)}};
+        cands.push_back(std::move(cd));
+    }
+    result["candidates"] = std::move(cands);
+    return result;
+}
+
+json select_varistor(const Shard<VaristorRow>& shard, const VaristorConstraints& c,
+                     VaristorTiebreaker tb, size_t max_candidates, RecordFetcher* fetcher) {
+    c.validate();
+    std::map<std::string, uint64_t> rej;
+    rej["unreadable_row"] = shard.meta.unreadable_row_count;
+    std::vector<const VaristorRow*> passing;
+    for (const auto& v : shard.rows) {
+        if (c.exclude_discontinued && !v.is_production) { rej["discontinued"]++; continue; }
+        if (v.max_continuous_dc_voltage < c.rated_continuous_voltage) { rej["vc_low"]++; continue; }
+        if (c.max_clamping_voltage.has_value() && v.clamping_voltage > *c.max_clamping_voltage) {
+            rej["clamping_high"]++; continue;
+        }
+        if (c.min_peak_surge_current.has_value() && v.peak_surge_current < *c.min_peak_surge_current) {
+            rej["surge_low"]++; continue;
+        }
+        if (c.max_capacitance.has_value() && v.capacitance > *c.max_capacitance) {
+            rej["capacitance_high"]++; continue;
+        }
+        passing.push_back(&v);
+    }
+    if (passing.empty())
+        throw NoCandidates("VaristorConstraints", emit_rejections(rej),
+                           shard.meta.source_line_count);
+    // Parts missing the ranked datum are deprioritised (clamping/capacitance 0 = unknown, not best).
+    auto tier_metric = [&](const VaristorRow* v) -> std::tuple<int, double> {
+        switch (tb) {
+            case VaristorTiebreaker::LowestClampingVoltage:
+                return {v->clamping_voltage <= 0 ? 1 : 0, v->clamping_voltage};
+            case VaristorTiebreaker::HighestSurge:
+                return {v->peak_surge_current <= 0 ? 1 : 0, -v->peak_surge_current};
+            case VaristorTiebreaker::LowestCapacitance:
+                return {v->capacitance <= 0 ? 1 : 0, v->capacitance};
+        }
+        return {0, 0};
+    };
+    std::sort(passing.begin(), passing.end(), [&](const VaristorRow* a, const VaristorRow* b) {
+        auto ka = tier_metric(a);
+        auto kb = tier_metric(b);
+        return std::make_tuple(std::get<0>(ka), std::get<1>(ka), a->lineno) <
+               std::make_tuple(std::get<0>(kb), std::get<1>(kb), b->lineno);
+    });
+    json result;
+    result["category"] = "varistor";
+    result["tiebreaker"] = to_string(tb);
+    result["totalRowsConsidered"] = shard.meta.source_line_count;
+    result["alternativesConsidered"] = passing.size();
+    result["rejections"] = emit_rejections(rej);
+    json cands = json::array();
+    size_t n = std::min(max_candidates, passing.size());
+    for (size_t i = 0; i < n; ++i) {
+        const VaristorRow* v = passing[i];
+        json cd = base_candidate(v, fetcher);
+        cd["margins"] = {
+            {"vc_margin", v->max_continuous_dc_voltage / c.rated_continuous_voltage},
+            {"clamping_headroom",
+             (c.max_clamping_voltage && v->clamping_voltage > 0)
+                 ? num_or_null(*c.max_clamping_voltage / v->clamping_voltage)
+                 : json(nullptr)},
+            {"surge_headroom", (c.min_peak_surge_current && *c.min_peak_surge_current > 0)
+                                   ? num_or_null(v->peak_surge_current / *c.min_peak_surge_current)
+                                   : json(nullptr)}};
+        cd["sortKey"] = {{"clampingVoltage", v->clamping_voltage},
+                         {"peakSurgeCurrent", v->peak_surge_current}};
+        cands.push_back(std::move(cd));
+    }
+    result["candidates"] = std::move(cands);
+    return result;
+}
+
 }  // namespace kelvin

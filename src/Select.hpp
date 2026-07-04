@@ -46,4 +46,13 @@ json select_resistor(const Shard<ResistorRow>& shard, const ResistorConstraints&
                      size_t max_candidates = kDefaultMaxCandidates,
                      RecordFetcher* fetcher = nullptr);
 
+// ---- Phase 5 ---------------------------------------------------------------
+json select_igbt(const Shard<IgbtRow>& shard, const IgbtConstraints& c, IgbtTiebreaker tb,
+                 size_t max_candidates = kDefaultMaxCandidates, RecordFetcher* fetcher = nullptr);
+json select_bjt(const Shard<BjtRow>& shard, const BjtConstraints& c, BjtTiebreaker tb,
+                size_t max_candidates = kDefaultMaxCandidates, RecordFetcher* fetcher = nullptr);
+json select_varistor(const Shard<VaristorRow>& shard, const VaristorConstraints& c,
+                     VaristorTiebreaker tb, size_t max_candidates = kDefaultMaxCandidates,
+                     RecordFetcher* fetcher = nullptr);
+
 }  // namespace kelvin

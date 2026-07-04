@@ -20,11 +20,14 @@ Sibling of [Kirchhoff](../Kirchhoff) and [Heaviside](../Heaviside). Design docs 
 - **Growth-aware.** The TAS nightly appends to the catalogs; the builder does an incremental
   tail index (prefix-hash gate) so re-indexing skips the unchanged prefix.
 
-## Families (v1)
+## Families
 
-MOSFET, diode, capacitor, resistor, controller — the five with both an HS reference selector and
-a KH requirements emitter. (IGBT/BJT/analog/varistor are review-gated follow-ups; magnetics stay
-with MKF; connectors have no emitter yet.)
+- **v1 (parity-locked to the HS Python selector):** MOSFET, diode, capacitor, resistor, controller.
+- **Phase 5 (new selectors, no HS reference — physics-sensible bounds, review-gated):** IGBT, BJT,
+  varistor.
+
+(Analog ICs + the cross-ref ranker are further follow-ups; magnetics stay with MKF; connectors
+have no requirements emitter yet.)
 
 ## Build
 

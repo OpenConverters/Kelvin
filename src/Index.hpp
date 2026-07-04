@@ -60,6 +60,10 @@ Shard<ResistorRow> build_resistor_shard(const std::string& ndjson_path,
                                         const Shard<ResistorRow>* prev = nullptr);
 Shard<ControllerRow> build_controller_shard(const std::string& ndjson_path,
                                             const Shard<ControllerRow>* prev = nullptr);
+Shard<IgbtRow> build_igbt_shard(const std::string& ndjson_path, const Shard<IgbtRow>* prev = nullptr);
+Shard<BjtRow> build_bjt_shard(const std::string& ndjson_path, const Shard<BjtRow>* prev = nullptr);
+Shard<VaristorRow> build_varistor_shard(const std::string& ndjson_path,
+                                        const Shard<VaristorRow>* prev = nullptr);
 
 // ---- serialize / deserialize ----------------------------------------------
 void write_shard(const std::string& out_path, const Shard<MosfetRow>&);
@@ -67,6 +71,9 @@ void write_shard(const std::string& out_path, const Shard<DiodeRow>&);
 void write_shard(const std::string& out_path, const Shard<CapacitorRow>&);
 void write_shard(const std::string& out_path, const Shard<ResistorRow>&);
 void write_shard(const std::string& out_path, const Shard<ControllerRow>&);
+void write_shard(const std::string& out_path, const Shard<IgbtRow>&);
+void write_shard(const std::string& out_path, const Shard<BjtRow>&);
+void write_shard(const std::string& out_path, const Shard<VaristorRow>&);
 
 // In-memory serialization (used by write_shard and by [determinism] bit-identity tests).
 std::string serialize_shard(const Shard<MosfetRow>&);
@@ -74,18 +81,27 @@ std::string serialize_shard(const Shard<DiodeRow>&);
 std::string serialize_shard(const Shard<CapacitorRow>&);
 std::string serialize_shard(const Shard<ResistorRow>&);
 std::string serialize_shard(const Shard<ControllerRow>&);
+std::string serialize_shard(const Shard<IgbtRow>&);
+std::string serialize_shard(const Shard<BjtRow>&);
+std::string serialize_shard(const Shard<VaristorRow>&);
 
 Shard<MosfetRow> read_mosfet_shard(const std::string& path);
 Shard<DiodeRow> read_diode_shard(const std::string& path);
 Shard<CapacitorRow> read_capacitor_shard(const std::string& path);
 Shard<ResistorRow> read_resistor_shard(const std::string& path);
 Shard<ControllerRow> read_controller_shard(const std::string& path);
+Shard<IgbtRow> read_igbt_shard(const std::string& path);
+Shard<BjtRow> read_bjt_shard(const std::string& path);
+Shard<VaristorRow> read_varistor_shard(const std::string& path);
 
 Shard<MosfetRow> deserialize_mosfet_shard(const std::string& bytes);
 Shard<DiodeRow> deserialize_diode_shard(const std::string& bytes);
 Shard<CapacitorRow> deserialize_capacitor_shard(const std::string& bytes);
 Shard<ResistorRow> deserialize_resistor_shard(const std::string& bytes);
 Shard<ControllerRow> deserialize_controller_shard(const std::string& bytes);
+Shard<IgbtRow> deserialize_igbt_shard(const std::string& bytes);
+Shard<BjtRow> deserialize_bjt_shard(const std::string& bytes);
+Shard<VaristorRow> deserialize_varistor_shard(const std::string& bytes);
 
 // Staleness: size-first (the nightly append always changes size), hash as confirmation.
 bool shard_is_stale(const ShardMeta& meta, const std::string& ndjson_path);

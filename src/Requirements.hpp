@@ -29,5 +29,8 @@ CapacitorConstraints capacitor_constraints(const json& req);
 ResistorConstraints resistor_constraints(const json& req);
 ControllerConstraints controller_constraints(const json& req, const std::string& topology,
                                              double vin_nom, double fsw_hz);
+IgbtConstraints igbt_constraints(const json& req);
+BjtConstraints bjt_constraints(const json& req);
+VaristorConstraints varistor_constraints(const json& req);
 
 }  // namespace kelvin

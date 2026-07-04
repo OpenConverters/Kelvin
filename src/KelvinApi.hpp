@@ -38,6 +38,9 @@ class Engine {
     std::optional<Shard<CapacitorRow>> capacitor_;
     std::optional<Shard<ResistorRow>> resistor_;
     std::optional<Shard<ControllerRow>> controller_;
+    std::optional<Shard<IgbtRow>> igbt_;
+    std::optional<Shard<BjtRow>> bjt_;
+    std::optional<Shard<VaristorRow>> varistor_;
 
     std::string ndjson_path(Family f) const;
     std::string shard_path(Family f) const;
@@ -46,6 +49,9 @@ class Engine {
     const Shard<CapacitorRow>& capacitor_shard();
     const Shard<ResistorRow>& resistor_shard();
     const Shard<ControllerRow>& controller_shard();
+    const Shard<IgbtRow>& igbt_shard();
+    const Shard<BjtRow>& bjt_shard();
+    const Shard<VaristorRow>& varistor_shard();
 };
 
 // String facade (guarded) for the embind/WASM and any C-string consumer: returns the

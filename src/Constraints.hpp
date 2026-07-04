@@ -109,4 +109,46 @@ struct ResistorConstraints {
     }
 };
 
+// ---- Phase 5 (no HS reference; physics-sensible bounds) ---------------------
+enum class IgbtTiebreaker { LowestVceSat, HighestVcesMargin, HighestIcMargin };
+enum class BjtTiebreaker { HighestHfe, HighestVceoMargin, HighestIcMargin };
+enum class VaristorTiebreaker { LowestClampingVoltage, HighestSurge, LowestCapacitance };
+
+const char* to_string(IgbtTiebreaker t);
+const char* to_string(BjtTiebreaker t);
+const char* to_string(VaristorTiebreaker t);
+IgbtTiebreaker igbt_tiebreaker_from_string(const std::string& s);
+BjtTiebreaker bjt_tiebreaker_from_string(const std::string& s);
+VaristorTiebreaker varistor_tiebreaker_from_string(const std::string& s);
+
+struct IgbtConstraints {
+    double vces_min = 0, ic_min = 0;
+    std::optional<double> vce_sat_max;  // maximumSaturationVoltage
+    bool exclude_discontinued = true;
+    void validate() const {
+        if (!(vces_min > 0)) throw InvalidOptions("IgbtConstraints.vces_min must be positive");
+        if (!(ic_min > 0)) throw InvalidOptions("IgbtConstraints.ic_min must be positive");
+    }
+};
+
+struct BjtConstraints {
+    double vceo_min = 0, ic_min = 0;
+    std::optional<double> hfe_min;  // minimumDcCurrentGain
+    bool exclude_discontinued = true;
+    void validate() const {
+        if (!(vceo_min > 0)) throw InvalidOptions("BjtConstraints.vceo_min must be positive");
+        if (!(ic_min > 0)) throw InvalidOptions("BjtConstraints.ic_min must be positive");
+    }
+};
+
+struct VaristorConstraints {
+    double rated_continuous_voltage = 0;  // part maxContinuousDcVoltage must be >= this
+    std::optional<double> max_clamping_voltage, min_peak_surge_current, max_capacitance;
+    bool exclude_discontinued = true;
+    void validate() const {
+        if (!(rated_continuous_voltage > 0))
+            throw InvalidOptions("VaristorConstraints.rated_continuous_voltage must be positive");
+    }
+};
+
 }  // namespace kelvin

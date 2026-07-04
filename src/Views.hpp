@@ -29,5 +29,8 @@ std::optional<DiodeRow> extract_diode(const json& env);
 std::optional<CapacitorRow> extract_capacitor(const json& env);
 std::optional<ResistorRow> extract_resistor(const json& env);
 std::optional<ControllerRow> extract_controller(const json& env);
+std::optional<IgbtRow> extract_igbt(const json& env);
+std::optional<BjtRow> extract_bjt(const json& env);
+std::optional<VaristorRow> extract_varistor(const json& env);
 
 }  // namespace kelvin

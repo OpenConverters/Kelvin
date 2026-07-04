@@ -14,11 +14,21 @@ if (EMSCRIPTEN)
     add_link_options(-fwasm-exceptions -sSUPPORT_LONGJMP=wasm)
 endif()
 
+# Top-level vs embedded (add_subdirectory from Kirchhoff). When embedded, the parent already
+# provides nlohmann_json / Catch2 / pybind11, and only the `kelvin` static lib is wanted.
+if (CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
+    set(KELVIN_TOP TRUE)
+else()
+    set(KELVIN_TOP FALSE)
+endif()
+
 include(FetchContent)
-FetchContent_Declare(nlohmann_json
-    GIT_REPOSITORY https://github.com/nlohmann/json.git
-    GIT_TAG v3.11.3)
-FetchContent_MakeAvailable(nlohmann_json)
+if (NOT TARGET nlohmann_json::nlohmann_json)
+    FetchContent_Declare(nlohmann_json
+        GIT_REPOSITORY https://github.com/nlohmann/json.git
+        GIT_TAG v3.11.3)
+    FetchContent_MakeAvailable(nlohmann_json)
+endif()
 
 # ---- core static lib -------------------------------------------------------
 # KelvinApi.cpp is compiled separately into the pybind/embind targets (mirrors Kirchhoff:
@@ -55,14 +65,14 @@ if (NOT MSVC)
 endif()
 
 # ---- kelvin-index CLI (offline / nightly index builder) --------------------
-if (NOT EMSCRIPTEN)
+if (NOT EMSCRIPTEN AND KELVIN_TOP)
     add_executable(kelvin-index tools/kelvin_index_main.cpp)
     target_link_libraries(kelvin-index PRIVATE kelvin)
 endif()
 
 # ---- Catch2 tests ----------------------------------------------------------
 option(KELVIN_BUILD_TESTS "Build the Catch2 test suite" ON)
-if (KELVIN_BUILD_TESTS AND NOT EMSCRIPTEN)
+if (KELVIN_BUILD_TESTS AND NOT EMSCRIPTEN AND KELVIN_TOP)
     FetchContent_Declare(Catch2
         GIT_REPOSITORY https://github.com/catchorg/Catch2.git
         GIT_TAG v3.8.1)
@@ -74,7 +84,8 @@ if (KELVIN_BUILD_TESTS AND NOT EMSCRIPTEN)
         tests/test_requirements.cpp
         tests/test_parity.cpp
         tests/test_determinism.cpp
-        tests/test_components.cpp)
+        tests/test_components.cpp
+        tests/test_phase5.cpp)
     target_compile_definitions(test_kelvin PRIVATE
         KELVIN_TEST_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests")
     target_link_libraries(test_kelvin PRIVATE kelvin Catch2::Catch2WithMain)
@@ -85,7 +96,7 @@ endif()
 
 # ---- PyKelvin: pybind11 module (Heaviside consumes this) -------------------
 option(KELVIN_BUILD_PYBIND "Build the PyKelvin pybind11 module" ON)
-if (KELVIN_BUILD_PYBIND AND NOT EMSCRIPTEN)
+if (KELVIN_BUILD_PYBIND AND NOT EMSCRIPTEN AND KELVIN_TOP)
     FetchContent_Declare(pybind11
         GIT_REPOSITORY https://github.com/pybind/pybind11.git GIT_TAG v2.13.6)
     FetchContent_Declare(pybind11_json

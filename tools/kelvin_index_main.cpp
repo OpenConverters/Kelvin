@@ -15,7 +15,8 @@
 using namespace kelvin;
 
 namespace {
-const char* kFamilies[] = {"mosfet", "diode", "capacitor", "resistor", "controller"};
+const char* kFamilies[] = {"mosfet", "diode", "capacitor",  "resistor",
+                           "controller", "igbt", "bjt", "varistor"};
 
 int usage() {
     std::cerr << "usage: kelvin-index --data <dir> --out <dir> [--family <f>] [--check]\n";
@@ -61,6 +62,9 @@ int main(int argc, char** argv) {
                         case Family::Capacitor: meta = read_capacitor_shard(shard).meta; break;
                         case Family::Resistor: meta = read_resistor_shard(shard).meta; break;
                         case Family::Controller: meta = read_controller_shard(shard).meta; break;
+                        case Family::Igbt: meta = read_igbt_shard(shard).meta; break;
+                        case Family::Bjt: meta = read_bjt_shard(shard).meta; break;
+                        case Family::Varistor: meta = read_varistor_shard(shard).meta; break;
                     }
                     have = true;
                 } catch (const std::exception&) { have = false; }

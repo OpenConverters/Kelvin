@@ -60,6 +60,9 @@ Family family_from_string(const std::string& s) {
     if (s == "capacitor" || s == "capacitors") return Family::Capacitor;
     if (s == "resistor" || s == "resistors") return Family::Resistor;
     if (s == "controller" || s == "controllers") return Family::Controller;
+    if (s == "igbt" || s == "igbts") return Family::Igbt;
+    if (s == "bjt" || s == "bjts") return Family::Bjt;
+    if (s == "varistor" || s == "varistors") return Family::Varistor;
     throw InvalidOptions("unknown category: " + s);
 }
 
@@ -157,6 +160,37 @@ const Shard<ControllerRow>& Engine::controller_shard() {
     return *controller_;
 }
 
+const Shard<IgbtRow>& Engine::igbt_shard() {
+    if (!igbt_)
+        igbt_ = load_or_build<IgbtRow>(
+            ndjson_path(Family::Igbt), shard_path(Family::Igbt), !cache_dir_.empty(), quiet_, "igbt",
+            [](const std::string& p, const Shard<IgbtRow>* pv) { return build_igbt_shard(p, pv); },
+            [](const std::string& p) { return read_igbt_shard(p); },
+            [](const std::string& p, const Shard<IgbtRow>& s) { write_shard(p, s); });
+    return *igbt_;
+}
+const Shard<BjtRow>& Engine::bjt_shard() {
+    if (!bjt_)
+        bjt_ = load_or_build<BjtRow>(
+            ndjson_path(Family::Bjt), shard_path(Family::Bjt), !cache_dir_.empty(), quiet_, "bjt",
+            [](const std::string& p, const Shard<BjtRow>* pv) { return build_bjt_shard(p, pv); },
+            [](const std::string& p) { return read_bjt_shard(p); },
+            [](const std::string& p, const Shard<BjtRow>& s) { write_shard(p, s); });
+    return *bjt_;
+}
+const Shard<VaristorRow>& Engine::varistor_shard() {
+    if (!varistor_)
+        varistor_ = load_or_build<VaristorRow>(
+            ndjson_path(Family::Varistor), shard_path(Family::Varistor), !cache_dir_.empty(), quiet_,
+            "varistor",
+            [](const std::string& p, const Shard<VaristorRow>* pv) {
+                return build_varistor_shard(p, pv);
+            },
+            [](const std::string& p) { return read_varistor_shard(p); },
+            [](const std::string& p, const Shard<VaristorRow>& s) { write_shard(p, s); });
+    return *varistor_;
+}
+
 ShardMeta Engine::build_index(const std::string& family) {
     Family f = family_from_string(family);
     switch (f) {
@@ -165,6 +199,9 @@ ShardMeta Engine::build_index(const std::string& family) {
         case Family::Capacitor: capacitor_.reset(); return capacitor_shard().meta;
         case Family::Resistor: resistor_.reset(); return resistor_shard().meta;
         case Family::Controller: controller_.reset(); return controller_shard().meta;
+        case Family::Igbt: igbt_.reset(); return igbt_shard().meta;
+        case Family::Bjt: bjt_.reset(); return bjt_shard().meta;
+        case Family::Varistor: varistor_.reset(); return varistor_shard().meta;
     }
     throw InvalidOptions("unknown family");
 }
@@ -230,6 +267,36 @@ json Engine::select(const std::string& category, const json& req, const json& op
         std::optional<FileRecordFetcher> fetch;
         if (include_env) fetch.emplace(ndjson_path(Family::Resistor));
         return select_resistor(sh, c, max_cand, include_env ? &*fetch : nullptr);
+    }
+    if (f == Family::Igbt) {
+        IgbtConstraints c = igbt_constraints(req);
+        c.exclude_discontinued = opt_bool(options, "excludeDiscontinued", true);
+        IgbtTiebreaker tb = IgbtTiebreaker::LowestVceSat;
+        if (auto s = opt_str(options, "tiebreaker")) tb = igbt_tiebreaker_from_string(*s);
+        const Shard<IgbtRow>& sh = igbt_shard();
+        std::optional<FileRecordFetcher> fetch;
+        if (include_env) fetch.emplace(ndjson_path(Family::Igbt));
+        return select_igbt(sh, c, tb, max_cand, include_env ? &*fetch : nullptr);
+    }
+    if (f == Family::Bjt) {
+        BjtConstraints c = bjt_constraints(req);
+        c.exclude_discontinued = opt_bool(options, "excludeDiscontinued", true);
+        BjtTiebreaker tb = BjtTiebreaker::HighestHfe;
+        if (auto s = opt_str(options, "tiebreaker")) tb = bjt_tiebreaker_from_string(*s);
+        const Shard<BjtRow>& sh = bjt_shard();
+        std::optional<FileRecordFetcher> fetch;
+        if (include_env) fetch.emplace(ndjson_path(Family::Bjt));
+        return select_bjt(sh, c, tb, max_cand, include_env ? &*fetch : nullptr);
+    }
+    if (f == Family::Varistor) {
+        VaristorConstraints c = varistor_constraints(req);
+        c.exclude_discontinued = opt_bool(options, "excludeDiscontinued", true);
+        VaristorTiebreaker tb = VaristorTiebreaker::LowestClampingVoltage;
+        if (auto s = opt_str(options, "tiebreaker")) tb = varistor_tiebreaker_from_string(*s);
+        const Shard<VaristorRow>& sh = varistor_shard();
+        std::optional<FileRecordFetcher> fetch;
+        if (include_env) fetch.emplace(ndjson_path(Family::Varistor));
+        return select_varistor(sh, c, tb, max_cand, include_env ? &*fetch : nullptr);
     }
     // controller
     auto topo = opt_str(options, "topology");

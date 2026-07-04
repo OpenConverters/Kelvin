@@ -105,7 +105,76 @@ ControllerConstraints controller_constraints(const json& req, const std::string&
     return c;
 }
 
+IgbtConstraints igbt_constraints(const json& req) {
+    IgbtConstraints c;
+    c.vces_min = req_num(req, "ratedCollectorEmitterVoltage");
+    c.ic_min = req_num(req, "ratedCollectorCurrent");
+    c.vce_sat_max = opt_num(req, "maximumSaturationVoltage");
+    return c;
+}
+
+BjtConstraints bjt_constraints(const json& req) {
+    BjtConstraints c;
+    c.vceo_min = req_num(req, "ratedCollectorEmitterVoltage");
+    c.ic_min = req_num(req, "ratedCollectorCurrent");
+    c.hfe_min = opt_num(req, "minimumDcCurrentGain");
+    return c;
+}
+
+VaristorConstraints varistor_constraints(const json& req) {
+    VaristorConstraints c;
+    c.rated_continuous_voltage = req_num(req, "ratedContinuousVoltage");
+    c.max_clamping_voltage = opt_num(req, "maximumClampingVoltage");
+    c.min_peak_surge_current = opt_num(req, "minimumPeakSurgeCurrent");
+    c.max_capacitance = opt_num(req, "maximumCapacitance");
+    return c;
+}
+
 // ---- tiebreaker <-> string -------------------------------------------------
+const char* to_string(IgbtTiebreaker t) {
+    switch (t) {
+        case IgbtTiebreaker::LowestVceSat: return "lowest_vce_sat";
+        case IgbtTiebreaker::HighestVcesMargin: return "highest_vces_margin";
+        case IgbtTiebreaker::HighestIcMargin: return "highest_ic_margin";
+    }
+    return "";
+}
+const char* to_string(BjtTiebreaker t) {
+    switch (t) {
+        case BjtTiebreaker::HighestHfe: return "highest_hfe";
+        case BjtTiebreaker::HighestVceoMargin: return "highest_vceo_margin";
+        case BjtTiebreaker::HighestIcMargin: return "highest_ic_margin";
+    }
+    return "";
+}
+const char* to_string(VaristorTiebreaker t) {
+    switch (t) {
+        case VaristorTiebreaker::LowestClampingVoltage: return "lowest_clamping_voltage";
+        case VaristorTiebreaker::HighestSurge: return "highest_surge";
+        case VaristorTiebreaker::LowestCapacitance: return "lowest_capacitance";
+    }
+    return "";
+}
+IgbtTiebreaker igbt_tiebreaker_from_string(const std::string& s) {
+    if (s == "lowest_vce_sat") return IgbtTiebreaker::LowestVceSat;
+    if (s == "highest_vces_margin") return IgbtTiebreaker::HighestVcesMargin;
+    if (s == "highest_ic_margin") return IgbtTiebreaker::HighestIcMargin;
+    throw InvalidOptions("unknown igbt tiebreaker: " + s);
+}
+BjtTiebreaker bjt_tiebreaker_from_string(const std::string& s) {
+    if (s == "highest_hfe") return BjtTiebreaker::HighestHfe;
+    if (s == "highest_vceo_margin") return BjtTiebreaker::HighestVceoMargin;
+    if (s == "highest_ic_margin") return BjtTiebreaker::HighestIcMargin;
+    throw InvalidOptions("unknown bjt tiebreaker: " + s);
+}
+VaristorTiebreaker varistor_tiebreaker_from_string(const std::string& s) {
+    if (s == "lowest_clamping_voltage") return VaristorTiebreaker::LowestClampingVoltage;
+    if (s == "highest_surge") return VaristorTiebreaker::HighestSurge;
+    if (s == "lowest_capacitance") return VaristorTiebreaker::LowestCapacitance;
+    throw InvalidOptions("unknown varistor tiebreaker: " + s);
+}
+
+// ---- original tiebreaker <-> string ----------------------------------------
 const char* to_string(MosfetTiebreaker t) {
     switch (t) {
         case MosfetTiebreaker::LowestRdsOn: return "lowest_rds_on";
