@@ -1,0 +1,212 @@
+{
+ "cases": [
+  {
+   "constraints": {
+    "max_tolerance": 0.01,
+    "max_value_deviation": 0.2,
+    "target_ohms": 120.0
+   },
+   "expect": {
+    "alternatives": 25,
+    "chosen": "560112110065",
+    "deviation": 0.0
+   }
+  },
+  {
+   "constraints": {
+    "max_tolerance": 0.01,
+    "max_value_deviation": 0.2,
+    "target_ohms": 4700.0
+   },
+   "expect": {
+    "alternatives": 24,
+    "chosen": "560112110245",
+    "deviation": 0.0
+   }
+  },
+  {
+   "constraints": {
+    "max_tolerance": 0.01,
+    "max_value_deviation": 0.2,
+    "target_ohms": 56000.0
+   },
+   "expect": {
+    "alternatives": 31,
+    "chosen": "560112110031",
+    "deviation": 0.0
+   }
+  },
+  {
+   "constraints": {
+    "max_tolerance": 0.01,
+    "max_value_deviation": 0.2,
+    "target_ohms": 1130.0
+   },
+   "expect": {
+    "alternatives": 29,
+    "chosen": "560112110188",
+    "deviation": 0.0
+   }
+  },
+  {
+   "constraints": {
+    "max_tolerance": 0.05,
+    "max_value_deviation": 0.2,
+    "target_ohms": 2200.0
+   },
+   "expect": {
+    "alternatives": 30,
+    "chosen": "560112110087",
+    "deviation": 0.0
+   }
+  },
+  {
+   "constraints": {
+    "max_tolerance": 0.01,
+    "max_value_deviation": 0.2,
+    "target_ohms": 1500.0
+   },
+   "expect": {
+    "alternatives": 33,
+    "chosen": "560112110095",
+    "deviation": 0.0
+   }
+  },
+  {
+   "constraints": {
+    "max_tolerance": 0.01,
+    "max_value_deviation": 0.2,
+    "target_ohms": 75.0
+   },
+   "expect": {
+    "alternatives": 8,
+    "chosen": "560112110050",
+    "deviation": 0.0
+   }
+  },
+  {
+   "constraints": {
+    "max_tolerance": 0.05,
+    "max_value_deviation": 0.2,
+    "target_ohms": 2.0
+   },
+   "expect": {
+    "alternatives": 17,
+    "chosen": "560112110057",
+    "deviation": 0.0
+   }
+  },
+  {
+   "constraints": {
+    "max_tolerance": 0.01,
+    "max_value_deviation": 0.2,
+    "target_ohms": 1820.0
+   },
+   "expect": {
+    "alternatives": 25,
+    "chosen": "560112110145",
+    "deviation": 0.0
+   }
+  },
+  {
+   "constraints": {
+    "max_tolerance": 0.01,
+    "max_value_deviation": 0.2,
+    "target_ohms": 9760.0
+   },
+   "expect": {
+    "alternatives": 23,
+    "chosen": "RC2512FK-079K76L",
+    "deviation": 0.0
+   }
+  },
+  {
+   "constraints": {
+    "max_tolerance": 0.01,
+    "max_value_deviation": 0.2,
+    "target_ohms": 32400.0
+   },
+   "expect": {
+    "alternatives": 22,
+    "chosen": "560112110155",
+    "deviation": 0.0
+   }
+  },
+  {
+   "constraints": {
+    "max_tolerance": 0.05,
+    "max_value_deviation": 0.2,
+    "target_ohms": 47.0
+   },
+   "expect": {
+    "alternatives": 24,
+    "chosen": "560112116054",
+    "deviation": 0.0
+   }
+  },
+  {
+   "constraints": {
+    "max_tolerance": 0.01,
+    "max_value_deviation": 0.2,
+    "target_ohms": 1600.0
+   },
+   "expect": {
+    "alternatives": 25,
+    "chosen": "560112116094",
+    "deviation": 0.0
+   }
+  },
+  {
+   "constraints": {
+    "max_tolerance": 0.01,
+    "max_value_deviation": 0.2,
+    "target_ohms": 619000.0
+   },
+   "expect": {
+    "alternatives": 8,
+    "chosen": "560112110255",
+    "deviation": 0.0
+   }
+  },
+  {
+   "constraints": {
+    "max_tolerance": 0.01,
+    "max_value_deviation": 0.2,
+    "target_ohms": 39200.0
+   },
+   "expect": {
+    "alternatives": 32,
+    "chosen": "560112110160",
+    "deviation": 0.0
+   }
+  },
+  {
+   "constraints": {
+    "max_tolerance": 0.01,
+    "max_value_deviation": 0.2,
+    "target_ohms": 100.0
+   },
+   "expect": {
+    "alternatives": 20,
+    "chosen": "560112110022",
+    "deviation": 0.0
+   }
+  },
+  {
+   "constraints": {
+    "max_tolerance": 0.001,
+    "max_value_deviation": 0.01,
+    "target_ohms": 1234500.0
+   },
+   "expect": {
+    "error": "SelectionError",
+    "rejections": {
+     "tolerance_loose": 800
+    },
+    "total": 800
+   }
+  }
+ ],
+ "family": "resistor",
+ "fixture": "resistors.ndjson"
+}

@@ -1,0 +1,704 @@
+{
+ "cases": [
+  {
+   "constraints": {
+    "capacitance_max": 0.0024,
+    "capacitance_min": 0.00108,
+    "exclude_discontinued": false,
+    "ripple_current_min": null,
+    "technology_allowed": [],
+    "v_rated_min": 5.0
+   },
+   "expect": {
+    "alternatives": 142,
+    "chosen": "861011086027",
+    "margins": {
+     "capacitance_ratio": 1.3888888888888888,
+     "ripple_headroom": null,
+     "v_margin": 40.0
+    }
+   },
+   "tiebreaker": "lowest_esr"
+  },
+  {
+   "constraints": {
+    "capacitance_max": 0.0013799999999999997,
+    "capacitance_min": 0.0010199999999999999,
+    "exclude_discontinued": false,
+    "ripple_current_min": null,
+    "technology_allowed": [],
+    "v_rated_min": 5.0
+   },
+   "expect": {
+    "alternatives": 36,
+    "chosen": "860010275017",
+    "margins": {
+     "capacitance_ratio": 1.1764705882352942,
+     "ripple_headroom": null,
+     "v_margin": 2.0
+    }
+   },
+   "tiebreaker": "highest_capacitance"
+  },
+  {
+   "constraints": {
+    "capacitance_max": 0.0036,
+    "capacitance_min": 0.0006,
+    "exclude_discontinued": false,
+    "ripple_current_min": 0.636,
+    "technology_allowed": [],
+    "v_rated_min": 5.0
+   },
+   "expect": {
+    "alternatives": 350,
+    "chosen": "870135175007",
+    "margins": {
+     "capacitance_ratio": 2.0,
+     "ripple_headroom": 10.440251572327044,
+     "v_margin": 1.26
+    }
+   },
+   "tiebreaker": "highest_ripple_headroom"
+  },
+  {
+   "constraints": {
+    "capacitance_max": 0.00164,
+    "capacitance_min": 0.000738,
+    "exclude_discontinued": false,
+    "ripple_current_min": null,
+    "technology_allowed": [],
+    "v_rated_min": 8.0
+   },
+   "expect": {
+    "alternatives": 163,
+    "chosen": "870025375010",
+    "margins": {
+     "capacitance_ratio": 1.111111111111111,
+     "ripple_headroom": null,
+     "v_margin": 2.0
+    }
+   },
+   "tiebreaker": "highest_ripple_headroom"
+  },
+  {
+   "constraints": {
+    "capacitance_max": 0.0009429999999999999,
+    "capacitance_min": 0.0006969999999999999,
+    "exclude_discontinued": false,
+    "ripple_current_min": null,
+    "technology_allowed": [],
+    "v_rated_min": 8.0
+   },
+   "expect": {
+    "alternatives": 36,
+    "chosen": "860010275014",
+    "margins": {
+     "capacitance_ratio": 1.1764705882352942,
+     "ripple_headroom": null,
+     "v_margin": 1.25
+    }
+   },
+   "tiebreaker": "highest_capacitance"
+  },
+  {
+   "constraints": {
+    "capacitance_max": 0.00246,
+    "capacitance_min": 0.00041,
+    "exclude_discontinued": false,
+    "ripple_current_min": 0.627,
+    "technology_allowed": [],
+    "v_rated_min": 8.0
+   },
+   "expect": {
+    "alternatives": 367,
+    "chosen": "870135375007",
+    "margins": {
+     "capacitance_ratio": 1.146341463414634,
+     "ripple_headroom": 9.728867623604467,
+     "v_margin": 2.0
+    }
+   },
+   "tiebreaker": "highest_ripple_headroom"
+  },
+  {
+   "constraints": {
+    "capacitance_max": 6.599999999999999e-05,
+    "capacitance_min": 2.9699999999999997e-05,
+    "exclude_discontinued": false,
+    "ripple_current_min": null,
+    "technology_allowed": [],
+    "v_rated_min": 25.0
+   },
+   "expect": {
+    "alternatives": 214,
+    "chosen": "860241481006",
+    "margins": {
+     "capacitance_ratio": 1.1111111111111112,
+     "ripple_headroom": null,
+     "v_margin": 18.0
+    }
+   },
+   "tiebreaker": "highest_voltage_margin"
+  },
+  {
+   "constraints": {
+    "capacitance_max": 3.7949999999999994e-05,
+    "capacitance_min": 2.8049999999999994e-05,
+    "exclude_discontinued": false,
+    "ripple_current_min": null,
+    "technology_allowed": [],
+    "v_rated_min": 25.0
+   },
+   "expect": {
+    "alternatives": 80,
+    "chosen": "860010472004",
+    "margins": {
+     "capacitance_ratio": 1.1764705882352942,
+     "ripple_headroom": null,
+     "v_margin": 1.0
+    }
+   },
+   "tiebreaker": "highest_capacitance"
+  },
+  {
+   "constraints": {
+    "capacitance_max": 9.9e-05,
+    "capacitance_min": 1.6499999999999998e-05,
+    "exclude_discontinued": false,
+    "ripple_current_min": 0.8,
+    "technology_allowed": [],
+    "v_rated_min": 25.0
+   },
+   "expect": {
+    "alternatives": 130,
+    "chosen": "870025574001",
+    "margins": {
+     "capacitance_ratio": 2.3636363636363638,
+     "ripple_headroom": 5.625,
+     "v_margin": 1.0
+    }
+   },
+   "tiebreaker": "highest_ripple_headroom"
+  },
+  {
+   "constraints": {
+    "capacitance_max": 9.400000000000001e-09,
+    "capacitance_min": 4.2300000000000005e-09,
+    "exclude_discontinued": false,
+    "ripple_current_min": null,
+    "technology_allowed": [],
+    "v_rated_min": 25.0
+   },
+   "expect": {
+    "alternatives": 41,
+    "chosen": "885012008029",
+    "margins": {
+     "capacitance_ratio": 1.6075650118203308,
+     "ripple_headroom": null,
+     "v_margin": 1.0
+    }
+   },
+   "tiebreaker": "highest_capacitance"
+  },
+  {
+   "constraints": {
+    "capacitance_max": 5.405e-09,
+    "capacitance_min": 3.995e-09,
+    "exclude_discontinued": false,
+    "ripple_current_min": null,
+    "technology_allowed": [],
+    "v_rated_min": 25.0
+   },
+   "expect": {
+    "alternatives": 23,
+    "chosen": "885012007044",
+    "margins": {
+     "capacitance_ratio": 1.1764705882352942,
+     "ripple_headroom": null,
+     "v_margin": 1.0
+    }
+   },
+   "tiebreaker": "highest_capacitance"
+  },
+  {
+   "constraints": {
+    "capacitance_max": 0.002,
+    "capacitance_min": 0.0009000000000000001,
+    "exclude_discontinued": false,
+    "ripple_current_min": null,
+    "technology_allowed": [],
+    "v_rated_min": 5.0
+   },
+   "expect": {
+    "alternatives": 177,
+    "chosen": "861011086027",
+    "margins": {
+     "capacitance_ratio": 1.6666666666666665,
+     "ripple_headroom": null,
+     "v_margin": 40.0
+    }
+   },
+   "tiebreaker": "lowest_esr"
+  },
+  {
+   "constraints": {
+    "capacitance_max": 0.00115,
+    "capacitance_min": 0.00085,
+    "exclude_discontinued": false,
+    "ripple_current_min": null,
+    "technology_allowed": [],
+    "v_rated_min": 5.0
+   },
+   "expect": {
+    "alternatives": 69,
+    "chosen": "860010274015",
+    "margins": {
+     "capacitance_ratio": 1.1764705882352942,
+     "ripple_headroom": null,
+     "v_margin": 2.0
+    }
+   },
+   "tiebreaker": "highest_capacitance"
+  },
+  {
+   "constraints": {
+    "capacitance_max": 0.003,
+    "capacitance_min": 0.0005,
+    "exclude_discontinued": false,
+    "ripple_current_min": 0.26,
+    "technology_allowed": [],
+    "v_rated_min": 5.0
+   },
+   "expect": {
+    "alternatives": 381,
+    "chosen": "870135175007",
+    "margins": {
+     "capacitance_ratio": 2.4,
+     "ripple_headroom": 25.53846153846154,
+     "v_margin": 1.26
+    }
+   },
+   "tiebreaker": "highest_ripple_headroom"
+  },
+  {
+   "constraints": {
+    "capacitance_max": 1.3599999999999999e-05,
+    "capacitance_min": 6.12e-06,
+    "exclude_discontinued": false,
+    "ripple_current_min": null,
+    "technology_allowed": [],
+    "v_rated_min": 225.0
+   },
+   "expect": {
+    "alternatives": 14,
+    "chosen": "860241478003",
+    "margins": {
+     "capacitance_ratio": 1.6339869281045751,
+     "ripple_headroom": null,
+     "v_margin": 2.0
+    }
+   },
+   "tiebreaker": "highest_ripple_headroom"
+  },
+  {
+   "constraints": {
+    "capacitance_max": 7.819999999999998e-06,
+    "capacitance_min": 5.779999999999999e-06,
+    "exclude_discontinued": false,
+    "ripple_current_min": null,
+    "technology_allowed": [],
+    "v_rated_min": 225.0
+   },
+   "expect": {
+    "alternatives": 5,
+    "chosen": "860021374009",
+    "margins": {
+     "capacitance_ratio": 1.1764705882352942,
+     "ripple_headroom": null,
+     "v_margin": 1.7777777777777777
+    }
+   },
+   "tiebreaker": "highest_capacitance"
+  },
+  {
+   "constraints": {
+    "capacitance_max": 2.0399999999999998e-05,
+    "capacitance_min": 3.3999999999999996e-06,
+    "exclude_discontinued": false,
+    "ripple_current_min": 0.12,
+    "technology_allowed": [],
+    "v_rated_min": 225.0
+   },
+   "expect": {
+    "alternatives": 5,
+    "chosen": "860241478003",
+    "margins": {
+     "capacitance_ratio": 2.9411764705882355,
+     "ripple_headroom": 3.2500000000000004,
+     "v_margin": 2.0
+    }
+   },
+   "tiebreaker": "highest_ripple_headroom"
+  },
+  {
+   "constraints": {
+    "capacitance_max": 0.0078,
+    "capacitance_min": 0.00351,
+    "exclude_discontinued": false,
+    "ripple_current_min": null,
+    "technology_allowed": [],
+    "v_rated_min": 8.0
+   },
+   "expect": {
+    "alternatives": 62,
+    "chosen": "861010786015",
+    "margins": {
+     "capacitance_ratio": 1.339031339031339,
+     "ripple_headroom": null,
+     "v_margin": 7.875
+    }
+   },
+   "tiebreaker": "highest_voltage_margin"
+  },
+  {
+   "constraints": {
+    "capacitance_max": 0.004484999999999999,
+    "capacitance_min": 0.003315,
+    "exclude_discontinued": false,
+    "ripple_current_min": null,
+    "technology_allowed": [],
+    "v_rated_min": 8.0
+   },
+   "expect": {
+    "alternatives": 15,
+    "chosen": "860010278023",
+    "margins": {
+     "capacitance_ratio": 1.1764705882352942,
+     "ripple_headroom": null,
+     "v_margin": 1.25
+    }
+   },
+   "tiebreaker": "highest_capacitance"
+  },
+  {
+   "constraints": {
+    "capacitance_max": 0.011699999999999999,
+    "capacitance_min": 0.00195,
+    "exclude_discontinued": false,
+    "ripple_current_min": 1.368,
+    "technology_allowed": [],
+    "v_rated_min": 8.0
+   },
+   "expect": {
+    "alternatives": 148,
+    "chosen": "861020786030",
+    "margins": {
+     "capacitance_ratio": 5.128205128205129,
+     "ripple_headroom": 4.027777777777778,
+     "v_margin": 7.875
+    }
+   },
+   "tiebreaker": "highest_ripple_headroom"
+  },
+  {
+   "constraints": {
+    "capacitance_max": 2e-10,
+    "capacitance_min": 9e-11,
+    "exclude_discontinued": false,
+    "ripple_current_min": null,
+    "technology_allowed": [],
+    "v_rated_min": 25.0
+   },
+   "expect": {
+    "alternatives": 48,
+    "chosen": "885012005047",
+    "margins": {
+     "capacitance_ratio": 1.6666666666666667,
+     "ripple_headroom": null,
+     "v_margin": 1.0
+    }
+   },
+   "tiebreaker": "highest_capacitance"
+  },
+  {
+   "constraints": {
+    "capacitance_max": 1.1499999999999999e-10,
+    "capacitance_min": 8.5e-11,
+    "exclude_discontinued": false,
+    "ripple_current_min": null,
+    "technology_allowed": [],
+    "v_rated_min": 25.0
+   },
+   "expect": {
+    "alternatives": 26,
+    "chosen": "885012004001",
+    "margins": {
+     "capacitance_ratio": 1.1764705882352942,
+     "ripple_headroom": null,
+     "v_margin": 1.0
+    }
+   },
+   "tiebreaker": "highest_capacitance"
+  },
+  {
+   "constraints": {
+    "capacitance_max": 9.4e-10,
+    "capacitance_min": 4.2300000000000004e-10,
+    "exclude_discontinued": false,
+    "ripple_current_min": null,
+    "technology_allowed": [],
+    "v_rated_min": 8.0
+   },
+   "expect": {
+    "alternatives": 64,
+    "chosen": "885012005017",
+    "margins": {
+     "capacitance_ratio": 1.1111111111111112,
+     "ripple_headroom": null,
+     "v_margin": 1.25
+    }
+   },
+   "tiebreaker": "lowest_esr"
+  },
+  {
+   "constraints": {
+    "capacitance_max": 5.404999999999999e-10,
+    "capacitance_min": 3.995e-10,
+    "exclude_discontinued": false,
+    "ripple_current_min": null,
+    "technology_allowed": [],
+    "v_rated_min": 8.0
+   },
+   "expect": {
+    "alternatives": 36,
+    "chosen": "885012005017",
+    "margins": {
+     "capacitance_ratio": 1.1764705882352942,
+     "ripple_headroom": null,
+     "v_margin": 1.25
+    }
+   },
+   "tiebreaker": "highest_capacitance"
+  },
+  {
+   "constraints": {
+    "capacitance_max": 9.4e-05,
+    "capacitance_min": 4.23e-05,
+    "exclude_discontinued": false,
+    "ripple_current_min": null,
+    "technology_allowed": [],
+    "v_rated_min": 31.5
+   },
+   "expect": {
+    "alternatives": 161,
+    "chosen": "870135775004",
+    "margins": {
+     "capacitance_ratio": 1.1111111111111112,
+     "ripple_headroom": null,
+     "v_margin": 1.5873015873015872
+    }
+   },
+   "tiebreaker": "highest_ripple_headroom"
+  },
+  {
+   "constraints": {
+    "capacitance_max": 5.404999999999999e-05,
+    "capacitance_min": 3.9949999999999995e-05,
+    "exclude_discontinued": false,
+    "ripple_current_min": null,
+    "technology_allowed": [],
+    "v_rated_min": 31.5
+   },
+   "expect": {
+    "alternatives": 66,
+    "chosen": "860010572005",
+    "margins": {
+     "capacitance_ratio": 1.1764705882352942,
+     "ripple_headroom": null,
+     "v_margin": 1.1111111111111112
+    }
+   },
+   "tiebreaker": "highest_capacitance"
+  },
+  {
+   "constraints": {
+    "capacitance_max": 0.00014099999999999998,
+    "capacitance_min": 2.35e-05,
+    "exclude_discontinued": false,
+    "ripple_current_min": 0.14,
+    "technology_allowed": [],
+    "v_rated_min": 31.5
+   },
+   "expect": {
+    "alternatives": 308,
+    "chosen": "870135775004",
+    "margins": {
+     "capacitance_ratio": 2.0,
+     "ripple_headroom": 29.28571428571428,
+     "v_margin": 1.5873015873015872
+    }
+   },
+   "tiebreaker": "highest_ripple_headroom"
+  },
+  {
+   "constraints": {
+    "capacitance_max": 0.00164,
+    "capacitance_min": 0.000738,
+    "exclude_discontinued": false,
+    "ripple_current_min": null,
+    "technology_allowed": [],
+    "v_rated_min": 17.5
+   },
+   "expect": {
+    "alternatives": 97,
+    "chosen": "861021386035",
+    "margins": {
+     "capacitance_ratio": 1.3550135501355014,
+     "ripple_headroom": null,
+     "v_margin": 22.857142857142858
+    }
+   },
+   "tiebreaker": "highest_voltage_margin"
+  },
+  {
+   "constraints": {
+    "capacitance_max": 0.0009429999999999999,
+    "capacitance_min": 0.0006969999999999999,
+    "exclude_discontinued": false,
+    "ripple_current_min": null,
+    "technology_allowed": [],
+    "v_rated_min": 17.5
+   },
+   "expect": {
+    "alternatives": 19,
+    "chosen": "860010475016",
+    "margins": {
+     "capacitance_ratio": 1.1764705882352942,
+     "ripple_headroom": null,
+     "v_margin": 1.4285714285714286
+    }
+   },
+   "tiebreaker": "highest_capacitance"
+  },
+  {
+   "constraints": {
+    "capacitance_max": 0.00246,
+    "capacitance_min": 0.00041,
+    "exclude_discontinued": false,
+    "ripple_current_min": 0.5225,
+    "technology_allowed": [],
+    "v_rated_min": 17.5
+   },
+   "expect": {
+    "alternatives": 231,
+    "chosen": "861011086027",
+    "margins": {
+     "capacitance_ratio": 3.658536585365854,
+     "ripple_headroom": 9.129186602870814,
+     "v_margin": 11.428571428571429
+    }
+   },
+   "tiebreaker": "highest_ripple_headroom"
+  },
+  {
+   "constraints": {
+    "capacitance_max": 0.00035999999999999997,
+    "capacitance_min": 0.00016199999999999998,
+    "exclude_discontinued": false,
+    "ripple_current_min": null,
+    "technology_allowed": [],
+    "v_rated_min": 225.0
+   },
+   "expect": {
+    "alternatives": 47,
+    "chosen": "861011385023",
+    "margins": {
+     "capacitance_ratio": 2.037037037037037,
+     "ripple_headroom": null,
+     "v_margin": 1.7777777777777777
+    }
+   },
+   "tiebreaker": "highest_capacitance"
+  },
+  {
+   "constraints": {
+    "capacitance_max": 0.00020699999999999996,
+    "capacitance_min": 0.00015299999999999998,
+    "exclude_discontinued": false,
+    "ripple_current_min": null,
+    "technology_allowed": [],
+    "v_rated_min": 225.0
+   },
+   "expect": {
+    "alternatives": 13,
+    "chosen": "860021381024",
+    "margins": {
+     "capacitance_ratio": 1.1764705882352942,
+     "ripple_headroom": null,
+     "v_margin": 1.7777777777777777
+    }
+   },
+   "tiebreaker": "highest_capacitance"
+  },
+  {
+   "constraints": {
+    "capacitance_max": 0.0005399999999999999,
+    "capacitance_min": 8.999999999999999e-05,
+    "exclude_discontinued": false,
+    "ripple_current_min": 0.5,
+    "technology_allowed": [],
+    "v_rated_min": 225.0
+   },
+   "expect": {
+    "alternatives": 104,
+    "chosen": "861011486024",
+    "margins": {
+     "capacitance_ratio": 5.222222222222222,
+     "ripple_headroom": 5.78,
+     "v_margin": 2.0
+    }
+   },
+   "tiebreaker": "highest_ripple_headroom"
+  },
+  {
+   "constraints": {
+    "capacitance_max": 0.0024,
+    "capacitance_min": 0.00108,
+    "exclude_discontinued": true,
+    "ripple_current_min": null,
+    "technology_allowed": [],
+    "v_rated_min": 5.0
+   },
+   "expect": {
+    "error": "SelectionError",
+    "rejections": {
+     "discontinued": 2979,
+     "unreadable_row": 521
+    },
+    "total": 3500
+   },
+   "tiebreaker": "lowest_esr"
+  },
+  {
+   "constraints": {
+    "capacitance_max": 10.0,
+    "capacitance_min": 1.0,
+    "exclude_discontinued": true,
+    "ripple_current_min": null,
+    "technology_allowed": [],
+    "v_rated_min": 1.0
+   },
+   "expect": {
+    "error": "SelectionError",
+    "rejections": {
+     "discontinued": 2979,
+     "unreadable_row": 521
+    },
+    "total": 3500
+   },
+   "tiebreaker": "lowest_esr"
+  }
+ ],
+ "family": "capacitor",
+ "fixture": "capacitors.ndjson"
+}

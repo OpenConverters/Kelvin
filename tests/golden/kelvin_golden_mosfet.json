@@ -1,0 +1,755 @@
+{
+ "cases": [
+  {
+   "constraints": {
+    "exclude_discontinued": true,
+    "id_min": 12.0,
+    "op_duty": null,
+    "op_fsw": null,
+    "op_i_rms": null,
+    "op_vds": null,
+    "qg_max": null,
+    "rds_on_max": 0.056,
+    "technology_allowed": [
+     "GaN",
+     "Si",
+     "SiC"
+    ],
+    "vds_min": 30.0
+   },
+   "expect": {
+    "alternatives": 434,
+    "chosen": "IQE006N04LM6",
+    "margins": {
+     "id_margin": 41.666666666666664,
+     "qg_headroom": null,
+     "rds_on_headroom": 93.33333333333334,
+     "vds_margin": 1.3333333333333333
+    }
+   },
+   "tiebreaker": "lowest_rds_on"
+  },
+  {
+   "constraints": {
+    "exclude_discontinued": true,
+    "id_min": 12.0,
+    "op_duty": 0.5,
+    "op_fsw": 100000.0,
+    "op_i_rms": 12.0,
+    "op_vds": 60.0,
+    "qg_max": null,
+    "rds_on_max": 0.112,
+    "technology_allowed": [
+     "GaN",
+     "Si",
+     "SiC"
+    ],
+    "vds_min": 30.0
+   },
+   "expect": {
+    "alternatives": 514,
+    "chosen": "EPC2071",
+    "margins": {
+     "id_margin": 2.5,
+     "qg_headroom": null,
+     "rds_on_headroom": 50.90909090909091,
+     "vds_margin": 3.3333333333333335
+    }
+   },
+   "tiebreaker": "lowest_total_loss"
+  },
+  {
+   "constraints": {
+    "exclude_discontinued": true,
+    "id_min": 81.5,
+    "op_duty": null,
+    "op_fsw": null,
+    "op_i_rms": null,
+    "op_vds": null,
+    "qg_max": null,
+    "rds_on_max": 0.004,
+    "technology_allowed": [
+     "GaN",
+     "Si",
+     "SiC"
+    ],
+    "vds_min": 20.0
+   },
+   "expect": {
+    "alternatives": 109,
+    "chosen": "BSC030N03LS",
+    "margins": {
+     "id_margin": 1.4723926380368098,
+     "qg_headroom": null,
+     "rds_on_headroom": 1.3333333333333333,
+     "vds_margin": 1.5
+    }
+   },
+   "tiebreaker": "lowest_qg"
+  },
+  {
+   "constraints": {
+    "exclude_discontinued": true,
+    "id_min": 81.5,
+    "op_duty": 0.5,
+    "op_fsw": 100000.0,
+    "op_i_rms": 81.5,
+    "op_vds": 40.0,
+    "qg_max": null,
+    "rds_on_max": 0.008,
+    "technology_allowed": [
+     "GaN",
+     "Si",
+     "SiC"
+    ],
+    "vds_min": 20.0
+   },
+   "expect": {
+    "alternatives": 147,
+    "chosen": "CSD19506KCS",
+    "margins": {
+     "id_margin": 1.8404907975460123,
+     "qg_headroom": null,
+     "rds_on_headroom": 6.666666666666667,
+     "vds_margin": 4.0
+    }
+   },
+   "tiebreaker": "lowest_total_loss"
+  },
+  {
+   "constraints": {
+    "exclude_discontinued": true,
+    "id_min": 4.1,
+    "op_duty": null,
+    "op_fsw": null,
+    "op_i_rms": null,
+    "op_vds": null,
+    "qg_max": null,
+    "rds_on_max": 0.015,
+    "technology_allowed": [
+     "GaN",
+     "Si",
+     "SiC"
+    ],
+    "vds_min": 40.0
+   },
+   "expect": {
+    "alternatives": 276,
+    "chosen": "NTH4L010N120SC1",
+    "margins": {
+     "id_margin": 37.31707317073171,
+     "qg_headroom": null,
+     "rds_on_headroom": 1.5,
+     "vds_margin": 30.0
+    }
+   },
+   "tiebreaker": "highest_vds_margin"
+  },
+  {
+   "constraints": {
+    "exclude_discontinued": true,
+    "id_min": 4.1,
+    "op_duty": 0.5,
+    "op_fsw": 100000.0,
+    "op_i_rms": 4.1,
+    "op_vds": 80.0,
+    "qg_max": null,
+    "rds_on_max": 0.03,
+    "technology_allowed": [
+     "GaN",
+     "Si",
+     "SiC"
+    ],
+    "vds_min": 40.0
+   },
+   "expect": {
+    "alternatives": 351,
+    "chosen": "EPC2071",
+    "margins": {
+     "id_margin": 7.317073170731708,
+     "qg_headroom": null,
+     "rds_on_headroom": 13.636363636363635,
+     "vds_margin": 2.5
+    }
+   },
+   "tiebreaker": "lowest_total_loss"
+  },
+  {
+   "constraints": {
+    "exclude_discontinued": true,
+    "id_min": 12.0,
+    "op_duty": null,
+    "op_fsw": null,
+    "op_i_rms": null,
+    "op_vds": null,
+    "qg_max": null,
+    "rds_on_max": 0.012,
+    "technology_allowed": [
+     "GaN",
+     "Si",
+     "SiC"
+    ],
+    "vds_min": 50.0
+   },
+   "expect": {
+    "alternatives": 195,
+    "chosen": "IRFP4368",
+    "margins": {
+     "id_margin": 29.166666666666668,
+     "qg_headroom": null,
+     "rds_on_headroom": 7.058823529411765,
+     "vds_margin": 1.5
+    }
+   },
+   "tiebreaker": "highest_id_margin"
+  },
+  {
+   "constraints": {
+    "exclude_discontinued": true,
+    "id_min": 12.0,
+    "op_duty": 0.5,
+    "op_fsw": 100000.0,
+    "op_i_rms": 12.0,
+    "op_vds": 100.0,
+    "qg_max": null,
+    "rds_on_max": 0.024,
+    "technology_allowed": [
+     "GaN",
+     "Si",
+     "SiC"
+    ],
+    "vds_min": 50.0
+   },
+   "expect": {
+    "alternatives": 251,
+    "chosen": "EPC2071",
+    "margins": {
+     "id_margin": 2.5,
+     "qg_headroom": null,
+     "rds_on_headroom": 10.909090909090908,
+     "vds_margin": 2.0
+    }
+   },
+   "tiebreaker": "lowest_total_loss"
+  },
+  {
+   "constraints": {
+    "exclude_discontinued": true,
+    "id_min": 5.0,
+    "op_duty": null,
+    "op_fsw": null,
+    "op_i_rms": null,
+    "op_vds": null,
+    "qg_max": null,
+    "rds_on_max": 0.013,
+    "technology_allowed": [
+     "GaN",
+     "Si",
+     "SiC"
+    ],
+    "vds_min": 20.0
+   },
+   "expect": {
+    "alternatives": 324,
+    "chosen": "IQE006N04LM6",
+    "margins": {
+     "id_margin": 100.0,
+     "qg_headroom": null,
+     "rds_on_headroom": 21.666666666666668,
+     "vds_margin": 2.0
+    }
+   },
+   "tiebreaker": "lowest_rds_on"
+  },
+  {
+   "constraints": {
+    "exclude_discontinued": true,
+    "id_min": 5.0,
+    "op_duty": 0.5,
+    "op_fsw": 100000.0,
+    "op_i_rms": 5.0,
+    "op_vds": 40.0,
+    "qg_max": null,
+    "rds_on_max": 0.026,
+    "technology_allowed": [
+     "GaN",
+     "Si",
+     "SiC"
+    ],
+    "vds_min": 20.0
+   },
+   "expect": {
+    "alternatives": 400,
+    "chosen": "EPC2071",
+    "margins": {
+     "id_margin": 6.0,
+     "qg_headroom": null,
+     "rds_on_headroom": 11.818181818181817,
+     "vds_margin": 5.0
+    }
+   },
+   "tiebreaker": "lowest_total_loss"
+  },
+  {
+   "constraints": {
+    "exclude_discontinued": true,
+    "id_min": 6.0,
+    "op_duty": null,
+    "op_fsw": null,
+    "op_i_rms": null,
+    "op_vds": null,
+    "qg_max": null,
+    "rds_on_max": 0.038,
+    "technology_allowed": [
+     "GaN",
+     "Si",
+     "SiC"
+    ],
+    "vds_min": 50.0
+   },
+   "expect": {
+    "alternatives": 304,
+    "chosen": "EPC2071",
+    "margins": {
+     "id_margin": 5.0,
+     "qg_headroom": null,
+     "rds_on_headroom": 17.27272727272727,
+     "vds_margin": 2.0
+    }
+   },
+   "tiebreaker": "lowest_qg"
+  },
+  {
+   "constraints": {
+    "exclude_discontinued": true,
+    "id_min": 6.0,
+    "op_duty": 0.5,
+    "op_fsw": 100000.0,
+    "op_i_rms": 6.0,
+    "op_vds": 100.0,
+    "qg_max": null,
+    "rds_on_max": 0.076,
+    "technology_allowed": [
+     "GaN",
+     "Si",
+     "SiC"
+    ],
+    "vds_min": 50.0
+   },
+   "expect": {
+    "alternatives": 397,
+    "chosen": "EPC2071",
+    "margins": {
+     "id_margin": 5.0,
+     "qg_headroom": null,
+     "rds_on_headroom": 34.54545454545454,
+     "vds_margin": 2.0
+    }
+   },
+   "tiebreaker": "lowest_total_loss"
+  },
+  {
+   "constraints": {
+    "exclude_discontinued": true,
+    "id_min": 58.0,
+    "op_duty": null,
+    "op_fsw": null,
+    "op_i_rms": null,
+    "op_vds": null,
+    "qg_max": null,
+    "rds_on_max": 0.044,
+    "technology_allowed": [
+     "GaN",
+     "Si",
+     "SiC"
+    ],
+    "vds_min": 325.0
+   },
+   "expect": {
+    "alternatives": 32,
+    "chosen": "NTBG020N120SC1",
+    "margins": {
+     "id_margin": 1.793103448275862,
+     "qg_headroom": null,
+     "rds_on_headroom": 2.1999999999999997,
+     "vds_margin": 3.6923076923076925
+    }
+   },
+   "tiebreaker": "highest_vds_margin"
+  },
+  {
+   "constraints": {
+    "exclude_discontinued": true,
+    "id_min": 58.0,
+    "op_duty": 0.5,
+    "op_fsw": 100000.0,
+    "op_i_rms": 58.0,
+    "op_vds": 650.0,
+    "qg_max": null,
+    "rds_on_max": 0.088,
+    "technology_allowed": [
+     "GaN",
+     "Si",
+     "SiC"
+    ],
+    "vds_min": 325.0
+   },
+   "expect": {
+    "alternatives": 34,
+    "chosen": "GS66516B",
+    "margins": {
+     "id_margin": 1.0344827586206897,
+     "qg_headroom": null,
+     "rds_on_headroom": 3.5199999999999996,
+     "vds_margin": 2.0
+    }
+   },
+   "tiebreaker": "lowest_total_loss"
+  },
+  {
+   "constraints": {
+    "exclude_discontinued": true,
+    "id_min": 2.5,
+    "op_duty": null,
+    "op_fsw": null,
+    "op_i_rms": null,
+    "op_vds": null,
+    "qg_max": null,
+    "rds_on_max": 0.08,
+    "technology_allowed": [
+     "GaN",
+     "Si",
+     "SiC"
+    ],
+    "vds_min": 15.0
+   },
+   "expect": {
+    "alternatives": 552,
+    "chosen": "IQE006N04LM6",
+    "margins": {
+     "id_margin": 200.0,
+     "qg_headroom": null,
+     "rds_on_headroom": 133.33333333333334,
+     "vds_margin": 2.6666666666666665
+    }
+   },
+   "tiebreaker": "highest_id_margin"
+  },
+  {
+   "constraints": {
+    "exclude_discontinued": true,
+    "id_min": 2.5,
+    "op_duty": 0.5,
+    "op_fsw": 100000.0,
+    "op_i_rms": 2.5,
+    "op_vds": 30.0,
+    "qg_max": null,
+    "rds_on_max": 0.16,
+    "technology_allowed": [
+     "GaN",
+     "Si",
+     "SiC"
+    ],
+    "vds_min": 15.0
+   },
+   "expect": {
+    "alternatives": 619,
+    "chosen": "EPC2071",
+    "margins": {
+     "id_margin": 12.0,
+     "qg_headroom": null,
+     "rds_on_headroom": 72.72727272727272,
+     "vds_margin": 6.666666666666667
+    }
+   },
+   "tiebreaker": "lowest_total_loss"
+  },
+  {
+   "constraints": {
+    "exclude_discontinued": true,
+    "id_min": 5.0,
+    "op_duty": null,
+    "op_fsw": null,
+    "op_i_rms": null,
+    "op_vds": null,
+    "qg_max": null,
+    "rds_on_max": 0.05,
+    "technology_allowed": [
+     "GaN",
+     "Si",
+     "SiC"
+    ],
+    "vds_min": 30.0
+   },
+   "expect": {
+    "alternatives": 460,
+    "chosen": "IQE006N04LM6",
+    "margins": {
+     "id_margin": 100.0,
+     "qg_headroom": null,
+     "rds_on_headroom": 83.33333333333334,
+     "vds_margin": 1.3333333333333333
+    }
+   },
+   "tiebreaker": "lowest_rds_on"
+  },
+  {
+   "constraints": {
+    "exclude_discontinued": true,
+    "id_min": 5.0,
+    "op_duty": 0.5,
+    "op_fsw": 100000.0,
+    "op_i_rms": 5.0,
+    "op_vds": 60.0,
+    "qg_max": null,
+    "rds_on_max": 0.1,
+    "technology_allowed": [
+     "GaN",
+     "Si",
+     "SiC"
+    ],
+    "vds_min": 30.0
+   },
+   "expect": {
+    "alternatives": 547,
+    "chosen": "EPC2071",
+    "margins": {
+     "id_margin": 6.0,
+     "qg_headroom": null,
+     "rds_on_headroom": 45.45454545454545,
+     "vds_margin": 3.3333333333333335
+    }
+   },
+   "tiebreaker": "lowest_total_loss"
+  },
+  {
+   "constraints": {
+    "exclude_discontinued": true,
+    "id_min": 12.0,
+    "op_duty": null,
+    "op_fsw": null,
+    "op_i_rms": null,
+    "op_vds": null,
+    "qg_max": null,
+    "rds_on_max": 0.024,
+    "technology_allowed": [
+     "GaN",
+     "Si",
+     "SiC"
+    ],
+    "vds_min": 100.0
+   },
+   "expect": {
+    "alternatives": 151,
+    "chosen": "EPC2071",
+    "margins": {
+     "id_margin": 2.5,
+     "qg_headroom": null,
+     "rds_on_headroom": 10.909090909090908,
+     "vds_margin": 1.0
+    }
+   },
+   "tiebreaker": "lowest_qg"
+  },
+  {
+   "constraints": {
+    "exclude_discontinued": true,
+    "id_min": 12.0,
+    "op_duty": 0.5,
+    "op_fsw": 100000.0,
+    "op_i_rms": 12.0,
+    "op_vds": 200.0,
+    "qg_max": null,
+    "rds_on_max": 0.048,
+    "technology_allowed": [
+     "GaN",
+     "Si",
+     "SiC"
+    ],
+    "vds_min": 100.0
+   },
+   "expect": {
+    "alternatives": 215,
+    "chosen": "EPC2071",
+    "margins": {
+     "id_margin": 2.5,
+     "qg_headroom": null,
+     "rds_on_headroom": 21.818181818181817,
+     "vds_margin": 1.0
+    }
+   },
+   "tiebreaker": "lowest_total_loss"
+  },
+  {
+   "constraints": {
+    "exclude_discontinued": true,
+    "id_min": 15.0,
+    "op_duty": null,
+    "op_fsw": null,
+    "op_i_rms": null,
+    "op_vds": null,
+    "qg_max": null,
+    "rds_on_max": 0.16,
+    "technology_allowed": [
+     "GaN",
+     "Si",
+     "SiC"
+    ],
+    "vds_min": 325.0
+   },
+   "expect": {
+    "alternatives": 153,
+    "chosen": "NTBG020N120SC1",
+    "margins": {
+     "id_margin": 6.933333333333334,
+     "qg_headroom": null,
+     "rds_on_headroom": 8.0,
+     "vds_margin": 3.6923076923076925
+    }
+   },
+   "tiebreaker": "highest_vds_margin"
+  },
+  {
+   "constraints": {
+    "exclude_discontinued": true,
+    "id_min": 15.0,
+    "op_duty": 0.5,
+    "op_fsw": 100000.0,
+    "op_i_rms": 15.0,
+    "op_vds": 650.0,
+    "qg_max": null,
+    "rds_on_max": 0.32,
+    "technology_allowed": [
+     "GaN",
+     "Si",
+     "SiC"
+    ],
+    "vds_min": 325.0
+   },
+   "expect": {
+    "alternatives": 178,
+    "chosen": "IGO60R040D1",
+    "margins": {
+     "id_margin": 2.8,
+     "qg_headroom": null,
+     "rds_on_headroom": 8.0,
+     "vds_margin": 1.8461538461538463
+    }
+   },
+   "tiebreaker": "lowest_total_loss"
+  },
+  {
+   "constraints": {
+    "exclude_discontinued": true,
+    "id_min": 25.0,
+    "op_duty": null,
+    "op_fsw": null,
+    "op_i_rms": null,
+    "op_vds": null,
+    "qg_max": null,
+    "rds_on_max": 0.0019,
+    "technology_allowed": [
+     "GaN",
+     "Si",
+     "SiC"
+    ],
+    "vds_min": 12.5
+   },
+   "expect": {
+    "alternatives": 62,
+    "chosen": "IQE006N04LM6",
+    "margins": {
+     "id_margin": 20.0,
+     "qg_headroom": null,
+     "rds_on_headroom": 3.166666666666667,
+     "vds_margin": 3.2
+    }
+   },
+   "tiebreaker": "highest_id_margin"
+  },
+  {
+   "constraints": {
+    "exclude_discontinued": true,
+    "id_min": 25.0,
+    "op_duty": 0.5,
+    "op_fsw": 100000.0,
+    "op_i_rms": 25.0,
+    "op_vds": 25.0,
+    "qg_max": null,
+    "rds_on_max": 0.0038,
+    "technology_allowed": [
+     "GaN",
+     "Si",
+     "SiC"
+    ],
+    "vds_min": 12.5
+   },
+   "expect": {
+    "alternatives": 139,
+    "chosen": "EPC2071",
+    "margins": {
+     "id_margin": 1.2,
+     "qg_headroom": null,
+     "rds_on_headroom": 1.727272727272727,
+     "vds_margin": 8.0
+    }
+   },
+   "tiebreaker": "lowest_total_loss"
+  },
+  {
+   "constraints": {
+    "exclude_discontinued": true,
+    "id_min": 12.0,
+    "op_duty": null,
+    "op_fsw": null,
+    "op_i_rms": null,
+    "op_vds": null,
+    "qg_max": null,
+    "rds_on_max": 0.112,
+    "technology_allowed": [
+     "GaN"
+    ],
+    "vds_min": 30.0
+   },
+   "expect": {
+    "alternatives": 91,
+    "chosen": "EPC2206",
+    "margins": {
+     "id_margin": 14.75,
+     "qg_headroom": null,
+     "rds_on_headroom": 117.89473684210526,
+     "vds_margin": 2.6666666666666665
+    }
+   },
+   "tiebreaker": "lowest_rds_on"
+  },
+  {
+   "constraints": {
+    "exclude_discontinued": true,
+    "id_min": 1.0,
+    "op_duty": null,
+    "op_fsw": null,
+    "op_i_rms": null,
+    "op_vds": null,
+    "qg_max": null,
+    "rds_on_max": 1.0,
+    "technology_allowed": [
+     "GaN",
+     "Si",
+     "SiC"
+    ],
+    "vds_min": 1000000000.0
+   },
+   "expect": {
+    "error": "SelectionError",
+    "rejections": {
+     "vds_rated_low": 700
+    },
+    "total": 700
+   },
+   "tiebreaker": "lowest_rds_on"
+  }
+ ],
+ "family": "mosfet",
+ "fixture": "mosfets.ndjson"
+}

@@ -1,0 +1,420 @@
+{
+ "cases": [
+  {
+   "constraints": {
+    "category": null,
+    "fsw_khz": 100.0,
+    "integrated_fet": null,
+    "topology": "flyback",
+    "vin_nom": 100.0
+   },
+   "expect": {
+    "alternatives": 879,
+    "chosen": "UCC28730"
+   }
+  },
+  {
+   "constraints": {
+    "category": "pwmController",
+    "fsw_khz": 100.0,
+    "integrated_fet": null,
+    "topology": "flyback",
+    "vin_nom": 100.0
+   },
+   "expect": {
+    "alternatives": 352,
+    "chosen": "UCC28730"
+   }
+  },
+  {
+   "constraints": {
+    "category": "gateDriver",
+    "fsw_khz": 100.0,
+    "integrated_fet": null,
+    "topology": "flyback",
+    "vin_nom": 100.0
+   },
+   "expect": {
+    "alternatives": 471,
+    "chosen": "UCC21710"
+   }
+  },
+  {
+   "constraints": {
+    "category": "llcController",
+    "fsw_khz": 100.0,
+    "integrated_fet": null,
+    "topology": "flyback",
+    "vin_nom": 100.0
+   },
+   "expect": {
+    "error": "SelectionError",
+    "rejections": {
+     "category_mismatch": 879,
+     "topology": 1254
+    },
+    "total": 2133
+   }
+  },
+  {
+   "constraints": {
+    "category": "pfcController",
+    "fsw_khz": 100.0,
+    "integrated_fet": null,
+    "topology": "flyback",
+    "vin_nom": 100.0
+   },
+   "expect": {
+    "alternatives": 1,
+    "chosen": "NCL30000"
+   }
+  },
+  {
+   "constraints": {
+    "category": null,
+    "fsw_khz": 100.0,
+    "integrated_fet": null,
+    "topology": "boost",
+    "vin_nom": 100.0
+   },
+   "expect": {
+    "alternatives": 910,
+    "chosen": "UCC3817"
+   }
+  },
+  {
+   "constraints": {
+    "category": "pwmController",
+    "fsw_khz": 100.0,
+    "integrated_fet": null,
+    "topology": "boost",
+    "vin_nom": 100.0
+   },
+   "expect": {
+    "alternatives": 380,
+    "chosen": "LTC3122"
+   }
+  },
+  {
+   "constraints": {
+    "category": "gateDriver",
+    "fsw_khz": 100.0,
+    "integrated_fet": null,
+    "topology": "boost",
+    "vin_nom": 100.0
+   },
+   "expect": {
+    "alternatives": 471,
+    "chosen": "UCC21710"
+   }
+  },
+  {
+   "constraints": {
+    "category": "llcController",
+    "fsw_khz": 100.0,
+    "integrated_fet": null,
+    "topology": "boost",
+    "vin_nom": 100.0
+   },
+   "expect": {
+    "alternatives": 1,
+    "chosen": "TEA1716"
+   }
+  },
+  {
+   "constraints": {
+    "category": "pfcController",
+    "fsw_khz": 100.0,
+    "integrated_fet": null,
+    "topology": "boost",
+    "vin_nom": 100.0
+   },
+   "expect": {
+    "alternatives": 8,
+    "chosen": "UCC3817"
+   }
+  },
+  {
+   "constraints": {
+    "category": null,
+    "fsw_khz": 100.0,
+    "integrated_fet": null,
+    "topology": "buck",
+    "vin_nom": 100.0
+   },
+   "expect": {
+    "alternatives": 1705,
+    "chosen": "NCL30000"
+   }
+  },
+  {
+   "constraints": {
+    "category": "pwmController",
+    "fsw_khz": 100.0,
+    "integrated_fet": null,
+    "topology": "buck",
+    "vin_nom": 100.0
+   },
+   "expect": {
+    "alternatives": 1103,
+    "chosen": "LM5148-Q1"
+   }
+  },
+  {
+   "constraints": {
+    "category": "gateDriver",
+    "fsw_khz": 100.0,
+    "integrated_fet": null,
+    "topology": "buck",
+    "vin_nom": 100.0
+   },
+   "expect": {
+    "alternatives": 475,
+    "chosen": "IR2110"
+   }
+  },
+  {
+   "constraints": {
+    "category": "llcController",
+    "fsw_khz": 100.0,
+    "integrated_fet": null,
+    "topology": "buck",
+    "vin_nom": 100.0
+   },
+   "expect": {
+    "error": "SelectionError",
+    "rejections": {
+     "category_mismatch": 1705,
+     "topology": 428
+    },
+    "total": 2133
+   }
+  },
+  {
+   "constraints": {
+    "category": "pfcController",
+    "fsw_khz": 100.0,
+    "integrated_fet": null,
+    "topology": "buck",
+    "vin_nom": 100.0
+   },
+   "expect": {
+    "alternatives": 1,
+    "chosen": "NCL30000"
+   }
+  },
+  {
+   "constraints": {
+    "category": null,
+    "fsw_khz": 100.0,
+    "integrated_fet": null,
+    "topology": "llc",
+    "vin_nom": 100.0
+   },
+   "expect": {
+    "alternatives": 716,
+    "chosen": "TEA1716"
+   }
+  },
+  {
+   "constraints": {
+    "category": "pwmController",
+    "fsw_khz": 100.0,
+    "integrated_fet": null,
+    "topology": "llc",
+    "vin_nom": 100.0
+   },
+   "expect": {
+    "alternatives": 119,
+    "chosen": "LMG3410R070"
+   }
+  },
+  {
+   "constraints": {
+    "category": "gateDriver",
+    "fsw_khz": 100.0,
+    "integrated_fet": null,
+    "topology": "llc",
+    "vin_nom": 100.0
+   },
+   "expect": {
+    "alternatives": 474,
+    "chosen": "UCC21520"
+   }
+  },
+  {
+   "constraints": {
+    "category": "llcController",
+    "fsw_khz": 100.0,
+    "integrated_fet": null,
+    "topology": "llc",
+    "vin_nom": 100.0
+   },
+   "expect": {
+    "alternatives": 68,
+    "chosen": "TEA1716"
+   }
+  },
+  {
+   "constraints": {
+    "category": "pfcController",
+    "fsw_khz": 100.0,
+    "integrated_fet": null,
+    "topology": "llc",
+    "vin_nom": 100.0
+   },
+   "expect": {
+    "error": "SelectionError",
+    "rejections": {
+     "category_mismatch": 716,
+     "topology": 1417
+    },
+    "total": 2133
+   }
+  },
+  {
+   "constraints": {
+    "category": null,
+    "fsw_khz": 100.0,
+    "integrated_fet": null,
+    "topology": "power_factor_correction",
+    "vin_nom": 100.0
+   },
+   "expect": {
+    "alternatives": 694,
+    "chosen": "MP2483"
+   }
+  },
+  {
+   "constraints": {
+    "category": "pwmController",
+    "fsw_khz": 100.0,
+    "integrated_fet": null,
+    "topology": "power_factor_correction",
+    "vin_nom": 100.0
+   },
+   "expect": {
+    "alternatives": 117,
+    "chosen": "NCP81239"
+   }
+  },
+  {
+   "constraints": {
+    "category": "gateDriver",
+    "fsw_khz": 100.0,
+    "integrated_fet": null,
+    "topology": "power_factor_correction",
+    "vin_nom": 100.0
+   },
+   "expect": {
+    "alternatives": 471,
+    "chosen": "UCC21710"
+   }
+  },
+  {
+   "constraints": {
+    "category": "llcController",
+    "fsw_khz": 100.0,
+    "integrated_fet": null,
+    "topology": "power_factor_correction",
+    "vin_nom": 100.0
+   },
+   "expect": {
+    "error": "SelectionError",
+    "rejections": {
+     "category_mismatch": 694,
+     "topology": 1439
+    },
+    "total": 2133
+   }
+  },
+  {
+   "constraints": {
+    "category": "pfcController",
+    "fsw_khz": 100.0,
+    "integrated_fet": null,
+    "topology": "power_factor_correction",
+    "vin_nom": 100.0
+   },
+   "expect": {
+    "alternatives": 58,
+    "chosen": "MP2483"
+   }
+  },
+  {
+   "constraints": {
+    "category": null,
+    "fsw_khz": 100.0,
+    "integrated_fet": null,
+    "topology": "phase_shifted_full_bridge",
+    "vin_nom": 100.0
+   },
+   "expect": {
+    "alternatives": 642,
+    "chosen": "UCC28951"
+   }
+  },
+  {
+   "constraints": {
+    "category": "pwmController",
+    "fsw_khz": 100.0,
+    "integrated_fet": null,
+    "topology": "phase_shifted_full_bridge",
+    "vin_nom": 100.0
+   },
+   "expect": {
+    "alternatives": 117,
+    "chosen": "NCP81239"
+   }
+  },
+  {
+   "constraints": {
+    "category": "gateDriver",
+    "fsw_khz": 100.0,
+    "integrated_fet": null,
+    "topology": "phase_shifted_full_bridge",
+    "vin_nom": 100.0
+   },
+   "expect": {
+    "alternatives": 471,
+    "chosen": "UCC21710"
+   }
+  },
+  {
+   "constraints": {
+    "category": "llcController",
+    "fsw_khz": 100.0,
+    "integrated_fet": null,
+    "topology": "phase_shifted_full_bridge",
+    "vin_nom": 100.0
+   },
+   "expect": {
+    "error": "SelectionError",
+    "rejections": {
+     "category_mismatch": 642,
+     "topology": 1491
+    },
+    "total": 2133
+   }
+  },
+  {
+   "constraints": {
+    "category": "pfcController",
+    "fsw_khz": 100.0,
+    "integrated_fet": null,
+    "topology": "phase_shifted_full_bridge",
+    "vin_nom": 100.0
+   },
+   "expect": {
+    "error": "SelectionError",
+    "rejections": {
+     "category_mismatch": 642,
+     "topology": 1491
+    },
+    "total": 2133
+   }
+  }
+ ],
+ "family": "controller",
+ "fixture": "controllers.ndjson"
+}

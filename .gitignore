@@ -1,0 +1,8 @@
+build/
+build-*/
+*.kidx
+.kelvin/
+_select_tmp.ndjson
+__pycache__/
+*.pyc
+.DS_Store
