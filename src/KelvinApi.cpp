@@ -191,6 +191,23 @@ const Shard<VaristorRow>& Engine::varistor_shard() {
     return *varistor_;
 }
 
+ShardMeta Engine::load_shard_bytes(const std::string& family, const std::string& bytes) {
+    Family f = family_from_string(family);
+    switch (f) {
+        case Family::Mosfet: mosfet_ = deserialize_mosfet_shard(bytes); return mosfet_->meta;
+        case Family::Diode: diode_ = deserialize_diode_shard(bytes); return diode_->meta;
+        case Family::Capacitor:
+            capacitor_ = deserialize_capacitor_shard(bytes); return capacitor_->meta;
+        case Family::Resistor: resistor_ = deserialize_resistor_shard(bytes); return resistor_->meta;
+        case Family::Controller:
+            controller_ = deserialize_controller_shard(bytes); return controller_->meta;
+        case Family::Igbt: igbt_ = deserialize_igbt_shard(bytes); return igbt_->meta;
+        case Family::Bjt: bjt_ = deserialize_bjt_shard(bytes); return bjt_->meta;
+        case Family::Varistor: varistor_ = deserialize_varistor_shard(bytes); return varistor_->meta;
+    }
+    throw InvalidOptions("unknown family");
+}
+
 ShardMeta Engine::build_index(const std::string& family) {
     Family f = family_from_string(family);
     switch (f) {
@@ -209,7 +226,10 @@ ShardMeta Engine::build_index(const std::string& family) {
 json Engine::select(const std::string& category, const json& req, const json& options) {
     Family f = family_from_string(category);
     size_t max_cand = opt_size(options, "maxCandidates", kDefaultMaxCandidates);
-    bool include_env = opt_bool(options, "includeEnvelope", true);
+    // Envelopes require the source NDJSON (the record fetcher). With no data dir (the browser /
+    // preloaded-shard path) candidates carry only shard data + the record's byte span; the caller
+    // fetches the chosen record itself (HTTP Range).
+    bool include_env = opt_bool(options, "includeEnvelope", true) && !data_dir_.empty();
 
     if (f == Family::Mosfet) {
         auto op_fsw = op_fsw_of(options);

@@ -15,6 +15,9 @@ namespace kelvin {
 inline constexpr uint64_t kFnvOffset = 1469598103934665603ULL;
 inline constexpr uint64_t kFnvPrime = 1099511628211ULL;
 
+// Single (ptr, len, seed) overload only. A std::string convenience overload is deliberately
+// omitted: a `const char*` argument converts to BOTH `const void*` and `std::string`, which is
+// ambiguous on any target where size_t != uint64_t (wasm32) — all callers pass (.data(), .size()).
 inline uint64_t fnv1a64(const void* data, size_t len, uint64_t seed = kFnvOffset) {
     const auto* p = static_cast<const unsigned char*>(data);
     uint64_t h = seed;
@@ -23,10 +26,6 @@ inline uint64_t fnv1a64(const void* data, size_t len, uint64_t seed = kFnvOffset
         h *= kFnvPrime;
     }
     return h;
-}
-
-inline uint64_t fnv1a64(const std::string& s, uint64_t seed = kFnvOffset) {
-    return fnv1a64(s.data(), s.size(), seed);
 }
 
 }  // namespace kelvin

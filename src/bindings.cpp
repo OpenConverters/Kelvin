@@ -50,6 +50,16 @@ PYBIND11_MODULE(PyKelvin, m) {
             py::arg("category"), py::arg("design_requirements"), py::arg("options") = json::object())
         .def("build_index", &kelvin::api::Engine::build_index, py::arg("family"))
         .def(
+            "load_shard_bytes",
+            [](kelvin::api::Engine& e, const std::string& family, const py::bytes& b) {
+                std::string bytes = b;  // copy the buffer
+                kelvin::ShardMeta m = e.load_shard_bytes(family, bytes);
+                return json{{"family", kelvin::family_name(m.family)},
+                            {"rowCount", m.row_count},
+                            {"buildId", m.build_id}};
+            },
+            py::arg("family"), py::arg("bytes"))
+        .def(
             "select_components",
             [](kelvin::api::Engine& e, const json& tas, const json& options) {
                 return kelvin::api::select_components(e, tas, options);

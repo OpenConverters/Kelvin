@@ -29,6 +29,12 @@ class Engine {
     // Build (or incrementally refresh) and persist the shard for one family. Returns its meta.
     ShardMeta build_index(const std::string& family);
 
+    // Load a prebuilt shard from raw bytes (the browser path: no filesystem). After loading, the
+    // family is queryable via select() with an empty data dir (candidates carry no envelope —
+    // the caller fetches the chosen record's byte span itself, e.g. an HTTP Range request). The
+    // candidate's srcOffset/srcLength locate that record in the source NDJSON.
+    ShardMeta load_shard_bytes(const std::string& family, const std::string& bytes);
+
    private:
     std::string data_dir_;
     std::string cache_dir_;
