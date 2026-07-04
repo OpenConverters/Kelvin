@@ -24,6 +24,21 @@ FetchContent_MakeAvailable(nlohmann_json)
 # KelvinApi.cpp is compiled separately into the pybind/embind targets (mirrors Kirchhoff:
 # it can also go into a hidden-visibility shared lib without a duplicate symbol) — but it has
 # no MAS-type clash, so we keep it in the core lib too for the native test binaries.
+# PEAS provides the canonical resolve_dimensional_values (json overload). Header-only; a git
+# submodule under deps/PEAS at deploy time. Overridable with -DKELVIN_PEAS_DIR for co-dev.
+set(KELVIN_PEAS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/deps/PEAS/src" CACHE PATH "PEAS headers (DimensionJson.hpp)")
+if (NOT EXISTS "${KELVIN_PEAS_DIR}/DimensionJson.hpp")
+    foreach(_cand "/home/alf/PSMA/PEAS/src" "${CMAKE_CURRENT_SOURCE_DIR}/../Kirchhoff/deps/PEAS/src")
+        if (EXISTS "${_cand}/DimensionJson.hpp")
+            set(KELVIN_PEAS_DIR "${_cand}")
+            break()
+        endif()
+    endforeach()
+endif()
+if (NOT EXISTS "${KELVIN_PEAS_DIR}/DimensionJson.hpp")
+    message(FATAL_ERROR "PEAS headers not found (need DimensionJson.hpp). Init deps/PEAS or set -DKELVIN_PEAS_DIR.")
+endif()
+
 add_library(kelvin STATIC
     src/Views.cpp
     src/Index.cpp
@@ -32,6 +47,7 @@ add_library(kelvin STATIC
     src/RecordFetcher.cpp
     src/KelvinApi.cpp)
 target_include_directories(kelvin PUBLIC src)
+target_include_directories(kelvin SYSTEM PUBLIC "${KELVIN_PEAS_DIR}")
 target_link_libraries(kelvin PUBLIC nlohmann_json::nlohmann_json)
 target_compile_definitions(kelvin PUBLIC _USE_MATH_DEFINES)
 if (NOT MSVC)

@@ -2,6 +2,8 @@
 
 #include <cmath>
 
+#include "DimensionJson.hpp"  // PEAS::resolve_dimensional_values
+
 namespace kelvin {
 namespace {
 
@@ -13,12 +15,17 @@ double req_num(const json& req, const char* key) {
     return req.at(key).get<double>();
 }
 
-double req_num_nested(const json& req, const char* key, const char* sub) {
-    if (!req.is_object() || !req.contains(key) || !req.at(key).is_object() ||
-        !req.at(key).contains(sub) || !req.at(key).at(sub).is_number())
-        throw InvalidOptions(std::string("designRequirements missing numeric '") + key + "." +
-                             sub + "'");
-    return req.at(key).at(sub).get<double>();
+// A required dimensionWithTolerance input field, collapsed with the canonical resolver (never a
+// hand-read of `.nominal`). Throws if the field is absent or unresolvable (no silent fallback).
+double req_dim(const json& req, const char* key) {
+    if (!req.is_object() || !req.contains(key))
+        throw InvalidOptions(std::string("designRequirements missing '") + key + "'");
+    try {
+        return PEAS::resolve_dimensional_values(req.at(key));
+    } catch (const std::exception& e) {
+        throw InvalidOptions(std::string("designRequirements '") + key + "' unresolvable: " +
+                             e.what());
+    }
 }
 
 std::optional<double> opt_num(const json& req, const char* key) {
@@ -61,7 +68,7 @@ DiodeConstraints diode_constraints(const json& req) {
 }
 
 CapacitorConstraints capacitor_constraints(const json& req) {
-    double cnom = req_num_nested(req, "capacitance", "nominal");
+    double cnom = req_dim(req, "capacitance");
     auto ripple = opt_num(req, "minimumRippleCurrent");
     double v_rated = req_num(req, "ratedVoltage");
     CapacitorConstraints c;
@@ -79,7 +86,7 @@ CapacitorConstraints capacitor_constraints(const json& req) {
 
 ResistorConstraints resistor_constraints(const json& req) {
     ResistorConstraints c;
-    c.target_ohms = req_num_nested(req, "resistance", "nominal");
+    c.target_ohms = req_dim(req, "resistance");
     auto tol = opt_num(req, "tolerance");
     c.max_tolerance = tol.value_or(0.05);
     c.max_value_deviation = 0.2;  // kirchhoff_fill uses ±20% for the power-path match

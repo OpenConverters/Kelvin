@@ -3,6 +3,8 @@
 #include <regex>
 #include <unordered_map>
 
+#include "DimensionJson.hpp"  // PEAS::resolve_dimensional_values (json overload)
+
 namespace kelvin {
 namespace {
 
@@ -36,20 +38,23 @@ bool get_bool(const json& o, const char* key, bool dflt) {
     return dflt;
 }
 
-// A dimensionWithTolerance-or-scalar field: read `.nominal` when it's an object, else the scalar.
-// (Parity note: HS reads the literal `.nominal`/`.maximum` key here, NOT the PEAS resolver's
-// nominal->mid->max chain. We reproduce HS exactly; a post-parity change could switch to the
-// resolver — see KELVIN_PROPOSAL.md open question 5.)
-std::optional<double> dim_key(const json& o, const char* key, const char* which) {
+// A dimensionWithTolerance-or-scalar field, collapsed to a scalar with the CANONICAL resolver
+// (PEAS::resolve_dimensional_values) — never a hand-read of `.nominal`/`.maximum` (house rule).
+// Semantics: number -> number; object -> preferred bound with the resolver's fallback chain
+// (NOMINAL: nominal -> mid(min,max) -> max -> min). A field that is absent OR present-but-
+// unresolvable returns nullopt, so the row is counted unreadable_row (the extractor's sanctioned
+// permissive skip — accounted, not a silent default). For rows carrying a nominal this equals the
+// old `.nominal` read, so parity holds; it differs only for a dimWithTol lacking a nominal, where
+// the resolver's min/max fallback is the intended behaviour.
+std::optional<double> resolve_field(const json& o, const char* key,
+                                    PEAS::DimensionalValues pref = PEAS::DimensionalValues::NOMINAL) {
     const json* v = obj_get(o, key);
     if (!v) return std::nullopt;
-    if (v->is_object()) {
-        const json* n = obj_get(*v, which);
-        if (n && n->is_number() && !n->is_boolean()) return n->get<double>();
-        return std::nullopt;
+    try {
+        return PEAS::resolve_dimensional_values(*v, pref);
+    } catch (const std::exception&) {
+        return std::nullopt;  // present-but-unresolvable -> unreadable row (HS None semantics)
     }
-    if (v->is_number() && !v->is_boolean()) return v->get<double>();
-    return std::nullopt;
 }
 
 bool pos(const std::optional<double>& x) { return x.has_value() && *x > 0.0; }
@@ -136,7 +141,7 @@ std::optional<MosfetRow> extract_mosfet(const json& env) {
     double coss = coss_o.value_or(0.0);
     if (coss < 0.0) return std::nullopt;
 
-    auto vgs = dim_key(*elec, "gateThresholdVoltage", "maximum");
+    auto vgs = resolve_field(*elec, "gateThresholdVoltage", PEAS::DimensionalValues::MAXIMUM);
     double vgs_max = vgs.value_or(0.0);
 
     MosfetRow r;
@@ -233,7 +238,7 @@ std::optional<CapacitorRow> extract_capacitor(const json& env) {
     auto manuf = get_str(*mi, "name");
     if (!mpn || !manuf) return std::nullopt;
 
-    auto cap_nom = dim_key(*elec, "capacitance", "nominal");
+    auto cap_nom = resolve_field(*elec, "capacitance");
     auto v_rated = get_num(*elec, "ratedVoltage");
     if (!pos(cap_nom) || !pos(v_rated)) return std::nullopt;
 
@@ -279,7 +284,7 @@ std::optional<ResistorRow> extract_resistor(const json& env) {
     if (!mpn) mpn = get_str(*part, "partNumber");
     if (!mpn) return std::nullopt;
 
-    auto r_nom = dim_key(*elec, "resistance", "nominal");
+    auto r_nom = resolve_field(*elec, "resistance");
     if (!r_nom || *r_nom <= 0) return std::nullopt;
 
     auto tol_o = get_num(*elec, "tolerance");
