@@ -1,0 +1,418 @@
+{
+ "_comment": "GOLDEN crossref corpus generated from the Python engine. Python reproduces it (test_crossref_golden.py); Kelvin C++ must reproduce it as the port lands.",
+ "score_primary_value": [
+  {
+   "category": "magnetic",
+   "original": 1.5e-06,
+   "substitute": 3.3e-07,
+   "expect": {
+    "verdict": "fail",
+    "penalty": 191.1541234647
+   }
+  },
+  {
+   "category": "magnetic",
+   "original": 1.5e-06,
+   "substitute": 1.5e-06,
+   "expect": {
+    "verdict": "pass",
+    "penalty": 0.0
+   }
+  },
+  {
+   "category": "magnetic",
+   "original": 1.5e-06,
+   "substitute": 1.2e-06,
+   "expect": {
+    "verdict": "warn",
+    "penalty": 0.2355660713
+   }
+  },
+  {
+   "category": "magnetic",
+   "original": 1.5e-06,
+   "substitute": 1.8e-06,
+   "expect": {
+    "verdict": "warn",
+    "penalty": 0.174022754
+   }
+  },
+  {
+   "category": "magnetic",
+   "original": 1.5e-06,
+   "substitute": 2e-06,
+   "expect": {
+    "verdict": "fail",
+    "penalty": 1.2392623038
+   }
+  },
+  {
+   "category": "magnetic",
+   "original": 4.7e-06,
+   "substitute": 1e-05,
+   "expect": {
+    "verdict": "fail",
+    "penalty": 17.045304431
+   }
+  },
+  {
+   "category": "resistor",
+   "original": 47000.0,
+   "substitute": 47000.0,
+   "expect": {
+    "verdict": "pass",
+    "penalty": 0.0
+   }
+  },
+  {
+   "category": "resistor",
+   "original": 47000.0,
+   "substitute": 46800.0,
+   "expect": {
+    "verdict": "pass",
+    "penalty": 0.0
+   }
+  },
+  {
+   "category": "resistor",
+   "original": 47000.0,
+   "substitute": 10000.0,
+   "expect": {
+    "verdict": "fail",
+    "penalty": 355.1360028457
+   }
+  },
+  {
+   "category": "capacitor",
+   "original": 1e-06,
+   "substitute": 1e-06,
+   "expect": {
+    "verdict": "pass",
+    "penalty": 0.0
+   }
+  },
+  {
+   "category": "capacitor",
+   "original": 1e-06,
+   "substitute": 2e-06,
+   "expect": {
+    "verdict": "warn",
+    "penalty": 0.5753641449
+   }
+  },
+  {
+   "category": "capacitor",
+   "original": 1e-06,
+   "substitute": 5e-06,
+   "expect": {
+    "verdict": "fail",
+    "penalty": 6.2204456087
+   }
+  },
+  {
+   "category": "capacitor",
+   "original": 1e-06,
+   "substitute": 7e-07,
+   "expect": {
+    "verdict": "fail",
+    "penalty": 2.4734743376
+   }
+  },
+  {
+   "category": "chipBead",
+   "original": 600.0,
+   "substitute": 800.0,
+   "expect": {
+    "verdict": "pass",
+    "penalty": 0.3218160128
+   }
+  },
+  {
+   "category": "chipBead",
+   "original": 600.0,
+   "substitute": 300.0,
+   "expect": {
+    "verdict": "fail",
+    "penalty": 28.0
+   }
+  },
+  {
+   "category": "mosfet",
+   "original": 100.0,
+   "substitute": 80.0,
+   "expect": null
+  }
+ ],
+ "over_dimensioning_penalty": [
+  {
+   "required": 5.0,
+   "actual": 5.0,
+   "expect": 0.0
+  },
+  {
+   "required": 5.0,
+   "actual": 6.0,
+   "expect": 0.2561947705
+  },
+  {
+   "required": 5.0,
+   "actual": 10.0,
+   "expect": 0.4995327667
+  },
+  {
+   "required": 5.0,
+   "actual": 40.0,
+   "expect": 0.865216132
+  },
+  {
+   "required": 5.0,
+   "actual": 4.0,
+   "expect": 0.0
+  },
+  {
+   "required": 0.0,
+   "actual": 5.0,
+   "expect": 0.0
+  }
+ ],
+ "required_inductance": [
+  {
+   "topology": "buck",
+   "spec": {
+    "inputVoltage": {
+     "minimum": 20.0,
+     "maximum": 28.0
+    },
+    "currentRippleRatio": 0.3,
+    "operatingPoints": [
+     {
+      "outputVoltages": [
+       5.0
+      ],
+      "outputCurrents": [
+       3.0
+      ],
+      "switchingFrequency": 500000.0
+     }
+    ]
+   },
+   "expect": 9.126984e-06
+  },
+  {
+   "topology": "boost",
+   "spec": {
+    "inputVoltage": {
+     "minimum": 9.0,
+     "maximum": 15.0
+    },
+    "currentRippleRatio": 0.4,
+    "operatingPoints": [
+     {
+      "outputVoltages": [
+       24.0
+      ],
+      "outputCurrents": [
+       2.0
+      ],
+      "switchingFrequency": 150000.0
+     }
+    ]
+   },
+   "expect": 2.9296875e-05
+  },
+  {
+   "topology": "buck",
+   "spec": {
+    "inputVoltage": {
+     "minimum": 20.0,
+     "maximum": 28.0
+    },
+    "currentRippleRatio": 0.3,
+    "operatingPoints": [
+     {
+      "outputVoltages": [
+       5.0
+      ],
+      "outputCurrents": [
+       3.0
+      ]
+     }
+    ]
+   },
+   "expect": null
+  },
+  {
+   "topology": "flyback",
+   "spec": {
+    "inputVoltage": {
+     "minimum": 20.0,
+     "maximum": 28.0
+    },
+    "currentRippleRatio": 0.3,
+    "operatingPoints": [
+     {
+      "outputVoltages": [
+       5.0
+      ],
+      "outputCurrents": [
+       3.0
+      ],
+      "switchingFrequency": 500000.0
+     }
+    ]
+   },
+   "expect": null
+  },
+  {
+   "topology": "cuk",
+   "spec": {
+    "inputVoltage": {
+     "minimum": 20.0,
+     "maximum": 28.0
+    },
+    "currentRippleRatio": 0.3,
+    "operatingPoints": [
+     {
+      "outputVoltages": [
+       5.0
+      ],
+      "outputCurrents": [
+       3.0
+      ],
+      "switchingFrequency": 500000.0
+     }
+    ]
+   },
+   "expect": null
+  }
+ ],
+ "footprint_area_mm2": [
+  {
+   "summary": {
+    "saturation_current": 5.5,
+    "rated_current": 4.5,
+    "dimensions_mm": {
+     "length": 6.0,
+     "width": 6.0,
+     "height": 3.0
+    }
+   },
+   "expect": 36.0
+  },
+  {
+   "summary": {
+    "saturation_current": 7.5,
+    "rated_current": 5.0,
+    "dimensions_mm": {
+     "length": 3.2,
+     "width": 2.5
+    }
+   },
+   "expect": "inf"
+  },
+  {
+   "summary": {
+    "dimensions_mm": {
+     "length": 1.2,
+     "width": 1.2,
+     "height": 8.0
+    }
+   },
+   "expect": "inf"
+  },
+  {
+   "summary": {
+    "dimensions_mm": {
+     "length": 1.0,
+     "width": 1.0,
+     "height": 0.5
+    }
+   },
+   "expect": "inf"
+  },
+  {
+   "summary": {},
+   "expect": "inf"
+  },
+  {
+   "summary": {
+    "saturation_current": 3.0,
+    "dimensions_mm": {
+     "length": 4.1,
+     "width": 4.1,
+     "height": 3.1
+    }
+   },
+   "expect": 16.81
+  }
+ ],
+ "operating_point_rescue": [
+  {
+   "stress": {
+    "l_required": 9.126984e-06,
+    "i_peak": 3.45,
+    "i_rms": 3.0
+   },
+   "pool": [
+    {
+     "mpn": "OVERSIZED_12A_13MM",
+     "value_si": 1e-05,
+     "saturation_current": 12.0,
+     "rated_current": 12.0,
+     "dimensions_mm": {
+      "length": 13.0,
+      "width": 12.8,
+      "height": 6.2
+     }
+    },
+    {
+     "mpn": "RIGHT_10UH_6MM",
+     "value_si": 1e-05,
+     "saturation_current": 5.5,
+     "rated_current": 5.0,
+     "dimensions_mm": {
+      "length": 6.0,
+      "width": 6.0,
+      "height": 3.0
+     }
+    },
+    {
+     "mpn": "THIN_IR_10UH",
+     "value_si": 1e-05,
+     "saturation_current": 5.0,
+     "rated_current": 3.05,
+     "dimensions_mm": {
+      "length": 5.0,
+      "width": 5.0,
+      "height": 2.0
+     }
+    },
+    {
+     "mpn": "OVER_L_22UH_4MM",
+     "value_si": 2.2e-05,
+     "saturation_current": 6.0,
+     "rated_current": 5.0,
+     "dimensions_mm": {
+      "length": 4.1,
+      "width": 4.1,
+      "height": 3.1
+     }
+    },
+    {
+     "mpn": "LOW_ISAT_10UH",
+     "value_si": 1e-05,
+     "saturation_current": 2.0,
+     "rated_current": 2.0,
+     "dimensions_mm": {
+      "length": 4.0,
+      "width": 4.0,
+      "height": 2.0
+     }
+    }
+   ],
+   "expect": {
+    "mpn": "RIGHT_10UH_6MM"
+   }
+  }
+ ]
+}
