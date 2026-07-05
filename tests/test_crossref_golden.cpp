@@ -15,6 +15,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <nlohmann/json.hpp>
 
+#include "CrossRefRescue.hpp"
 #include "CrossRefScore.hpp"
 
 using nlohmann::json;
@@ -66,7 +67,21 @@ TEST_CASE("golden: over_dimensioning_penalty matches Python", "[crossref][golden
     }
 }
 
+TEST_CASE("golden: required_inductance matches Python", "[crossref][golden]") {
+    const json g = load_golden();
+    for (const auto& c : g.at("required_inductance")) {
+        auto got = required_inductance(c.at("topology").get<std::string>(), c.at("spec"));
+        const auto& exp = c.at("expect");
+        INFO("topology=" << c.at("topology"));
+        if (exp.is_null()) {
+            REQUIRE_FALSE(got.has_value());
+        } else {
+            REQUIRE(got.has_value());
+            REQUIRE_THAT(*got, WithinRel(exp.get<double>(), 1e-6));
+        }
+    }
+}
+
 // TODO(port): enable as the C++ functions land, each must reproduce its golden:
-//   required_inductance(topology, spec)      -> g["required_inductance"]
 //   footprint_area_mm2(summary)              -> g["footprint_area_mm2"]
 //   operating_point_magnetic_rescue(...)     -> g["operating_point_rescue"]
