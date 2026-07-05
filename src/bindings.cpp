@@ -10,6 +10,8 @@
 
 #include "Constraints.hpp"
 #include "CrossRef.hpp"
+#include "CrossRefParams.hpp"
+#include "CrossRefRescue.hpp"
 #include "Index.hpp"
 #include "KelvinApi.hpp"
 #include "Select.hpp"
@@ -87,6 +89,61 @@ PYBIND11_MODULE(PyKelvin, m) {
         },
         py::arg("category"), py::arg("original"), py::arg("candidates"),
         py::arg("options") = json::object());
+
+    // ── Deterministic crossref PRIMITIVES (Heaviside delegates its Python
+    // scoring.py / param_check.py / stress.py / rescue bodies to these) ─────────
+    m.def(
+        "score_primary_value",
+        [](const std::string& category, std::optional<double> original,
+           std::optional<double> substitute) -> json {
+            bool has = false;
+            auto r = kelvin::crossref::score_primary_value(category, original, substitute, has);
+            if (!has) return json(nullptr);  // category has no primary-value spec
+            return json{{"verdict", r.verdict}, {"penalty", r.penalty}};
+        },
+        py::arg("category"), py::arg("original"), py::arg("substitute"));
+
+    m.def(
+        "over_dimensioning_penalty",
+        [](std::optional<double> required, std::optional<double> actual, double weight) {
+            return kelvin::crossref::over_dimensioning_penalty(required, actual, weight);
+        },
+        py::arg("required"), py::arg("actual"), py::arg("weight") = 1.0);
+
+    m.def(
+        "evaluate_params",
+        [](const std::string& category, const json& original, const json& substitute) -> json {
+            json out = json::array();
+            for (const auto& [name, verdict] :
+                 kelvin::crossref::evaluate_params(category, original, substitute))
+                out.push_back({{"name", name}, {"verdict", verdict}});
+            return out;
+        },
+        py::arg("category"), py::arg("original"), py::arg("substitute"));
+
+    m.def(
+        "required_inductance",
+        [](const std::string& topology, const json& spec) -> json {
+            auto L = kelvin::crossref::required_inductance(topology, spec);
+            return L ? json(*L) : json(nullptr);
+        },
+        py::arg("topology"), py::arg("spec"));
+
+    m.def(
+        "footprint_area_mm2",
+        [](const json& summary) { return kelvin::crossref::footprint_area_mm2(summary); },
+        py::arg("summary"));
+
+    m.def(
+        "operating_point_magnetic_rescue",
+        [](double l_required, double i_peak, std::optional<double> i_rms,
+           const json& candidates) -> json {
+            auto r = kelvin::crossref::operating_point_magnetic_rescue(l_required, i_peak, i_rms,
+                                                                      candidates);
+            if (!r) return json(nullptr);
+            return json{{"summary", r->summary}, {"inductance", r->inductance}};
+        },
+        py::arg("l_required"), py::arg("i_peak"), py::arg("i_rms"), py::arg("candidates"));
 
     m.def(
         "build_and_write_index",
