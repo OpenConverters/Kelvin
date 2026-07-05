@@ -414,5 +414,190 @@
     "mpn": "RIGHT_10UH_6MM"
    }
   }
+ ],
+ "evaluate_params": [
+  {
+   "category": "capacitor",
+   "original": {
+    "esr": 0.02,
+    "ripple_current": 2.0,
+    "dielectric_code": "X7R",
+    "temp_max_C": 125.0,
+    "tolerance_pct": 10.0
+   },
+   "substitute": {
+    "esr": 0.015,
+    "ripple_current": 2.5,
+    "dielectric_code": "X7R",
+    "temp_max_C": 125.0,
+    "tolerance_pct": 10.0
+   },
+   "expect": {
+    "esr": "pass",
+    "ripple_current": "pass",
+    "dielectric_code": "pass",
+    "temp_max_C": "pass",
+    "tolerance_pct": "pass"
+   }
+  },
+  {
+   "category": "capacitor",
+   "original": {
+    "dielectric_code": "X7R",
+    "temp_max_C": 125.0
+   },
+   "substitute": {
+    "dielectric_code": "Y5V",
+    "temp_max_C": 85.0
+   },
+   "expect": {
+    "dielectric_code": "fail",
+    "temp_max_C": "fail"
+   }
+  },
+  {
+   "category": "capacitor",
+   "original": {
+    "esr": 0.02
+   },
+   "substitute": {
+    "esr": 0.08
+   },
+   "expect": {
+    "esr": "fail"
+   }
+  },
+  {
+   "category": "mosfet",
+   "original": {
+    "rds_on": 0.05,
+    "qg": 1.2e-08,
+    "coss": 1e-10,
+    "vgs_threshold_max": 3.0
+   },
+   "substitute": {
+    "rds_on": 0.04,
+    "qg": 1e-08,
+    "coss": 9e-11,
+    "vgs_threshold_max": 2.8
+   },
+   "expect": {
+    "rds_on": "pass",
+    "qg": "pass",
+    "coss": "pass",
+    "vgs_threshold_max": "pass"
+   }
+  },
+  {
+   "category": "mosfet",
+   "original": {
+    "rds_on": 0.05
+   },
+   "substitute": {
+    "rds_on": 0.2
+   },
+   "expect": {
+    "rds_on": "fail"
+   }
+  },
+  {
+   "category": "diode",
+   "original": {
+    "vf": 0.45,
+    "qrr": 5e-08,
+    "trr": 3.5e-08
+   },
+   "substitute": {
+    "vf": 0.4,
+    "qrr": 4.5e-08,
+    "trr": 3e-08
+   },
+   "expect": {
+    "vf": "pass",
+    "qrr": "pass",
+    "trr": "pass"
+   }
+  },
+  {
+   "category": "resistor",
+   "original": {
+    "power_rating": 0.1,
+    "tolerance_pct": 1.0,
+    "tcr": 100.0
+   },
+   "substitute": {
+    "power_rating": 0.25,
+    "tolerance_pct": 1.0,
+    "tcr": 50.0
+   },
+   "expect": {
+    "power_rating": "pass",
+    "tolerance_pct": "pass",
+    "tcr": "pass"
+   }
+  },
+  {
+   "category": "resistor",
+   "original": {
+    "power_rating": 0.25
+   },
+   "substitute": {
+    "power_rating": 0.1
+   },
+   "expect": {
+    "power_rating": "fail"
+   }
+  },
+  {
+   "category": "magnetic",
+   "original": {
+    "saturation_current": 5.0,
+    "dcr": 0.03,
+    "rated_current": 4.0
+   },
+   "substitute": {
+    "saturation_current": 6.0,
+    "dcr": 0.025,
+    "rated_current": 4.5
+   },
+   "expect": {
+    "saturation_current": "pass",
+    "dcr": "pass",
+    "rated_current": "pass"
+   }
+  },
+  {
+   "category": "magnetic",
+   "original": {
+    "saturation_current": 5.0
+   },
+   "substitute": {
+    "saturation_current": 2.0
+   },
+   "expect": {
+    "saturation_current": "fail"
+   }
+  },
+  {
+   "category": "chipBead",
+   "original": {
+    "impedance_100mhz": 600.0,
+    "srf": 100000000.0,
+    "dcr": 0.05,
+    "rated_current": 2.0
+   },
+   "substitute": {
+    "impedance_100mhz": 800.0,
+    "srf": 120000000.0,
+    "dcr": 0.04,
+    "rated_current": 2.5
+   },
+   "expect": {
+    "impedance_100mhz": "pass",
+    "srf": "pass",
+    "dcr": "pass",
+    "rated_current": "pass"
+   }
+  }
  ]
 }
