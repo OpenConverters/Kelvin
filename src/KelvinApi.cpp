@@ -1,3 +1,4 @@
+#include "MfrPolicy.hpp"
 #include "KelvinApi.hpp"
 
 #include <sys/stat.h>
@@ -226,6 +227,15 @@ ShardMeta Engine::build_index(const std::string& family) {
 json Engine::select(const std::string& category, const json& req, const json& options) {
     Family f = family_from_string(category);
     size_t max_cand = opt_size(options, "maxCandidates", kDefaultMaxCandidates);
+    // Optional manufacturer controls (settings today, GUI-wired later; default
+    // off = parity-locked to the Python selector). maxManufacturerFraction caps
+    // any one vendor's share of the result; manufacturerAllowlist restricts to
+    // named vendors (substring, case-insensitive).
+    MfrPolicy mfr;
+    if (auto frac = opt_num(options, "maxManufacturerFraction")) mfr.max_frac = *frac;
+    if (options.contains("manufacturerAllowlist") && options.at("manufacturerAllowlist").is_array())
+        for (const auto& m : options.at("manufacturerAllowlist"))
+            if (m.is_string()) mfr.allowlist.push_back(norm_mfr(m.get<std::string>()));
     // Envelopes require the source NDJSON (the record fetcher). With no data dir (the browser /
     // preloaded-shard path) candidates carry only shard data + the record's byte span; the caller
     // fetches the chosen record itself (HTTP Range).
@@ -254,7 +264,7 @@ json Engine::select(const std::string& category, const json& req, const json& op
         const Shard<MosfetRow>& sh = mosfet_shard();
         std::optional<FileRecordFetcher> fetch;
         if (include_env) fetch.emplace(ndjson_path(Family::Mosfet));
-        return select_mosfet(sh, c, tb, max_cand, include_env ? &*fetch : nullptr);
+        return select_mosfet(sh, c, tb, max_cand, include_env ? &*fetch : nullptr, mfr);
     }
     if (f == Family::Diode) {
         DiodeConstraints c = diode_constraints(req);
@@ -265,7 +275,7 @@ json Engine::select(const std::string& category, const json& req, const json& op
         const Shard<DiodeRow>& sh = diode_shard();
         std::optional<FileRecordFetcher> fetch;
         if (include_env) fetch.emplace(ndjson_path(Family::Diode));
-        return select_diode(sh, c, tb, max_cand, include_env ? &*fetch : nullptr);
+        return select_diode(sh, c, tb, max_cand, include_env ? &*fetch : nullptr, mfr);
     }
     if (f == Family::Capacitor) {
         CapacitorConstraints c = capacitor_constraints(req);
@@ -279,14 +289,14 @@ json Engine::select(const std::string& category, const json& req, const json& op
         const Shard<CapacitorRow>& sh = capacitor_shard();
         std::optional<FileRecordFetcher> fetch;
         if (include_env) fetch.emplace(ndjson_path(Family::Capacitor));
-        return select_capacitor(sh, c, tb, max_cand, include_env ? &*fetch : nullptr);
+        return select_capacitor(sh, c, tb, max_cand, include_env ? &*fetch : nullptr, mfr);
     }
     if (f == Family::Resistor) {
         ResistorConstraints c = resistor_constraints(req);
         const Shard<ResistorRow>& sh = resistor_shard();
         std::optional<FileRecordFetcher> fetch;
         if (include_env) fetch.emplace(ndjson_path(Family::Resistor));
-        return select_resistor(sh, c, max_cand, include_env ? &*fetch : nullptr);
+        return select_resistor(sh, c, max_cand, include_env ? &*fetch : nullptr, mfr);
     }
     if (f == Family::Igbt) {
         IgbtConstraints c = igbt_constraints(req);
@@ -296,7 +306,7 @@ json Engine::select(const std::string& category, const json& req, const json& op
         const Shard<IgbtRow>& sh = igbt_shard();
         std::optional<FileRecordFetcher> fetch;
         if (include_env) fetch.emplace(ndjson_path(Family::Igbt));
-        return select_igbt(sh, c, tb, max_cand, include_env ? &*fetch : nullptr);
+        return select_igbt(sh, c, tb, max_cand, include_env ? &*fetch : nullptr, mfr);
     }
     if (f == Family::Bjt) {
         BjtConstraints c = bjt_constraints(req);
@@ -306,7 +316,7 @@ json Engine::select(const std::string& category, const json& req, const json& op
         const Shard<BjtRow>& sh = bjt_shard();
         std::optional<FileRecordFetcher> fetch;
         if (include_env) fetch.emplace(ndjson_path(Family::Bjt));
-        return select_bjt(sh, c, tb, max_cand, include_env ? &*fetch : nullptr);
+        return select_bjt(sh, c, tb, max_cand, include_env ? &*fetch : nullptr, mfr);
     }
     if (f == Family::Varistor) {
         VaristorConstraints c = varistor_constraints(req);
@@ -316,7 +326,7 @@ json Engine::select(const std::string& category, const json& req, const json& op
         const Shard<VaristorRow>& sh = varistor_shard();
         std::optional<FileRecordFetcher> fetch;
         if (include_env) fetch.emplace(ndjson_path(Family::Varistor));
-        return select_varistor(sh, c, tb, max_cand, include_env ? &*fetch : nullptr);
+        return select_varistor(sh, c, tb, max_cand, include_env ? &*fetch : nullptr, mfr);
     }
     // controller
     auto topo = opt_str(options, "topology");
@@ -329,7 +339,7 @@ json Engine::select(const std::string& category, const json& req, const json& op
     const Shard<ControllerRow>& sh = controller_shard();
     std::optional<FileRecordFetcher> fetch;
     if (include_env) fetch.emplace(ndjson_path(Family::Controller));
-    return select_controller(sh, c, max_cand, include_env ? &*fetch : nullptr);
+    return select_controller(sh, c, max_cand, include_env ? &*fetch : nullptr, mfr);
 }
 
 std::string select_string(const std::string& data_dir, const std::string& cache_dir,

@@ -3,6 +3,7 @@
 // (reproduces Python min()/max() first-in-file-order-wins semantics), and returns a
 // SelectionResult JSON. Throws NoCandidates (carrying the rejection histogram) when none pass.
 #pragma once
+#include "MfrPolicy.hpp"
 #include <cstddef>
 #include <stdexcept>
 #include <string>
@@ -33,26 +34,26 @@ struct NoCandidates : std::runtime_error {
 constexpr size_t kDefaultMaxCandidates = 25;
 
 json select_mosfet(const Shard<MosfetRow>& shard, const MosfetConstraints& c, MosfetTiebreaker tb,
-                   size_t max_candidates = kDefaultMaxCandidates, RecordFetcher* fetcher = nullptr);
+                   size_t max_candidates = kDefaultMaxCandidates, RecordFetcher* fetcher = nullptr, const MfrPolicy& mfr = {});
 json select_diode(const Shard<DiodeRow>& shard, const DiodeConstraints& c, DiodeTiebreaker tb,
-                  size_t max_candidates = kDefaultMaxCandidates, RecordFetcher* fetcher = nullptr);
+                  size_t max_candidates = kDefaultMaxCandidates, RecordFetcher* fetcher = nullptr, const MfrPolicy& mfr = {});
 json select_capacitor(const Shard<CapacitorRow>& shard, const CapacitorConstraints& c,
                       CapacitorTiebreaker tb, size_t max_candidates = kDefaultMaxCandidates,
-                      RecordFetcher* fetcher = nullptr);
+                      RecordFetcher* fetcher = nullptr, const MfrPolicy& mfr = {});
 json select_controller(const Shard<ControllerRow>& shard, const ControllerConstraints& c,
                        size_t max_candidates = kDefaultMaxCandidates,
-                       RecordFetcher* fetcher = nullptr);
+                       RecordFetcher* fetcher = nullptr, const MfrPolicy& mfr = {});
 json select_resistor(const Shard<ResistorRow>& shard, const ResistorConstraints& c,
                      size_t max_candidates = kDefaultMaxCandidates,
-                     RecordFetcher* fetcher = nullptr);
+                     RecordFetcher* fetcher = nullptr, const MfrPolicy& mfr = {});
 
 // ---- Phase 5 ---------------------------------------------------------------
 json select_igbt(const Shard<IgbtRow>& shard, const IgbtConstraints& c, IgbtTiebreaker tb,
-                 size_t max_candidates = kDefaultMaxCandidates, RecordFetcher* fetcher = nullptr);
+                 size_t max_candidates = kDefaultMaxCandidates, RecordFetcher* fetcher = nullptr, const MfrPolicy& mfr = {});
 json select_bjt(const Shard<BjtRow>& shard, const BjtConstraints& c, BjtTiebreaker tb,
-                size_t max_candidates = kDefaultMaxCandidates, RecordFetcher* fetcher = nullptr);
+                size_t max_candidates = kDefaultMaxCandidates, RecordFetcher* fetcher = nullptr, const MfrPolicy& mfr = {});
 json select_varistor(const Shard<VaristorRow>& shard, const VaristorConstraints& c,
                      VaristorTiebreaker tb, size_t max_candidates = kDefaultMaxCandidates,
-                     RecordFetcher* fetcher = nullptr);
+                     RecordFetcher* fetcher = nullptr, const MfrPolicy& mfr = {});
 
 }  // namespace kelvin

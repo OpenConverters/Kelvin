@@ -1,3 +1,4 @@
+#include "MfrPolicy.hpp"
 #include "Select.hpp"
 
 #include <algorithm>
@@ -37,7 +38,7 @@ json base_candidate(const Row* r, RecordFetcher* fetcher) {
 }  // namespace
 
 json select_mosfet(const Shard<MosfetRow>& shard, const MosfetConstraints& c, MosfetTiebreaker tb,
-                   size_t max_candidates, RecordFetcher* fetcher) {
+                   size_t max_candidates, RecordFetcher* fetcher, const MfrPolicy& mfr) {
     c.validate();
     std::map<std::string, uint64_t> rej;
     rej["unreadable_row"] = shard.meta.unreadable_row_count;
@@ -101,9 +102,9 @@ json select_mosfet(const Shard<MosfetRow>& shard, const MosfetConstraints& c, Mo
     result["alternativesConsidered"] = passing.size();
     result["rejections"] = emit_rejections(rej);
     json cands = json::array();
-    size_t n = std::min(max_candidates, passing.size());
-    for (size_t i = 0; i < n; ++i) {
-        const MosfetRow* m = passing[i];
+    const auto chosen = apply_mfr_policy(passing, max_candidates, mfr);
+    for (size_t i = 0; i < chosen.size(); ++i) {
+        const MosfetRow* m = chosen[i];
         json cd = base_candidate(m, fetcher);
         cd["margins"] = {
             {"vds_margin", m->vds_rated / c.vds_min},
@@ -130,7 +131,7 @@ json select_mosfet(const Shard<MosfetRow>& shard, const MosfetConstraints& c, Mo
 }
 
 json select_diode(const Shard<DiodeRow>& shard, const DiodeConstraints& c, DiodeTiebreaker tb,
-                  size_t max_candidates, RecordFetcher* fetcher) {
+                  size_t max_candidates, RecordFetcher* fetcher, const MfrPolicy& mfr) {
     c.validate();
     std::map<std::string, uint64_t> rej;
     rej["unreadable_row"] = shard.meta.unreadable_row_count;
@@ -166,10 +167,10 @@ json select_diode(const Shard<DiodeRow>& shard, const DiodeConstraints& c, Diode
     result["alternativesConsidered"] = passing.size();
     result["rejections"] = emit_rejections(rej);
     json cands = json::array();
-    size_t n = std::min(max_candidates, passing.size());
+    const auto chosen = apply_mfr_policy(passing, max_candidates, mfr);
     bool qrr_active = c.qrr_max.has_value() && *c.qrr_max != 0.0;
-    for (size_t i = 0; i < n; ++i) {
-        const DiodeRow* d = passing[i];
+    for (size_t i = 0; i < chosen.size(); ++i) {
+        const DiodeRow* d = chosen[i];
         json cd = base_candidate(d, fetcher);
         cd["margins"] = {
             {"vrrm_margin", d->vrrm_rated / c.vrrm_min},
@@ -186,7 +187,7 @@ json select_diode(const Shard<DiodeRow>& shard, const DiodeConstraints& c, Diode
 }
 
 json select_capacitor(const Shard<CapacitorRow>& shard, const CapacitorConstraints& c,
-                      CapacitorTiebreaker tb, size_t max_candidates, RecordFetcher* fetcher) {
+                      CapacitorTiebreaker tb, size_t max_candidates, RecordFetcher* fetcher, const MfrPolicy& mfr) {
     c.validate();
     std::map<std::string, uint64_t> rej;
     rej["unreadable_row"] = shard.meta.unreadable_row_count;
@@ -233,10 +234,10 @@ json select_capacitor(const Shard<CapacitorRow>& shard, const CapacitorConstrain
     result["alternativesConsidered"] = passing.size();
     result["rejections"] = emit_rejections(rej);
     json cands = json::array();
-    size_t n = std::min(max_candidates, passing.size());
+    const auto chosen = apply_mfr_policy(passing, max_candidates, mfr);
     bool ripple_active = c.ripple_current_min.has_value() && *c.ripple_current_min > 0;
-    for (size_t i = 0; i < n; ++i) {
-        const CapacitorRow* x = passing[i];
+    for (size_t i = 0; i < chosen.size(); ++i) {
+        const CapacitorRow* x = chosen[i];
         json cd = base_candidate(x, fetcher);
         cd["margins"] = {
             {"v_margin", x->v_rated / c.v_rated_min},
@@ -254,7 +255,7 @@ json select_capacitor(const Shard<CapacitorRow>& shard, const CapacitorConstrain
 }
 
 json select_controller(const Shard<ControllerRow>& shard, const ControllerConstraints& c,
-                       size_t max_candidates, RecordFetcher* fetcher) {
+                       size_t max_candidates, RecordFetcher* fetcher, const MfrPolicy& mfr) {
     c.validate();
     std::string topo = c.topology;
     std::transform(topo.begin(), topo.end(), topo.begin(),
@@ -313,9 +314,9 @@ json select_controller(const Shard<ControllerRow>& shard, const ControllerConstr
     result["alternativesConsidered"] = passing.size();
     result["rejections"] = emit_rejections(rej);
     json cands = json::array();
-    size_t n = std::min(max_candidates, passing.size());
-    for (size_t i = 0; i < n; ++i) {
-        const ControllerRow* x = passing[i];
+    const auto chosen = apply_mfr_policy(passing, max_candidates, mfr);
+    for (size_t i = 0; i < chosen.size(); ++i) {
+        const ControllerRow* x = chosen[i];
         json cd = base_candidate(x, fetcher);
         cd["margins"] = json::object();
         auto r = rank(x);
@@ -332,7 +333,7 @@ json select_controller(const Shard<ControllerRow>& shard, const ControllerConstr
 }
 
 json select_resistor(const Shard<ResistorRow>& shard, const ResistorConstraints& c,
-                     size_t max_candidates, RecordFetcher* fetcher) {
+                     size_t max_candidates, RecordFetcher* fetcher, const MfrPolicy& mfr) {
     c.validate();
     std::map<std::string, uint64_t> rej;
     rej["unreadable_row"] = shard.meta.unreadable_row_count;
@@ -363,9 +364,9 @@ json select_resistor(const Shard<ResistorRow>& shard, const ResistorConstraints&
     result["alternativesConsidered"] = passing.size();  // == Python `considered`
     result["rejections"] = emit_rejections(rej);
     json cands = json::array();
-    size_t n = std::min(max_candidates, passing.size());
-    for (size_t i = 0; i < n; ++i) {
-        const ResistorRow* r = passing[i];
+    const auto chosen = apply_mfr_policy(passing, max_candidates, mfr);
+    for (size_t i = 0; i < chosen.size(); ++i) {
+        const ResistorRow* r = chosen[i];
         json cd = base_candidate(r, fetcher);
         cd["margins"] = json::object();
         cd["deviation"] = (r->resistance - c.target_ohms) / c.target_ohms;  // signed
@@ -378,7 +379,7 @@ json select_resistor(const Shard<ResistorRow>& shard, const ResistorConstraints&
 
 // ---- Phase 5 selectors -----------------------------------------------------
 json select_igbt(const Shard<IgbtRow>& shard, const IgbtConstraints& c, IgbtTiebreaker tb,
-                 size_t max_candidates, RecordFetcher* fetcher) {
+                 size_t max_candidates, RecordFetcher* fetcher, const MfrPolicy& mfr) {
     c.validate();
     std::map<std::string, uint64_t> rej;
     rej["unreadable_row"] = shard.meta.unreadable_row_count;
@@ -411,9 +412,9 @@ json select_igbt(const Shard<IgbtRow>& shard, const IgbtConstraints& c, IgbtTieb
     result["alternativesConsidered"] = passing.size();
     result["rejections"] = emit_rejections(rej);
     json cands = json::array();
-    size_t n = std::min(max_candidates, passing.size());
-    for (size_t i = 0; i < n; ++i) {
-        const IgbtRow* g = passing[i];
+    const auto chosen = apply_mfr_policy(passing, max_candidates, mfr);
+    for (size_t i = 0; i < chosen.size(); ++i) {
+        const IgbtRow* g = chosen[i];
         json cd = base_candidate(g, fetcher);
         cd["margins"] = {{"vces_margin", g->vces_rated / c.vces_min},
                          {"ic_margin", g->ic_continuous / c.ic_min},
@@ -429,7 +430,7 @@ json select_igbt(const Shard<IgbtRow>& shard, const IgbtConstraints& c, IgbtTieb
 }
 
 json select_bjt(const Shard<BjtRow>& shard, const BjtConstraints& c, BjtTiebreaker tb,
-                size_t max_candidates, RecordFetcher* fetcher) {
+                size_t max_candidates, RecordFetcher* fetcher, const MfrPolicy& mfr) {
     c.validate();
     std::map<std::string, uint64_t> rej;
     rej["unreadable_row"] = shard.meta.unreadable_row_count;
@@ -462,9 +463,9 @@ json select_bjt(const Shard<BjtRow>& shard, const BjtConstraints& c, BjtTiebreak
     result["alternativesConsidered"] = passing.size();
     result["rejections"] = emit_rejections(rej);
     json cands = json::array();
-    size_t n = std::min(max_candidates, passing.size());
-    for (size_t i = 0; i < n; ++i) {
-        const BjtRow* b = passing[i];
+    const auto chosen = apply_mfr_policy(passing, max_candidates, mfr);
+    for (size_t i = 0; i < chosen.size(); ++i) {
+        const BjtRow* b = chosen[i];
         json cd = base_candidate(b, fetcher);
         cd["margins"] = {{"vceo_margin", b->vceo_rated / c.vceo_min},
                          {"ic_margin", b->ic_continuous / c.ic_min},
@@ -477,7 +478,7 @@ json select_bjt(const Shard<BjtRow>& shard, const BjtConstraints& c, BjtTiebreak
 }
 
 json select_varistor(const Shard<VaristorRow>& shard, const VaristorConstraints& c,
-                     VaristorTiebreaker tb, size_t max_candidates, RecordFetcher* fetcher) {
+                     VaristorTiebreaker tb, size_t max_candidates, RecordFetcher* fetcher, const MfrPolicy& mfr) {
     c.validate();
     std::map<std::string, uint64_t> rej;
     rej["unreadable_row"] = shard.meta.unreadable_row_count;
@@ -524,9 +525,9 @@ json select_varistor(const Shard<VaristorRow>& shard, const VaristorConstraints&
     result["alternativesConsidered"] = passing.size();
     result["rejections"] = emit_rejections(rej);
     json cands = json::array();
-    size_t n = std::min(max_candidates, passing.size());
-    for (size_t i = 0; i < n; ++i) {
-        const VaristorRow* v = passing[i];
+    const auto chosen = apply_mfr_policy(passing, max_candidates, mfr);
+    for (size_t i = 0; i < chosen.size(); ++i) {
+        const VaristorRow* v = chosen[i];
         json cd = base_candidate(v, fetcher);
         cd["margins"] = {
             {"vc_margin", v->max_continuous_dc_voltage / c.rated_continuous_voltage},
