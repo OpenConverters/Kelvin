@@ -82,6 +82,34 @@ TEST_CASE("golden: required_inductance matches Python", "[crossref][golden]") {
     }
 }
 
-// TODO(port): enable as the C++ functions land, each must reproduce its golden:
-//   footprint_area_mm2(summary)              -> g["footprint_area_mm2"]
-//   operating_point_magnetic_rescue(...)     -> g["operating_point_rescue"]
+TEST_CASE("golden: footprint_area_mm2 matches Python", "[crossref][golden]") {
+    const json g = load_golden();
+    for (const auto& c : g.at("footprint_area_mm2")) {
+        double got = footprint_area_mm2(c.at("summary"));
+        const auto& exp = c.at("expect");
+        INFO("summary=" << c.at("summary"));
+        if (exp.is_string() && exp.get<std::string>() == "inf") {
+            REQUIRE(std::isinf(got));
+        } else {
+            REQUIRE_THAT(got, WithinRel(exp.get<double>(), 1e-6));
+        }
+    }
+}
+
+TEST_CASE("golden: operating_point_magnetic_rescue matches Python", "[crossref][golden]") {
+    const json g = load_golden();
+    for (const auto& c : g.at("operating_point_rescue")) {
+        const auto& st = c.at("stress");
+        std::optional<double> i_rms;
+        if (st.contains("i_rms") && !st.at("i_rms").is_null()) i_rms = st.at("i_rms").get<double>();
+        auto r = operating_point_magnetic_rescue(st.at("l_required").get<double>(),
+                                                 st.at("i_peak").get<double>(), i_rms, c.at("pool"));
+        const auto& exp_mpn = c.at("expect").at("mpn");
+        if (exp_mpn.is_null()) {
+            REQUIRE_FALSE(r.has_value());
+        } else {
+            REQUIRE(r.has_value());
+            REQUIRE(r->summary.at("mpn").get<std::string>() == exp_mpn.get<std::string>());
+        }
+    }
+}
