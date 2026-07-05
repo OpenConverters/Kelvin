@@ -69,5 +69,17 @@ See `docs/CONTRACT.md` for the frozen interface.
 
 ## Status
 
-v1 core complete and parity-green. Heaviside switchover and the Kirchhoff web candidate table are
-staged (see the implementation plan, phases 3–4).
+- **Core (v1 + Phase 5 + cross-ref ranker):** complete and parity-green — `test_kelvin` at 1257
+  assertions / 43 cases; differential fuzzer 0 mismatches over the full DB.
+- **Kirchhoff (Phase 3):** C++ (`select_components`/`bind_part`) done; web PartDrawer shows real
+  WASM-Kelvin candidates (Playwright e2e green). *Remaining:* in-drawer bind+re-sim over hosted
+  NDJSON Range requests, and the prod shard/NDJSON deploy (ABT #124 tail).
+- **Heaviside cross-ref seam:** landed (HS `bbb2ede`) — `kelvin_adapter.cross_reference()` wraps
+  the C++ ranker; parity test (10 cases) proves verdicts match HS `scoring.py`. *Validated but
+  not yet activated:* `crossref_pipeline.py` still scores in Python; no live caller routes through
+  the adapter.
+- **Heaviside selector switchover (Phase 4, ABT #125):** not started — `kirchhoff_fill`/`assemble`
+  still run the all-Python selector; `kelvin_adapter.select` has no live caller.
+
+See the implementation plan (`Kirchhoff/docs/KELVIN_IMPLEMENTATION_PLAN.md`) phases 3–4 and ABT
+#123/#124/#125.
