@@ -5,14 +5,18 @@
 //
 // --check: exit non-zero if any shard is stale vs its source (no build); for a cheap nightly gate.
 #include <cstring>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
+
+#include <nlohmann/json.hpp>
 
 #include "Index.hpp"
 #include "KelvinApi.hpp"
 
 using namespace kelvin;
+using json = nlohmann::json;
 
 namespace {
 const char* kFamilies[] = {"mosfet", "diode", "capacitor",  "resistor",
@@ -21,6 +25,34 @@ const char* kFamilies[] = {"mosfet", "diode", "capacitor",  "resistor",
 int usage() {
     std::cerr << "usage: kelvin-index --data <dir> --out <dir> [--family <f>] [--check]\n";
     return 2;
+}
+
+// Write/refresh out_dir/manifest.json — the deploy pairing record the KH web worker reads to
+// (a) cache-bust shards by buildId and (b) refuse to Range-bind against an NDJSON whose size no
+// longer matches the shard's `sourceSize` (a mismatched shard/NDJSON pair). buildId/contentHash are
+// 64-bit fnv values → emitted as strings so a JS consumer never rounds them past 2^53. When a single
+// --family is (re)built the entry is merged into any existing manifest rather than dropping the rest.
+void write_manifest(const std::string& out_dir, Family f, const ShardMeta& m) {
+    std::string path = out_dir + "/manifest.json";
+    json doc;
+    { std::ifstream in(path); if (in) { try { in >> doc; } catch (...) { doc = json::object(); } } }
+    if (!doc.is_object()) doc = json::object();
+    doc["formatVersion"] = 1;
+    if (!doc.contains("families") || !doc["families"].is_object()) doc["families"] = json::object();
+    std::string fam = std::string(family_name(f));
+    doc["families"][fam] = {
+        {"shard", fam + ".kidx"},
+        {"ndjson", fam + ".ndjson"},          // singular name the web serves (symlink to <fam>s.ndjson)
+        {"buildId", std::to_string(m.build_id)},
+        {"contentHash", std::to_string(m.content_hash)},
+        {"rows", m.row_count},
+        {"unreadableRows", m.unreadable_row_count},
+        {"sourceLines", m.source_line_count},
+        {"sourceSize", m.source_size},        // bytes of the NDJSON at build — the pairing anchor
+    };
+    std::ofstream out(path);
+    if (!out) throw std::runtime_error("kelvin-index: cannot write " + path);
+    out << doc.dump(2) << "\n";
 }
 }  // namespace
 
@@ -77,6 +109,7 @@ int main(int argc, char** argv) {
 
         for (const auto& fam : families) {
             ShardMeta m = api::build_and_write_index(data_dir, out_dir, fam);
+            write_manifest(out_dir, api::family_from_string(fam), m);
             std::cout << fam << ": rows=" << m.row_count << " unreadable=" << m.unreadable_row_count
                       << " lines=" << m.source_line_count << " buildId=" << m.build_id << "\n";
         }
