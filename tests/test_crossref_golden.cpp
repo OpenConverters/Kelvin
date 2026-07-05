@@ -15,6 +15,7 @@
 #include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <nlohmann/json.hpp>
 
+#include "CrossRefParams.hpp"
 #include "CrossRefRescue.hpp"
 #include "CrossRefScore.hpp"
 
@@ -111,5 +112,17 @@ TEST_CASE("golden: operating_point_magnetic_rescue matches Python", "[crossref][
             REQUIRE(r.has_value());
             REQUIRE(r->summary.at("mpn").get<std::string>() == exp_mpn.get<std::string>());
         }
+    }
+}
+
+TEST_CASE("golden: evaluate_params matches Python", "[crossref][golden]") {
+    const json g = load_golden();
+    for (const auto& c : g.at("evaluate_params")) {
+        auto results = evaluate_params(c.at("category").get<std::string>(), c.at("original"),
+                                       c.at("substitute"));
+        json got = json::object();
+        for (const auto& [name, verdict] : results) got[name] = verdict;
+        INFO("category=" << c.at("category") << " got=" << got << " expect=" << c.at("expect"));
+        REQUIRE(got == c.at("expect"));
     }
 }
