@@ -598,6 +598,150 @@
     "dcr": "pass",
     "rated_current": "pass"
    }
+  },
+  {
+   "category": "connector",
+   "original": {
+    "family": "pinHeaderSocket",
+    "positions": 10,
+    "polarity": "male",
+    "pitch_mm": 2.54,
+    "rated_current_A": 3.0,
+    "temp_max_C": 105.0,
+    "mating_cycles": 500
+   },
+   "substitute": {
+    "family": "boardToBoard",
+    "positions": 10,
+    "polarity": "male",
+    "pitch_mm": 2.5399,
+    "rated_current_A": 4.0,
+    "temp_max_C": 105.0,
+    "mating_cycles": 500
+   },
+   "expect": {
+    "family": "pass",
+    "positions": "pass",
+    "polarity": "pass",
+    "pitch_mm": "pass",
+    "rated_current_A": "pass",
+    "temp_max_C": "pass",
+    "mating_cycles": "pass"
+   }
+  },
+  {
+   "category": "connector",
+   "original": {
+    "family": "wireToBoard",
+    "positions": 4,
+    "pitch_mm": 2.0
+   },
+   "substitute": {
+    "family": "wireToBoard",
+    "positions": 6,
+    "pitch_mm": 2.54
+   },
+   "expect": {
+    "family": "pass",
+    "positions": "fail",
+    "pitch_mm": "fail"
+   }
+  },
+  {
+   "category": "analog",
+   "original": {
+    "subtype": "opamp",
+    "channels": 2,
+    "package": "SOIC-8",
+    "supply_min_V": 1.8,
+    "gbw": 1000000.0,
+    "input_offset_voltage": 0.0001,
+    "rail_to_rail_input": "yes"
+   },
+   "substitute": {
+    "subtype": "opamp",
+    "channels": 2,
+    "package": "SOIC-8",
+    "supply_min_V": 2.0,
+    "gbw": 1500000.0,
+    "input_offset_voltage": -8e-05,
+    "rail_to_rail_input": "yes"
+   },
+   "expect": {
+    "subtype": "pass",
+    "channels": "pass",
+    "package": "pass",
+    "supply_min_V": "warn",
+    "gbw": "pass",
+    "input_offset_voltage": "pass",
+    "rail_to_rail_input": "pass"
+   }
+  },
+  {
+   "category": "analog",
+   "original": {
+    "subtype": "opamp",
+    "channels": 1,
+    "rail_to_rail_output": "yes"
+   },
+   "substitute": {
+    "subtype": "comparator",
+    "channels": 1,
+    "rail_to_rail_output": "no"
+   },
+   "expect": {
+    "subtype": "fail",
+    "channels": "pass",
+    "rail_to_rail_output": "fail"
+   }
+  },
+  {
+   "category": "timeBase",
+   "original": {
+    "subtype": "crystal",
+    "technology": "quartz",
+    "frequency": 25000000.0,
+    "load_capacitance_pF": 18.0,
+    "tolerance_ppm": 30.0,
+    "esr": 40.0
+   },
+   "substitute": {
+    "subtype": "crystal",
+    "technology": "quartz",
+    "frequency": 25001000.0,
+    "load_capacitance_pF": 18.5,
+    "tolerance_ppm": 20.0,
+    "esr": 35.0
+   },
+   "expect": {
+    "subtype": "pass",
+    "technology": "pass",
+    "frequency": "pass",
+    "load_capacitance_pF": "pass",
+    "tolerance_ppm": "pass",
+    "esr": "pass"
+   }
+  },
+  {
+   "category": "timeBase",
+   "original": {
+    "subtype": "crystal",
+    "technology": "quartz",
+    "frequency": 16000000.0,
+    "load_capacitance_pF": 20.0
+   },
+   "substitute": {
+    "subtype": "mems",
+    "technology": "mems",
+    "frequency": 16000000.0,
+    "load_capacitance_pF": 20.0
+   },
+   "expect": {
+    "subtype": "fail",
+    "technology": "fail",
+    "frequency": "pass",
+    "load_capacitance_pF": "pass"
+   }
   }
  ]
 }
