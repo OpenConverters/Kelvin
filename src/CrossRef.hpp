@@ -188,4 +188,17 @@ inline json cross_reference(const std::string& category, const json& original,
             {"candidates", cands}};
 }
 
+// JSON-options wrapper shared by both bindings (PyKelvin + embind WASM).
+inline json cross_reference_json(const std::string& category, const json& original,
+                                 const json& candidates, const json& options) {
+    Options opt;
+    if (options.contains("original_verified") && options["original_verified"].is_boolean())
+        opt.original_verified = options["original_verified"].get<bool>();
+    if (options.contains("max_results") && options["max_results"].is_number())
+        opt.max_results = options["max_results"].get<size_t>();
+    if (options.contains("primary_weight") && options["primary_weight"].is_number())
+        opt.primary_weight = options["primary_weight"].get<double>();
+    return cross_reference(category, original, candidates, opt);
+}
+
 }  // namespace kelvin::crossref

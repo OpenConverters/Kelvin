@@ -9,6 +9,7 @@
 #include <pybind11_json/pybind11_json.hpp>
 
 #include "Constraints.hpp"
+#include "CrossRef.hpp"
 #include "Index.hpp"
 #include "KelvinApi.hpp"
 #include "Select.hpp"
@@ -72,6 +73,20 @@ PYBIND11_MODULE(PyKelvin, m) {
             return kelvin::api::bind_part(tas, ref, envelope);
         },
         py::arg("tas"), py::arg("ref"), py::arg("envelope"));
+
+    // Cross-reference ranker: deterministic scored substitutes for an original.
+    // Heaviside runs its LLM chooser over the returned candidates[]; Kirchhoff
+    // consumes them directly. `original`/`candidates[]` are category-appropriate
+    // spec dicts (SI units); `options.original_verified` tells the ranker whether
+    // the original's specs were resolved (the honesty gate).
+    m.def(
+        "cross_reference",
+        [](const std::string& category, const json& original, const json& candidates,
+           const json& options) {
+            return kelvin::crossref::cross_reference_json(category, original, candidates, options);
+        },
+        py::arg("category"), py::arg("original"), py::arg("candidates"),
+        py::arg("options") = json::object());
 
     m.def(
         "build_and_write_index",
