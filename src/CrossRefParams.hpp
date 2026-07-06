@@ -149,8 +149,149 @@ inline const char* compare_exact(const ParamSpec& spec, const nlohmann::json& or
     return FAIL;
 }
 
+// ── Saturation-current %-drop normalization (manufacturer-agnostic) ──────────
+// A magnetic's I_sat is quoted at a roll-off criterion — the % the inductance has
+// dropped from its small-signal value (|ΔL/L|). Vendors pick different criteria
+// (Würth @10 %/@30 %, Coilcraft/Vishay @20 %), so comparing raw scalars manufactures
+// a FALSE shortfall. This mirrors Heaviside's heaviside/pipeline/isat_normalize.py
+// (proven, 13 tests): normalize BOTH sides to a common criterion before comparing.
+// It reads ONLY the stated per-point %-drop of each datapoint, never the vendor.
+namespace isat {
+constexpr double kCanonicalPercentDrop = 20.0;  // most common industry convention
+constexpr double kBasisUncertaintyBand = 1.9;   // ratio a criterion diff could explain
+
+struct Point {
+    std::optional<double> percent_drop;  // |ΔL/L| %, or nullopt if basis unknown
+    double current;                      // amperes
+};
+
+// Parse a saturation_points array ([{percent_drop, current, temperature?}]),
+// dropping malformed entries; sorted with known-basis points first (mirrors
+// _coerce_points).
+inline std::vector<Point> coerce_points(const nlohmann::json& pts) {
+    std::vector<Point> out;
+    if (!pts.is_array()) return out;
+    for (const auto& p : pts) {
+        if (!p.is_object()) continue;
+        auto ci = p.find("current");
+        if (ci == p.end() || ci->is_null() || ci->is_boolean() || !ci->is_number()) continue;
+        double cur = ci->get<double>();
+        if (!(cur > 0)) continue;
+        std::optional<double> pd;
+        auto pi = p.find("percent_drop");
+        if (pi != p.end() && !pi->is_null() && !pi->is_boolean() && pi->is_number()) {
+            double v = pi->get<double>();
+            if (v >= 0) pd = v;
+        }
+        out.push_back({pd, cur});
+    }
+    std::sort(out.begin(), out.end(), [](const Point& a, const Point& b) {
+        bool an = !a.percent_drop.has_value(), bn = !b.percent_drop.has_value();
+        if (an != bn) return an < bn;  // known (false) sorts before unknown (true)
+        return a.percent_drop.value_or(0.0) < b.percent_drop.value_or(0.0);
+    });
+    return out;
+}
+
+// Best saturation representation for one candidate summary (mirrors
+// resolve_saturation_points priority): explicit saturation_points table, else
+// the legacy saturation_current scalar as one basis-unknown point. (The
+// inductancePoints-derived path runs upstream in Heaviside, which fills
+// saturation_points — Kelvin reads the already-resolved list.)
+inline std::vector<Point> resolve_points(const nlohmann::json& summary) {
+    auto it = summary.find("saturation_points");
+    if (it != summary.end() && it->is_array() && !it->empty()) {
+        auto pts = coerce_points(*it);
+        if (!pts.empty()) return pts;
+    }
+    auto sc = detail::jnum(summary, "saturation_current");
+    if (sc && *sc > 0) return {{std::nullopt, *sc}};
+    return {};
+}
+
+inline bool has_basis(const std::vector<Point>& pts) {
+    for (const auto& p : pts)
+        if (p.percent_drop) return true;
+    return false;
+}
+
+// I_sat interpolated to target_pct inductance drop; nullopt when no based points.
+// Clamps beyond the measured range rather than extrapolating a divergent slope.
+inline std::optional<double> isat_at_percent_drop(const std::vector<Point>& all, double target) {
+    std::vector<const Point*> pts;
+    for (const auto& p : all)
+        if (p.percent_drop) pts.push_back(&p);
+    if (pts.empty()) return std::nullopt;
+    for (const auto* p : pts)
+        if (std::abs(*p->percent_drop - target) < 1e-9) return p->current;
+    const Point* below = nullptr;  // greatest pd below target
+    const Point* above = nullptr;  // smallest pd above target
+    for (const auto* p : pts) {
+        if (*p->percent_drop < target && (!below || *p->percent_drop > *below->percent_drop))
+            below = p;
+        if (*p->percent_drop > target && (!above || *p->percent_drop < *above->percent_drop))
+            above = p;
+    }
+    if (below && above) {
+        double frac = (target - *below->percent_drop) / (*above->percent_drop - *below->percent_drop);
+        return below->current + frac * (above->current - below->current);
+    }
+    return below ? below->current : above->current;
+}
+
+// The single most representative I_sat when bases can't be matched: a based point
+// nearest the canonical criterion, else the lone scalar (mirrors _headline).
+inline std::optional<double> headline(const std::vector<Point>& pts) {
+    if (pts.empty()) return std::nullopt;
+    const Point* best = nullptr;
+    for (const auto& p : pts) {
+        if (!p.percent_drop) continue;
+        if (!best || std::abs(*p.percent_drop - kCanonicalPercentDrop) <
+                         std::abs(*best->percent_drop - kCanonicalPercentDrop))
+            best = &p;
+    }
+    return best ? best->current : pts.front().current;
+}
+
+enum class Verdict { Adequate, Shortfall, Uncertain };
+
+// Mirrors compare_isat: both based -> normalize + compare; else headline compare
+// that only calls SHORTFALL when the gap is too large for any basis diff.
+inline Verdict compare(const std::vector<Point>& op, const std::vector<Point>& sp, double margin) {
+    auto o_at = isat_at_percent_drop(op, kCanonicalPercentDrop);
+    auto s_at = isat_at_percent_drop(sp, kCanonicalPercentDrop);
+    if (o_at && s_at) return (*s_at >= margin * *o_at) ? Verdict::Adequate : Verdict::Shortfall;
+    auto o_raw = headline(op), s_raw = headline(sp);
+    if (!o_raw || !s_raw) return Verdict::Uncertain;
+    double ratio = *s_raw / *o_raw;
+    if (ratio * kBasisUncertaintyBand < margin) return Verdict::Shortfall;
+    return Verdict::Uncertain;
+}
+}  // namespace isat
+
+// saturation_current gate: %-drop-normalized when either side states a real
+// inductance-drop basis; otherwise the raw HIGHER_BETTER numeric compare (legacy
+// basis-unknown scalars — preserves existing pass/warn/fail granularity).
+inline const char* compare_saturation_current(const ParamSpec& spec, const nlohmann::json& orig,
+                                              const nlohmann::json& sub) {
+    std::vector<isat::Point> op = isat::resolve_points(orig), sp = isat::resolve_points(sub);
+    bool o_has = !op.empty(), s_has = !sp.empty();
+    if (!o_has && !s_has) return UNVERIFIED;
+    if (!s_has) return spec.exclude_missing_sub ? FAIL : UNVERIFIED;
+    if (!o_has) return UNVERIFIED;
+    if (!isat::has_basis(op) && !isat::has_basis(sp))
+        return compare_numeric(spec, detail::jnum(orig, spec.key), detail::jnum(sub, spec.key));
+    switch (isat::compare(op, sp, spec.tol_factor)) {
+        case isat::Verdict::Adequate:  return PASS;
+        case isat::Verdict::Shortfall: return FAIL;
+        case isat::Verdict::Uncertain: return WARN;
+    }
+    return WARN;  // unreachable
+}
+
 inline const char* compare_param(const ParamSpec& spec, const nlohmann::json& orig,
                                  const nlohmann::json& sub) {
+    if (spec.key == "saturation_current") return compare_saturation_current(spec, orig, sub);
     if (spec.dir == Dir::ClassMatch)
         return compare_class(spec, detail::jstr(orig, spec.key), detail::jstr(sub, spec.key));
     if (spec.dir == Dir::ExactMatch) return compare_exact(spec, orig, sub);
@@ -270,7 +411,11 @@ inline std::vector<std::pair<std::string, std::string>> evaluate_params(
     const std::string& category, const nlohmann::json& orig, const nlohmann::json& sub) {
     std::vector<std::pair<std::string, std::string>> out;
     for (const ParamSpec& spec : params_for(category)) {
-        if (!detail::present(orig, spec.key) && !detail::present(sub, spec.key)) continue;
+        bool has_data = detail::present(orig, spec.key) || detail::present(sub, spec.key);
+        if (spec.key == "saturation_current")  // a multi-point table counts as data too
+            has_data = has_data || detail::present(orig, "saturation_points") ||
+                       detail::present(sub, "saturation_points");
+        if (!has_data) continue;
         out.emplace_back(spec.key, compare_param(spec, orig, sub));
     }
     return out;
