@@ -149,11 +149,17 @@ MagneticConstraints magnetic_constraints(const json& req) {
     if (!c.peak_current) c.peak_current = opt_num(req, "maximumCurrent");
     c.rms_current = opt_num(req, "rmsCurrent");
     if (!c.rms_current) c.rms_current = opt_num(req, "ratedCurrent");
-    // kind hint (annotation only): a non-empty turnsRatios array reads as a transformer.
+    // kind hint (annotation only): a non-empty turnsRatios array reads as a transformer. Its first entry
+    // is the primary:secondary ratio select_magnetic ranks catalog transformers against.
     if (req.is_object() && req.contains("turnsRatios") && req.at("turnsRatios").is_array() &&
-        !req.at("turnsRatios").empty())
+        !req.at("turnsRatios").empty()) {
         c.kind = "transformer";
-    else
+        try {
+            double tr = PEAS::resolve_dimensional_values(req.at("turnsRatios").at(0));
+            if (tr > 0) c.target_turns_ratio = tr;
+        } catch (const std::exception&) {
+        }
+    } else
         c.kind = "inductor";
     return c;
 }

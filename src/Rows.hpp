@@ -140,6 +140,7 @@ struct MagneticRow : RowBase {
     double rated_current = kNaN();        // A  — max(ratedCurrents[])
     double dcr = kNaN();                  // Ω  — dcResistance (worst-case / maximum), else dcResistances[0]
     double srf = kNaN();                  // Hz — selfResonantFrequency
+    double turns_ratio = kNaN();          // —  electrical[0].turnsRatios[0] (transformers): primary:secondary
     std::string device_type;              // electrical[0].subtype (inductor/transformer/…): annotated, never gated
     std::string family;                   // manufacturerInfo.family or part.family (series, for context)
     bool is_production = false;

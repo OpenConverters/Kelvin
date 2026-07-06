@@ -576,6 +576,7 @@ namespace {
 constexpr double kIndW = 1.0;    // weight: |ln(L/target)| closeness
 constexpr double kSatW = 0.5;    // weight: peak-current saturation shortfall
 constexpr double kRatW = 0.25;   // weight: rms-current rated shortfall
+constexpr double kTurnsW = 1.0;  // weight: |ln(turnsRatio/target)| closeness (transformer selection)
 // Penalty a candidate pays for lacking the datum a set target would score against (ranked below
 // parts that have the datum but roughly this far off — never dropped).
 const double kMissingInd = std::log(3.0);   // ~1.10  (≈ a 3x inductance mismatch)
@@ -624,6 +625,7 @@ json select_magnetic(const Shard<MagneticRow>& shard, const MagneticConstraints&
     const bool have_L = c.target_inductance && *c.target_inductance > 0;
     const bool have_ipk = c.peak_current && *c.peak_current > 0;
     const bool have_irms = c.rms_current && *c.rms_current > 0;
+    const bool have_TR = c.target_turns_ratio && *c.target_turns_ratio > 0;
 
     auto penalty = [&](const MagneticRow* m) -> double {
         double p = 0.0;
@@ -644,6 +646,12 @@ json select_magnetic(const Shard<MagneticRow>& shard, const MagneticConstraints&
                 p += kRatW * std::max(0.0, std::log(*c.rms_current / m->rated_current));
             else
                 p += kRatW * kMissingCur;
+        }
+        if (have_TR) {
+            if (present(m->turns_ratio) && m->turns_ratio > 0)
+                p += kTurnsW * std::fabs(std::log(m->turns_ratio / *c.target_turns_ratio));
+            else
+                p += kTurnsW * kMissingInd;  // no ratio datum → sink but never drop
         }
         return p;
     };
@@ -666,6 +674,7 @@ json select_magnetic(const Shard<MagneticRow>& shard, const MagneticConstraints&
     result["target"] = {{"inductance", have_L ? json(*c.target_inductance) : json(nullptr)},
                         {"peakCurrent", have_ipk ? json(*c.peak_current) : json(nullptr)},
                         {"rmsCurrent", have_irms ? json(*c.rms_current) : json(nullptr)},
+                        {"turnsRatio", have_TR ? json(*c.target_turns_ratio) : json(nullptr)},
                         {"kind", c.kind}};
 
     json cands = json::array();
@@ -676,8 +685,10 @@ json select_magnetic(const Shard<MagneticRow>& shard, const MagneticConstraints&
         int is = inductance_status(have_L, m->inductance, have_L ? *c.target_inductance : 1.0);
         int ss = headroom_status(have_ipk, m->saturation_current, have_ipk ? *c.peak_current : 1.0);
         int rs = headroom_status(have_irms, m->rated_current, have_irms ? *c.rms_current : 1.0);
+        // Turns-ratio closeness reuses the inductance ±30 % / factor-2 bands (same "match a value" shape).
+        int trs = inductance_status(have_TR, m->turns_ratio, have_TR ? *c.target_turns_ratio : 1.0);
         int overall = -1;  // worst of the evaluated dimensions; -1 => nothing evaluable
-        for (int s : {is, ss, rs})
+        for (int s : {is, ss, rs, trs})
             if (s >= 0) overall = (overall < 0) ? s : std::min(overall, s);
 
         cd["margins"] = {
@@ -696,17 +707,23 @@ json select_magnetic(const Shard<MagneticRow>& shard, const MagneticConstraints&
              (have_irms && present(m->rated_current))
                  ? num_or_null(m->rated_current / *c.rms_current)
                  : json(nullptr)},
+            {"turns_ratio_ratio",
+             (have_TR && present(m->turns_ratio) && m->turns_ratio > 0)
+                 ? num_or_null(m->turns_ratio / *c.target_turns_ratio)
+                 : json(nullptr)},
         };
         cd["verdict"] = verdict_str(overall);
         cd["verdictByDimension"] = {{"inductance", verdict_str(is)},
                                     {"saturationCurrent", verdict_str(ss)},
-                                    {"ratedCurrent", verdict_str(rs)}};
+                                    {"ratedCurrent", verdict_str(rs)},
+                                    {"turnsRatio", verdict_str(trs)}};
         cd["evidence"] = {{"deviceType", m->device_type},
                           {"family", m->family},
                           {"isProduction", m->is_production},
                           {"inductance", num_or_null(m->inductance)},
                           {"saturationCurrent", num_or_null(m->saturation_current)},
                           {"ratedCurrent", num_or_null(m->rated_current)},
+                          {"turnsRatio", num_or_null(m->turns_ratio)},
                           {"dcr", num_or_null(m->dcr)},
                           {"selfResonantFrequency", num_or_null(m->srf)}};
         cd["sortKey"] = {{"metric", "best_fit"}, {"penalty", penalty(m)}};

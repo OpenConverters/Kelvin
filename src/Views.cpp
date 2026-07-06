@@ -541,6 +541,17 @@ std::optional<MagneticRow> extract_magnetic(const json& env) {
         if (dcr && *dcr > 0) r.dcr = *dcr;
         auto srf = get_num(elec, "selfResonantFrequency");
         if (srf && *srf > 0) r.srf = *srf;
+        // Transformer turns ratio (primary:secondary): electrical[0].turnsRatios[0] (a dimWithTol). Lets
+        // select_magnetic rank a catalog transformer by how close its ratio is to the design's required
+        // ratio — the meaningful match for flyback/isolated transformers (TAS has no per-winding structure).
+        const json* trs = obj_get(elec, "turnsRatios");
+        if (trs && trs->is_array() && !trs->empty()) {
+            try {
+                double tr = PEAS::resolve_dimensional_values(trs->front());
+                if (tr > 0) r.turns_ratio = tr;
+            } catch (const std::exception&) {
+            }
+        }
         r.device_type = get_str(elec, "subtype").value_or("");
     }
 

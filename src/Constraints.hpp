@@ -159,6 +159,7 @@ struct MagneticConstraints {
     std::optional<double> target_inductance;  // H — magnetizingInductance / inductance / desiredInductance
     std::optional<double> peak_current;       // A — operating-point peak (saturation-current headroom)
     std::optional<double> rms_current;        // A — operating-point rms (rated-current headroom)
+    std::optional<double> target_turns_ratio; // — designRequirements.turnsRatios[0] (transformers)
     std::string kind;                          // "inductor"/"transformer" hint — annotation only, never gates
     void validate() const {}                   // never throws — imperfect matches are still returned
 };

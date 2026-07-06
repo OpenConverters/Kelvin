@@ -221,6 +221,7 @@ void row_io(Ar& ar, MagneticRow& r) {
     ar.dbl(r.rated_current);
     ar.dbl(r.dcr);
     ar.dbl(r.srf);
+    ar.dbl(r.turns_ratio);
     ar.str(r.device_type);
     ar.str(r.family);
     ar.boolean(r.is_production);
