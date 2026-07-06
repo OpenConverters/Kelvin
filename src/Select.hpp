@@ -56,4 +56,13 @@ json select_varistor(const Shard<VaristorRow>& shard, const VaristorConstraints&
                      VaristorTiebreaker tb, size_t max_candidates = kDefaultMaxCandidates,
                      RecordFetcher* fetcher = nullptr, const MfrPolicy& mfr = {});
 
+// ---- Magnetic (from-spec, rank-not-gate) -----------------------------------
+// Unlike every other selector this one NEVER hard-gates: it ranks the whole catalogue toward the
+// (all-optional) targets and returns the top-N even when nothing satisfies them, each candidate
+// carrying per-dimension margins + an overall pass/marginal/fail verdict. It throws NoCandidates
+// only when there is literally nothing to rank (an empty shard, or an allowlist that admits none).
+json select_magnetic(const Shard<MagneticRow>& shard, const MagneticConstraints& c,
+                     size_t max_candidates = kDefaultMaxCandidates,
+                     RecordFetcher* fetcher = nullptr, const MfrPolicy& mfr = {});
+
 }  // namespace kelvin

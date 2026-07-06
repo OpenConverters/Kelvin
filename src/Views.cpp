@@ -455,4 +455,101 @@ std::optional<VaristorRow> extract_varistor(const json& env) {
     return r;
 }
 
+// ---- Magnetic extractor ----------------------------------------------------
+namespace {
+// A single representative saturation current (A) for one electrical entry:
+//   1. saturationCurrentPeak scalar (the datasheet headline), else
+//   2. the saturationCurrents [{percentInductanceDrop,current}] table — the current at the point
+//      nearest the 20 % inductance-drop industry convention (falls back to the largest current when
+//      no point states a basis). Returns NaN when neither is present.
+double magnetic_saturation_current(const json& elec) {
+    auto peak = get_num(elec, "saturationCurrentPeak");
+    if (peak && *peak > 0) return *peak;
+    const json* tbl = obj_get(elec, "saturationCurrents");
+    if (tbl && tbl->is_array()) {
+        const json* best = nullptr;
+        double best_dist = 0.0, max_cur = kNaN();
+        for (const auto& p : *tbl) {
+            if (!p.is_object()) continue;
+            auto cur = get_num(p, "current");
+            if (!cur || *cur <= 0) continue;
+            if (!present(max_cur) || *cur > max_cur) max_cur = *cur;
+            auto pd = get_num(p, "percentInductanceDrop");
+            if (pd) {
+                double d = std::fabs(*pd - 20.0);
+                if (!best || d < best_dist) { best = &p; best_dist = d; }
+            }
+        }
+        if (best) return get_num(*best, "current").value_or(kNaN());
+        return max_cur;  // no stated basis -> the largest quoted current
+    }
+    return kNaN();
+}
+}  // namespace
+
+std::optional<MagneticRow> extract_magnetic(const json& env) {
+    const json* mag = obj_get(env, "magnetic");
+    if (!mag) return std::nullopt;
+    const json* mi = obj_get(*mag, "manufacturerInfo");
+    if (!mi) return std::nullopt;
+    const json* di = obj_get(*mi, "datasheetInfo");
+    if (!di) return std::nullopt;
+    const json empty = json::object();
+    const json* part = obj_get(*di, "part");
+    if (!part) part = &empty;
+
+    // Identity: reference (or part.partNumber) + manufacturer name. As with every family, a row
+    // without an identity is unreadable (skipped, counted) — that is not a spec gate.
+    auto mpn = get_str(*mi, "reference");
+    if (!mpn) mpn = get_str(*part, "partNumber");
+    auto manuf = get_str(*mi, "name");
+    if (!mpn || !manuf) return std::nullopt;
+
+    MagneticRow r;
+    r.mpn = *mpn;
+    r.manufacturer = *manuf;
+
+    // electrical is an ARRAY; the first entry is the primary-winding projection we rank on.
+    const json* elec_arr = obj_get(*di, "electrical");
+    if (elec_arr && elec_arr->is_array() && !elec_arr->empty() && elec_arr->front().is_object()) {
+        const json& elec = elec_arr->front();
+        auto L = resolve_field(elec, "inductance");
+        if (L && *L > 0) r.inductance = *L;
+        r.saturation_current = magnetic_saturation_current(elec);
+        const json* rc = obj_get(elec, "ratedCurrents");
+        if (rc && rc->is_array()) {
+            double best = kNaN();
+            for (const auto& v : *rc)
+                if (v.is_number() && !v.is_boolean()) {
+                    double x = v.get<double>();
+                    if (x > 0 && (!present(best) || x > best)) best = x;
+                }
+            r.rated_current = best;
+        }
+        // DCR: prefer the worst-case (maximum) bound; fall back to the plural dcResistances[0].
+        auto dcr = resolve_field(elec, "dcResistance", PEAS::DimensionalValues::MAXIMUM);
+        if (!dcr) {
+            const json* dcrs = obj_get(elec, "dcResistances");
+            if (dcrs && dcrs->is_array() && !dcrs->empty()) {
+                try {
+                    dcr = PEAS::resolve_dimensional_values(dcrs->front(),
+                                                           PEAS::DimensionalValues::MAXIMUM);
+                } catch (const std::exception&) {
+                }
+            }
+        }
+        if (dcr && *dcr > 0) r.dcr = *dcr;
+        auto srf = get_num(elec, "selfResonantFrequency");
+        if (srf && *srf > 0) r.srf = *srf;
+        r.device_type = get_str(elec, "subtype").value_or("");
+    }
+
+    std::string fam = get_str(*mi, "family").value_or("");
+    if (fam.empty()) fam = get_str(*part, "family").value_or("");
+    r.family = fam;
+    auto status = get_str(*mi, "status");
+    r.is_production = status.has_value() && *status == "production";
+    return r;
+}
+
 }  // namespace kelvin

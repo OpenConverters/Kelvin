@@ -214,6 +214,19 @@ void row_io(Ar& ar, VaristorRow& r) {
 }
 
 template <class Ar>
+void row_io(Ar& ar, MagneticRow& r) {
+    io_base(ar, r);
+    ar.dbl(r.inductance);
+    ar.dbl(r.saturation_current);
+    ar.dbl(r.rated_current);
+    ar.dbl(r.dcr);
+    ar.dbl(r.srf);
+    ar.str(r.device_type);
+    ar.str(r.family);
+    ar.boolean(r.is_production);
+}
+
+template <class Ar>
 void row_io(Ar& ar, ControllerRow& r) {
     io_base(ar, r);
     ar.dbl(r.vref);
@@ -475,6 +488,9 @@ Shard<BjtRow> build_bjt_shard(const std::string& p, const Shard<BjtRow>* prev) {
 Shard<VaristorRow> build_varistor_shard(const std::string& p, const Shard<VaristorRow>* prev) {
     return build_generic<VaristorRow>(Family::Varistor, p, extract_varistor, prev);
 }
+Shard<MagneticRow> build_magnetic_shard(const std::string& p, const Shard<MagneticRow>* prev) {
+    return build_generic<MagneticRow>(Family::Magnetic, p, extract_magnetic, prev);
+}
 
 std::string serialize_shard(const Shard<MosfetRow>& s) { return serialize_impl(s); }
 std::string serialize_shard(const Shard<DiodeRow>& s) { return serialize_impl(s); }
@@ -484,6 +500,7 @@ std::string serialize_shard(const Shard<ControllerRow>& s) { return serialize_im
 std::string serialize_shard(const Shard<IgbtRow>& s) { return serialize_impl(s); }
 std::string serialize_shard(const Shard<BjtRow>& s) { return serialize_impl(s); }
 std::string serialize_shard(const Shard<VaristorRow>& s) { return serialize_impl(s); }
+std::string serialize_shard(const Shard<MagneticRow>& s) { return serialize_impl(s); }
 
 namespace {
 void write_bytes(const std::string& path, const std::string& bytes) {
@@ -501,6 +518,7 @@ void write_shard(const std::string& p, const Shard<ControllerRow>& s) { write_by
 void write_shard(const std::string& p, const Shard<IgbtRow>& s) { write_bytes(p, serialize_impl(s)); }
 void write_shard(const std::string& p, const Shard<BjtRow>& s) { write_bytes(p, serialize_impl(s)); }
 void write_shard(const std::string& p, const Shard<VaristorRow>& s) { write_bytes(p, serialize_impl(s)); }
+void write_shard(const std::string& p, const Shard<MagneticRow>& s) { write_bytes(p, serialize_impl(s)); }
 
 Shard<MosfetRow> deserialize_mosfet_shard(const std::string& b) { return deserialize_impl<MosfetRow>(b, Family::Mosfet); }
 Shard<DiodeRow> deserialize_diode_shard(const std::string& b) { return deserialize_impl<DiodeRow>(b, Family::Diode); }
@@ -510,6 +528,7 @@ Shard<ControllerRow> deserialize_controller_shard(const std::string& b) { return
 Shard<IgbtRow> deserialize_igbt_shard(const std::string& b) { return deserialize_impl<IgbtRow>(b, Family::Igbt); }
 Shard<BjtRow> deserialize_bjt_shard(const std::string& b) { return deserialize_impl<BjtRow>(b, Family::Bjt); }
 Shard<VaristorRow> deserialize_varistor_shard(const std::string& b) { return deserialize_impl<VaristorRow>(b, Family::Varistor); }
+Shard<MagneticRow> deserialize_magnetic_shard(const std::string& b) { return deserialize_impl<MagneticRow>(b, Family::Magnetic); }
 
 Shard<MosfetRow> read_mosfet_shard(const std::string& p) { return deserialize_mosfet_shard(read_file(p)); }
 Shard<DiodeRow> read_diode_shard(const std::string& p) { return deserialize_diode_shard(read_file(p)); }
@@ -519,6 +538,7 @@ Shard<ControllerRow> read_controller_shard(const std::string& p) { return deseri
 Shard<IgbtRow> read_igbt_shard(const std::string& p) { return deserialize_igbt_shard(read_file(p)); }
 Shard<BjtRow> read_bjt_shard(const std::string& p) { return deserialize_bjt_shard(read_file(p)); }
 Shard<VaristorRow> read_varistor_shard(const std::string& p) { return deserialize_varistor_shard(read_file(p)); }
+Shard<MagneticRow> read_magnetic_shard(const std::string& p) { return deserialize_magnetic_shard(read_file(p)); }
 
 bool shard_is_stale(const ShardMeta& meta, const std::string& ndjson_path) {
     std::ifstream f(ndjson_path, std::ios::binary | std::ios::ate);

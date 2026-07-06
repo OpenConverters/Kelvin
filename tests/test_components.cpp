@@ -17,7 +17,7 @@ namespace {
 std::string fixtures_dir() { return std::string(KELVIN_TEST_DIR) + "/fixtures"; }
 
 // A minimal TAS with: a real mosfet seed, a body-diode (deferred), a numerical aid (deferred),
-// a magnetic (deferred), and a resistor seed.
+// a magnetic (now real-selected, rank-not-gate), and a resistor seed.
 json make_tas() {
     return json::parse(R"({
       "inputs": {"designRequirements": {"inputVoltage": 100.0, "switchingFrequency": 100000.0}},
@@ -60,8 +60,12 @@ TEST_CASE("components: select_components fills seeds and defers the rest", "[com
     // Csn1: numerical aid -> deferred (never sourced).
     REQUIRE(by_ref("Csn1").at("filled").get<bool>() == false);
     REQUIRE(by_ref("Csn1").at("deferred").get<std::string>().find("numerical") != std::string::npos);
-    // T1: magnetic -> deferred to MKF.
-    REQUIRE(by_ref("T1").at("deferred").get<std::string>().find("MKF") != std::string::npos);
+    // T1: magnetic -> now REAL-selected (rank-not-gate). With a spec-less seed the selector still
+    // returns the closest catalogue magnetics ranked by relevance, so T1 is filled (no MKF defer).
+    json t1 = by_ref("T1");
+    REQUIRE(t1.at("filled").get<bool>() == true);
+    REQUIRE(t1.at("category").get<std::string>() == "magnetic");
+    REQUIRE(t1.contains("mpn"));
     // Rb: resistor is sourced.
     REQUIRE(by_ref("Rb").at("filled").get<bool>() == true);
 }

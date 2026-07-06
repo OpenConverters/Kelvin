@@ -32,5 +32,6 @@ std::optional<ControllerRow> extract_controller(const json& env);
 std::optional<IgbtRow> extract_igbt(const json& env);
 std::optional<BjtRow> extract_bjt(const json& env);
 std::optional<VaristorRow> extract_varistor(const json& env);
+std::optional<MagneticRow> extract_magnetic(const json& env);
 
 }  // namespace kelvin

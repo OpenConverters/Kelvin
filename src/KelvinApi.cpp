@@ -64,6 +64,7 @@ Family family_from_string(const std::string& s) {
     if (s == "igbt" || s == "igbts") return Family::Igbt;
     if (s == "bjt" || s == "bjts") return Family::Bjt;
     if (s == "varistor" || s == "varistors") return Family::Varistor;
+    if (s == "magnetic" || s == "magnetics") return Family::Magnetic;
     throw InvalidOptions("unknown category: " + s);
 }
 
@@ -191,6 +192,18 @@ const Shard<VaristorRow>& Engine::varistor_shard() {
             [](const std::string& p, const Shard<VaristorRow>& s) { write_shard(p, s); });
     return *varistor_;
 }
+const Shard<MagneticRow>& Engine::magnetic_shard() {
+    if (!magnetic_)
+        magnetic_ = load_or_build<MagneticRow>(
+            ndjson_path(Family::Magnetic), shard_path(Family::Magnetic), !cache_dir_.empty(), quiet_,
+            "magnetic",
+            [](const std::string& p, const Shard<MagneticRow>* pv) {
+                return build_magnetic_shard(p, pv);
+            },
+            [](const std::string& p) { return read_magnetic_shard(p); },
+            [](const std::string& p, const Shard<MagneticRow>& s) { write_shard(p, s); });
+    return *magnetic_;
+}
 
 ShardMeta Engine::load_shard_bytes(const std::string& family, const std::string& bytes) {
     Family f = family_from_string(family);
@@ -205,6 +218,7 @@ ShardMeta Engine::load_shard_bytes(const std::string& family, const std::string&
         case Family::Igbt: igbt_ = deserialize_igbt_shard(bytes); return igbt_->meta;
         case Family::Bjt: bjt_ = deserialize_bjt_shard(bytes); return bjt_->meta;
         case Family::Varistor: varistor_ = deserialize_varistor_shard(bytes); return varistor_->meta;
+        case Family::Magnetic: magnetic_ = deserialize_magnetic_shard(bytes); return magnetic_->meta;
     }
     throw InvalidOptions("unknown family");
 }
@@ -220,6 +234,7 @@ ShardMeta Engine::build_index(const std::string& family) {
         case Family::Igbt: igbt_.reset(); return igbt_shard().meta;
         case Family::Bjt: bjt_.reset(); return bjt_shard().meta;
         case Family::Varistor: varistor_.reset(); return varistor_shard().meta;
+        case Family::Magnetic: magnetic_.reset(); return magnetic_shard().meta;
     }
     throw InvalidOptions("unknown family");
 }
@@ -327,6 +342,23 @@ json Engine::select(const std::string& category, const json& req, const json& op
         std::optional<FileRecordFetcher> fetch;
         if (include_env) fetch.emplace(ndjson_path(Family::Varistor));
         return select_varistor(sh, c, tb, max_cand, include_env ? &*fetch : nullptr, mfr);
+    }
+    if (f == Family::Magnetic) {
+        MagneticConstraints c = magnetic_constraints(req);
+        // Operating-point currents may be supplied out-of-band (they are not in the magnetic
+        // designRequirements block): options.operatingPoint {peakCurrent, rmsCurrent}. Absent ->
+        // those ranking terms stay neutral (the part is still ranked by inductance closeness).
+        if (options.contains("operatingPoint")) {
+            const json& op = options.at("operatingPoint");
+            if (auto p = opt_num(op, "peakCurrent")) c.peak_current = p;
+            if (auto r = opt_num(op, "rmsCurrent")) c.rms_current = r;
+        }
+        if (auto p = opt_num(options, "peakCurrent")) c.peak_current = p;
+        if (auto r = opt_num(options, "rmsCurrent")) c.rms_current = r;
+        const Shard<MagneticRow>& sh = magnetic_shard();
+        std::optional<FileRecordFetcher> fetch;
+        if (include_env) fetch.emplace(ndjson_path(Family::Magnetic));
+        return select_magnetic(sh, c, max_cand, include_env ? &*fetch : nullptr, mfr);
     }
     // controller
     auto topo = opt_str(options, "topology");
@@ -453,10 +485,14 @@ json select_components(Engine& engine, const json& tas, const json& options) {
             std::string category;
             json sel_options = json::object();
             if (family == "magnetic") {
-                rec["filled"] = false;
-                rec["deferred"] = "MKF magnetic-first";
-                out["components"].push_back(rec);
-                continue;
+                // Rank-not-gate: the magnetic selector returns the closest catalogue matches even
+                // when none fully meet the spec, so we no longer defer to MKF — we select here.
+                category = "magnetic";
+                // Best-effort operating-point currents (peak for saturation, rms for rating) when
+                // the seed carries them; absent -> ranked by inductance closeness alone.
+                if (auto p = dr_scalar(req, "peakCurrent")) sel_options["peakCurrent"] = *p;
+                else if (auto mc = dr_scalar(req, "maximumCurrent")) sel_options["peakCurrent"] = *mc;
+                if (auto r = dr_scalar(req, "rmsCurrent")) sel_options["rmsCurrent"] = *r;
             } else if (family == "semiconductor") {
                 std::string kind = slot.is_object() && !slot.empty() ? slot.begin().key() : "";
                 rec["kind"] = kind;

@@ -26,6 +26,9 @@ enum class Family : uint32_t {
     Igbt = 6,
     Bjt = 7,
     Varistor = 8,
+    // Magnetic (from-spec): unlike the parametric families this one RANKS the whole catalogue
+    // and returns the top-N even when nothing meets the spec (no hard gate) — see select_magnetic.
+    Magnetic = 9,
 };
 
 inline const char* family_name(Family f) {
@@ -38,6 +41,7 @@ inline const char* family_name(Family f) {
         case Family::Igbt: return "igbt";
         case Family::Bjt: return "bjt";
         case Family::Varistor: return "varistor";
+        case Family::Magnetic: return "magnetic";
     }
     return "unknown";
 }
@@ -52,6 +56,7 @@ inline const char* family_file(Family f) {
         case Family::Igbt: return "igbts.ndjson";
         case Family::Bjt: return "bjts.ndjson";
         case Family::Varistor: return "varistors.ndjson";
+        case Family::Magnetic: return "magnetics.ndjson";
     }
     return "";
 }
@@ -122,6 +127,23 @@ struct VaristorRow : RowBase {
     double max_continuous_dc_voltage = 0, capacitance = 0;
     std::string technology;
     bool is_production = false;
+};
+
+// A catalogue magnetic (inductor / transformer / coupled-inductor / choke / chip-bead). Every
+// electrical datum is nullable (NaN when the datasheet omits it) — that is deliberate: the
+// magnetic selector RANKS on what is present rather than gating on it, so a part with a null
+// saturation current is deprioritised, never dropped. Fields are the primary-winding projection
+// of manufacturerInfo.datasheetInfo.electrical[0] (the array's first entry).
+struct MagneticRow : RowBase {
+    double inductance = kNaN();           // H  — electrical[0].inductance (nominal)
+    double saturation_current = kNaN();   // A  — saturationCurrentPeak, else the ~20%-drop table headline
+    double rated_current = kNaN();        // A  — max(ratedCurrents[])
+    double dcr = kNaN();                  // Ω  — dcResistance (worst-case / maximum), else dcResistances[0]
+    double srf = kNaN();                  // Hz — selfResonantFrequency
+    std::string device_type;              // electrical[0].subtype (inductor/transformer/…): annotated, never gated
+    std::string family;                   // manufacturerInfo.family or part.family (series, for context)
+    bool is_production = false;
+    bool has_inductance() const { return present(inductance); }
 };
 
 struct ControllerRow : RowBase {

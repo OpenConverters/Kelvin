@@ -151,4 +151,16 @@ struct VaristorConstraints {
     }
 };
 
+// Magnetic constraints — deliberately ALL-OPTIONAL and never-throwing. The magnetic selector
+// ranks the whole catalogue toward these targets and returns the top-N even if none satisfy them
+// (the "magnetic-first fallback" the caller needs), so there is nothing to hard-validate: a
+// missing target simply makes that scoring term neutral. None of these fields gate a candidate.
+struct MagneticConstraints {
+    std::optional<double> target_inductance;  // H — magnetizingInductance / inductance / desiredInductance
+    std::optional<double> peak_current;       // A — operating-point peak (saturation-current headroom)
+    std::optional<double> rms_current;        // A — operating-point rms (rated-current headroom)
+    std::string kind;                          // "inductor"/"transformer" hint — annotation only, never gates
+    void validate() const {}                   // never throws — imperfect matches are still returned
+};
+
 }  // namespace kelvin

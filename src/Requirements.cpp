@@ -130,6 +130,34 @@ VaristorConstraints varistor_constraints(const json& req) {
     return c;
 }
 
+MagneticConstraints magnetic_constraints(const json& req) {
+    MagneticConstraints c;
+    // Target inductance (dimensionWithTolerance -> nominal): the MAS requirement is
+    // `magnetizingInductance` for both inductors and transformers; accept a couple of aliases.
+    for (const char* k : {"magnetizingInductance", "inductance", "desiredInductance"}) {
+        if (req.is_object() && req.contains(k)) {
+            try {
+                c.target_inductance = PEAS::resolve_dimensional_values(req.at(k));
+                break;
+            } catch (const std::exception&) {
+                // present-but-unresolvable -> leave the target neutral (rank-not-gate); keep trying.
+            }
+        }
+    }
+    // Operating-point currents (best-effort; absent -> those ranking terms stay neutral).
+    c.peak_current = opt_num(req, "peakCurrent");
+    if (!c.peak_current) c.peak_current = opt_num(req, "maximumCurrent");
+    c.rms_current = opt_num(req, "rmsCurrent");
+    if (!c.rms_current) c.rms_current = opt_num(req, "ratedCurrent");
+    // kind hint (annotation only): a non-empty turnsRatios array reads as a transformer.
+    if (req.is_object() && req.contains("turnsRatios") && req.at("turnsRatios").is_array() &&
+        !req.at("turnsRatios").empty())
+        c.kind = "transformer";
+    else
+        c.kind = "inductor";
+    return c;
+}
+
 // ---- tiebreaker <-> string -------------------------------------------------
 const char* to_string(IgbtTiebreaker t) {
     switch (t) {

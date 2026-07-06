@@ -3,12 +3,26 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <map>
+#include <set>
 #include <tuple>
 #include <vector>
 
 namespace kelvin {
 namespace {
+
+// Distinct manufacturers across the candidate POOL (every gate-passing row, or every ranked row for the
+// rank-not-gate families), sorted. Drives the GUI "restrict to one manufacturer" dropdown so it lists
+// EVERY vendor that has a fitting part — not just the vendors of the top-N candidates shown. Computed
+// over the full pool (before the diversity cap / allowlist), so it stays complete even under a restriction.
+template <class Row>
+json manufacturer_facet(const std::vector<const Row*>& pool) {
+    std::set<std::string> mfrs;
+    for (const Row* r : pool)
+        if (r && !r->manufacturer.empty()) mfrs.insert(r->manufacturer);
+    return json(std::vector<std::string>(mfrs.begin(), mfrs.end()));
+}
 
 // inf/NaN margin -> JSON null (Python float("inf") headrooms).
 json num_or_null(double x) {
@@ -102,6 +116,7 @@ json select_mosfet(const Shard<MosfetRow>& shard, const MosfetConstraints& c, Mo
     result["alternativesConsidered"] = passing.size();
     result["rejections"] = emit_rejections(rej);
     json cands = json::array();
+    result["manufacturers"] = manufacturer_facet(passing);
     const auto chosen = apply_mfr_policy(passing, max_candidates, mfr);
     for (size_t i = 0; i < chosen.size(); ++i) {
         const MosfetRow* m = chosen[i];
@@ -167,6 +182,7 @@ json select_diode(const Shard<DiodeRow>& shard, const DiodeConstraints& c, Diode
     result["alternativesConsidered"] = passing.size();
     result["rejections"] = emit_rejections(rej);
     json cands = json::array();
+    result["manufacturers"] = manufacturer_facet(passing);
     const auto chosen = apply_mfr_policy(passing, max_candidates, mfr);
     bool qrr_active = c.qrr_max.has_value() && *c.qrr_max != 0.0;
     for (size_t i = 0; i < chosen.size(); ++i) {
@@ -234,6 +250,7 @@ json select_capacitor(const Shard<CapacitorRow>& shard, const CapacitorConstrain
     result["alternativesConsidered"] = passing.size();
     result["rejections"] = emit_rejections(rej);
     json cands = json::array();
+    result["manufacturers"] = manufacturer_facet(passing);
     const auto chosen = apply_mfr_policy(passing, max_candidates, mfr);
     bool ripple_active = c.ripple_current_min.has_value() && *c.ripple_current_min > 0;
     for (size_t i = 0; i < chosen.size(); ++i) {
@@ -314,6 +331,7 @@ json select_controller(const Shard<ControllerRow>& shard, const ControllerConstr
     result["alternativesConsidered"] = passing.size();
     result["rejections"] = emit_rejections(rej);
     json cands = json::array();
+    result["manufacturers"] = manufacturer_facet(passing);
     const auto chosen = apply_mfr_policy(passing, max_candidates, mfr);
     for (size_t i = 0; i < chosen.size(); ++i) {
         const ControllerRow* x = chosen[i];
@@ -364,6 +382,7 @@ json select_resistor(const Shard<ResistorRow>& shard, const ResistorConstraints&
     result["alternativesConsidered"] = passing.size();  // == Python `considered`
     result["rejections"] = emit_rejections(rej);
     json cands = json::array();
+    result["manufacturers"] = manufacturer_facet(passing);
     const auto chosen = apply_mfr_policy(passing, max_candidates, mfr);
     for (size_t i = 0; i < chosen.size(); ++i) {
         const ResistorRow* r = chosen[i];
@@ -412,6 +431,7 @@ json select_igbt(const Shard<IgbtRow>& shard, const IgbtConstraints& c, IgbtTieb
     result["alternativesConsidered"] = passing.size();
     result["rejections"] = emit_rejections(rej);
     json cands = json::array();
+    result["manufacturers"] = manufacturer_facet(passing);
     const auto chosen = apply_mfr_policy(passing, max_candidates, mfr);
     for (size_t i = 0; i < chosen.size(); ++i) {
         const IgbtRow* g = chosen[i];
@@ -463,6 +483,7 @@ json select_bjt(const Shard<BjtRow>& shard, const BjtConstraints& c, BjtTiebreak
     result["alternativesConsidered"] = passing.size();
     result["rejections"] = emit_rejections(rej);
     json cands = json::array();
+    result["manufacturers"] = manufacturer_facet(passing);
     const auto chosen = apply_mfr_policy(passing, max_candidates, mfr);
     for (size_t i = 0; i < chosen.size(); ++i) {
         const BjtRow* b = chosen[i];
@@ -525,6 +546,7 @@ json select_varistor(const Shard<VaristorRow>& shard, const VaristorConstraints&
     result["alternativesConsidered"] = passing.size();
     result["rejections"] = emit_rejections(rej);
     json cands = json::array();
+    result["manufacturers"] = manufacturer_facet(passing);
     const auto chosen = apply_mfr_policy(passing, max_candidates, mfr);
     for (size_t i = 0; i < chosen.size(); ++i) {
         const VaristorRow* v = chosen[i];
@@ -540,6 +562,154 @@ json select_varistor(const Shard<VaristorRow>& shard, const VaristorConstraints&
                                    : json(nullptr)}};
         cd["sortKey"] = {{"clampingVoltage", v->clamping_voltage},
                          {"peakSurgeCurrent", v->peak_surge_current}};
+        cands.push_back(std::move(cd));
+    }
+    result["candidates"] = std::move(cands);
+    return result;
+}
+
+// ---- Magnetic (from-spec, rank-not-gate) -----------------------------------
+namespace {
+// Scoring weights — inductance closeness dominates; a sat-current / rated-current shortfall only
+// breaks near-ties. All terms are natural-log distances (dimensionless, scale-free), so a 2x
+// mismatch costs the same whether the target is 1 uH or 1 mH.
+constexpr double kIndW = 1.0;    // weight: |ln(L/target)| closeness
+constexpr double kSatW = 0.5;    // weight: peak-current saturation shortfall
+constexpr double kRatW = 0.25;   // weight: rms-current rated shortfall
+// Penalty a candidate pays for lacking the datum a set target would score against (ranked below
+// parts that have the datum but roughly this far off — never dropped).
+const double kMissingInd = std::log(3.0);   // ~1.10  (≈ a 3x inductance mismatch)
+const double kMissingCur = std::log(2.0);   // ~0.69  (≈ a 2x current shortfall)
+
+// Per-dimension verdict: 2=pass, 1=marginal, 0=fail, -1=not-applicable (target or datum absent).
+int inductance_status(bool have, double L, double target) {
+    if (!have || !present(L) || L <= 0) return -1;
+    double r = L / target;
+    if (r >= 1.0 / 1.3 && r <= 1.3) return 2;   // within ±30 %
+    if (r >= 0.5 && r <= 2.0) return 1;          // within a factor of 2
+    return 0;
+}
+int headroom_status(bool have, double val, double ref) {
+    if (!have || !present(val) || val <= 0) return -1;
+    double h = val / ref;
+    if (h >= 1.0) return 2;
+    if (h >= 0.8) return 1;
+    return 0;
+}
+const char* verdict_str(int v) {
+    switch (v) {
+        case 2: return "pass";
+        case 1: return "marginal";
+        case 0: return "fail";
+    }
+    return "unknown";
+}
+}  // namespace
+
+json select_magnetic(const Shard<MagneticRow>& shard, const MagneticConstraints& c,
+                     size_t max_candidates, RecordFetcher* fetcher, const MfrPolicy& mfr) {
+    c.validate();  // never throws — kept for structural parity with the other selectors
+    std::map<std::string, uint64_t> rej;
+    rej["unreadable_row"] = shard.meta.unreadable_row_count;
+
+    // RANK-NOT-GATE: every readable row is a candidate. We never drop a part for missing a spec —
+    // each instead carries per-dimension margins + a pass/marginal/fail verdict so the UI can show
+    // even imperfect matches. (There are no rejection buckets beyond the index-time unreadable count.)
+    std::vector<const MagneticRow*> all;
+    all.reserve(shard.rows.size());
+    for (const auto& m : shard.rows) all.push_back(&m);
+    if (all.empty())
+        throw NoCandidates("MagneticConstraints", emit_rejections(rej), shard.meta.source_line_count);
+
+    const bool have_L = c.target_inductance && *c.target_inductance > 0;
+    const bool have_ipk = c.peak_current && *c.peak_current > 0;
+    const bool have_irms = c.rms_current && *c.rms_current > 0;
+
+    auto penalty = [&](const MagneticRow* m) -> double {
+        double p = 0.0;
+        if (have_L) {
+            if (present(m->inductance) && m->inductance > 0)
+                p += kIndW * std::fabs(std::log(m->inductance / *c.target_inductance));
+            else
+                p += kIndW * kMissingInd;
+        }
+        if (have_ipk) {
+            if (present(m->saturation_current) && m->saturation_current > 0)
+                p += kSatW * std::max(0.0, std::log(*c.peak_current / m->saturation_current));
+            else
+                p += kSatW * kMissingCur;
+        }
+        if (have_irms) {
+            if (present(m->rated_current) && m->rated_current > 0)
+                p += kRatW * std::max(0.0, std::log(*c.rms_current / m->rated_current));
+            else
+                p += kRatW * kMissingCur;
+        }
+        return p;
+    };
+    // Unknown DCR sorts last among otherwise-equal parts (a real low-DCR part is preferred).
+    auto dcr_key = [](const MagneticRow* m) {
+        return present(m->dcr) ? m->dcr : std::numeric_limits<double>::infinity();
+    };
+    // Ascending tuple: (fit penalty, production first, lower DCR, source line) — deterministic.
+    std::sort(all.begin(), all.end(), [&](const MagneticRow* a, const MagneticRow* b) {
+        return std::make_tuple(penalty(a), a->is_production ? 0 : 1, dcr_key(a), a->lineno) <
+               std::make_tuple(penalty(b), b->is_production ? 0 : 1, dcr_key(b), b->lineno);
+    });
+
+    json result;
+    result["category"] = "magnetic";
+    result["tiebreaker"] = "best_fit";
+    result["totalRowsConsidered"] = shard.meta.source_line_count;
+    result["alternativesConsidered"] = all.size();
+    result["rejections"] = emit_rejections(rej);
+    result["target"] = {{"inductance", have_L ? json(*c.target_inductance) : json(nullptr)},
+                        {"peakCurrent", have_ipk ? json(*c.peak_current) : json(nullptr)},
+                        {"rmsCurrent", have_irms ? json(*c.rms_current) : json(nullptr)},
+                        {"kind", c.kind}};
+
+    json cands = json::array();
+    result["manufacturers"] = manufacturer_facet(all);
+    const auto chosen = apply_mfr_policy(all, max_candidates, mfr);
+    for (const MagneticRow* m : chosen) {
+        json cd = base_candidate(m, fetcher);
+        int is = inductance_status(have_L, m->inductance, have_L ? *c.target_inductance : 1.0);
+        int ss = headroom_status(have_ipk, m->saturation_current, have_ipk ? *c.peak_current : 1.0);
+        int rs = headroom_status(have_irms, m->rated_current, have_irms ? *c.rms_current : 1.0);
+        int overall = -1;  // worst of the evaluated dimensions; -1 => nothing evaluable
+        for (int s : {is, ss, rs})
+            if (s >= 0) overall = (overall < 0) ? s : std::min(overall, s);
+
+        cd["margins"] = {
+            {"inductance_ratio",
+             (have_L && present(m->inductance)) ? num_or_null(m->inductance / *c.target_inductance)
+                                                : json(nullptr)},
+            {"inductance_log_distance",
+             (have_L && present(m->inductance) && m->inductance > 0)
+                 ? num_or_null(std::fabs(std::log(m->inductance / *c.target_inductance)))
+                 : json(nullptr)},
+            {"saturation_headroom",
+             (have_ipk && present(m->saturation_current))
+                 ? num_or_null(m->saturation_current / *c.peak_current)
+                 : json(nullptr)},
+            {"rated_headroom",
+             (have_irms && present(m->rated_current))
+                 ? num_or_null(m->rated_current / *c.rms_current)
+                 : json(nullptr)},
+        };
+        cd["verdict"] = verdict_str(overall);
+        cd["verdictByDimension"] = {{"inductance", verdict_str(is)},
+                                    {"saturationCurrent", verdict_str(ss)},
+                                    {"ratedCurrent", verdict_str(rs)}};
+        cd["evidence"] = {{"deviceType", m->device_type},
+                          {"family", m->family},
+                          {"isProduction", m->is_production},
+                          {"inductance", num_or_null(m->inductance)},
+                          {"saturationCurrent", num_or_null(m->saturation_current)},
+                          {"ratedCurrent", num_or_null(m->rated_current)},
+                          {"dcr", num_or_null(m->dcr)},
+                          {"selfResonantFrequency", num_or_null(m->srf)}};
+        cd["sortKey"] = {{"metric", "best_fit"}, {"penalty", penalty(m)}};
         cands.push_back(std::move(cd));
     }
     result["candidates"] = std::move(cands);

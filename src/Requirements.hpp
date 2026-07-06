@@ -33,4 +33,10 @@ IgbtConstraints igbt_constraints(const json& req);
 BjtConstraints bjt_constraints(const json& req);
 VaristorConstraints varistor_constraints(const json& req);
 
+// Magnetic design requirements -> targets. Target inductance is the MAS `magnetizingInductance`
+// (falling back to `inductance` / `desiredInductance`), resolved from a dimensionWithTolerance.
+// Operating-point currents are read best-effort (peak/rms) — all fields are optional and this
+// never throws, because the magnetic path returns ranked matches even for a spec-less seed.
+MagneticConstraints magnetic_constraints(const json& req);
+
 }  // namespace kelvin
