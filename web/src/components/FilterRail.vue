@@ -20,7 +20,11 @@ watch(
 )
 
 function commitNum(f, side, raw) {
-  const v = parseSI(raw)
+  let v = parseSI(raw)
+  // scaled display columns (tol %, ppm): the user types display units, the shard
+  // stores the raw fraction — divide back before filtering
+  const col = props.family.columns.find((c) => c.f === f)
+  if (v != null && !Number.isNaN(v) && col?.scale) v = v / col.scale
   const next = JSON.parse(JSON.stringify(props.modelValue))
   next.num[f] = next.num[f] ?? {}
   if (v == null) delete next.num[f][side]
@@ -67,7 +71,10 @@ const rangeHint = (f) => {
   if (!r || r.present === 0) return ''
   const col = props.family.columns.find((c) => c.f === f)
   const scale = col?.scale ?? 1
-  return `${si(r.min * scale, col?.unit ?? '', 2)} … ${si(r.max * scale, col?.unit ?? '', 2)}`
+  const fmt = (v) => col?.plain
+    ? `${Number((v * scale).toPrecision(3))}${col.unit ? ` ${col.unit}` : ''}`
+    : si(v * scale, col?.unit ?? '', 2)
+  return `${fmt(r.min)} … ${fmt(r.max)}`
 }
 
 const numericFields = computed(() => props.family.columns.filter((c) => !c.str && !c.bool))
