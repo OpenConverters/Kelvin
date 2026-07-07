@@ -288,7 +288,7 @@ json Engine::select(const std::string& category, const json& req, const json& op
     Family f = family_from_string(category);
     // Browse-only families: no requirements emitter → no selector. Refuse loudly rather than
     // invent selection semantics (they get one when a review-gated selector lands).
-    if (f == Family::Analog || f == Family::Timing || f == Family::Connector)
+    if (f == Family::Analog || f == Family::Timing)
         throw InvalidOptions("no selector for '" + category + "' — browse-only family (use browse)");
     size_t max_cand = opt_size(options, "maxCandidates", kDefaultMaxCandidates);
     // Optional manufacturer controls (settings today, GUI-wired later; default
@@ -305,6 +305,16 @@ json Engine::select(const std::string& category, const json& req, const json& op
     // fetches the chosen record itself (HTTP Range).
     bool include_env = opt_bool(options, "includeEnvelope", true) && !data_dir_.empty();
 
+    if (f == Family::Connector) {
+        ConnectorConstraints c = connector_constraints(req);
+        c.exclude_discontinued = opt_bool(options, "excludeDiscontinued", true);
+        ConnectorTiebreaker tb = ConnectorTiebreaker::HighestCurrentMargin;
+        if (auto s = opt_str(options, "tiebreaker")) tb = connector_tiebreaker_from_string(*s);
+        const Shard<ConnectorRow>& sh = connector_shard();
+        std::optional<FileRecordFetcher> fetch;
+        if (include_env) fetch.emplace(ndjson_path(Family::Connector));
+        return select_connector(sh, c, tb, max_cand, include_env ? &*fetch : nullptr, mfr);
+    }
     if (f == Family::Mosfet) {
         auto op_fsw = op_fsw_of(options);
         MosfetConstraints c = mosfet_constraints(req, op_fsw);

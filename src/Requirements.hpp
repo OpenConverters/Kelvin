@@ -33,6 +33,11 @@ IgbtConstraints igbt_constraints(const json& req);
 BjtConstraints bjt_constraints(const json& req);
 VaristorConstraints varistor_constraints(const json& req);
 
+// Connector requirements -> constraints. Keys: positions (exact contact count),
+// minimumCurrentPerContact|ratedCurrentPerContact, minimumRatedVoltage|ratedVoltage,
+// family, matingPolarity|polarity. At least one gating key is required (validate()).
+ConnectorConstraints connector_constraints(const json& req);
+
 // Magnetic design requirements -> targets. Target inductance is the MAS `magnetizingInductance`
 // (falling back to `inductance` / `desiredInductance`), resolved from a dimensionWithTolerance.
 // Operating-point currents are read best-effort (peak/rms) — all fields are optional and this

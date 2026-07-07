@@ -259,7 +259,6 @@ FAMILIES.push(
     label: 'Connectors',
     tagline: 'board-to-board · headers · terminal blocks',
     glyph: 'J',
-    browseOnly: true,
     columns: [
       { f: 'positions', label: 'pos', unit: '', plain: true },
       { f: 'rated_current', label: 'I/contact', unit: 'A' },
@@ -273,7 +272,19 @@ FAMILIES.push(
       { f: 'interface_standard', label: 'Interface' },
       { f: 'series', label: 'Series' },
     ],
-    recommend: null,
+    recommend: {
+      intro: 'Positions, family and polarity gate exactly; ratings gate as minimums and rank by headroom. Set at least one gate.',
+      fields: [
+        { key: 'positions', label: 'Positions (exact)', unit: '', placeholder: '26' },
+        { key: 'minimumCurrentPerContact', label: 'Current per contact >=', unit: 'A', placeholder: '2' },
+        { key: 'minimumRatedVoltage', label: 'Rated voltage >=', unit: 'V', placeholder: '250' },
+      ],
+      facetFields: [
+        { key: 'family', label: 'Family', facet: 'family' },
+        { key: 'matingPolarity', label: 'Mating polarity', facet: 'polarity' },
+      ],
+      tiebreakers: ['highest_current_margin', 'highest_voltage_margin'],
+    },
   },
 )
 
@@ -304,4 +315,6 @@ export const MARGIN_LABELS = {
   saturation_headroom: 'Isat headroom',
   rated_headroom: 'I rated headroom',
   turns_ratio_ratio: 'n fit (part/target)',
+  current_margin: 'I/contact margin',
+  voltage_margin: 'V rated margin',
 }

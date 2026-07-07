@@ -151,6 +151,35 @@ struct VaristorConstraints {
     }
 };
 
+// ---- Connector (browse family graduating to a selector; no HS reference) ---
+// Gates are the physically disqualifying axes (position count, family, polarity);
+// electrical ratings gate as minimums and rank as headroom.
+enum class ConnectorTiebreaker { HighestCurrentMargin, HighestVoltageMargin };
+
+const char* to_string(ConnectorTiebreaker t);
+ConnectorTiebreaker connector_tiebreaker_from_string(const std::string& s);
+
+struct ConnectorConstraints {
+    std::optional<double> positions;        // exact contact count (a 10-pos is no 26-pos substitute)
+    std::optional<double> current_min;      // A per contact, part rating must be >=
+    std::optional<double> voltage_min;      // V, part rating must be >=
+    std::optional<std::string> family;      // boardToBoard / terminalBlock / ... (exact)
+    std::optional<std::string> polarity;    // male / female / hermaphroditic (exact)
+    bool exclude_discontinued = true;
+    void validate() const {
+        if (!positions && !current_min && !voltage_min && !family)
+            throw InvalidOptions(
+                "ConnectorConstraints: need at least one of positions / current_min / "
+                "voltage_min / family");
+        if (positions && !(*positions > 0))
+            throw InvalidOptions("ConnectorConstraints.positions must be positive");
+        if (current_min && !(*current_min > 0))
+            throw InvalidOptions("ConnectorConstraints.current_min must be positive");
+        if (voltage_min && !(*voltage_min > 0))
+            throw InvalidOptions("ConnectorConstraints.voltage_min must be positive");
+    }
+};
+
 // Magnetic constraints — deliberately ALL-OPTIONAL and never-throwing. The magnetic selector
 // ranks the whole catalogue toward these targets and returns the top-N even if none satisfy them
 // (the "magnetic-first fallback" the caller needs), so there is nothing to hard-validate: a

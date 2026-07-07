@@ -56,6 +56,14 @@ json select_varistor(const Shard<VaristorRow>& shard, const VaristorConstraints&
                      VaristorTiebreaker tb, size_t max_candidates = kDefaultMaxCandidates,
                      RecordFetcher* fetcher = nullptr, const MfrPolicy& mfr = {});
 
+// Connector: gates on the physically disqualifying axes (exact position count, family,
+// polarity) and on minimum electrical ratings — a part with an UNDOCUMENTED gated rating is
+// rejected (counted as *_undocumented), never assumed adequate. Survivors rank by rating
+// headroom.
+json select_connector(const Shard<ConnectorRow>& shard, const ConnectorConstraints& c,
+                      ConnectorTiebreaker tb, size_t max_candidates = kDefaultMaxCandidates,
+                      RecordFetcher* fetcher = nullptr, const MfrPolicy& mfr = {});
+
 // ---- Magnetic (from-spec, rank-not-gate) -----------------------------------
 // Unlike every other selector this one NEVER hard-gates: it ranks the whole catalogue toward the
 // (all-optional) targets and returns the top-N even when nothing satisfies them, each candidate

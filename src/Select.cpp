@@ -607,6 +607,91 @@ const char* verdict_str(int v) {
 }
 }  // namespace
 
+json select_connector(const Shard<ConnectorRow>& shard, const ConnectorConstraints& c,
+                      ConnectorTiebreaker tb, size_t max_candidates, RecordFetcher* fetcher,
+                      const MfrPolicy& mfr) {
+    c.validate();
+    std::map<std::string, uint64_t> rej;
+    rej["unreadable_row"] = shard.meta.unreadable_row_count;
+    std::vector<const ConnectorRow*> passing;
+    for (const auto& v : shard.rows) {
+        if (c.exclude_discontinued && !v.is_production) { rej["discontinued"]++; continue; }
+        if (c.family && v.family != *c.family) { rej["family_mismatch"]++; continue; }
+        if (c.polarity && v.polarity != *c.polarity) { rej["polarity_mismatch"]++; continue; }
+        // exact contact count: a 10-position part is no substitute for a 26-position need
+        if (c.positions) {
+            if (!present(v.positions)) { rej["positions_undocumented"]++; continue; }
+            if (v.positions != *c.positions) { rej["positions_mismatch"]++; continue; }
+        }
+        // gated ratings: an undocumented rating is rejected (counted), never assumed adequate
+        if (c.current_min) {
+            if (!present(v.rated_current)) { rej["current_undocumented"]++; continue; }
+            if (v.rated_current < *c.current_min) { rej["current_low"]++; continue; }
+        }
+        if (c.voltage_min) {
+            if (!present(v.rated_voltage)) { rej["voltage_undocumented"]++; continue; }
+            if (v.rated_voltage < *c.voltage_min) { rej["voltage_low"]++; continue; }
+        }
+        passing.push_back(&v);
+    }
+    if (passing.empty())
+        throw NoCandidates("ConnectorConstraints", emit_rejections(rej),
+                           shard.meta.source_line_count);
+    // Rank by rating headroom; a part missing the ranked datum is deprioritised, not dropped
+    // (it already passed every gate the caller asked for).
+    auto tier_metric = [&](const ConnectorRow* v) -> std::tuple<int, double> {
+        switch (tb) {
+            case ConnectorTiebreaker::HighestCurrentMargin:
+                return {present(v->rated_current) ? 0 : 1,
+                        present(v->rated_current) ? -v->rated_current : 0.0};
+            case ConnectorTiebreaker::HighestVoltageMargin:
+                return {present(v->rated_voltage) ? 0 : 1,
+                        present(v->rated_voltage) ? -v->rated_voltage : 0.0};
+        }
+        return {0, 0};
+    };
+    std::sort(passing.begin(), passing.end(), [&](const ConnectorRow* a, const ConnectorRow* b) {
+        auto ka = tier_metric(a);
+        auto kb = tier_metric(b);
+        return std::make_tuple(std::get<0>(ka), std::get<1>(ka), a->lineno) <
+               std::make_tuple(std::get<0>(kb), std::get<1>(kb), b->lineno);
+    });
+    json result;
+    result["category"] = "connector";
+    result["tiebreaker"] = to_string(tb);
+    result["totalRowsConsidered"] = shard.meta.source_line_count;
+    result["alternativesConsidered"] = passing.size();
+    result["rejections"] = emit_rejections(rej);
+    result["manufacturers"] = manufacturer_facet(passing);
+    json cands = json::array();
+    const auto chosen = apply_mfr_policy(passing, max_candidates, mfr);
+    for (const ConnectorRow* v : chosen) {
+        json cd = base_candidate(v, fetcher);
+        cd["margins"] = {
+            {"current_margin", (c.current_min && present(v->rated_current))
+                                   ? num_or_null(v->rated_current / *c.current_min)
+                                   : json(nullptr)},
+            {"voltage_margin", (c.voltage_min && present(v->rated_voltage))
+                                   ? num_or_null(v->rated_voltage / *c.voltage_min)
+                                   : json(nullptr)},
+        };
+        cd["evidence"] = {
+            {"family", v->family},
+            {"interfaceStandard", v->interface_standard},
+            {"series", v->series},
+            {"polarity", v->polarity},
+            {"positions", present(v->positions) ? json(v->positions) : json(nullptr)},
+            {"ratedCurrentPerContact",
+             present(v->rated_current) ? json(v->rated_current) : json(nullptr)},
+            {"ratedVoltage", present(v->rated_voltage) ? json(v->rated_voltage) : json(nullptr)},
+            {"isProduction", v->is_production},
+        };
+        cands.push_back(std::move(cd));
+    }
+    result["candidates"] = std::move(cands);
+    return result;
+}
+
 json select_magnetic(const Shard<MagneticRow>& shard, const MagneticConstraints& c,
                      size_t max_candidates, RecordFetcher* fetcher, const MfrPolicy& mfr) {
     c.validate();  // never throws — kept for structural parity with the other selectors

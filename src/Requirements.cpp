@@ -130,6 +130,21 @@ VaristorConstraints varistor_constraints(const json& req) {
     return c;
 }
 
+ConnectorConstraints connector_constraints(const json& req) {
+    ConnectorConstraints c;
+    c.positions = opt_num(req, "positions");
+    c.current_min = opt_num(req, "minimumCurrentPerContact");
+    if (!c.current_min) c.current_min = opt_num(req, "ratedCurrentPerContact");
+    c.voltage_min = opt_num(req, "minimumRatedVoltage");
+    if (!c.voltage_min) c.voltage_min = opt_num(req, "ratedVoltage");
+    std::string fam = opt_str(req, "family");
+    if (!fam.empty()) c.family = fam;
+    std::string pol = opt_str(req, "matingPolarity");
+    if (pol.empty()) pol = opt_str(req, "polarity");
+    if (!pol.empty()) c.polarity = pol;
+    return c;
+}
+
 MagneticConstraints magnetic_constraints(const json& req) {
     MagneticConstraints c;
     // Target inductance (dimensionWithTolerance -> nominal): the MAS requirement is
@@ -206,6 +221,18 @@ VaristorTiebreaker varistor_tiebreaker_from_string(const std::string& s) {
     if (s == "highest_surge") return VaristorTiebreaker::HighestSurge;
     if (s == "lowest_capacitance") return VaristorTiebreaker::LowestCapacitance;
     throw InvalidOptions("unknown varistor tiebreaker: " + s);
+}
+const char* to_string(ConnectorTiebreaker t) {
+    switch (t) {
+        case ConnectorTiebreaker::HighestCurrentMargin: return "highest_current_margin";
+        case ConnectorTiebreaker::HighestVoltageMargin: return "highest_voltage_margin";
+    }
+    return "";
+}
+ConnectorTiebreaker connector_tiebreaker_from_string(const std::string& s) {
+    if (s == "highest_current_margin") return ConnectorTiebreaker::HighestCurrentMargin;
+    if (s == "highest_voltage_margin") return ConnectorTiebreaker::HighestVoltageMargin;
+    throw InvalidOptions("unknown connector tiebreaker: " + s);
 }
 
 // ---- original tiebreaker <-> string ----------------------------------------

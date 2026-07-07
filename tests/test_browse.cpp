@@ -239,5 +239,50 @@ TEST_CASE("browse-only families: select refuses loudly", "[browse][select]") {
     api::Engine eng(fixtures_dir(), "", /*quiet=*/true);
     REQUIRE_THROWS_AS(eng.select("analog", json::object(), json::object()), InvalidOptions);
     REQUIRE_THROWS_AS(eng.select("timing", json::object(), json::object()), InvalidOptions);
+}
+
+TEST_CASE("select connector: gates + margin ranking + rejection buckets", "[select][connector]") {
+    api::Engine eng(fixtures_dir(), "", /*quiet=*/true);
+    // an empty requirement is a caller error, not an everything-matches query
     REQUIRE_THROWS_AS(eng.select("connector", json::object(), json::object()), InvalidOptions);
+
+    // discover a real (family, positions) pair from the fixture via browse
+    json b = eng.browse("connector", json{{"filters", {{"positions", {{"min", 1.0}}}}},
+                                          {"limit", 1}});
+    REQUIRE(b.at("rows").size() == 1);
+    const json& probe = b.at("rows")[0];
+    double positions = probe.at("positions").get<double>();
+    std::string family = probe.at("family").get<std::string>();
+
+    json r = eng.select("connector",
+                        json{{"positions", positions}, {"family", family}},
+                        json{{"maxCandidates", 10}});
+    REQUIRE(r.at("category") == "connector");
+    REQUIRE(r.at("tiebreaker") == "highest_current_margin");
+    REQUIRE(r.at("candidates").size() >= 1);
+    for (const auto& cand : r.at("candidates")) {
+        REQUIRE(cand.at("evidence").at("positions").get<double>() == positions);
+        REQUIRE(cand.at("evidence").at("family") == family);
+    }
+    // ranked by rated current descending (highest margin first) among documented parts
+    double prev = std::numeric_limits<double>::infinity();
+    for (const auto& cand : r.at("candidates")) {
+        const json& rc = cand.at("evidence").at("ratedCurrentPerContact");
+        if (rc.is_null()) break;  // undocumented tier sorts after every documented part
+        REQUIRE(rc.get<double>() <= prev);
+        prev = rc.get<double>();
+    }
+
+    // a current gate produces ratio margins >= 1 on every candidate
+    json r2 = eng.select("connector", json{{"minimumCurrentPerContact", 0.5}, {"family", family}},
+                         json{{"maxCandidates", 5}});
+    for (const auto& cand : r2.at("candidates"))
+        REQUIRE(cand.at("margins").at("current_margin").get<double>() >= 1.0);
+
+    // an impossible gate yields NoCandidates JSON with the offending bucket via the string facade
+    std::string s = api::select_string(fixtures_dir(), "", "connector",
+                                       R"({"minimumCurrentPerContact": 1e9})", "{}");
+    json err = json::parse(s);
+    REQUIRE(err.at("error") == "NoCandidates");
+    REQUIRE(err.at("rejections").contains("current_low"));
 }

@@ -67,6 +67,20 @@ test.describe('kelvin site', () => {
     await expect(page.locator('.rej-row').first()).toBeVisible()
   })
 
+  test('connector recommender gates on family and ranks by current margin', async ({ page }) => {
+    await page.goto('/#/recommend/connector')
+    await expect(page.getByRole('button', { name: 'Find parts' })).toBeVisible({ timeout: 30_000 })
+    // family select is fed from the live facet
+    const familySelect = page.locator('.field select').first()
+    await expect(familySelect.locator('option', { hasText: 'terminalBlock' })).toHaveCount(1, { timeout: 15_000 })
+    await familySelect.selectOption('terminalBlock')
+    await page.locator('.req input:not([type=checkbox])').nth(1).fill('10') // current >= 10 A
+    await page.getByRole('button', { name: 'Find parts' }).click()
+    await expect(page.locator('.cand').first()).toBeVisible({ timeout: 30_000 })
+    await expect(page.locator('.cand').first().locator('.chip', { hasText: 'terminalBlock' })).toBeVisible()
+    await expect(page.locator('.cand').first().locator('.meter').first()).toBeVisible()
+  })
+
   test('browse-only families: timing catalogue browses, recommender hides them', async ({ page }) => {
     await page.goto('/#/catalog/timing')
     await expect(page.locator('tbody tr .mpn').first()).toBeVisible({ timeout: 20_000 })

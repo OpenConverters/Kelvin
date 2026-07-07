@@ -24,6 +24,7 @@ function form() {
       text: {}, // field key -> raw text
       role: false,
       technology: [],
+      facet: {},
       tiebreaker: '',
       topology: '',
       inputVoltage: '',
@@ -43,14 +44,20 @@ const ran = ref(false)
 
 watch(() => fam.value.key, () => { result.value = null; errorMsg.value = ''; ran.value = false })
 
-// controller topology options come from the live shard facet, not a hardcoded list
+// select options come from the live shard facets, not hardcoded lists
 const topologies = ref([])
+const facetOptions = reactive({}) // facet field -> [values]
 watch(() => fam.value.key, async (k) => {
-  if (k !== 'controller') return
+  const wantsTopo = k === 'controller'
+  const facetFields = fam.value.recommend.facetFields ?? []
+  if (!wantsTopo && !facetFields.length) return
   try {
-    const r = await browse('controller', { withFacets: true, limit: 0 })
-    topologies.value = r.facets.topologies.values.map(([v]) => v)
-  } catch { /* facet list is a convenience; select still validates */ }
+    const r = await browse(k, { withFacets: true, limit: 0 })
+    if (wantsTopo) topologies.value = r.facets.topologies.values.map(([v]) => v)
+    for (const ff of facetFields) {
+      facetOptions[ff.facet] = r.facets[ff.facet].values.map(([v]) => v).filter(Boolean)
+    }
+  } catch { /* facet lists are a convenience; select still validates */ }
 }, { immediate: true })
 
 function parsedField(field) {
@@ -96,6 +103,9 @@ async function run() {
     if (v != null && !Number.isNaN(v)) options[opt.key] = v
   }
   if (f.recommend.roleToggle && st.role) req[f.recommend.roleToggle.key] = f.recommend.roleToggle.value
+  for (const ff of f.recommend.facetFields ?? []) {
+    if (st.facet[ff.key]) req[ff.key] = st.facet[ff.key]
+  }
   if (f.recommend.technologyOption && st.technology.length) options.technologyAllowed = st.technology
   if (st.tiebreaker) options.tiebreaker = st.tiebreaker
   if (f.recommend.contextRequired) {
@@ -207,6 +217,14 @@ const target = computed(() => result.value?.target ?? null)
           <input v-model="form().text[field.key]" :placeholder="field.placeholder" />
         </label>
 
+        <label v-for="ff in fam.recommend.facetFields ?? []" :key="ff.key" class="field">
+          <span>{{ ff.label }}</span>
+          <select v-model="form().facet[ff.key]">
+            <option value="">any</option>
+            <option v-for="v in facetOptions[ff.facet] ?? []" :key="v" :value="v">{{ v }}</option>
+          </select>
+        </label>
+
         <label v-for="opt in fam.recommend.options ?? []" :key="opt.key" class="field">
           <span>{{ opt.label }} <template v-if="opt.unit">({{ opt.unit }})</template></span>
           <input v-model="form().text[opt.key]" :placeholder="opt.placeholder" />
@@ -312,6 +330,8 @@ const target = computed(() => result.value?.target ?? null)
               <button class="mpn-link mono" type="button" @click="openPart(c)">{{ c.mpn }}</button>
               <span class="mfr">{{ c.manufacturer }}</span>
               <span v-if="c.verdict" class="chip" :class="`verdict-${c.verdict}`">{{ c.verdict }}</span>
+              <span v-if="c.evidence?.family" class="chip">{{ c.evidence.family }}</span>
+              <span v-if="c.evidence?.positions != null" class="chip">{{ c.evidence.positions }} pos</span>
               <span v-for="b in evidenceBadges(c)" :key="b.t" class="chip warn" :title="b.title">{{ b.t }}</span>
               <button
                 class="pin"
