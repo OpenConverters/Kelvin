@@ -6,3 +6,4 @@ _select_tmp.ndjson
 __pycache__/
 *.pyc
 .DS_Store
+.playwright-mcp/

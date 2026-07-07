@@ -87,3 +87,9 @@ export function restoreFromUrl(validFamilies) {
   store.view = m[1]
   if (validFamilies.includes(m[2])) store.family = m[2]
 }
+
+// Back/forward + pasted #-links switch views without a reload. syncUrl writes via
+// replaceState (which never fires hashchange), so this can't loop.
+export function bindHashNavigation(validFamilies) {
+  window.addEventListener('hashchange', () => restoreFromUrl(validFamilies))
+}

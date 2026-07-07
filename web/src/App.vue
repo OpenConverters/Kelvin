@@ -5,7 +5,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { loadEngine, manifest, ensureShard, shardEvents } from './engine.js'
 import { FAMILIES } from './families.js'
-import { store, syncUrl, restoreFromUrl, clearPins } from './store.js'
+import { store, syncUrl, restoreFromUrl, bindHashNavigation, clearPins } from './store.js'
 import CatalogView from './views/CatalogView.vue'
 import RecommendView from './views/RecommendView.vue'
 import CompareView from './views/CompareView.vue'
@@ -41,7 +41,9 @@ const railLabel = computed(() => {
 })
 
 onMounted(async () => {
-  restoreFromUrl(FAMILIES.map((f) => f.key))
+  const familyKeys = FAMILIES.map((f) => f.key)
+  restoreFromUrl(familyKeys)
+  bindHashNavigation(familyKeys)
   syncUrl()
   try {
     await loadEngine()
