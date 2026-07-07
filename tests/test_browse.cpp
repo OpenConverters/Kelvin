@@ -142,3 +142,53 @@ TEST_CASE("browse: Engine browses from a data dir", "[browse]") {
     REQUIRE(r.at("family") == "diode");
     REQUIRE(r.at("rows").size() == 3);
 }
+
+TEST_CASE("browse: analog ICs — subtype facet + supply-range filter", "[browse][analog]") {
+    auto shard = build_analog_shard(fixtures_dir() + "/analog_ics.ndjson");
+    REQUIRE(shard.meta.row_count > 0);
+    json r = browse::browse_rows(shard, json{{"withFacets", true}, {"limit", 5}});
+    REQUIRE(r.at("family") == "analog");
+    REQUIRE(r.at("facets").contains("device_type"));
+    REQUIRE(r.at("facets").at("device_type").at("values").size() >= 1);
+    const json& row = r.at("rows")[0];
+    REQUIRE(row.contains("gain_bandwidth"));
+    REQUIRE(row.contains("vsupply_max"));
+    // numeric filter excludes rows lacking the datum
+    json f = browse::browse_rows(
+        shard, json{{"filters", {{"gain_bandwidth", {{"min", 1e6}}}}}, {"limit", 1000}});
+    for (const auto& x : f.at("rows")) REQUIRE(x.at("gain_bandwidth").get<double>() >= 1e6);
+}
+
+TEST_CASE("browse: timing devices — technology facet + frequency sort", "[browse][timing]") {
+    auto shard = build_timing_shard(fixtures_dir() + "/timing_devices.ndjson");
+    REQUIRE(shard.meta.row_count > 0);
+    json r = browse::browse_rows(
+        shard, json{{"sort", {{"field", "frequency"}, {"dir", "asc"}}}, {"withFacets", true},
+                    {"limit", 1000}});
+    REQUIRE(r.at("family") == "timing");
+    REQUIRE(r.at("facets").at("technology").at("values").size() >= 1);
+    double prev = 0;
+    for (const auto& row : r.at("rows")) {
+        if (row.at("frequency").is_null()) continue;
+        double v = row.at("frequency").get<double>();
+        REQUIRE(v >= prev);
+        prev = v;
+    }
+}
+
+TEST_CASE("browse: round-trip serialize/deserialize for the new families", "[browse][index]") {
+    auto a = build_analog_shard(fixtures_dir() + "/analog_ics.ndjson");
+    auto a2 = deserialize_analog_shard(serialize_shard(a));
+    REQUIRE(a2.rows.size() == a.rows.size());
+    REQUIRE(a2.rows.front().mpn == a.rows.front().mpn);
+    auto t = build_timing_shard(fixtures_dir() + "/timing_devices.ndjson");
+    auto t2 = deserialize_timing_shard(serialize_shard(t));
+    REQUIRE(t2.rows.size() == t.rows.size());
+    REQUIRE(t2.meta.build_id == t.meta.build_id);
+}
+
+TEST_CASE("browse-only families: select refuses loudly", "[browse][select]") {
+    api::Engine eng(fixtures_dir(), "", /*quiet=*/true);
+    REQUIRE_THROWS_AS(eng.select("analog", json::object(), json::object()), InvalidOptions);
+    REQUIRE_THROWS_AS(eng.select("timing", json::object(), json::object()), InvalidOptions);
+}

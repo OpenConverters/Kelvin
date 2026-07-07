@@ -29,6 +29,10 @@ enum class Family : uint32_t {
     // Magnetic (from-spec): unlike the parametric families this one RANKS the whole catalogue
     // and returns the top-N even when nothing meets the spec (no hard gate) — see select_magnetic.
     Magnetic = 9,
+    // Browse-only families (no requirements emitter → no selector yet; the Kelvin site
+    // catalogues them and select() refuses them loudly).
+    Analog = 10,
+    Timing = 11,
 };
 
 inline const char* family_name(Family f) {
@@ -42,6 +46,8 @@ inline const char* family_name(Family f) {
         case Family::Bjt: return "bjt";
         case Family::Varistor: return "varistor";
         case Family::Magnetic: return "magnetic";
+        case Family::Analog: return "analog";
+        case Family::Timing: return "timing";
     }
     return "unknown";
 }
@@ -57,6 +63,8 @@ inline const char* family_file(Family f) {
         case Family::Bjt: return "bjts.ndjson";
         case Family::Varistor: return "varistors.ndjson";
         case Family::Magnetic: return "magnetics.ndjson";
+        case Family::Analog: return "analog_ics.ndjson";
+        case Family::Timing: return "timing_devices.ndjson";
     }
     return "";
 }
@@ -145,6 +153,45 @@ struct MagneticRow : RowBase {
     std::string family;                   // manufacturerInfo.family or part.family (series, for context)
     bool is_production = false;
     bool has_inductance() const { return present(inductance); }
+};
+
+// A catalogue analog IC (op-amp / comparator / ADC / DAC / switch / mux / ...). Browse-only:
+// every datum is nullable and nothing gates — the row is the parametric-search projection of
+// analog.<subtype>.manufacturerInfo.datasheetInfo.electrical.
+struct AnalogRow : RowBase {
+    double channels = kNaN();             // numberOfChannels
+    double input_offset_voltage = kNaN(); // V
+    double input_bias_current = kNaN();   // A
+    double gain_bandwidth = kNaN();       // Hz — gainBandwidthProduct
+    double slew_rate = kNaN();            // V/s
+    double cmrr = kNaN();                 // dB
+    double vsupply_min = kNaN();          // V — supply.minimumSupplyVoltage
+    double vsupply_max = kNaN();          // V — supply.maximumSupplyVoltage
+    double resolution = kNaN();           // bits (ADC/DAC)
+    double sample_rate = kNaN();          // S/s (ADC)
+    double on_resistance = kNaN();        // Ω (switch/mux)
+    std::string device_type;              // the analog.<subtype> key (operationalAmplifier, adc, …)
+    std::string architecture;
+    std::string input_stage;
+    bool is_production = false;
+};
+
+// A catalogue timing device (quartz crystal / MEMS / XO / TCXO / ...). Browse-only projection
+// of timeBase.<subtype>.manufacturerInfo.datasheetInfo.electrical.
+struct TimingRow : RowBase {
+    double frequency = kNaN();            // Hz
+    double frequency_tolerance = kNaN();  // fraction (±)
+    double frequency_stability = kNaN();  // fraction (±)
+    double load_capacitance = kNaN();     // F
+    double esr = kNaN();                  // Ω — equivalentSeriesResistance
+    double rms_phase_jitter = kNaN();     // s
+    double vsupply_min = kNaN();          // V — supply.minimumSupplyVoltage
+    double vsupply_max = kNaN();          // V
+    std::string device_type;              // the timeBase.<subtype> key (oscillator / timer)
+    std::string technology;               // quartzCrystal / mems / crystalOscillator / tcxo / …
+    std::string output_type;
+    std::string mode;
+    bool is_production = false;
 };
 
 struct ControllerRow : RowBase {

@@ -20,8 +20,8 @@ if [[ ! -x "$KELVIN_INDEX" ]]; then
 fi
 mkdir -p "$OUT"
 
-# eight families from the TAS data dir; magnetics live in their own dir
-for fam in mosfet diode capacitor resistor controller igbt bjt varistor; do
+# ten families from the TAS data dir; magnetics live in their own dir
+for fam in mosfet diode capacitor resistor controller igbt bjt varistor analog timing; do
   "$KELVIN_INDEX" --data "$TAS_DATA" --out "$OUT" --family "$fam"
 done
 "$KELVIN_INDEX" --data "$MAGNETICS_DATA" --out "$OUT" --family magnetic
@@ -39,6 +39,8 @@ for fam in mosfet diode capacitor resistor controller igbt bjt varistor; do
   fi
 done
 ln -sfn "$MAGNETICS_DATA/magnetics.ndjson" "$OUT/magnetic.ndjson"
+ln -sfn "$TAS_DATA/analog_ics.ndjson" "$OUT/analog.ndjson"
+ln -sfn "$TAS_DATA/timing_devices.ndjson" "$OUT/timing.ndjson"
 
 echo "Kelvin shards + NDJSON written to $OUT"
 ls -la "$OUT"

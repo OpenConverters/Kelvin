@@ -67,6 +67,19 @@ test.describe('kelvin site', () => {
     await expect(page.locator('.rej-row').first()).toBeVisible()
   })
 
+  test('browse-only families: timing catalogue browses, recommender hides them', async ({ page }) => {
+    await page.goto('/#/catalog/timing')
+    await expect(page.locator('tbody tr .mpn').first()).toBeVisible({ timeout: 20_000 })
+    // technology facet from the live shard
+    await expect(page.locator('.facet label', { hasText: 'quartzCrystal' })).toBeVisible()
+    // the recommender strip offers no browse-only family
+    await page.goto('/#/recommend/mosfet')
+    await page.reload()
+    await expect(page.getByRole('button', { name: 'Find parts' })).toBeVisible({ timeout: 20_000 })
+    await expect(page.locator('.fam-tab', { hasText: 'Timing' })).toHaveCount(0)
+    await expect(page.locator('.fam-tab', { hasText: 'Analog' })).toHaveCount(0)
+  })
+
   test('pins overlay curves in compare', async ({ page }) => {
     await page.goto('/#/catalog/magnetic')
     await expect(page.locator('tbody tr .mpn').first()).toBeVisible({ timeout: 20_000 })

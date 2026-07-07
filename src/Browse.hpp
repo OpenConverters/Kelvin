@@ -174,6 +174,47 @@ inline const FieldTable<MagneticRow>& fields<MagneticRow>() {
     return t;
 }
 
+template <>
+inline const FieldTable<AnalogRow>& fields<AnalogRow>() {
+    static const FieldTable<AnalogRow> t{
+        {{"channels", &AnalogRow::channels},
+         {"input_offset_voltage", &AnalogRow::input_offset_voltage},
+         {"input_bias_current", &AnalogRow::input_bias_current},
+         {"gain_bandwidth", &AnalogRow::gain_bandwidth},
+         {"slew_rate", &AnalogRow::slew_rate},
+         {"cmrr", &AnalogRow::cmrr},
+         {"vsupply_min", &AnalogRow::vsupply_min},
+         {"vsupply_max", &AnalogRow::vsupply_max},
+         {"resolution", &AnalogRow::resolution},
+         {"sample_rate", &AnalogRow::sample_rate},
+         {"on_resistance", &AnalogRow::on_resistance}},
+        {{"device_type", &AnalogRow::device_type},
+         {"architecture", &AnalogRow::architecture},
+         {"input_stage", &AnalogRow::input_stage}},
+        {{"is_production", &AnalogRow::is_production}},
+        {}};
+    return t;
+}
+template <>
+inline const FieldTable<TimingRow>& fields<TimingRow>() {
+    static const FieldTable<TimingRow> t{
+        {{"frequency", &TimingRow::frequency},
+         {"frequency_tolerance", &TimingRow::frequency_tolerance},
+         {"frequency_stability", &TimingRow::frequency_stability},
+         {"load_capacitance", &TimingRow::load_capacitance},
+         {"esr", &TimingRow::esr},
+         {"rms_phase_jitter", &TimingRow::rms_phase_jitter},
+         {"vsupply_min", &TimingRow::vsupply_min},
+         {"vsupply_max", &TimingRow::vsupply_max}},
+        {{"device_type", &TimingRow::device_type},
+         {"technology", &TimingRow::technology},
+         {"output_type", &TimingRow::output_type},
+         {"mode", &TimingRow::mode}},
+        {{"is_production", &TimingRow::is_production}},
+        {}};
+    return t;
+}
+
 // ---- parsed query -----------------------------------------------------------------------------
 namespace detail {
 

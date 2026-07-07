@@ -9,13 +9,18 @@ import { parseSI, si } from '../units.js'
 import { store, togglePin, isPinned, pinColor } from '../store.js'
 import MarginMeter from '../components/MarginMeter.vue'
 
-const fam = computed(() => familyByKey(store.family))
+// browse-only families have no selector — the recommender only lists selectable ones
+const SELECTABLE = FAMILIES.filter((f) => f.recommend)
+const fam = computed(() => {
+  const f = familyByKey(store.family)
+  return f?.recommend ? f : SELECTABLE[0]
+})
 
 // form state survives family switches
 const forms = reactive({})
 function form() {
-  if (!forms[store.family]) {
-    forms[store.family] = {
+  if (!forms[fam.value.key]) {
+    forms[fam.value.key] = {
       text: {}, // field key -> raw text
       role: false,
       technology: [],
@@ -28,7 +33,7 @@ function form() {
       maxCandidates: 25,
     }
   }
-  return forms[store.family]
+  return forms[fam.value.key]
 }
 
 const result = ref(null)
@@ -36,11 +41,11 @@ const errorMsg = ref('')
 const busy = ref(false)
 const ran = ref(false)
 
-watch(() => store.family, () => { result.value = null; errorMsg.value = ''; ran.value = false })
+watch(() => fam.value.key, () => { result.value = null; errorMsg.value = ''; ran.value = false })
 
 // controller topology options come from the live shard facet, not a hardcoded list
 const topologies = ref([])
-watch(() => store.family, async (k) => {
+watch(() => fam.value.key, async (k) => {
   if (k !== 'controller') return
   try {
     const r = await browse('controller', { withFacets: true, limit: 0 })
@@ -105,7 +110,7 @@ async function run() {
   errorMsg.value = ''
   ran.value = true
   try {
-    result.value = await select(store.family, req, options)
+    result.value = await select(fam.value.key, req, options)
   } catch (e) {
     result.value = null
     errorMsg.value = e.message
@@ -156,7 +161,7 @@ function evidenceBadges(c) {
 
 function openPart(c) {
   if (typeof c.srcOffset !== 'number') return
-  store.drawer = { family: store.family, mpn: c.mpn, manufacturer: c.manufacturer, srcOffset: c.srcOffset, srcLength: c.srcLength }
+  store.drawer = { family: fam.value.key, mpn: c.mpn, manufacturer: c.manufacturer, srcOffset: c.srcOffset, srcLength: c.srcLength }
 }
 
 const target = computed(() => result.value?.target ?? null)
@@ -166,8 +171,8 @@ const target = computed(() => result.value?.target ?? null)
   <div class="recommend">
     <div class="family-strip">
       <button
-        v-for="f in FAMILIES" :key="f.key"
-        class="fam-tab" :class="{ active: f.key === store.family }"
+        v-for="f in SELECTABLE" :key="f.key"
+        class="fam-tab" :class="{ active: f.key === fam.key }"
         type="button"
         @click="store.family = f.key"
       >{{ f.label }}</button>
@@ -312,7 +317,7 @@ const target = computed(() => result.value?.target ?? null)
                 class="pin"
                 type="button"
                 :style="isPinned(c.mpn) ? { color: pinColor(c.mpn), borderColor: pinColor(c.mpn) } : {}"
-                @click="togglePin(store.family, c)"
+                @click="togglePin(fam.key, c)"
               >◉</button>
             </header>
             <div v-if="meterRows(c).length" class="meters">

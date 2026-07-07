@@ -563,4 +563,118 @@ std::optional<MagneticRow> extract_magnetic(const json& env) {
     return r;
 }
 
+// ---- browse-only families (analog ICs / timing devices) --------------------
+// Both envelopes carry a VARIABLE subtype key (analog.<subtype> / timeBase.<subtype>), so the
+// walk takes the first object member carrying a manufacturerInfo. Identity is required; every
+// electrical datum is optional (NaN when absent) — these rows browse, they never gate.
+namespace {
+struct SubtypeNode {
+    std::string subtype;
+    const json* mi = nullptr;  // manufacturerInfo
+    const json* di = nullptr;  // datasheetInfo (may be null)
+};
+
+std::optional<SubtypeNode> subtype_node(const json& env, const char* root) {
+    const json* node = obj_get(env, root);
+    if (!node || !node->is_object()) return std::nullopt;
+    for (auto it = node->begin(); it != node->end(); ++it) {
+        if (!it->is_object()) continue;
+        const json* mi = obj_get(*it, "manufacturerInfo");
+        if (!mi) continue;
+        SubtypeNode out;
+        out.subtype = it.key();
+        out.mi = mi;
+        out.di = obj_get(*mi, "datasheetInfo");
+        return out;
+    }
+    return std::nullopt;
+}
+
+void set_if_pos(double& dst, const std::optional<double>& v) {
+    if (v && *v > 0) dst = *v;
+}
+}  // namespace
+
+std::optional<AnalogRow> extract_analog(const json& env) {
+    auto node = subtype_node(env, "analog");
+    if (!node) return std::nullopt;
+    const json empty = json::object();
+    const json* di = node->di ? node->di : &empty;
+    const json* part = obj_get(*di, "part");
+    if (!part) part = &empty;
+
+    auto mpn = get_str(*node->mi, "reference");
+    if (!mpn) mpn = get_str(*part, "partNumber");
+    auto manuf = get_str(*node->mi, "name");
+    if (!mpn || !manuf) return std::nullopt;
+
+    AnalogRow r;
+    r.mpn = *mpn;
+    r.manufacturer = *manuf;
+    r.device_type = node->subtype;
+
+    const json* elec = obj_get(*di, "electrical");
+    if (elec && elec->is_object()) {
+        set_if_pos(r.channels, get_num(*elec, "numberOfChannels"));
+        set_if_pos(r.input_offset_voltage, get_num(*elec, "inputOffsetVoltage"));
+        set_if_pos(r.input_bias_current, get_num(*elec, "inputBiasCurrent"));
+        set_if_pos(r.gain_bandwidth, get_num(*elec, "gainBandwidthProduct"));
+        set_if_pos(r.slew_rate, get_num(*elec, "slewRate"));
+        set_if_pos(r.cmrr, get_num(*elec, "commonModeRejectionRatio"));
+        set_if_pos(r.resolution, get_num(*elec, "resolution"));
+        set_if_pos(r.sample_rate, get_num(*elec, "sampleRate"));
+        set_if_pos(r.on_resistance, get_num(*elec, "onResistance"));
+        const json* supply = obj_get(*elec, "supply");
+        if (supply) {
+            set_if_pos(r.vsupply_min, get_num(*supply, "minimumSupplyVoltage"));
+            set_if_pos(r.vsupply_max, get_num(*supply, "maximumSupplyVoltage"));
+        }
+        r.architecture = get_str(*elec, "architecture").value_or("");
+        r.input_stage = get_str(*elec, "inputStage").value_or("");
+    }
+    auto status = get_str(*node->mi, "status");
+    r.is_production = status.has_value() && *status == "production";
+    return r;
+}
+
+std::optional<TimingRow> extract_timing(const json& env) {
+    auto node = subtype_node(env, "timeBase");
+    if (!node) return std::nullopt;
+    const json empty = json::object();
+    const json* di = node->di ? node->di : &empty;
+    const json* part = obj_get(*di, "part");
+    if (!part) part = &empty;
+
+    auto mpn = get_str(*node->mi, "reference");
+    if (!mpn) mpn = get_str(*part, "partNumber");
+    auto manuf = get_str(*node->mi, "name");
+    if (!mpn || !manuf) return std::nullopt;
+
+    TimingRow r;
+    r.mpn = *mpn;
+    r.manufacturer = *manuf;
+    r.device_type = node->subtype;
+
+    const json* elec = obj_get(*di, "electrical");
+    if (elec && elec->is_object()) {
+        set_if_pos(r.frequency, get_num(*elec, "frequency"));
+        set_if_pos(r.frequency_tolerance, get_num(*elec, "frequencyTolerance"));
+        set_if_pos(r.frequency_stability, get_num(*elec, "frequencyStability"));
+        set_if_pos(r.load_capacitance, get_num(*elec, "loadCapacitance"));
+        set_if_pos(r.esr, get_num(*elec, "equivalentSeriesResistance"));
+        set_if_pos(r.rms_phase_jitter, get_num(*elec, "rmsPhaseJitter"));
+        const json* supply = obj_get(*elec, "supply");
+        if (supply) {
+            set_if_pos(r.vsupply_min, get_num(*supply, "minimumSupplyVoltage"));
+            set_if_pos(r.vsupply_max, get_num(*supply, "maximumSupplyVoltage"));
+        }
+        r.technology = get_str(*elec, "technology").value_or("");
+        r.output_type = get_str(*elec, "outputType").value_or("");
+        r.mode = get_str(*elec, "mode").value_or("");
+    }
+    auto status = get_str(*node->mi, "status");
+    r.is_production = status.has_value() && *status == "production";
+    return r;
+}
+
 }  // namespace kelvin

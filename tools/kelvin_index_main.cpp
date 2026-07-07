@@ -20,7 +20,7 @@ using json = nlohmann::json;
 
 namespace {
 const char* kFamilies[] = {"mosfet", "diode", "capacitor",  "resistor", "controller",
-                           "igbt", "bjt", "varistor", "magnetic"};
+                           "igbt", "bjt", "varistor", "magnetic", "analog", "timing"};
 
 int usage() {
     std::cerr << "usage: kelvin-index --data <dir> --out <dir> [--family <f>] [--check]\n";
@@ -98,6 +98,8 @@ int main(int argc, char** argv) {
                         case Family::Bjt: meta = read_bjt_shard(shard).meta; break;
                         case Family::Varistor: meta = read_varistor_shard(shard).meta; break;
                         case Family::Magnetic: meta = read_magnetic_shard(shard).meta; break;
+                        case Family::Analog: meta = read_analog_shard(shard).meta; break;
+                        case Family::Timing: meta = read_timing_shard(shard).meta; break;
                     }
                     have = true;
                 } catch (const std::exception&) { have = false; }

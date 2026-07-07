@@ -183,7 +183,7 @@ function openPart(row) {
 
 .family-strip {
   display: grid;
-  grid-template-columns: repeat(9, minmax(96px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 8px;
 }
 .fam-card {

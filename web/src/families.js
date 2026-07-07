@@ -210,6 +210,52 @@ export const FAMILIES = [
   },
 ]
 
+// ---- browse-only families (no Kelvin selector yet — catalogue + graphs only) --
+FAMILIES.push(
+  {
+    key: 'analog',
+    label: 'Analog ICs',
+    tagline: 'op-amps · comparators · ADC · DAC · switches',
+    glyph: 'A',
+    browseOnly: true,
+    columns: [
+      { f: 'channels', label: 'ch', unit: '', plain: true },
+      { f: 'gain_bandwidth', label: 'GBW', unit: 'Hz' },
+      { f: 'input_offset_voltage', label: 'Vos', unit: 'V' },
+      { f: 'slew_rate', label: 'SR', unit: 'V/s' },
+      { f: 'vsupply_max', label: 'Vsup max', unit: 'V' },
+      { f: 'resolution', label: 'bits', unit: '', plain: true },
+      { f: 'sample_rate', label: 'fs', unit: 'S/s' },
+    ],
+    facets: [
+      { f: 'device_type', label: 'Type' },
+      { f: 'architecture', label: 'Architecture' },
+      { f: 'input_stage', label: 'Input stage' },
+    ],
+    recommend: null,
+  },
+  {
+    key: 'timing',
+    label: 'Timing',
+    tagline: 'crystals · MEMS · XO · TCXO',
+    glyph: 'X',
+    browseOnly: true,
+    columns: [
+      { f: 'frequency', label: 'f', unit: 'Hz' },
+      { f: 'frequency_tolerance', label: 'tol', unit: 'ppm', scale: 1e6, plain: true },
+      { f: 'frequency_stability', label: 'stab', unit: 'ppm', scale: 1e6, plain: true },
+      { f: 'load_capacitance', label: 'CL', unit: 'F' },
+      { f: 'esr', label: 'ESR', unit: 'Ω' },
+    ],
+    facets: [
+      { f: 'technology', label: 'Technology' },
+      { f: 'output_type', label: 'Output' },
+      { f: 'mode', label: 'Mode' },
+    ],
+    recommend: null,
+  },
+)
+
 export function familyByKey(key) {
   return FAMILIES.find((f) => f.key === key) ?? null
 }
