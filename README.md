@@ -56,6 +56,19 @@ res = eng.select("mosfet", {"ratedDrainSourceVoltage": 60, "ratedContinuousDrain
 res["candidates"][0]["mpn"]   # the deterministic default pick
 ```
 
+## Web frontend (kelvin.openconverters.com)
+
+`web/` is a Vue 3 + Vite SPA over the WASM engine — a browsable/graphable catalogue of the
+whole TAS DB plus the deterministic recommender, no backend: shards + NDJSON are static-hosted
+under `/kelvin/` and full records are fetched as HTTP Range slices (206).
+
+```bash
+source ~/emsdk/emsdk_env.sh && emcmake cmake -S . -B build-wasm -G Ninja && ninja -C build-wasm libKelvin
+cd web && npm install
+./scripts/build-kelvin-shards.sh   # shards + manifest + NDJSON symlinks into public/kelvin
+npm run dev                        # or: npm run build && npm run test:e2e (headless)
+```
+
 ## Validation
 
 - **`[parity]`** replays a golden generated from the Python selector over committed fixtures:

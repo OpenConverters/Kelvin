@@ -1,0 +1,163 @@
+/* KELVIN — the precision parts bridge. Cold end of the OpenConverters bench:
+   Heaviside is the aqua CRT scope, Kirchhoff the amber schematic terminal; Kelvin
+   sits at ~10 000 K on the same color-temperature scale — ice-blue phosphor on
+   blue-black metrology panels. Dark-only, like its siblings. */
+
+:root {
+  --bg: #070b10;
+  --bg-deep: #04070b;
+  --panel: #0c1219;
+  --panel-hi: #121a24;
+  --line: #1e2c3c;
+  --line-soft: #16202c;
+  --ink: #d8e4ee;
+  --ink-dim: #6f8298;
+
+  --k: #7fc9ff;        /* 10 000 K — the brand phosphor */
+  --k-hi: #c9e6ff;
+  --k-deep: #2f6ea8;
+  --warm: #ffb347;     /* 2 000 K — Kirchhoff's amber, kept as the warm reference / marginal state */
+
+  --ok: #86d97e;
+  --fault: #ff5d55;
+
+  --grat: rgba(127, 201, 255, 0.045);
+  --grat-strong: rgba(127, 201, 255, 0.11);
+
+  --disp: 'Michroma', 'Share Tech Mono', monospace;
+  --body: 'IBM Plex Sans', system-ui, sans-serif;
+  --mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+  /* validated categorical series palette (dataviz six-checks, dark surface #0c1219);
+     fixed order, color follows the pinned part, never its rank */
+  --s1: #3b8fdb;
+  --s2: #c77b28;
+  --s3: #26a0b5;
+  --s4: #b08d22;
+  --s5: #7d74d6;
+  --s6: #c25580;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  min-height: 100%;
+}
+
+body {
+  font-family: var(--body);
+  font-size: 14px;
+  color: var(--ink);
+  background:
+    linear-gradient(var(--grat) 1px, transparent 1px) 0 0 / 28px 28px,
+    linear-gradient(90deg, var(--grat) 1px, transparent 1px) 0 0 / 28px 28px,
+    radial-gradient(1200px 500px at 85% -10%, rgba(127, 201, 255, 0.07), transparent 60%),
+    radial-gradient(900px 420px at -10% 0%, rgba(127, 201, 255, 0.05), transparent 60%),
+    var(--bg);
+  background-attachment: fixed;
+}
+
+::selection { background: rgba(127, 201, 255, 0.28); }
+
+/* scrollbars, cold chrome */
+* { scrollbar-width: thin; scrollbar-color: #23425e var(--bg-deep); }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: var(--bg-deep); }
+*::-webkit-scrollbar-thumb { background: #23425e; border-radius: 5px; }
+
+/* ---- panels: instrument modules with a hairline phosphor edge -------------- */
+.panel {
+  background: linear-gradient(180deg, var(--panel-hi), var(--panel));
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  position: relative;
+}
+.panel::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  border-radius: 6px 6px 0 0;
+  background: linear-gradient(90deg, transparent, rgba(127, 201, 255, 0.55), transparent);
+  pointer-events: none;
+}
+
+.section-label {
+  font-family: var(--disp);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  margin: 0 0 10px;
+}
+
+/* ---- controls --------------------------------------------------------------- */
+button, .btn {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink);
+  background: #0b1118;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+button:hover:not(:disabled), .btn:hover { border-color: var(--k-deep); color: var(--k-hi); }
+button:disabled { opacity: 0.45; cursor: default; }
+button.primary {
+  color: #05121e;
+  background: var(--k);
+  border-color: var(--k);
+  font-weight: 500;
+}
+button.primary:hover:not(:disabled) { background: var(--k-hi); color: #05121e; }
+button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible {
+  outline: 2px solid var(--k);
+  outline-offset: 1px;
+}
+
+input, select {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink);
+  background: #0a0f15;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 6px 8px;
+}
+input::placeholder { color: #4a5b6e; }
+input:focus, select:focus { border-color: var(--k-deep); outline: none; }
+
+a { color: var(--k); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+code, .mono { font-family: var(--mono); }
+
+/* ---- shared chips / badges --------------------------------------------------- */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink-dim);
+  background: #0a1017;
+}
+.chip.on { color: var(--k-hi); border-color: var(--k-deep); }
+.verdict-pass { color: var(--ok); }
+.verdict-marginal { color: var(--warm); }
+.verdict-fail { color: var(--fault); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

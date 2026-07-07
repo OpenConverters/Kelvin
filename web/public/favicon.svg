@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Kelvin: four-terminal (Kelvin) sense connection on a cold instrument panel -->
+  <rect width="64" height="64" rx="12" fill="#070b10"/>
+  <g stroke="#7fc9ff" stroke-opacity=".12" stroke-width="1">
+    <path d="M0 16h64M0 32h64M0 48h64M16 0v64M32 0v64M48 0v64"/>
+  </g>
+  <!-- device under test: the resistance bar -->
+  <rect x="14" y="28" width="36" height="8" rx="2" fill="none" stroke="#7fc9ff" stroke-width="2.4"/>
+  <!-- force pair (outer) -->
+  <path d="M14 32H4M60 32H50" stroke="#7fc9ff" stroke-width="2.4" fill="none"/>
+  <!-- sense pair (inner), tapping the bar itself -->
+  <path d="M22 28V10M42 36v18" stroke="#7fc9ff" stroke-width="1.6" fill="none"/>
+  <circle cx="22" cy="10" r="3" fill="#7fc9ff">
+    <animate attributeName="fill-opacity" values="1;.35;1" dur="2.4s" repeatCount="indefinite"/>
+  </circle>
+  <circle cx="42" cy="54" r="3" fill="#7fc9ff">
+    <animate attributeName="fill-opacity" values=".35;1;.35" dur="2.4s" repeatCount="indefinite"/>
+  </circle>
+  <circle cx="22" cy="28" r="2.2" fill="#7fc9ff"/>
+  <circle cx="42" cy="36" r="2.2" fill="#7fc9ff"/>
+</svg>

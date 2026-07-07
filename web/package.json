@@ -1,0 +1,21 @@
+{
+  "name": "kelvin-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "sync-wasm": "cp ../build-wasm/kelvin.js public/",
+    "dev": "npm run sync-wasm && vite",
+    "build": "npm run sync-wasm && vite build",
+    "preview": "vite preview",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "vue": "^3.5.24"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "@vitejs/plugin-vue": "^6.0.1",
+    "vite": "^7.2.2"
+  }
+}
