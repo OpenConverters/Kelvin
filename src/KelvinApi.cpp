@@ -7,6 +7,7 @@
 #include <initializer_list>
 #include <iostream>
 
+#include "Browse.hpp"
 #include "Constraints.hpp"
 #include "Requirements.hpp"
 #include "Select.hpp"
@@ -372,6 +373,35 @@ json Engine::select(const std::string& category, const json& req, const json& op
     std::optional<FileRecordFetcher> fetch;
     if (include_env) fetch.emplace(ndjson_path(Family::Controller));
     return select_controller(sh, c, max_cand, include_env ? &*fetch : nullptr, mfr);
+}
+
+json Engine::browse(const std::string& category, const json& query) {
+    Family f = family_from_string(category);
+    // Browser path guard: with no data dir a shard can only come from load_shard_bytes, so an
+    // unloaded family is a caller error, not a build trigger (the *_shard() getters would try
+    // to read "/<family>.ndjson" and produce a misleading DataError).
+    if (data_dir_.empty()) {
+        bool loaded = (f == Family::Mosfet && mosfet_) || (f == Family::Diode && diode_) ||
+                      (f == Family::Capacitor && capacitor_) ||
+                      (f == Family::Resistor && resistor_) ||
+                      (f == Family::Controller && controller_) || (f == Family::Igbt && igbt_) ||
+                      (f == Family::Bjt && bjt_) || (f == Family::Varistor && varistor_) ||
+                      (f == Family::Magnetic && magnetic_);
+        if (!loaded)
+            throw InvalidOptions("browse: shard not loaded for family '" + category + "'");
+    }
+    switch (f) {
+        case Family::Mosfet: return browse::browse_rows(mosfet_shard(), query);
+        case Family::Diode: return browse::browse_rows(diode_shard(), query);
+        case Family::Capacitor: return browse::browse_rows(capacitor_shard(), query);
+        case Family::Resistor: return browse::browse_rows(resistor_shard(), query);
+        case Family::Controller: return browse::browse_rows(controller_shard(), query);
+        case Family::Igbt: return browse::browse_rows(igbt_shard(), query);
+        case Family::Bjt: return browse::browse_rows(bjt_shard(), query);
+        case Family::Varistor: return browse::browse_rows(varistor_shard(), query);
+        case Family::Magnetic: return browse::browse_rows(magnetic_shard(), query);
+    }
+    throw InvalidOptions("unknown family");
 }
 
 std::string select_string(const std::string& data_dir, const std::string& cache_dir,

@@ -26,6 +26,12 @@ class Engine {
     // (non-schema) options object. Returns a SelectionResult; throws NoCandidates on none.
     json select(const std::string& category, const json& design_requirements, const json& options);
 
+    // Catalogue browsing (the Kelvin web frontend): deterministic filter/sort/facet/paginate
+    // over one family's shard rows — see Browse.hpp for the query/result contract. With an
+    // empty data dir (the browser path) the family's shard must have been fed via
+    // load_shard_bytes first; browsing an unloaded family throws InvalidOptions.
+    json browse(const std::string& category, const json& query);
+
     // Build (or incrementally refresh) and persist the shard for one family. Returns its meta.
     ShardMeta build_index(const std::string& family);
 
