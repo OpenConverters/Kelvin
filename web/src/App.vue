@@ -9,6 +9,7 @@ import { store, syncUrl, restoreFromUrl, bindHashNavigation, clearPins } from '.
 import CatalogView from './views/CatalogView.vue'
 import RecommendView from './views/RecommendView.vue'
 import CompareView from './views/CompareView.vue'
+import StatsView from './views/StatsView.vue'
 import PartDrawer from './components/PartDrawer.vue'
 
 const boot = reactive({ phase: 'cold', detail: 'powering engine…', error: '' })
@@ -69,6 +70,7 @@ const VIEWS = [
   { key: 'catalog', label: 'Catalog' },
   { key: 'recommend', label: 'Recommend' },
   { key: 'compare', label: 'Compare' },
+  { key: 'stats', label: 'Stats' },
 ]
 </script>
 
@@ -128,6 +130,7 @@ const VIEWS = [
     <main v-else class="main">
       <CatalogView v-if="store.view === 'catalog'" :counts="counts" />
       <RecommendView v-else-if="store.view === 'recommend'" />
+      <StatsView v-else-if="store.view === 'stats'" :counts="counts" />
       <CompareView v-else />
     </main>
 

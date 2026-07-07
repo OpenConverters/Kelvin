@@ -82,7 +82,7 @@ export function syncUrl() {
 }
 
 export function restoreFromUrl(validFamilies) {
-  const m = location.hash.match(/^#\/(catalog|recommend|compare)\/([a-z]+)$/)
+  const m = location.hash.match(/^#\/(catalog|recommend|compare|stats)\/([a-z]+)$/)
   if (!m) return
   store.view = m[1]
   if (validFamilies.includes(m[2])) store.family = m[2]

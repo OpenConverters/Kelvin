@@ -69,6 +69,7 @@ Family family_from_string(const std::string& s) {
     if (s == "analog" || s == "analog_ics" || s == "analog_ic") return Family::Analog;
     if (s == "timing" || s == "timing_devices" || s == "timing_device" || s == "timebase")
         return Family::Timing;
+    if (s == "connector" || s == "connectors") return Family::Connector;
     throw InvalidOptions("unknown category: " + s);
 }
 
@@ -230,6 +231,19 @@ const Shard<TimingRow>& Engine::timing_shard() {
     return *timing_;
 }
 
+const Shard<ConnectorRow>& Engine::connector_shard() {
+    if (!connector_)
+        connector_ = load_or_build<ConnectorRow>(
+            ndjson_path(Family::Connector), shard_path(Family::Connector), !cache_dir_.empty(),
+            quiet_, "connector",
+            [](const std::string& p, const Shard<ConnectorRow>* pv) {
+                return build_connector_shard(p, pv);
+            },
+            [](const std::string& p) { return read_connector_shard(p); },
+            [](const std::string& p, const Shard<ConnectorRow>& s) { write_shard(p, s); });
+    return *connector_;
+}
+
 ShardMeta Engine::load_shard_bytes(const std::string& family, const std::string& bytes) {
     Family f = family_from_string(family);
     switch (f) {
@@ -246,6 +260,7 @@ ShardMeta Engine::load_shard_bytes(const std::string& family, const std::string&
         case Family::Magnetic: magnetic_ = deserialize_magnetic_shard(bytes); return magnetic_->meta;
         case Family::Analog: analog_ = deserialize_analog_shard(bytes); return analog_->meta;
         case Family::Timing: timing_ = deserialize_timing_shard(bytes); return timing_->meta;
+        case Family::Connector: connector_ = deserialize_connector_shard(bytes); return connector_->meta;
     }
     throw InvalidOptions("unknown family");
 }
@@ -264,6 +279,7 @@ ShardMeta Engine::build_index(const std::string& family) {
         case Family::Magnetic: magnetic_.reset(); return magnetic_shard().meta;
         case Family::Analog: analog_.reset(); return analog_shard().meta;
         case Family::Timing: timing_.reset(); return timing_shard().meta;
+        case Family::Connector: connector_.reset(); return connector_shard().meta;
     }
     throw InvalidOptions("unknown family");
 }
@@ -272,7 +288,7 @@ json Engine::select(const std::string& category, const json& req, const json& op
     Family f = family_from_string(category);
     // Browse-only families: no requirements emitter → no selector. Refuse loudly rather than
     // invent selection semantics (they get one when a review-gated selector lands).
-    if (f == Family::Analog || f == Family::Timing)
+    if (f == Family::Analog || f == Family::Timing || f == Family::Connector)
         throw InvalidOptions("no selector for '" + category + "' — browse-only family (use browse)");
     size_t max_cand = opt_size(options, "maxCandidates", kDefaultMaxCandidates);
     // Optional manufacturer controls (settings today, GUI-wired later; default
@@ -419,7 +435,7 @@ json Engine::browse(const std::string& category, const json& query) {
                       (f == Family::Controller && controller_) || (f == Family::Igbt && igbt_) ||
                       (f == Family::Bjt && bjt_) || (f == Family::Varistor && varistor_) ||
                       (f == Family::Magnetic && magnetic_) || (f == Family::Analog && analog_) ||
-                      (f == Family::Timing && timing_);
+                      (f == Family::Timing && timing_) || (f == Family::Connector && connector_);
         if (!loaded)
             throw InvalidOptions("browse: shard not loaded for family '" + category + "'");
     }
@@ -435,6 +451,7 @@ json Engine::browse(const std::string& category, const json& query) {
         case Family::Magnetic: return browse::browse_rows(magnetic_shard(), query);
         case Family::Analog: return browse::browse_rows(analog_shard(), query);
         case Family::Timing: return browse::browse_rows(timing_shard(), query);
+        case Family::Connector: return browse::browse_rows(connector_shard(), query);
     }
     throw InvalidOptions("unknown family");
 }

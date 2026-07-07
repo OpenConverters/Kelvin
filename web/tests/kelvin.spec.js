@@ -80,6 +80,21 @@ test.describe('kelvin site', () => {
     await expect(page.locator('.fam-tab', { hasText: 'Analog' })).toHaveCount(0)
   })
 
+  test('connectors browse with family facet', async ({ page }) => {
+    await page.goto('/#/catalog/connector')
+    await expect(page.locator('tbody tr .mpn').first()).toBeVisible({ timeout: 30_000 })
+    await expect(page.locator('.facet label', { hasText: 'boardToBoard' })).toBeVisible()
+  })
+
+  test('stats view renders tiles, vendor share and histograms', async ({ page }) => {
+    await page.goto('/#/stats/magnetic')
+    await expect(page.locator('.tile-value').first()).toBeVisible({ timeout: 30_000 })
+    await expect(page.locator('.bar-row').first()).toBeVisible()
+    await expect(page.locator('.hist svg rect').first()).toBeVisible({ timeout: 20_000 })
+    const parts = await page.locator('.tile-value').first().textContent()
+    expect(Number(parts.replace(/,/g, ''))).toBeGreaterThan(1000)
+  })
+
   test('pins overlay curves in compare', async ({ page }) => {
     await page.goto('/#/catalog/magnetic')
     await expect(page.locator('tbody tr .mpn').first()).toBeVisible({ timeout: 20_000 })

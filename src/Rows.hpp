@@ -33,6 +33,7 @@ enum class Family : uint32_t {
     // catalogues them and select() refuses them loudly).
     Analog = 10,
     Timing = 11,
+    Connector = 12,
 };
 
 inline const char* family_name(Family f) {
@@ -48,6 +49,7 @@ inline const char* family_name(Family f) {
         case Family::Magnetic: return "magnetic";
         case Family::Analog: return "analog";
         case Family::Timing: return "timing";
+        case Family::Connector: return "connector";
     }
     return "unknown";
 }
@@ -65,6 +67,7 @@ inline const char* family_file(Family f) {
         case Family::Magnetic: return "magnetics.ndjson";
         case Family::Analog: return "analog_ics.ndjson";
         case Family::Timing: return "timing_devices.ndjson";
+        case Family::Connector: return "connectors.ndjson";
     }
     return "";
 }
@@ -191,6 +194,19 @@ struct TimingRow : RowBase {
     std::string technology;               // quartzCrystal / mems / crystalOscillator / tcxo / …
     std::string output_type;
     std::string mode;
+    bool is_production = false;
+};
+
+// A catalogue connector. Browse-only projection of connector.manufacturerInfo.datasheetInfo
+// (electrical.ratedCurrentPerContact/ratedVoltage, mechanical.positions, familyDetails, part).
+struct ConnectorRow : RowBase {
+    double rated_current = kNaN();  // A per contact
+    double rated_voltage = kNaN();  // V
+    double positions = kNaN();      // contact count
+    std::string family;             // familyDetails.family (boardToBoard / terminalBlock / …)
+    std::string interface_standard; // familyDetails.interfaceStandard (when standardised)
+    std::string polarity;           // part.matingPolarity (male / female / hermaphroditic)
+    std::string series;             // part.series
     bool is_production = false;
 };
 

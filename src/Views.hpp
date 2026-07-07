@@ -35,5 +35,6 @@ std::optional<VaristorRow> extract_varistor(const json& env);
 std::optional<MagneticRow> extract_magnetic(const json& env);
 std::optional<AnalogRow> extract_analog(const json& env);
 std::optional<TimingRow> extract_timing(const json& env);
+std::optional<ConnectorRow> extract_connector(const json& env);
 
 }  // namespace kelvin

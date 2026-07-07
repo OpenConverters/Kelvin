@@ -187,8 +187,57 @@ TEST_CASE("browse: round-trip serialize/deserialize for the new families", "[bro
     REQUIRE(t2.meta.build_id == t.meta.build_id);
 }
 
+TEST_CASE("browse: connectors — family/polarity facets + positions filter", "[browse][connector]") {
+    auto shard = build_connector_shard(fixtures_dir() + "/connectors.ndjson");
+    REQUIRE(shard.meta.row_count > 0);
+    json r = browse::browse_rows(shard, json{{"withFacets", true}, {"limit", 5}});
+    REQUIRE(r.at("family") == "connector");
+    REQUIRE(r.at("facets").at("polarity").at("values").size() >= 1);
+    REQUIRE(r.at("facets").contains("series"));
+    json f = browse::browse_rows(
+        shard, json{{"filters", {{"positions", {{"min", 10.0}}}}}, {"limit", 1000}});
+    for (const auto& x : f.at("rows")) REQUIRE(x.at("positions").get<double>() >= 10.0);
+    // round-trip
+    auto c2 = deserialize_connector_shard(serialize_shard(shard));
+    REQUIRE(c2.meta.build_id == shard.meta.build_id);
+    REQUIRE(c2.rows.size() == shard.rows.size());
+}
+
+TEST_CASE("browse: histogram — log buckets count every present value once", "[browse][histogram]") {
+    auto shard = build_magnetic_shard(fixtures_dir() + "/magnetics.ndjson");
+    json r = browse::browse_rows(
+        shard, json{{"histogram", {{"field", "inductance"}, {"buckets", 12}, {"log", true}}},
+                    {"limit", 0}});
+    const json& h = r.at("histogram");
+    REQUIRE(h.at("field") == "inductance");
+    REQUIRE(h.at("log") == true);
+    uint64_t total = 0;
+    for (const auto& c : h.at("counts")) total += c.get<uint64_t>();
+    REQUIRE(total == h.at("present").get<uint64_t>());
+    REQUIRE(h.at("present").get<uint64_t>() + h.at("absent").get<uint64_t>() ==
+            r.at("total").get<uint64_t>());
+    REQUIRE(h.at("edges").size() == h.at("counts").size() + 1);
+    // edges strictly increasing, spanning the data
+    double prev = 0;
+    for (const auto& e : h.at("edges")) {
+        REQUIRE(e.get<double>() > prev);
+        prev = e.get<double>();
+    }
+    // histogram respects filters: a narrow window shrinks the present count
+    json f = browse::browse_rows(
+        shard, json{{"filters", {{"inductance", {{"min", 1e-6}, {"max", 1e-3}}}}},
+                    {"histogram", {{"field", "inductance"}, {"buckets", 6}, {"log", true}}},
+                    {"limit", 0}});
+    REQUIRE(f.at("histogram").at("present").get<uint64_t>() <
+            h.at("present").get<uint64_t>());
+    REQUIRE_THROWS_AS(
+        browse::browse_rows(shard, json{{"histogram", {{"field", "nonsense"}}}}),
+        InvalidOptions);
+}
+
 TEST_CASE("browse-only families: select refuses loudly", "[browse][select]") {
     api::Engine eng(fixtures_dir(), "", /*quiet=*/true);
     REQUIRE_THROWS_AS(eng.select("analog", json::object(), json::object()), InvalidOptions);
     REQUIRE_THROWS_AS(eng.select("timing", json::object(), json::object()), InvalidOptions);
+    REQUIRE_THROWS_AS(eng.select("connector", json::object(), json::object()), InvalidOptions);
 }

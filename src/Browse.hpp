@@ -11,8 +11,12 @@
 //   { "filters": { "<numField>": {"min":x,"max":y}, "<strField>": ["v1","v2"],
 //                  "<boolField>": true, "mpn": "substr" },
 //     "sort": {"field": "<numField>|mpn|manufacturer|lineno", "dir": "asc"|"desc"},
-//     "offset": 0, "limit": 50, "withFacets": false, "facetTop": 100 }
+//     "offset": 0, "limit": 50, "withFacets": false, "facetTop": 100,
+//     "histogram": {"field": "<numField>", "buckets": 24, "log": true} }
 // Unknown filter/sort fields throw InvalidOptions (no silent skips).
+// histogram: bucket counts of one numeric field over the FILTERED set (log10 or linear
+// edges); rows lacking the datum (and, for log, non-positive values) are reported in
+// "absent" rather than silently dropped.
 //
 // Result:
 //   { "family", "rowCount", "total", "rows": [ {mpn, manufacturer, lineno, srcOffset,
@@ -215,6 +219,21 @@ inline const FieldTable<TimingRow>& fields<TimingRow>() {
     return t;
 }
 
+template <>
+inline const FieldTable<ConnectorRow>& fields<ConnectorRow>() {
+    static const FieldTable<ConnectorRow> t{
+        {{"rated_current", &ConnectorRow::rated_current},
+         {"rated_voltage", &ConnectorRow::rated_voltage},
+         {"positions", &ConnectorRow::positions}},
+        {{"family", &ConnectorRow::family},
+         {"interface_standard", &ConnectorRow::interface_standard},
+         {"polarity", &ConnectorRow::polarity},
+         {"series", &ConnectorRow::series}},
+        {{"is_production", &ConnectorRow::is_production}},
+        {}};
+    return t;
+}
+
 // ---- parsed query -----------------------------------------------------------------------------
 namespace detail {
 
@@ -243,6 +262,9 @@ struct Query {
     size_t limit = 50;
     bool with_facets = false;
     size_t facet_top = 100;
+    int histogram_field = -1;  // index into table.nums, -1 = none
+    size_t histogram_buckets = 24;
+    bool histogram_log = false;
 };
 
 template <class Row>
@@ -360,6 +382,27 @@ Query<Row> parse_query(const json& q) {
         if (!q.at("facetTop").is_number_integer() || q.at("facetTop").get<int64_t>() < 1)
             throw InvalidOptions("browse: facetTop must be a positive integer");
         out.facet_top = q.at("facetTop").get<size_t>();
+    }
+    if (q.contains("histogram")) {
+        const json& h = q.at("histogram");
+        if (!h.is_object() || !h.contains("field") || !h.at("field").is_string())
+            throw InvalidOptions("browse: histogram must be {field, buckets?, log?}");
+        int i = num_index(h.at("field").get<std::string>());
+        if (i < 0)
+            throw InvalidOptions("browse: unknown histogram field '" +
+                                 h.at("field").get<std::string>() + "'");
+        out.histogram_field = i;
+        if (h.contains("buckets")) {
+            if (!h.at("buckets").is_number_integer() || h.at("buckets").get<int64_t>() < 1 ||
+                h.at("buckets").get<int64_t>() > 512)
+                throw InvalidOptions("browse: histogram.buckets must be in [1,512]");
+            out.histogram_buckets = h.at("buckets").get<size_t>();
+        }
+        if (h.contains("log")) {
+            if (!h.at("log").is_boolean())
+                throw InvalidOptions("browse: histogram.log must be a boolean");
+            out.histogram_log = h.at("log").get<bool>();
+        }
     }
     return out;
 }
@@ -533,6 +576,48 @@ json browse_rows(const Shard<Row>& shard, const json& query) {
             ranges[t.nums[i].first] = std::move(entry);
         }
         out["ranges"] = std::move(ranges);
+    }
+
+    if (q.histogram_field >= 0) {
+        auto mem = t.nums[q.histogram_field].second;
+        // pass 1: bounds over the matched set
+        double lo = std::numeric_limits<double>::infinity();
+        double hi = -std::numeric_limits<double>::infinity();
+        uint64_t absent = 0, present = 0;
+        for (size_t idx : matched) {
+            double v = shard.rows[idx].*mem;
+            if (std::isnan(v) || (q.histogram_log && v <= 0)) { ++absent; continue; }
+            ++present;
+            if (v < lo) lo = v;
+            if (v > hi) hi = v;
+        }
+        json hist{{"field", t.nums[q.histogram_field].first},
+                  {"log", q.histogram_log},
+                  {"present", present},
+                  {"absent", absent}};
+        if (present > 0) {
+            double e0 = q.histogram_log ? std::log10(lo) : lo;
+            double e1 = q.histogram_log ? std::log10(hi) : hi;
+            if (e1 <= e0) e1 = e0 + 1e-9;  // all-equal values: one degenerate bucket
+            size_t n = q.histogram_buckets;
+            std::vector<uint64_t> counts(n, 0);
+            for (size_t idx : matched) {
+                double v = shard.rows[idx].*mem;
+                if (std::isnan(v) || (q.histogram_log && v <= 0)) continue;
+                double e = q.histogram_log ? std::log10(v) : v;
+                size_t b = static_cast<size_t>((e - e0) / (e1 - e0) * n);
+                if (b >= n) b = n - 1;  // v == hi lands in the last bucket
+                ++counts[b];
+            }
+            json edges = json::array();
+            for (size_t b = 0; b <= n; ++b) {
+                double e = e0 + (e1 - e0) * static_cast<double>(b) / n;
+                edges.push_back(q.histogram_log ? std::pow(10.0, e) : e);
+            }
+            hist["edges"] = std::move(edges);
+            hist["counts"] = counts;
+        }
+        out["histogram"] = std::move(hist);
     }
     return out;
 }

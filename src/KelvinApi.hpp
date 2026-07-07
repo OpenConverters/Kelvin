@@ -56,6 +56,7 @@ class Engine {
     std::optional<Shard<MagneticRow>> magnetic_;
     std::optional<Shard<AnalogRow>> analog_;
     std::optional<Shard<TimingRow>> timing_;
+    std::optional<Shard<ConnectorRow>> connector_;
 
     std::string ndjson_path(Family f) const;
     std::string shard_path(Family f) const;
@@ -70,6 +71,7 @@ class Engine {
     const Shard<MagneticRow>& magnetic_shard();
     const Shard<AnalogRow>& analog_shard();
     const Shard<TimingRow>& timing_shard();
+    const Shard<ConnectorRow>& connector_shard();
 };
 
 // String facade (guarded) for the embind/WASM and any C-string consumer: returns the

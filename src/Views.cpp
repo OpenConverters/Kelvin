@@ -677,4 +677,43 @@ std::optional<TimingRow> extract_timing(const json& env) {
     return r;
 }
 
+std::optional<ConnectorRow> extract_connector(const json& env) {
+    const json* con = obj_get(env, "connector");
+    if (!con) return std::nullopt;
+    const json* mi = obj_get(*con, "manufacturerInfo");
+    if (!mi) return std::nullopt;
+    const json empty = json::object();
+    const json* di = obj_get(*mi, "datasheetInfo");
+    if (!di) di = &empty;
+    const json* part = obj_get(*di, "part");
+    if (!part) part = &empty;
+
+    auto mpn = get_str(*mi, "reference");
+    if (!mpn) mpn = get_str(*part, "partNumber");
+    auto manuf = get_str(*mi, "name");
+    if (!mpn || !manuf) return std::nullopt;
+
+    ConnectorRow r;
+    r.mpn = *mpn;
+    r.manufacturer = *manuf;
+
+    const json* elec = obj_get(*di, "electrical");
+    if (elec && elec->is_object()) {
+        set_if_pos(r.rated_current, get_num(*elec, "ratedCurrentPerContact"));
+        set_if_pos(r.rated_voltage, get_num(*elec, "ratedVoltage"));
+    }
+    const json* mech = obj_get(*di, "mechanical");
+    if (mech && mech->is_object()) set_if_pos(r.positions, get_num(*mech, "positions"));
+    const json* fd = obj_get(*di, "familyDetails");
+    if (fd && fd->is_object()) {
+        r.family = get_str(*fd, "family").value_or("");
+        r.interface_standard = get_str(*fd, "interfaceStandard").value_or("");
+    }
+    r.polarity = get_str(*part, "matingPolarity").value_or("");
+    r.series = get_str(*part, "series").value_or("");
+    auto status = get_str(*mi, "status");
+    r.is_production = status.has_value() && *status == "production";
+    return r;
+}
+
 }  // namespace kelvin

@@ -254,6 +254,27 @@ FAMILIES.push(
     ],
     recommend: null,
   },
+  {
+    key: 'connector',
+    label: 'Connectors',
+    tagline: 'board-to-board · headers · terminal blocks',
+    glyph: 'J',
+    browseOnly: true,
+    columns: [
+      { f: 'positions', label: 'pos', unit: '', plain: true },
+      { f: 'rated_current', label: 'I/contact', unit: 'A' },
+      { f: 'rated_voltage', label: 'V rated', unit: 'V' },
+      { f: 'family', label: 'Family', str: true },
+      { f: 'polarity', label: 'Polarity', str: true },
+    ],
+    facets: [
+      { f: 'family', label: 'Family' },
+      { f: 'polarity', label: 'Polarity' },
+      { f: 'interface_standard', label: 'Interface' },
+      { f: 'series', label: 'Series' },
+    ],
+    recommend: null,
+  },
 )
 
 export function familyByKey(key) {
