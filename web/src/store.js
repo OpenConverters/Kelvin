@@ -1,6 +1,7 @@
 // App state (no router, no pinia — the family pattern is a single reactive module).
 import { reactive, watch } from 'vue'
 import { fetchRecord } from './engine.js'
+import { trackEvent } from './telemetry.js'
 
 // Validated categorical series palette (dataviz six-checks vs the panel surface).
 // Fixed order; a pinned part keeps its color for the life of the pin.
@@ -29,8 +30,10 @@ export function togglePin(family, part) {
   const i = store.pins.findIndex((p) => p.mpn === part.mpn)
   if (i >= 0) {
     store.pins.splice(i, 1)
+    trackEvent('unpin', { target: part.mpn, family, manufacturer: part.manufacturer })
     return
   }
+  trackEvent('pin', { target: part.mpn, family, manufacturer: part.manufacturer })
   if (store.pins.length && store.pins[0].family !== family) {
     store.pins.splice(0)
     store.pinNote = 'Compare tray cleared — pins compare within one family.'
@@ -79,6 +82,11 @@ export function syncUrl() {
     },
     { immediate: true },
   )
+  // Interaction telemetry for mode + family switches. Not `immediate` — the
+  // initial view/family is already captured by `app_open`; this records only
+  // real user navigation (header tabs, family strips, tray CTA, hash nav).
+  watch(() => store.view, (to, from) => trackEvent('view_switch', { target: to, from }))
+  watch(() => store.family, (to, from) => trackEvent('family_switch', { target: to, from }))
 }
 
 export function restoreFromUrl(validFamilies) {

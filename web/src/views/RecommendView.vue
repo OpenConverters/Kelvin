@@ -7,6 +7,7 @@ import { browse, select } from '../engine.js'
 import { FAMILIES, familyByKey, MARGIN_LABELS } from '../families.js'
 import { parseSI, si } from '../units.js'
 import { store, togglePin, isPinned, pinColor } from '../store.js'
+import { trackEvent } from '../telemetry.js'
 import MarginMeter from '../components/MarginMeter.vue'
 
 // browse-only families have no selector — the recommender only lists selectable ones
@@ -119,11 +120,24 @@ async function run() {
   busy.value = true
   errorMsg.value = ''
   ran.value = true
+  trackEvent('recommend_run', {
+    target: fam.value.key,
+    topology: st.topology || undefined,
+    tiebreaker: st.tiebreaker || undefined,
+    diversity: !!st.diversity,
+    allowlist: st.allowlist.length || undefined,
+  })
   try {
     result.value = await select(fam.value.key, req, options)
+    trackEvent('recommend_result', {
+      target: fam.value.key,
+      candidates: result.value?.candidates?.length ?? 0,
+      error: result.value?.error || undefined,
+    })
   } catch (e) {
     result.value = null
     errorMsg.value = e.message
+    trackEvent('recommend_error', { target: fam.value.key, message: (e.message || '').slice(0, 120) })
   } finally {
     busy.value = false
   }

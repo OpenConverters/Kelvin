@@ -6,6 +6,7 @@ import { record, store, togglePin, isPinned, pinColor } from '../store.js'
 import { extractCurves, specRows, familyNode, unitFor } from '../curves.js'
 import { familyByKey } from '../families.js'
 import { si } from '../units.js'
+import { trackEvent } from '../telemetry.js'
 import CurveChart from './CurveChart.vue'
 
 const rec = ref(null)
@@ -19,6 +20,7 @@ watch(part, async (p) => {
   rec.value = null
   err.value = ''
   if (!p) return
+  trackEvent('drawer_open', { target: p.mpn, family: p.family, manufacturer: p.manufacturer })
   loading.value = true
   try {
     rec.value = await record(p.family, p.srcOffset, p.srcLength)
