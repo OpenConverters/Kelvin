@@ -9,7 +9,7 @@ export const KSERIES = ['#3b8fdb', '#c77b28', '#26a0b5', '#b08d22', '#7d74d6', '
 export const MAX_PINS = KSERIES.length
 
 export const store = reactive({
-  view: 'catalog', // catalog | recommend | compare
+  view: 'catalog', // catalog | recommend | crossref | compare | stats
   family: 'magnetic',
   pins: [], // [{family, mpn, manufacturer, srcOffset, srcLength, color}]
   pinNote: '',
@@ -90,7 +90,7 @@ export function syncUrl() {
 }
 
 export function restoreFromUrl(validFamilies) {
-  const m = location.hash.match(/^#\/(catalog|recommend|compare|stats)\/([a-z]+)$/)
+  const m = location.hash.match(/^#\/(catalog|recommend|crossref|compare|stats)\/([a-z]+)$/)
   if (!m) return
   store.view = m[1]
   if (validFamilies.includes(m[2])) store.family = m[2]

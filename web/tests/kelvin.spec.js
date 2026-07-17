@@ -100,6 +100,32 @@ test.describe('kelvin site', () => {
     await expect(page.locator('.facet label', { hasText: 'boardToBoard' })).toBeVisible()
   })
 
+  test('cross-ref ranks substitutes from marked manufacturers deterministically', async ({ page }) => {
+    const errors = []
+    page.on('pageerror', (e) => errors.push(String(e)))
+    page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
+
+    await page.goto('/#/crossref/mosfet')
+    // pick the original by MPN search
+    await page.locator('.mpn-search').fill('CSD18536')
+    await page.locator('.hit', { hasText: 'CSD18536KCS' }).first().click({ timeout: 30_000 })
+    await expect(page.getByTestId('original-card')).toBeVisible()
+    // mark every other manufacturer and run the analytical ranker
+    await expect(page.getByTestId('mfr-list').locator('.mfr-row').first()).toBeVisible({ timeout: 15_000 })
+    await page.getByRole('button', { name: 'mark all others' }).click()
+    await page.getByRole('button', { name: 'Find cross references' }).click()
+    const table = page.getByTestId('xref-table')
+    await expect(table.locator('tbody tr').first()).toBeVisible({ timeout: 30_000 })
+    // every row carries a status chip and per-parameter verdict cells
+    await expect(table.locator('tbody tr').first().locator('.chip')).toHaveText(/recommended|partial|no substitute/)
+    await expect(table.locator('tbody tr').first().locator('td.num').first()).toBeVisible()
+    const firstMpn = await table.locator('tbody tr').first().locator('.mpn-link').textContent()
+    // deterministic engine: re-running the same question returns the same answer
+    await page.getByRole('button', { name: 'Find cross references' }).click()
+    await expect(table.locator('tbody tr').first().locator('.mpn-link')).toHaveText(firstMpn, { timeout: 30_000 })
+    expect(errors).toEqual([])
+  })
+
   test('stats view renders tiles, vendor share and histograms', async ({ page }) => {
     await page.goto('/#/stats/magnetic')
     await expect(page.locator('.tile-value').first()).toBeVisible({ timeout: 30_000 })

@@ -131,6 +131,16 @@ export async function select(family, requirements, options = {}) {
   return callJson('select', family, JSON.stringify(requirements), JSON.stringify(options))
 }
 
+// ── cross-reference: the deterministic substitute ranker (CrossRef.hpp). Pure
+//    math over spec blocks the caller built from browse rows — no shard access,
+//    so no ensureShard here. ──────────────────────────────────────────────────
+export async function crossReference(category, original, candidates, options = {}) {
+  const out = await callJson('cross_reference_string', category,
+    JSON.stringify(original), JSON.stringify(candidates), JSON.stringify(options))
+  if (out?.error) throw new Error(`cross-reference failed: ${out.error}`)
+  return out
+}
+
 // ── record fetch: ONE part's full datasheet record by byte span (Range, 206) ──
 export async function fetchRecord(family, srcOffset, srcLength) {
   if (typeof srcOffset !== 'number' || typeof srcLength !== 'number') {

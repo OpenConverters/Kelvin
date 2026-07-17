@@ -8,6 +8,7 @@ import { FAMILIES } from './families.js'
 import { store, syncUrl, restoreFromUrl, bindHashNavigation, clearPins } from './store.js'
 import CatalogView from './views/CatalogView.vue'
 import RecommendView from './views/RecommendView.vue'
+import CrossRefView from './views/CrossRefView.vue'
 import CompareView from './views/CompareView.vue'
 import StatsView from './views/StatsView.vue'
 import PartDrawer from './components/PartDrawer.vue'
@@ -69,6 +70,7 @@ onMounted(async () => {
 const VIEWS = [
   { key: 'catalog', label: 'Catalog' },
   { key: 'recommend', label: 'Recommend' },
+  { key: 'crossref', label: 'Cross-Ref' },
   { key: 'compare', label: 'Compare' },
   { key: 'stats', label: 'Stats' },
 ]
@@ -130,6 +132,7 @@ const VIEWS = [
     <main v-else class="main">
       <CatalogView v-if="store.view === 'catalog'" :counts="counts" />
       <RecommendView v-else-if="store.view === 'recommend'" />
+      <CrossRefView v-else-if="store.view === 'crossref'" />
       <StatsView v-else-if="store.view === 'stats'" :counts="counts" />
       <CompareView v-else />
     </main>
