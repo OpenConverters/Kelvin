@@ -99,6 +99,13 @@ struct RowBase {
 struct MosfetRow : RowBase {
     double vds_rated = 0, id_continuous = 0, rds_on = 0, qg_total = 0, coss = 0;
     double vgs_threshold_max = 0;
+    // Rds(on) is only meaningful at the Vgs it was measured at: a logic-level
+    // part specified at 4.5 V and a standard part at 10 V are not comparable as
+    // bare scalars. Distributor tables that omit this (Mouser) make the two
+    // indistinguishable, which is a documented substitution hazard.
+    double rds_on_vgs = kNaN();
+    double vgs_max = kNaN();       // absolute gate-source rating
+    std::string qualification;     // AEC-Q101 etc., when the datasheet states it
     double rth_ja = kNaN(), rth_jc = kNaN(), tj_max = kNaN();
     std::string technology;   // Si / SiC / GaN (part.technology)
     bool is_production = false;
@@ -121,6 +128,11 @@ struct CapacitorRow : RowBase {
     double rth = kNaN();
     std::string technology;      // part.technology (ceramic-class-2, film-…)
     std::string dielectric_code; // part.dielectricCode (X7R / C0G / X5R …)
+    // ESR without its measurement frequency is not comparable — a 120 Hz figure
+    // and a 100 kHz figure differ severalfold on the same part.
+    double esr_frequency = kNaN();
+    double temp_min_c = kNaN();
+    double temp_max_c = kNaN();
     bool is_production = false;
     bool no_thermal() const { return !present(rth); }
 };

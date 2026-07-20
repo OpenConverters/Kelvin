@@ -35,7 +35,7 @@ const XREF = [
     sameFacet: { f: 'technology', label: 'technology' },
     hardKeys: ['voltage'],
     hardMin: [{ row: 'v_rated', factor: 0.9 }],
-    spec: (r) => ({ ...base(r), value_si: nz(r.capacitance), voltage: nz(r.v_rated), esr: nz(r.esr), ripple_current: nz(r.ripple_current_rms), technology: r.technology ?? '', dielectric_code: r.dielectric_code ?? '' }),
+    spec: (r) => ({ ...base(r), value_si: nz(r.capacitance), voltage: nz(r.v_rated), esr: nz(r.esr), ripple_current: nz(r.ripple_current_rms), technology: r.technology ?? '', dielectric_code: r.dielectric_code ?? '', esr_frequency: nz(r.esr_frequency), temp_min_C: r.temp_min_c, temp_max_C: r.temp_max_c }),
     params: [
       { key: 'value', label: 'C', row: 'capacitance', unit: 'F' },
       { key: 'voltage', label: 'V rated', row: 'v_rated', unit: 'V' },
@@ -61,7 +61,7 @@ const XREF = [
     sameFacet: { f: 'technology', label: 'technology' },
     hardKeys: ['vds'],
     hardMin: [{ row: 'vds_rated', factor: 0.9 }],
-    spec: (r) => ({ ...base(r), vds: nz(r.vds_rated), id: nz(r.id_continuous), rds_on: nz(r.rds_on), qg: nz(r.qg_total), coss: nz(r.coss), vgs_threshold_max: nz(r.vgs_threshold_max) }),
+    spec: (r) => ({ ...base(r), vds: nz(r.vds_rated), id: nz(r.id_continuous), rds_on: nz(r.rds_on), qg: nz(r.qg_total), coss: nz(r.coss), vgs_threshold_max: nz(r.vgs_threshold_max), rds_on_vgs: nz(r.rds_on_vgs), vgs_max: nz(r.vgs_max), technology: r.technology ?? '', qualification: r.qualification ?? '' }),
     params: [
       { key: 'vds', label: 'Vds', row: 'vds_rated', unit: 'V' },
       { key: 'id', label: 'Id', row: 'id_continuous', unit: 'A' },
@@ -75,7 +75,7 @@ const XREF = [
     sameFacet: { f: 'technology', label: 'type' },
     hardKeys: ['vrrm'],
     hardMin: [{ row: 'vrrm_rated', factor: 0.9 }],
-    spec: (r) => ({ ...base(r), vrrm: nz(r.vrrm_rated), if_avg: nz(r.if_avg_rated), vf: nz(r.vf_typ), qrr: nz(r.qrr), trr: nz(r.trr) }),
+    spec: (r) => ({ ...base(r), vrrm: nz(r.vrrm_rated), if_avg: nz(r.if_avg_rated), vf: nz(r.vf_typ), qrr: nz(r.qrr), trr: nz(r.trr), technology: r.technology ?? '' }),
     params: [
       { key: 'vrrm', label: 'Vrrm', row: 'vrrm_rated', unit: 'V' },
       { key: 'if_avg', label: 'If avg', row: 'if_avg_rated', unit: 'A' },
@@ -269,6 +269,26 @@ function penaltyText(c) {
   return c.penalty.toFixed(2)
 }
 const STATUS_LABEL = { recommended: 'recommended', partial: 'partial', no_substitute: 'no substitute' }
+// Grade answers "what work does this swap cost me?" — the question the industry
+// graders (SiliconExpert A/B/C/D/SF, Z2Data Drop-In A/B/C) exist to answer.
+const GRADE_LABEL = {
+  drop_in: 'drop-in', minor_review: 'minor review', major_review: 'major review',
+  redesign: 'redesign', no_substitute: 'no substitute',
+}
+const GRADE_TITLE = {
+  drop_in: 'fits the original’s footprint with no parameter regressions',
+  minor_review: 'fits, but with warnings worth checking',
+  major_review: 'fits, but a parameter regressed materially — re-qualify before building',
+  redesign: 'does not fit the original’s board space, or mount/family/process differs',
+  no_substitute: 'a hard gate failed — this is not a substitute',
+}
+// Direction answers "better or worse?", computed from the measured ratios.
+const DIRECTION_LABEL = { upgrade: '▲ upgrade', downgrade: '▼ downgrade', mixed: '◆ mixed' }
+const DIRECTION_TITLE = {
+  upgrade: 'ahead of the original on every directional parameter compared',
+  downgrade: 'behind the original on the parameters compared',
+  mixed: 'better on some parameters, worse on others',
+}
 const FOOTPRINT_LABEL = {
   fits: 'fits', one_size_larger: '+1 size', overflows: 'larger', unknown: '?',
 }
@@ -438,7 +458,11 @@ function openPart(r) {
                   <td class="mono rank">{{ String(i + 1).padStart(2, '0') }}</td>
                   <td><button class="mpn-link mono" type="button" @click="openPart(rowOf(c))">{{ dispMpn(c) }}</button></td>
                   <td class="mfr-cell">{{ dispMfr(c) }}</td>
-                  <td><span class="chip" :class="`st-${c.status}`">{{ STATUS_LABEL[c.status] ?? c.status }}</span></td>
+                  <td>
+                    <span class="chip" :class="`gr-${c.grade}`" :title="GRADE_TITLE[c.grade] ?? ''">{{ GRADE_LABEL[c.grade] ?? c.status }}</span>
+                    <span v-if="c.direction && c.direction !== 'equivalent'" class="dir" :class="`dir-${c.direction}`"
+                          :title="DIRECTION_TITLE[c.direction]">{{ DIRECTION_LABEL[c.direction] }}</span>
+                  </td>
                   <td v-for="p in fam.params" :key="p.key" class="num mono" :class="`v-${verdictOf(c, p.key)}`"
                       :title="`${p.label}: ${verdictOf(c, p.key)}`">
                     {{ cellValue(rowOf(c), p) }}
@@ -556,6 +580,15 @@ function openPart(r) {
 .mfr-cell { color: var(--ink-dim); font-size: 11px; }
 .row-no_substitute { opacity: 0.55; }
 .chip.st-recommended { color: var(--ok); border-color: rgba(120, 220, 150, 0.4); }
+.chip.gr-drop_in { color: var(--ok); border-color: rgba(120, 220, 150, 0.45); }
+.chip.gr-minor_review { color: var(--warm); border-color: rgba(255, 179, 71, 0.4); }
+.chip.gr-major_review { color: var(--warm); border-color: rgba(255, 179, 71, 0.55); }
+.chip.gr-redesign { color: var(--fault); border-color: rgba(255, 110, 110, 0.4); }
+.chip.gr-no_substitute { color: var(--fault); border-color: rgba(255, 110, 110, 0.5); }
+.dir { font-size: 9px; margin-left: 6px; white-space: nowrap; }
+.dir-upgrade { color: var(--ok); }
+.dir-downgrade { color: var(--fault); }
+.dir-mixed { color: var(--ink-dim); }
 .chip.st-partial { color: var(--warm); border-color: rgba(255, 179, 71, 0.4); }
 .chip.st-no_substitute { color: var(--fault); border-color: rgba(255, 110, 110, 0.4); }
 .v-pass { color: var(--ok); }

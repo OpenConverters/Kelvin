@@ -35,6 +35,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "CrossRefClasses.hpp"
 #include "CrossRefDecode.hpp"
 #include "CrossRefDimensions.hpp"
 #include "CrossRefParams.hpp"
@@ -117,6 +118,29 @@ struct Options {
 inline constexpr double kVerdictWarnPenalty = 0.5;
 inline constexpr double kVerdictFailPenalty = 3.0;
 
+// ── Match grade ──────────────────────────────────────────────────────────────
+// The industry cross-reference graders (SiliconExpert A / A-U / A-D / B / C / D
+// / SF, Z2Data Drop-In A / B / C) all express two things our status alone does
+// not: whether the swap needs a BOARD change, and whether the substitute is
+// better or worse than the original. Both are what an engineer actually asks.
+//
+// We express the same two axes, but from published rules rather than an
+// undisclosed algorithm:
+//   drop_in        — fits the original's footprint, no parameter regressions
+//   minor_review   — fits, but with warnings worth a look
+//   major_review   — fits, but a parameter regressed materially
+//   redesign       — does not fit, or mount/family/process differs
+//   no_substitute  — a hard gate failed
+// direction: upgrade / equivalent / downgrade, from the per-parameter verdicts.
+inline const char* grade_for(const std::string& status, FootprintTier fit, bool any_warn,
+                             bool any_fail) {
+    if (status == "no_substitute") return "no_substitute";
+    if (fit == FootprintTier::Overflows) return "redesign";
+    if (any_fail) return "major_review";
+    if (any_warn || fit == FootprintTier::OneSizeLarger) return "minor_review";
+    return "drop_in";
+}
+
 // Physical size of a part: an explicit mechanical drawing when the record has
 // one, else the category-aware case-code resolution. Metres.
 inline std::optional<Dims> dims_of(const json& p, const std::string& category) {
@@ -147,6 +171,15 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     std::string status = "recommended";
     json params = json::array();
     std::vector<std::string> notes;
+    // Direction bookkeeping: on each directional parameter we could compare,
+    // did the substitute come out strictly ahead of the original, or behind?
+    int better = 0, worse = 0;
+    auto note_direction = [&](Dir dir, std::optional<double> o, std::optional<double> s) {
+        if (!o || !s || *o <= 0 || *s <= 0) return;
+        const double ratio = *s / *o;
+        if (ratio > 1.05) (dir == Dir::Higher ? better : worse)++;
+        else if (ratio < 0.95) (dir == Dir::Higher ? worse : better)++;
+    };
 
     auto reject = [&](const char* reason) {
         out["status"] = "no_substitute";
@@ -154,6 +187,11 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         out["penalty"] = 1e9;
         out["params"] = params;
         if (!notes.empty()) out["notes"] = notes;
+        // A rejected candidate still carries grade/direction so every row in the
+        // result has the same shape — a consumer should never have to special-case
+        // the rejects to render a table.
+        out["grade"] = "no_substitute";
+        out["direction"] = "downgrade";
         return out;
     };
     auto demote = [&] {
@@ -168,6 +206,32 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         if (pv.verdict == FAIL) return reject("primary value out of range");
         penalty += opt.primary_weight * pv.penalty;
         if (pv.verdict == WARN) demote();
+    }
+
+    // ── construction family (hard) ───────────────────────────────────────────
+    // A parametric match across families is not a substitution: a 10 uF ceramic
+    // and a 10 uF tantalum share every catalogue column and have different
+    // failure modes, ESR, derating and bias behaviour.
+    if (cat == "capacitor") {
+        const std::string conflict = cap_family_conflict(cap_family(str(original, "technology")),
+                                                         cap_family(str(cand, "technology")));
+        if (!conflict.empty()) {
+            params.push_back({{"name", "family"}, {"verdict", FAIL}});
+            notes.push_back(conflict);
+            return reject("different capacitor construction family");
+        }
+    }
+    // Si / SiC / GaN differ in gate-drive requirements — a driver redesign, not
+    // a drop-in, so it is surfaced loudly rather than scored away.
+    if (cat == "mosfet" || cat == "igbt" || cat == "diode") {
+        const std::string conflict =
+            process_conflict(str(original, "technology"), str(cand, "technology"));
+        if (!conflict.empty()) {
+            params.push_back({{"name", "process"}, {"verdict", FAIL}});
+            demote();
+            penalty += opt.gate_weight * kVerdictFailPenalty;
+            notes.push_back(conflict);
+        }
     }
 
     // ── PARAM_SPECS verdicts (the shared Heaviside table) ────────────────────
@@ -201,6 +265,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                                  ? over_dimensioning_penalty(o, s, 1.0)
                                                  : over_dimensioning_penalty(s, o, 1.0));
         }
+        if (numeric) note_direction(spec.dir, o, s);
     }
 
     // ── critical ratings (Vds / Vrrm / rated voltage / Id / If) ──────────────
@@ -219,6 +284,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         } else {
             penalty += opt.overdim_weight * over_dimensioning_penalty(o, s, 1.0);
         }
+        note_direction(r.mode == Mode::HigherBetter ? Dir::Higher : Dir::Lower, o, s);
     }
 
     // ── physical fit ─────────────────────────────────────────────────────────
@@ -258,10 +324,107 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         }
     }
 
+    // ── dielectric envelope (EIA RS-198), not a string compare ──────────────
+    // X7R -> X5R keeps the code "shape" but drops the upper temperature 125 ->
+    // 85 degC; X7R -> X7S keeps the temperature and widens tolerance 15 -> 22%.
+    // Both are real regressions that comparing code strings cannot articulate.
+    if (cat == "capacitor") {
+        const std::string reg = dielectric_regression(str(original, "dielectric_code"),
+                                                      str(cand, "dielectric_code"));
+        if (!reg.empty()) {
+            params.push_back({{"name", "dielectric_envelope"}, {"verdict", FAIL}});
+            demote();
+            penalty += opt.gate_weight * kVerdictFailPenalty;
+            notes.push_back(reg);
+        }
+    }
+
+    // ── operating temperature range ─────────────────────────────────────────
+    // A substitute must cover the original's whole rated range, at both ends.
+    {
+        auto o_lo = num(original, "temp_min_C"), s_lo = num(cand, "temp_min_C");
+        auto o_hi = num(original, "temp_max_C"), s_hi = num(cand, "temp_max_C");
+        if (o_lo && s_lo && *s_lo > *o_lo + 1e-9) {
+            params.push_back({{"name", "temp_min_C"}, {"verdict", FAIL}});
+            demote();
+            penalty += opt.gate_weight * kVerdictFailPenalty;
+            notes.push_back("does not reach the original's minimum operating temperature");
+        }
+        if (o_hi && s_hi && *s_hi < *o_hi - 1e-9) {
+            // temp_max_C may also be covered by PARAM_SPECS for some categories;
+            // the note is what carries the meaning either way.
+            notes.push_back("does not reach the original's maximum operating temperature");
+        }
+    }
+
+    // ── ESR / ripple measurement conditions ─────────────────────────────────
+    // ESR is strongly frequency-dependent and a ripple rating is meaningless
+    // without its frequency: a 120 Hz rating and a 100 kHz rating are not
+    // interconvertible. Comparing them as bare numbers manufactures a verdict.
+    // Where both sides state a frequency and they disagree by more than a
+    // decade, the comparison is reported UNVERIFIED rather than passed.
+    if (cat == "capacitor") {
+        auto o_f = num(original, "esr_frequency"), s_f = num(cand, "esr_frequency");
+        if (o_f && s_f && *o_f > 0 && *s_f > 0) {
+            double ratio = *o_f > *s_f ? *o_f / *s_f : *s_f / *o_f;
+            if (ratio > 10.0) {
+                params.push_back({{"name", "esr_basis"}, {"verdict", UNVERIFIED}});
+                notes.push_back("ESR quoted at different frequencies (" +
+                                std::to_string(static_cast<long>(*o_f)) + " Hz vs " +
+                                std::to_string(static_cast<long>(*s_f)) +
+                                " Hz) — not directly comparable");
+            }
+        }
+    }
+
+    // ── MOSFET gate-drive compatibility ─────────────────────────────────────
+    // The classic swap failure: a logic-level part replaced by a standard-level
+    // one still switches on the bench at 10 V and never fully enhances from a
+    // 3.3 V controller. Rds(on) is only meaningful at its stated Vgs, so a part
+    // whose Rds(on) is specified at a higher Vgs than the original's is not
+    // delivering that resistance in the original's circuit.
+    if (cat == "mosfet") {
+        auto o_th = num(original, "vgs_threshold_max"), s_th = num(cand, "vgs_threshold_max");
+        if (o_th && s_th && *s_th > *o_th * 1.25) {
+            params.push_back({{"name", "gate_drive"}, {"verdict", FAIL}});
+            demote();
+            penalty += opt.gate_weight * kVerdictFailPenalty;
+            notes.push_back("higher gate threshold than the original — may not fully enhance at "
+                            "the existing drive voltage");
+        }
+        auto o_rv = num(original, "rds_on_vgs"), s_rv = num(cand, "rds_on_vgs");
+        if (o_rv && s_rv && *s_rv > *o_rv + 1e-9) {
+            params.push_back({{"name", "rds_on_basis"}, {"verdict", WARN}});
+            demote();
+            penalty += opt.gate_weight * kVerdictWarnPenalty;
+            notes.push_back("Rds(on) is specified at a higher Vgs (" +
+                            std::to_string(static_cast<int>(*s_rv)) + " V vs " +
+                            std::to_string(static_cast<int>(*o_rv)) +
+                            " V) — it will be higher at the original's drive level");
+        }
+        // Vgs(max) is the gate's absolute rating: a lower one can be exceeded by
+        // the existing driver and destroy the part.
+        auto o_gm = num(original, "vgs_max"), s_gm = num(cand, "vgs_max");
+        if (o_gm && s_gm && *s_gm < *o_gm - 1e-9) {
+            params.push_back({{"name", "vgs_max"}, {"verdict", WARN}});
+            demote();
+            penalty += opt.gate_weight * kVerdictWarnPenalty;
+            notes.push_back("lower maximum gate-source voltage than the original — check the "
+                            "existing gate drive cannot exceed it");
+        }
+    }
+
     // ── automotive grade (AEC-Q), decoded from the MPN ───────────────────────
     // Fires even when the original is not in the catalogue, which is exactly
     // when an engineer most needs to be told.
-    if (is_automotive_grade(str(original, "mpn")) && !is_automotive_grade(str(cand, "mpn"))) {
+    // The catalogue's structured `qualification` field is authoritative where it
+    // exists; the MPN decode is the fallback for parts we hold no record of.
+    auto qualified = [](const json& p) {
+        const std::string q = lower_copy(str(p, "qualification"));
+        if (!q.empty()) return q.find("aec") != std::string::npos;
+        return is_automotive_grade(str(p, "mpn"));
+    };
+    if (qualified(original) && !qualified(cand)) {
         params.push_back({{"name", "automotive_grade"}, {"verdict", FAIL}});
         demote();
         penalty += opt.gate_weight * kVerdictFailPenalty;
@@ -327,6 +490,34 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     out["penalty"] = penalty;
     out["params"] = params;
     if (!notes.empty()) out["notes"] = notes;
+
+    // ── grade + direction ────────────────────────────────────────────────────
+    bool any_warn = false, any_fail = false;
+    for (const auto& p : params) {
+        const std::string v = p.value("verdict", "");
+        if (v == WARN) any_warn = true;
+        if (v == FAIL) any_fail = true;
+    }
+    FootprintTier tier = FootprintTier::Unknown;
+    if (out.contains("footprint")) {
+        const std::string f = out["footprint"];
+        tier = f == "fits"              ? FootprintTier::Fits
+               : f == "one_size_larger" ? FootprintTier::OneSizeLarger
+               : f == "overflows"       ? FootprintTier::Overflows
+                                        : FootprintTier::Unknown;
+    }
+    out["grade"] = grade_for(status, tier, any_warn, any_fail);
+
+    // Direction: on the directional parameters we could actually compare, did
+    // the substitute come out ahead or behind? Mirrors the industry's upgrade /
+    // downgrade suffix (SiliconExpert A/U vs A/D), but computed from the
+    // measured ratios rather than asserted. "equivalent" when neither side
+    // clearly leads — including when there was nothing comparable to judge on,
+    // which is honest rather than flattering.
+    out["direction"] = (worse > 0 && better == 0)   ? "downgrade"
+                       : (better > 0 && worse == 0) ? "upgrade"
+                       : (better > 0 && worse > 0)  ? "mixed"
+                                                    : "equivalent";
     return out;
 }
 

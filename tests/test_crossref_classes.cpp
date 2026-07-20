@@ -1,0 +1,223 @@
+// Class-equivalence gates: capacitor construction family, dielectric envelope,
+// semiconductor process, gate drive, operating temperature, measurement-basis
+// awareness, and the industry-style match grade.
+//
+// Every case here encodes a documented real-world substitution failure, not a
+// characterisation of current behaviour.
+#include <catch2/catch_test_macros.hpp>
+
+#include "../src/CrossRef.hpp"
+#include "../src/CrossRefClasses.hpp"
+
+using namespace kelvin::crossref;
+
+// ── capacitor construction family ────────────────────────────────────────────
+
+TEST_CASE("capacitor families are classified from the technology string", "[crossref][classes]") {
+    CHECK(cap_family("ceramic-class-1") == CapFamily::CeramicClass1);
+    CHECK(cap_family("ceramic-class-2") == CapFamily::CeramicClass2);
+    CHECK(cap_family("aluminum-electrolytic-wet") == CapFamily::AluminiumWet);
+    CHECK(cap_family("aluminum-electrolytic-polymer") == CapFamily::AluminiumPolymer);
+    CHECK(cap_family("tantalum-mno2") == CapFamily::TantalumMnO2);
+    CHECK(cap_family("tantalum-polymer") == CapFamily::TantalumPolymer);
+    CHECK(cap_family("film-polypropylene") == CapFamily::Film);
+    // ceramic of unstated class must NOT be guessed into a class
+    CHECK(cap_family("ceramic") == CapFamily::Unknown);
+    CHECK(cap_family("") == CapFamily::Unknown);
+}
+
+TEST_CASE("a ceramic is never a drop-in for a tantalum or an electrolytic",
+          "[crossref][classes][rank]") {
+    // Same capacitance, same voltage, completely different part.
+    json original = {{"mpn", "TANT"}, {"value_si", 1e-5}, {"voltage", 25.0},
+                     {"technology", "tantalum-mno2"}};
+    json cands = json::array({
+        {{"mpn", "CER"}, {"value_si", 1e-5}, {"voltage", 25.0}, {"technology", "ceramic-class-2"}}});
+    auto r = cross_reference("capacitor", original, cands, Options{});
+    CHECK(r["candidates"][0]["status"] == "no_substitute");
+}
+
+TEST_CASE("MnO2 and polymer tantalum are not interchangeable", "[crossref][classes][rank]") {
+    // Different failure mode (ignition vs benign) and different derating
+    // convention (50% vs 70-80%) — a swap either way moves the part into a role
+    // it was not derated for.
+    json original = {{"mpn", "MNO2"}, {"value_si", 1e-5}, {"voltage", 25.0},
+                     {"technology", "tantalum-mno2"}};
+    json cands = json::array({
+        {{"mpn", "POLY"}, {"value_si", 1e-5}, {"voltage", 25.0},
+         {"technology", "tantalum-polymer"}}});
+    auto r = cross_reference("capacitor", original, cands, Options{});
+    CHECK(r["candidates"][0]["status"] == "no_substitute");
+    CHECK(std::string(r["candidates"][0]["notes"][0]).find("cathode") != std::string::npos);
+}
+
+TEST_CASE("same family passes the family gate", "[crossref][classes][rank]") {
+    json original = {{"mpn", "A"}, {"value_si", 1e-7}, {"voltage", 50.0},
+                     {"technology", "ceramic-class-2"}};
+    json cands = json::array({
+        {{"mpn", "B"}, {"value_si", 1e-7}, {"voltage", 50.0}, {"technology", "ceramic-class-2"}}});
+    auto r = cross_reference("capacitor", original, cands, Options{});
+    CHECK(r["candidates"][0]["status"] != "no_substitute");
+}
+
+// ── dielectric envelope (EIA RS-198) ─────────────────────────────────────────
+
+TEST_CASE("dielectric codes decode to their published envelope", "[crossref][classes]") {
+    auto x7r = dielectric_envelope("X7R");
+    REQUIRE(x7r.has_value());
+    CHECK(x7r->temp_min_c == -55);
+    CHECK(x7r->temp_max_c == 125);
+    CHECK(x7r->delta_c_pct == 15.0);
+    auto x5r = dielectric_envelope("X5R");
+    REQUIRE(x5r.has_value());
+    CHECK(x5r->temp_max_c == 85);   // the whole point: X5R stops at 85 degC
+    auto c0g = dielectric_envelope("C0G");
+    REQUIRE(c0g.has_value());
+    CHECK(c0g->class1);
+    CHECK(dielectric_envelope("NP0")->class1);   // same material system as C0G
+    CHECK_FALSE(dielectric_envelope("WAT").has_value());
+}
+
+TEST_CASE("X7R to X5R is caught as a temperature regression", "[crossref][classes]") {
+    const std::string reg = dielectric_regression("X7R", "X5R");
+    REQUIRE_FALSE(reg.empty());
+    CHECK(reg.find("upper temperature") != std::string::npos);
+}
+
+TEST_CASE("X7R to X7S is caught as a tolerance regression", "[crossref][classes]") {
+    // Same temperature range, but +/-22% instead of +/-15% — invisible to a
+    // string comparison of the codes.
+    const std::string reg = dielectric_regression("X7R", "X7S");
+    REQUIRE_FALSE(reg.empty());
+    CHECK(reg.find("capacitance change") != std::string::npos);
+}
+
+TEST_CASE("an improving dielectric swap is not flagged", "[crossref][classes]") {
+    CHECK(dielectric_regression("X5R", "X7R").empty());   // wider temperature
+    CHECK(dielectric_regression("X7S", "X7R").empty());   // tighter tolerance
+    CHECK(dielectric_regression("X7R", "C0G").empty());   // class 1 is better
+    // class 1 -> class 2 IS a regression (adds bias derating and ageing)
+    CHECK_FALSE(dielectric_regression("C0G", "X7R").empty());
+    // undecodable either side -> no claim
+    CHECK(dielectric_regression("X7R", "").empty());
+}
+
+// ── semiconductor process ────────────────────────────────────────────────────
+
+TEST_CASE("Si to SiC or GaN is flagged as a gate-drive change", "[crossref][classes]") {
+    CHECK_FALSE(process_conflict("Si", "SiC").empty());
+    CHECK_FALSE(process_conflict("Si", "GaN").empty());
+    CHECK(process_conflict("Si", "Si").empty());
+    CHECK(process_conflict("", "SiC").empty());  // unknown -> no claim
+}
+
+TEST_CASE("a SiC part offered for a Si original is not silently recommended",
+          "[crossref][classes][rank]") {
+    json original = {{"mpn", "SI"}, {"vds", 650.0}, {"id", 20.0}, {"rds_on", 0.1},
+                     {"technology", "Si"}};
+    json cands = json::array({
+        {{"mpn", "SIC"}, {"vds", 650.0}, {"id", 20.0}, {"rds_on", 0.05}, {"technology", "SiC"}}});
+    auto r = cross_reference("mosfet", original, cands, Options{});
+    CHECK(r["candidates"][0]["status"] == "partial");
+}
+
+// ── MOSFET gate drive ────────────────────────────────────────────────────────
+
+TEST_CASE("a standard-level FET for a logic-level original is flagged",
+          "[crossref][classes][rank]") {
+    // The classic failure: works on the bench at 10 V, never fully enhances
+    // from the 3.3 V controller already on the board.
+    json original = {{"mpn", "LOGIC"}, {"vds", 60.0}, {"id", 10.0}, {"rds_on", 0.01},
+                     {"vgs_threshold_max", 1.5}};
+    json cands = json::array({
+        {{"mpn", "STD"}, {"vds", 60.0}, {"id", 10.0}, {"rds_on", 0.01},
+         {"vgs_threshold_max", 4.0}}});
+    auto r = cross_reference("mosfet", original, cands, Options{});
+    CHECK(r["candidates"][0]["status"] == "partial");
+    CHECK(std::string(r["candidates"][0]["notes"][0]).find("gate threshold") != std::string::npos);
+}
+
+TEST_CASE("Rds(on) quoted at a higher Vgs is flagged as not comparable",
+          "[crossref][classes][rank]") {
+    json original = {{"mpn", "A"}, {"vds", 30.0}, {"id", 10.0}, {"rds_on", 0.01},
+                     {"rds_on_vgs", 4.5}};
+    json cands = json::array({
+        {{"mpn", "B"}, {"vds", 30.0}, {"id", 10.0}, {"rds_on", 0.01}, {"rds_on_vgs", 10.0}}});
+    auto r = cross_reference("mosfet", original, cands, Options{});
+    CHECK(r["candidates"][0]["status"] == "partial");
+}
+
+TEST_CASE("a lower Vgs(max) rating is surfaced", "[crossref][classes][rank]") {
+    json original = {{"mpn", "A"}, {"vds", 30.0}, {"id", 10.0}, {"rds_on", 0.01}, {"vgs_max", 20.0}};
+    json cands = json::array({
+        {{"mpn", "B"}, {"vds", 30.0}, {"id", 10.0}, {"rds_on", 0.01}, {"vgs_max", 12.0}}});
+    auto r = cross_reference("mosfet", original, cands, Options{});
+    CHECK(r["candidates"][0]["status"] == "partial");
+}
+
+// ── measurement basis ────────────────────────────────────────────────────────
+
+TEST_CASE("ESR quoted at different frequencies is not compared as a bare number",
+          "[crossref][classes][rank]") {
+    // A 120 Hz figure and a 100 kHz figure differ severalfold on the same part.
+    json original = {{"mpn", "A"}, {"value_si", 1e-4}, {"voltage", 25.0}, {"esr", 0.5},
+                     {"esr_frequency", 120.0}, {"technology", "aluminum-electrolytic-wet"}};
+    json cands = json::array({
+        {{"mpn", "B"}, {"value_si", 1e-4}, {"voltage", 25.0}, {"esr", 0.03},
+         {"esr_frequency", 100000.0}, {"technology", "aluminum-electrolytic-wet"}}});
+    auto r = cross_reference("capacitor", original, cands, Options{});
+    const json& c = r["candidates"][0];
+    bool flagged = false;
+    for (const auto& p : c["params"])
+        if (p["name"] == "esr_basis") flagged = true;
+    CHECK(flagged);
+}
+
+TEST_CASE("operating temperature range must be covered", "[crossref][classes][rank]") {
+    json original = {{"mpn", "WIDE"}, {"value_si", 1e-7}, {"voltage", 50.0},
+                     {"technology", "ceramic-class-2"}, {"temp_min_C", -55.0}};
+    json cands = json::array({
+        {{"mpn", "NARROW"}, {"value_si", 1e-7}, {"voltage", 50.0},
+         {"technology", "ceramic-class-2"}, {"temp_min_C", -20.0}}});
+    auto r = cross_reference("capacitor", original, cands, Options{});
+    CHECK(r["candidates"][0]["status"] == "partial");
+}
+
+// ── grade + direction ────────────────────────────────────────────────────────
+
+TEST_CASE("a clean same-size match grades drop_in", "[crossref][classes][rank]") {
+    json original = {{"mpn", "A"}, {"value_si", 1e-7}, {"voltage", 50.0}, {"package", "0603"},
+                     {"technology", "ceramic-class-2"}};
+    json cands = json::array({
+        {{"mpn", "B"}, {"value_si", 1e-7}, {"voltage", 50.0}, {"package", "0603"},
+         {"technology", "ceramic-class-2"}}});
+    auto r = cross_reference("capacitor", original, cands, Options{});
+    CHECK(r["candidates"][0]["grade"] == "drop_in");
+}
+
+TEST_CASE("an oversize part grades redesign, not drop_in", "[crossref][classes][rank]") {
+    json original = {{"mpn", "A"}, {"value_si", 1e-7}, {"voltage", 50.0}, {"package", "0402"},
+                     {"technology", "ceramic-class-2"}};
+    json cands = json::array({
+        {{"mpn", "BIG"}, {"value_si", 1e-7}, {"voltage", 50.0}, {"package", "1206"},
+         {"technology", "ceramic-class-2"}}});
+    auto r = cross_reference("capacitor", original, cands, Options{});
+    CHECK(r["candidates"][0]["grade"] == "redesign");
+}
+
+TEST_CASE("direction reports upgrade, downgrade and mixed honestly",
+          "[crossref][classes][rank]") {
+    json original = {{"mpn", "O"}, {"vds", 60.0}, {"id", 10.0}, {"rds_on", 0.010}};
+    // strictly better: more voltage headroom, more current, lower Rds(on)
+    json up = json::array({{{"mpn", "UP"}, {"vds", 100.0}, {"id", 20.0}, {"rds_on", 0.005}}});
+    CHECK(cross_reference("mosfet", original, up, Options{})["candidates"][0]["direction"] ==
+          "upgrade");
+    // better on current, worse on Rds(on)
+    json mix = json::array({{{"mpn", "MIX"}, {"vds", 60.0}, {"id", 20.0}, {"rds_on", 0.030}}});
+    CHECK(cross_reference("mosfet", original, mix, Options{})["candidates"][0]["direction"] ==
+          "mixed");
+    // nothing clearly leads
+    json same = json::array({{{"mpn", "SAME"}, {"vds", 60.0}, {"id", 10.0}, {"rds_on", 0.010}}});
+    CHECK(cross_reference("mosfet", original, same, Options{})["candidates"][0]["direction"] ==
+          "equivalent");
+}

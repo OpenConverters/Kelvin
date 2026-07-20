@@ -18,10 +18,15 @@ using json = nlohmann::json;
 static_assert(sizeof(double) == 8, "double must be 8 bytes");
 
 constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
-// v2 added RowBase dimensions (length/width/height + case code) for the
-// cross-reference footprint check. A v1 shard is rejected rather than read
-// leniently: the field offsets moved, so a lenient read would mis-parse rows.
-constexpr uint32_t kFormatVersion = 2;
+// v2 added RowBase dimensions (length/width/height, case code, mount type) for
+// the cross-reference footprint and mount-type checks.
+// v3 added the substitution-condition fields: Rds(on) test Vgs, Vgs max and
+// qualification on MOSFETs; ESR measurement frequency and operating temperature
+// range on capacitors. These are the CONDITIONS under which a headline number
+// was measured — without them, comparing the numbers manufactures a verdict.
+// An older shard is rejected rather than read leniently: the field offsets
+// moved, so a lenient read would silently mis-parse every row.
+constexpr uint32_t kFormatVersion = 3;
 
 // ---- string pool -----------------------------------------------------------
 class StringPool {
@@ -141,6 +146,9 @@ void row_io(Ar& ar, MosfetRow& r) {
     ar.dbl(r.qg_total);
     ar.dbl(r.coss);
     ar.dbl(r.vgs_threshold_max);
+    ar.dbl(r.rds_on_vgs);
+    ar.dbl(r.vgs_max);
+    ar.str(r.qualification);
     ar.dbl(r.rth_ja);
     ar.dbl(r.rth_jc);
     ar.dbl(r.tj_max);
@@ -174,6 +182,9 @@ void row_io(Ar& ar, CapacitorRow& r) {
     ar.dbl(r.rth);
     ar.str(r.technology);
     ar.str(r.dielectric_code);
+    ar.dbl(r.esr_frequency);
+    ar.dbl(r.temp_min_c);
+    ar.dbl(r.temp_max_c);
     ar.boolean(r.is_production);
 }
 

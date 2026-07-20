@@ -191,6 +191,9 @@ std::optional<MosfetRow> extract_mosfet(const json& env) {
     r.qg_total = qg_total;
     r.coss = coss;
     r.vgs_threshold_max = vgs_max;
+    if (auto v = get_num(*elec, "onResistanceVgs"); pos(v)) r.rds_on_vgs = *v;
+    if (auto v = get_num(*elec, "gateSourceVoltageMax"); pos(v)) r.vgs_max = *v;
+    r.qualification = get_str(*part, "qualification").value_or("");
     r.technology = get_str(*part, "technology").value_or("");
     auto status = get_str(*mi, "status");
     r.is_production = status.has_value() && *status == "production";
@@ -307,6 +310,15 @@ std::optional<CapacitorRow> extract_capacitor(const json& env) {
     // Dielectric code (X7R / C0G / X5R …) drives the class-equivalence gate in
     // the cross-reference ranker: swapping C0G for X5R is a real regression.
     r.dielectric_code = get_str(*part, "dielectricCode").value_or("");
+    if (auto v = get_num(*elec, "esrFrequency"); pos(v)) r.esr_frequency = *v;
+    // Operating temperature range: a substitute must cover the original's, at
+    // both ends. Present on essentially every capacitor record.
+    if (const json* th = obj_get(*di, "thermal")) {
+        if (const json* t = obj_get(*th, "temperature")) {
+            if (auto v = get_num(*t, "minimum")) r.temp_min_c = *v;
+            if (auto v = get_num(*t, "maximum")) r.temp_max_c = *v;
+        }
+    }
     r.technology = tech;
     auto status = get_str(*mi, "status");
     r.is_production = status.has_value() && *status == "production";

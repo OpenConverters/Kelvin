@@ -118,7 +118,9 @@ test.describe('kelvin site', () => {
     const dataRows = table.locator('tbody tr:not(.notes-row)')
     await expect(dataRows.first()).toBeVisible({ timeout: 30_000 })
     // every row carries a status chip and per-parameter verdict cells
-    await expect(dataRows.first().locator('.chip')).toHaveText(/recommended|partial|no substitute/)
+    // the status chip now carries the industry-style GRADE (what work the swap costs)
+    await expect(dataRows.first().locator('.chip')).toHaveText(
+      /drop-in|minor review|major review|redesign|no substitute/)
     await expect(dataRows.first().locator('td.num').first()).toBeVisible()
     // physical-fit verdict is now part of every row
     await expect(dataRows.first().locator('td[class^="fp-"]')).toBeVisible()
