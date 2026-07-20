@@ -119,7 +119,8 @@ struct DiodeRow : RowBase {
 struct CapacitorRow : RowBase {
     double capacitance = 0, v_rated = 0, ripple_current_rms = 0, esr = 0;
     double rth = kNaN();
-    std::string technology;   // part.family|subType|series
+    std::string technology;      // part.technology (ceramic-class-2, film-…)
+    std::string dielectric_code; // part.dielectricCode (X7R / C0G / X5R …)
     bool is_production = false;
     bool no_thermal() const { return !present(rth); }
 };

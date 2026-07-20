@@ -98,7 +98,8 @@ inline const FieldTable<CapacitorRow>& fields<CapacitorRow>() {
          {"ripple_current_rms", &CapacitorRow::ripple_current_rms},
          {"esr", &CapacitorRow::esr},
          {"rth", &CapacitorRow::rth}},
-        {{"technology", &CapacitorRow::technology}},
+        {{"technology", &CapacitorRow::technology},
+         {"dielectric_code", &CapacitorRow::dielectric_code}},
         {{"is_production", &CapacitorRow::is_production}},
         {}};
     return t;

@@ -294,10 +294,19 @@ std::optional<CapacitorRow> extract_capacitor(const json& env) {
     r.v_rated = *v_rated;
     r.ripple_current_rms = ripple;
     r.esr = esr;
-    // technology = part.family or part.subType or part.series
-    std::string tech = get_str(*part, "family").value_or("");
+    // Technology is `part.technology` — a real comparable class
+    // ("ceramic-class-2", "aluminum-electrolytic-wet", "film-polypropylene"),
+    // present on every record. The family/subType/series chain below is only a
+    // fallback: those hold a VENDOR SERIES ("GRM1885"), which is not a
+    // technology, is never equal across manufacturers, and made both the
+    // catalogue facet and the cross-reference same-technology filter useless.
+    std::string tech = get_str(*part, "technology").value_or("");
+    if (tech.empty()) tech = get_str(*part, "family").value_or("");
     if (tech.empty()) tech = get_str(*part, "subType").value_or("");
     if (tech.empty()) tech = get_str(*part, "series").value_or("");
+    // Dielectric code (X7R / C0G / X5R …) drives the class-equivalence gate in
+    // the cross-reference ranker: swapping C0G for X5R is a real regression.
+    r.dielectric_code = get_str(*part, "dielectricCode").value_or("");
     r.technology = tech;
     auto status = get_str(*mi, "status");
     r.is_production = status.has_value() && *status == "production";

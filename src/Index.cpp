@@ -173,6 +173,7 @@ void row_io(Ar& ar, CapacitorRow& r) {
     ar.dbl(r.esr);
     ar.dbl(r.rth);
     ar.str(r.technology);
+    ar.str(r.dielectric_code);
     ar.boolean(r.is_production);
 }
 
