@@ -115,14 +115,17 @@ test.describe('kelvin site', () => {
     await page.getByRole('button', { name: 'mark all others' }).click()
     await page.getByRole('button', { name: 'Find cross references' }).click()
     const table = page.getByTestId('xref-table')
-    await expect(table.locator('tbody tr').first()).toBeVisible({ timeout: 30_000 })
+    const dataRows = table.locator('tbody tr:not(.notes-row)')
+    await expect(dataRows.first()).toBeVisible({ timeout: 30_000 })
     // every row carries a status chip and per-parameter verdict cells
-    await expect(table.locator('tbody tr').first().locator('.chip')).toHaveText(/recommended|partial|no substitute/)
-    await expect(table.locator('tbody tr').first().locator('td.num').first()).toBeVisible()
-    const firstMpn = await table.locator('tbody tr').first().locator('.mpn-link').textContent()
+    await expect(dataRows.first().locator('.chip')).toHaveText(/recommended|partial|no substitute/)
+    await expect(dataRows.first().locator('td.num').first()).toBeVisible()
+    // physical-fit verdict is now part of every row
+    await expect(dataRows.first().locator('td[class^="fp-"]')).toBeVisible()
+    const firstMpn = await dataRows.first().locator('.mpn-link').textContent()
     // deterministic engine: re-running the same question returns the same answer
     await page.getByRole('button', { name: 'Find cross references' }).click()
-    await expect(table.locator('tbody tr').first().locator('.mpn-link')).toHaveText(firstMpn, { timeout: 30_000 })
+    await expect(dataRows.first().locator('.mpn-link')).toHaveText(firstMpn, { timeout: 30_000 })
     expect(errors).toEqual([])
   })
 

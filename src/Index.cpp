@@ -18,7 +18,10 @@ using json = nlohmann::json;
 static_assert(sizeof(double) == 8, "double must be 8 bytes");
 
 constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
-constexpr uint32_t kFormatVersion = 1;
+// v2 added RowBase dimensions (length/width/height + case code) for the
+// cross-reference footprint check. A v1 shard is rejected rather than read
+// leniently: the field offsets moved, so a lenient read would mis-parse rows.
+constexpr uint32_t kFormatVersion = 2;
 
 // ---- string pool -----------------------------------------------------------
 class StringPool {
@@ -122,6 +125,11 @@ void io_base(Ar& ar, RowBase& r) {
     ar.u32(r.src_length);
     ar.str(r.mpn);
     ar.str(r.manufacturer);
+    ar.dbl(r.length_m);
+    ar.dbl(r.width_m);
+    ar.dbl(r.height_m);
+    ar.str(r.case_code);
+    ar.str(r.mount);
 }
 
 template <class Ar>

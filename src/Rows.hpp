@@ -82,6 +82,18 @@ struct RowBase {
     uint32_t src_length = 0;  // raw line length (bytes, excluding the newline)
     std::string mpn;
     std::string manufacturer;
+    // Physical body size, metres, from datasheetInfo.mechanical. NaN when the
+    // record carries no drawing — the cross-reference footprint check then falls
+    // back to resolving `case_code`, and reports "unknown" if that fails too
+    // rather than assuming the part fits.
+    double length_m = kNaN();
+    double width_m = kNaN();
+    double height_m = kNaN();
+    std::string case_code;  // part.case / mechanical.case — the fallback size source
+    // mechanical.assemblyType (smt / tht / chassis): an EXPLICIT mount type, far
+    // more reliable than inferring it from a package string, which is all
+    // Heaviside had. Empty when the record does not state it.
+    std::string mount;
 };
 
 struct MosfetRow : RowBase {

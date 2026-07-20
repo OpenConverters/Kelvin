@@ -516,6 +516,14 @@ json browse_rows(const Shard<Row>& shard, const json& query) {
                {"lineno", r.lineno},
                {"srcOffset", r.src_offset},
                {"srcLength", r.src_length}};
+        // Physical size travels with every row (all families) so the caller can
+        // run the cross-reference footprint check without a second fetch. Absent
+        // stays null — never 0, which would read as a real dimension.
+        o["lengthM"] = std::isnan(r.length_m) ? json(nullptr) : json(r.length_m);
+        o["widthM"] = std::isnan(r.width_m) ? json(nullptr) : json(r.width_m);
+        o["heightM"] = std::isnan(r.height_m) ? json(nullptr) : json(r.height_m);
+        if (!r.case_code.empty()) o["caseCode"] = r.case_code;
+        if (!r.mount.empty()) o["mount"] = r.mount;
         for (const auto& [name, mem] : t.nums) {
             double v = r.*mem;
             if (std::isnan(v)) o[name] = nullptr;

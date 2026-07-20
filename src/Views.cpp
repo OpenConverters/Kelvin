@@ -59,6 +59,43 @@ std::optional<double> resolve_field(const json& o, const char* key,
 
 bool pos(const std::optional<double>& x) { return x.has_value() && *x > 0.0; }
 
+// Physical body size + case code, shared by every family extractor: the
+// cross-reference footprint check needs a real size, because a substitute that
+// does not fit the board is not a substitute. Dimensions are
+// dimensionWithTolerance in TAS, so they go through the resolver rather than
+// being hand-read. Absent stays NaN — the ranker then falls back to resolving
+// the case code, and reports "unknown" if that fails too, never assuming a fit.
+void fill_dimensions(RowBase& r, const json& di, const json& part) {
+    if (const json* mech = obj_get(di, "mechanical")) {
+        // Some records nest the drawing one level deeper under `dimensions`.
+        const json* nested = obj_get(*mech, "dimensions");
+        const json& src = nested ? *nested : *mech;
+        if (auto v = resolve_field(src, "length"); pos(v)) r.length_m = *v;
+        if (auto v = resolve_field(src, "width"); pos(v)) r.width_m = *v;
+        if (auto v = resolve_field(src, "height"); pos(v)) r.height_m = *v;
+        if (nested) {  // a nested block may still leave siblings on `mechanical`
+            if (!present(r.length_m))
+                if (auto v = resolve_field(*mech, "length"); pos(v)) r.length_m = *v;
+            if (!present(r.width_m))
+                if (auto v = resolve_field(*mech, "width"); pos(v)) r.width_m = *v;
+            if (!present(r.height_m))
+                if (auto v = resolve_field(*mech, "height"); pos(v)) r.height_m = *v;
+        }
+    }
+    // Case code: `part.case` is the field the catalogue actually populates
+    // (100% of sampled capacitors/mosfets/resistors/diodes); `mechanical.case`
+    // and the caseCode/package spellings are accepted as fallbacks.
+    const json* mech = obj_get(di, "mechanical");
+    if (auto c = get_str(part, "case")) r.case_code = *c;
+    else if (mech) { if (auto c = get_str(*mech, "case")) r.case_code = *c; }
+    if (r.case_code.empty()) {
+        if (auto c = get_str(part, "caseCode")) r.case_code = *c;
+        else if (auto p = get_str(part, "package")) r.case_code = *p;
+    }
+    // Explicit mount type when the record states it (smt / tht / chassis).
+    if (mech) { if (auto a = get_str(*mech, "assemblyType")) r.mount = *a; }
+}
+
 }  // namespace
 
 bool datasheet_unusable(const std::string& url) {
@@ -147,6 +184,7 @@ std::optional<MosfetRow> extract_mosfet(const json& env) {
     MosfetRow r;
     r.mpn = *mpn;
     r.manufacturer = *manuf;
+    fill_dimensions(r, *di, *part);
     r.vds_rated = *vds;
     r.id_continuous = *id;
     r.rds_on = *rds;
@@ -201,6 +239,7 @@ std::optional<DiodeRow> extract_diode(const json& env) {
     DiodeRow r;
     r.mpn = *mpn;
     r.manufacturer = *manuf;
+    fill_dimensions(r, *di, *part);
     r.vrrm_rated = *vrrm;
     r.if_avg_rated = *if_avg;
     r.vf_typ = *vf;
@@ -250,6 +289,7 @@ std::optional<CapacitorRow> extract_capacitor(const json& env) {
     CapacitorRow r;
     r.mpn = *mpn;
     r.manufacturer = *manuf;
+    fill_dimensions(r, *di, *part);
     r.capacitance = *cap_nom;
     r.v_rated = *v_rated;
     r.ripple_current_rms = ripple;
@@ -295,6 +335,7 @@ std::optional<ResistorRow> extract_resistor(const json& env) {
     ResistorRow r;
     r.mpn = *mpn;
     r.manufacturer = get_str(*mi, "name").value_or("");
+    fill_dimensions(r, *di, *part);
     r.resistance = *r_nom;
     r.tolerance = tol;
     r.power_rating = pw;
@@ -325,6 +366,7 @@ std::optional<ControllerRow> extract_controller(const json& env) {
     ControllerRow r;
     r.mpn = *mpn;
     r.manufacturer = *manuf;
+    fill_dimensions(r, *ds, *part);
     r.category = get_str(*fn, "category").value_or("");
     const json* topos = obj_get(*fn, "intendedTopologies");
     if (topos && topos->is_array()) {
@@ -382,6 +424,8 @@ std::optional<IgbtRow> extract_igbt(const json& env) {
     IgbtRow r;
     r.mpn = *mpn;
     r.manufacturer = *manuf;
+    const json* dinfo_dims = obj_get(*refs->mi, "datasheetInfo");
+    if (dinfo_dims) fill_dimensions(r, *dinfo_dims, *refs->part);
     r.vces_rated = *vces;
     r.ic_continuous = *ic;
     r.vce_sat = get_num(*refs->elec, "collectorEmitterSaturation").value_or(0.0);
@@ -412,6 +456,8 @@ std::optional<BjtRow> extract_bjt(const json& env) {
     BjtRow r;
     r.mpn = *mpn;
     r.manufacturer = *manuf;
+    const json* dinfo_dims = obj_get(*refs->mi, "datasheetInfo");
+    if (dinfo_dims) fill_dimensions(r, *dinfo_dims, *refs->part);
     r.vceo_rated = *vceo;
     r.ic_continuous = *ic;
     // dcCurrentGain: {minimum,maximum} or scalar -> the guaranteed MINIMUM gain.
@@ -444,6 +490,7 @@ std::optional<VaristorRow> extract_varistor(const json& env) {
     VaristorRow r;
     r.mpn = *mpn;
     r.manufacturer = *manuf;
+    fill_dimensions(r, *di, *part);
     r.varistor_voltage = *vnom;
     r.clamping_voltage = get_num(*elec, "clampingVoltage").value_or(0.0);
     r.peak_surge_current = get_num(*elec, "peakSurgeCurrent").value_or(0.0);
@@ -508,6 +555,7 @@ std::optional<MagneticRow> extract_magnetic(const json& env) {
     MagneticRow r;
     r.mpn = *mpn;
     r.manufacturer = *manuf;
+    fill_dimensions(r, *di, *part);
 
     // electrical is an ARRAY; the first entry is the primary-winding projection we rank on.
     const json* elec_arr = obj_get(*di, "electrical");
@@ -611,6 +659,7 @@ std::optional<AnalogRow> extract_analog(const json& env) {
     AnalogRow r;
     r.mpn = *mpn;
     r.manufacturer = *manuf;
+    fill_dimensions(r, *di, *part);
     r.device_type = node->subtype;
 
     const json* elec = obj_get(*di, "electrical");
@@ -653,6 +702,7 @@ std::optional<TimingRow> extract_timing(const json& env) {
     TimingRow r;
     r.mpn = *mpn;
     r.manufacturer = *manuf;
+    fill_dimensions(r, *di, *part);
     r.device_type = node->subtype;
 
     const json* elec = obj_get(*di, "electrical");
@@ -696,6 +746,7 @@ std::optional<ConnectorRow> extract_connector(const json& env) {
     ConnectorRow r;
     r.mpn = *mpn;
     r.manufacturer = *manuf;
+    fill_dimensions(r, *di, *part);
 
     const json* elec = obj_get(*di, "electrical");
     if (elec && elec->is_object()) {

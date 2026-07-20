@@ -88,6 +88,7 @@ if (KELVIN_BUILD_TESTS AND NOT EMSCRIPTEN AND KELVIN_TOP)
         tests/test_phase5.cpp
         tests/test_crossref_score.cpp
         tests/test_crossref_rank.cpp
+        tests/test_crossref_dimensions.cpp
         tests/test_crossref_golden.cpp
         tests/test_mfr_policy.cpp
         tests/test_browse.cpp)

@@ -21,7 +21,7 @@ const XREF = [
     primary: { row: 'inductance', label: 'L', unit: 'H', acceptLo: 0.80, acceptHi: 1.25 },
     sameFacet: { f: 'device_type', label: 'device type' },
     hardKeys: ['saturation_current', 'rated_current'],
-    spec: (r) => ({ value_si: nz(r.inductance), saturation_current: nz(r.saturation_current), rated_current: nz(r.rated_current), dcr: nz(r.dcr) }),
+    spec: (r) => ({ ...base(r), value_si: nz(r.inductance), saturation_current: nz(r.saturation_current), rated_current: nz(r.rated_current), dcr: nz(r.dcr) }),
     params: [
       { key: 'value', label: 'L', row: 'inductance', unit: 'H' },
       { key: 'saturation_current', label: 'Isat', row: 'saturation_current', unit: 'A' },
@@ -35,7 +35,7 @@ const XREF = [
     sameFacet: { f: 'technology', label: 'technology' },
     hardKeys: ['voltage'],
     hardMin: [{ row: 'v_rated', factor: 0.9 }],
-    spec: (r) => ({ value_si: nz(r.capacitance), voltage: nz(r.v_rated), esr: nz(r.esr), ripple_current: nz(r.ripple_current_rms) }),
+    spec: (r) => ({ ...base(r), value_si: nz(r.capacitance), voltage: nz(r.v_rated), esr: nz(r.esr), ripple_current: nz(r.ripple_current_rms), technology: r.technology ?? '' }),
     params: [
       { key: 'value', label: 'C', row: 'capacitance', unit: 'F' },
       { key: 'voltage', label: 'V rated', row: 'v_rated', unit: 'V' },
@@ -48,7 +48,7 @@ const XREF = [
     primary: { row: 'resistance', label: 'R', unit: 'Ω', acceptLo: 0.95, acceptHi: 1.05 },
     sameFacet: null,
     hardKeys: [],
-    spec: (r) => ({ value_si: nz(r.resistance), power_rating: nz(r.power_rating), tolerance_pct: r.tolerance != null && r.tolerance > 0 ? r.tolerance * 100 : null }),
+    spec: (r) => ({ ...base(r), value_si: nz(r.resistance), power_rating: nz(r.power_rating), tolerance_pct: r.tolerance != null && r.tolerance > 0 ? r.tolerance * 100 : null }),
     params: [
       { key: 'value', label: 'R', row: 'resistance', unit: 'Ω' },
       { key: 'power_rating', label: 'P', row: 'power_rating', unit: 'W' },
@@ -61,7 +61,7 @@ const XREF = [
     sameFacet: { f: 'technology', label: 'technology' },
     hardKeys: ['vds'],
     hardMin: [{ row: 'vds_rated', factor: 0.9 }],
-    spec: (r) => ({ vds: nz(r.vds_rated), id: nz(r.id_continuous), rds_on: nz(r.rds_on), qg: nz(r.qg_total) }),
+    spec: (r) => ({ ...base(r), vds: nz(r.vds_rated), id: nz(r.id_continuous), rds_on: nz(r.rds_on), qg: nz(r.qg_total), coss: nz(r.coss), vgs_threshold_max: nz(r.vgs_threshold_max) }),
     params: [
       { key: 'vds', label: 'Vds', row: 'vds_rated', unit: 'V' },
       { key: 'id', label: 'Id', row: 'id_continuous', unit: 'A' },
@@ -75,7 +75,7 @@ const XREF = [
     sameFacet: { f: 'technology', label: 'type' },
     hardKeys: ['vrrm'],
     hardMin: [{ row: 'vrrm_rated', factor: 0.9 }],
-    spec: (r) => ({ vrrm: nz(r.vrrm_rated), if_avg: nz(r.if_avg_rated), vf: nz(r.vf_typ), qrr: nz(r.qrr) }),
+    spec: (r) => ({ ...base(r), vrrm: nz(r.vrrm_rated), if_avg: nz(r.if_avg_rated), vf: nz(r.vf_typ), qrr: nz(r.qrr), trr: nz(r.trr) }),
     params: [
       { key: 'vrrm', label: 'Vrrm', row: 'vrrm_rated', unit: 'V' },
       { key: 'if_avg', label: 'If avg', row: 'if_avg_rated', unit: 'A' },
@@ -88,6 +88,23 @@ const XREF = [
 // Shard rows carry 0 (fixed fields) or null (nullable fields) for "not in the
 // datasheet" — both mean UNKNOWN to the ranker, never a real datum.
 function nz(v) { return v != null && v > 0 ? v : null }
+
+// Fields every category contributes regardless of its electrical parameters:
+// identity (drives the AEC-Q / voltage MPN decode), physical size and case code
+// (the footprint + mount-type gates), and lifecycle. Dimensions are metres, as
+// the shard stores them; the engine falls back to resolving the case code when a
+// record has no mechanical drawing.
+function base(r) {
+  return {
+    mpn: r.mpn,
+    length_m: nz(r.lengthM),
+    width_m: nz(r.widthM),
+    height_m: nz(r.heightM),
+    case_code: r.caseCode ?? '',
+    mount: r.mount ?? '',
+    is_production: r.is_production,
+  }
+}
 
 const fam = computed(() => XREF.find((f) => f.key === store.family) ?? XREF[0])
 
@@ -250,6 +267,15 @@ function penaltyText(c) {
   return c.penalty.toFixed(2)
 }
 const STATUS_LABEL = { recommended: 'recommended', partial: 'partial', no_substitute: 'no substitute' }
+const FOOTPRINT_LABEL = {
+  fits: 'fits', one_size_larger: '+1 size', overflows: 'larger', unknown: '?',
+}
+const FOOTPRINT_TITLE = {
+  fits: 'fits within the original’s footprint (orientation-agnostic, height checked when known)',
+  one_size_larger: 'about one case size larger — works electrically, verify board space',
+  overflows: 'larger than the original’s footprint — board respin likely',
+  unknown: 'no dimensions or resolvable case code on this part',
+}
 function openPart(r) {
   if (typeof r?.srcOffset !== 'number') return
   store.drawer = { family: fam.value.key, mpn: r.mpn, manufacturer: r.manufacturer, srcOffset: r.srcOffset, srcLength: r.srcLength }
@@ -399,12 +425,14 @@ function openPart(r) {
                   <th v-for="p in fam.params" :key="p.key" class="num">
                     {{ p.label }}<span class="orig-ref mono">{{ cellValue(original, p) }}</span>
                   </th>
+                  <th title="does the substitute fit the original's board space?">fit</th>
                   <th class="num" title="total penalty — lower is better (0 = ideal)">penalty</th>
                   <th></th>
                 </tr>
               </thead>
               <tbody>
-                <tr v-for="(c, i) in result.ranked" :key="c.mpn" :class="`row-${c.status}`">
+                <template v-for="(c, i) in result.ranked" :key="c.mpn">
+                <tr :class="`row-${c.status}`">
                   <td class="mono rank">{{ String(i + 1).padStart(2, '0') }}</td>
                   <td><button class="mpn-link mono" type="button" @click="openPart(rowOf(c))">{{ dispMpn(c) }}</button></td>
                   <td class="mfr-cell">{{ dispMfr(c) }}</td>
@@ -412,6 +440,9 @@ function openPart(r) {
                   <td v-for="p in fam.params" :key="p.key" class="num mono" :class="`v-${verdictOf(c, p.key)}`"
                       :title="`${p.label}: ${verdictOf(c, p.key)}`">
                     {{ cellValue(rowOf(c), p) }}
+                  </td>
+                  <td :class="`fp-${c.footprint ?? 'unknown'}`" :title="FOOTPRINT_TITLE[c.footprint] ?? 'no dimensions on record'">
+                    {{ FOOTPRINT_LABEL[c.footprint] ?? '—' }}
                   </td>
                   <td class="num mono">{{ penaltyText(c) }}</td>
                   <td>
@@ -422,6 +453,14 @@ function openPart(r) {
                     >◉</button>
                   </td>
                 </tr>
+                <!-- the engine's own reasons for a demotion — footprint, automotive
+                     grade, DC bias, lifecycle. Shown inline so a "partial" is never
+                     unexplained. -->
+                <tr v-if="c.notes?.length" class="notes-row">
+                  <td></td>
+                  <td :colspan="fam.params.length + 5" class="note">{{ c.notes.join(' · ') }}</td>
+                </tr>
+                </template>
               </tbody>
             </table>
           </div>
@@ -431,6 +470,9 @@ function openPart(r) {
             <span class="v-fail">■</span> fail · <span class="v-unverified">■</span> not documented —
             per-parameter verdicts against the original ({{ fam.primary ? `${fam.primary.label} window + ` : '' }}directional gates,
             penalties in log-ratio space; “no substitute” = a hard gate failed).
+            Also checked, and reported in the row note when they bite: physical fit
+            (3-axis, orientation-agnostic, case codes resolved per family), SMD↔leaded
+            mount type, automotive (AEC-Q) grade decoded from the MPN, and lifecycle.
           </p>
         </template>
       </section>
@@ -518,6 +560,13 @@ function openPart(r) {
 .v-warn { color: var(--warm); }
 .v-fail { color: var(--fault); }
 .v-unverified { color: #4a5b6e; }
+.xref-tbl td[class^="fp-"] { font-size: 10px; }
+.fp-fits { color: var(--ok); }
+.fp-one_size_larger { color: var(--warm); }
+.fp-overflows { color: var(--fault); }
+.fp-unknown { color: #4a5b6e; }
+.notes-row td { padding-top: 0; border-bottom: 1px solid var(--line-soft); }
+.note { font-size: 10px; color: var(--warm); }
 .pin { padding: 1px 7px; border-radius: 999px; font-size: 12px; }
 .legend { font-size: 10px; color: var(--ink-dim); margin: 10px 0 0; }
 
