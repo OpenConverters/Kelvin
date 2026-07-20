@@ -41,14 +41,27 @@ fi
 # 5. Byte-verify the live artifacts against this clean-HEAD build (per artifact).
 BASE=https://kelvin.openconverters.com
 if [[ -n "${SKIP_NGINX:-}" ]] || curl -sfI "$BASE/" >/dev/null 2>&1; then
+  # Each artifact is checked over BOTH response paths, because nginx has gzip_static
+  # on: a plain request serves <file>, but any browser (Accept-Encoding: gzip) gets
+  # <file>.gz instead. A stale sidecar therefore ships old bytes to every real user
+  # while a plain curl reports success — so checking only the plain path cannot
+  # detect the very failure this message names. (Cost us a full cycle on 2026-07-20:
+  # a corrected catalogue was live, plain curl verified clean, and browsers kept
+  # loading the previous manifest from its stale .gz.)
   for f in kelvin.js index.html $(cd "$HERE/dist" && ls assets/*.js assets/*.css); do
-    live=$(curl -sf "$BASE/$f" | sha256sum | cut -d' ' -f1)
     local_=$(sha256sum "$HERE/dist/$f" | cut -d' ' -f1)
-    if [[ "$live" != "$local_" ]]; then
-      echo "BYTE MISMATCH on $f (live $live vs built $local_) — stale .gz sidecar or stray tree change" >&2
+    plain=$(curl -sf "$BASE/$f" | sha256sum | cut -d' ' -f1)
+    if [[ "$plain" != "$local_" ]]; then
+      echo "BYTE MISMATCH on $f (live $plain vs built $local_) — stray working-tree change or failed rsync" >&2
       exit 1
     fi
-    echo "verified $f"
+    gz=$(curl -sf --compressed "$BASE/$f" | sha256sum | cut -d' ' -f1)
+    if [[ "$gz" != "$local_" ]]; then
+      echo "STALE GZIP SIDECAR on $f — browsers receive $gz, built $local_." >&2
+      echo "Regenerate it: ssh $HOST \"cd $DOCROOT && gzip -kf9 $f\"" >&2
+      exit 1
+    fi
+    echo "verified $f (plain + gzip)"
   done
   # Range sanity: the drawer refuses anything but a 206.
   code=$(curl -s -o /dev/null -w '%{http_code}' -H 'Range: bytes=0-99' "$BASE/kelvin/mosfet.ndjson")
