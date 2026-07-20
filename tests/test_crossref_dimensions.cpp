@@ -303,20 +303,55 @@ TEST_CASE("an explicit assembly type beats package-string inference", "[crossref
     CHECK(normalize_mount("chassis").empty());
 }
 
-TEST_CASE("caller identity travels in `id`, leaving `mpn` decodable", "[crossref][rank]") {
+TEST_CASE("caller identity travels in `_key`, leaving `mpn` decodable", "[crossref][rank]") {
     // Two vendors can ship the same MPN string, so callers pass their own `id`.
     // It must be echoed back UNCHANGED, and must not displace `mpn` — the AEC-Q
     // and rated-voltage gates decode `mpn`, and a composite key decodes to
     // nothing, silently disabling both gates.
-    json original = {{"mpn", "GCM188R71H104KA57D"}, {"id", "Murata|GCM188R71H104KA57D"},
+    json original = {{"mpn", "GCM188R71H104KA57D"}, {"_key", "Murata|GCM188R71H104KA57D"},
                      {"value_si", 1e-7}, {"voltage", 50.0}};
     json cands = json::array({
-        {{"mpn", "GRM188R71H104KA93D"}, {"id", "Murata|GRM188R71H104KA93D"},
+        {{"mpn", "GRM188R71H104KA93D"}, {"_key", "Murata|GRM188R71H104KA93D"},
          {"value_si", 1e-7}, {"voltage", 50.0}}});
     auto r = cross_reference("capacitor", original, cands, Options{});
     const json& c = r["candidates"][0];
-    CHECK(c["id"] == "Murata|GRM188R71H104KA93D");
+    CHECK(c["_key"] == "Murata|GRM188R71H104KA93D");
     CHECK(c["mpn"] == "GRM188R71H104KA93D");
     // the automotive gate still fires, which it cannot do on a composite key
     CHECK(c["status"] == "partial");
+}
+
+TEST_CASE("a caller identity key never masks a physical parameter", "[crossref][rank]") {
+    // The identity field used to be `id`, which is ALSO the MOSFET drain-current
+    // parameter. The key overwrote the current, num() read the string as absent,
+    // and the drain-current comparison silently disabled itself in production:
+    // a 31 A part ranked top against a 200 A original. This asserts the current
+    // is still compared while an identity key is present.
+    json original = {{"mpn", "ORIG"}, {"_key", "TI|ORIG"}, {"vds", 60.0}, {"id", 200.0},
+                     {"rds_on", 0.00065}};
+    json cands = json::array({
+        {{"mpn", "WEAK"}, {"_key", "Infineon|WEAK"}, {"vds", 650.0}, {"id", 31.0},
+         {"rds_on", 0.099}},
+        {{"mpn", "STRONG"}, {"_key", "TI|STRONG"}, {"vds", 100.0}, {"id", 200.0},
+         {"rds_on", 0.0009}}});
+    auto r = cross_reference("mosfet", original, cands, Options{});
+    CHECK(r["candidates"][0]["mpn"] == "STRONG");
+    auto weak = std::find_if(r["candidates"].begin(), r["candidates"].end(),
+                             [](const json& c) { return c["mpn"] == "WEAK"; });
+    REQUIRE(weak != r["candidates"].end());
+    // the drain-current shortfall must actually register
+    bool id_failed = false;
+    for (const auto& p : (*weak)["params"])
+        if (p["name"] == "id" && p["verdict"] == FAIL) id_failed = true;
+    CHECK(id_failed);
+    CHECK((*weak)["penalty"].get<double>() > 100.0);
+}
+
+TEST_CASE("a string where a numeric parameter belongs is rejected loudly",
+          "[crossref][rank]") {
+    // The silent-masking failure mode: `id` is the MOSFET drain current, so a
+    // caller reusing it as a row key removed the check without any signal.
+    json original = {{"mpn", "O"}, {"vds", 60.0}, {"id", 200.0}};
+    json bad = json::array({{{"mpn", "C"}, {"vds", 60.0}, {"id", "Vendor|C"}}});
+    CHECK_THROWS_AS(cross_reference("mosfet", original, bad, Options{}), std::invalid_argument);
 }

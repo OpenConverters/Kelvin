@@ -30,6 +30,7 @@
 #include <algorithm>
 #include <optional>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -173,9 +174,28 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     out["mpn"] = str(cand, "mpn");
     // Optional caller-supplied identity, echoed verbatim. Two vendors can ship
     // the same MPN string, so a caller that needs to map a result back to its
-    // own row passes an `id` rather than overloading `mpn` — `mpn` must stay the
+    // own row passes a key rather than overloading `mpn` — `mpn` must stay the
     // REAL part number, because the AEC-Q and rated-voltage gates decode it.
-    if (!str(cand, "id").empty()) out["id"] = str(cand, "id");
+    //
+    // The field is `_key`, deliberately underscore-prefixed: it previously used
+    // `id`, which COLLIDES with the MOSFET drain-current parameter of the same
+    // name. The identity string overwrote the current, num() then read a string
+    // as absent, and the drain-current comparison silently disabled itself — a
+    // 31 A part ranked top against a 200 A original. A datasheet parameter will
+    // never be named with a leading underscore, so the namespace is safe.
+    if (!str(cand, "_key").empty()) out["_key"] = str(cand, "_key");
+    // Guard the class of bug rather than just this instance: a caller that puts
+    // a STRING where a physical parameter is expected has masked that parameter,
+    // and num() would read it as simply absent — the comparison then disables
+    // itself in silence. Say so instead.
+    for (const auto& r : critical_ratings(cat)) {
+        auto it = cand.find(r.key);
+        if (it != cand.end() && it->is_string())
+            throw std::invalid_argument(std::string("cross_reference: '") + r.key +
+                                        "' is a numeric parameter for category '" + cat +
+                                        "' but was given a string — a caller key must not "
+                                        "reuse a parameter name (use `_key`)");
+    }
     double penalty = 0.0;
     std::string status = "recommended";
     json params = json::array();

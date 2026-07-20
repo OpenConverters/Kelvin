@@ -264,9 +264,11 @@ const busy = ref(false)
 const maxResults = ref(25)
 
 // Collision-proof row key: two vendors can ship the same MPN string, so the
-// caller-side identity is manufacturer+mpn. It travels in `id`, which the engine
-// echoes verbatim — NOT in `mpn`, which must stay the real part number because
-// the AEC-Q grade and rated-voltage gates decode it.
+// caller-side identity is manufacturer+mpn. It travels in `_key`, which the
+// engine echoes verbatim — NOT in `mpn` (which must stay the real part number,
+// because the AEC-Q and rated-voltage gates decode it) and NOT in `id`, which is
+// the MOSFET DRAIN-CURRENT parameter. Using `id` silently overwrote the current
+// and disabled that comparison entirely.
 const SEP = '␟'
 const keyOf = (r) => `${r.manufacturer}${SEP}${r.mpn}`
 
@@ -324,8 +326,8 @@ async function run() {
     const missing = originalMissing(f, origSpec)
     const origVerified = missing.length === 0
     const ranked = rows.length
-      ? (await crossReference(f.category, { ...origSpec, id: keyOf(orig) },
-          rows.map((r) => ({ ...f.spec(r), id: keyOf(r) })),
+      ? (await crossReference(f.category, { ...origSpec, _key: keyOf(orig) },
+          rows.map((r) => ({ ...f.spec(r), _key: keyOf(r) })),
           { original_verified: origVerified, max_results: Number(maxResults.value) })).candidates
       : []
     result.value = { ranked, rowByKey, poolTotal: pool.total, poolScored: rows.length, origVerified, missing }
@@ -339,7 +341,7 @@ async function run() {
 }
 
 // ── render helpers ───────────────────────────────────────────────────────────
-function rowOf(c) { return result.value?.rowByKey.get(c.id ?? c.mpn) }
+function rowOf(c) { return result.value?.rowByKey.get(c._key ?? c.mpn) }
 function dispMpn(c) { return rowOf(c)?.mpn ?? c.mpn }
 function dispMfr(c) { return rowOf(c)?.manufacturer ?? '' }
 function verdictOf(c, paramKey) {
@@ -538,7 +540,7 @@ function openPart(r) {
                 </tr>
               </thead>
               <tbody>
-                <template v-for="(c, i) in result.ranked" :key="c.id ?? c.mpn">
+                <template v-for="(c, i) in result.ranked" :key="c._key ?? c.mpn">
                 <tr :class="`row-${c.status}`">
                   <td class="mono rank">{{ String(i + 1).padStart(2, '0') }}</td>
                   <td><button class="mpn-link mono" type="button" @click="openPart(rowOf(c))">{{ dispMpn(c) }}</button></td>
