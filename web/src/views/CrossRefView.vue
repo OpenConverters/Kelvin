@@ -119,33 +119,6 @@ const XREF = [
     ],
   },
   {
-    key: 'analog', label: 'Op-Amps', category: 'analog',
-    // Identity is device subtype + channel count — a dual op-amp is not a quad,
-    // and an op-amp is not a multiplier or comparator. device_type MUST pre-gate
-    // the pool: without it the analog catalogue's multipliers/comparators fill
-    // the candidate list and every one correctly rejects on the subtype
-    // identity, leaving an all-'no substitute' result set that helps nobody.
-    // Pinout is the axis that actually decides an IC swap and no catalogue
-    // carries per-pin function, so it is NOT checked; the caveat says so.
-    primary: null,
-    sameFacet: { f: 'device_type', label: 'device type' },
-    hardKeys: ['subtype', 'channels'],
-    exactNum: [{ row: 'channels', tol: 1e-9 }],
-    caveat: 'Pinout is NOT compared — same package does not mean same pinout, and it is the axis that decides an op-amp swap. Verify pin assignment before substituting.',
-    spec: (r) => ({ ...base(r), subtype: r.device_type ?? '', channels: nz(r.channels),
-      supply_min_V: nz(r.vsupply_min), supply_max_V: nz(r.vsupply_max),
-      gbw: nz(r.gain_bandwidth), slew_rate: nz(r.slew_rate),
-      input_offset_voltage: nz(r.input_offset_voltage), input_bias_current: nz(r.input_bias_current),
-      cmrr_db: nz(r.cmrr), resolution: nz(r.resolution), sample_rate: nz(r.sample_rate) }),
-    params: [
-      { key: 'channels', label: 'ch', row: 'channels', unit: '' },
-      { key: 'supply_max_V', label: 'Vs max', row: 'vsupply_max', unit: 'V' },
-      { key: 'gbw', label: 'GBW', row: 'gain_bandwidth', unit: 'Hz' },
-      { key: 'slew_rate', label: 'SR', row: 'slew_rate', unit: 'V/s' },
-      { key: 'input_offset_voltage', label: 'Vos', row: 'input_offset_voltage', unit: 'V' },
-    ],
-  },
-  {
     key: 'diode', label: 'Diodes', category: 'diode',
     primary: null,
     sameFacet: { f: 'technology', label: 'type' },
