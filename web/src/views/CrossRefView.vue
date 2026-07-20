@@ -108,6 +108,7 @@ const XREF = [
     sameFacet: { f: 'family', label: 'family' },
     hardKeys: ['family', 'positions', 'rated_current_A'],
     exactNum: [{ row: 'positions', tol: 1e-9 }],
+    caveat: 'Mating compatibility is NOT checked — the catalogue carries no pitch, plating or termination data. Verify the part mates with your existing counterpart before substituting.',
     spec: (r) => ({ ...base(r), family: r.family ?? '', positions: nz(r.positions),
       polarity: r.polarity ?? '', interface_standard: r.interface_standard ?? '',
       rated_current_A: nz(r.rated_current), rated_voltage_V: nz(r.rated_voltage) }),
@@ -115,6 +116,29 @@ const XREF = [
       { key: 'positions', label: 'pos', row: 'positions', unit: '' },
       { key: 'rated_current_A', label: 'I/contact', row: 'rated_current', unit: 'A' },
       { key: 'rated_voltage_V', label: 'V rated', row: 'rated_voltage', unit: 'V' },
+    ],
+  },
+  {
+    key: 'analog', label: 'Op-Amps', category: 'analog',
+    // Identity is device subtype + channel count — a dual op-amp is not a quad.
+    // Pinout is the axis that actually decides an IC swap and no catalogue
+    // carries per-pin function, so it is NOT checked; the caveat says so.
+    primary: null,
+    sameFacet: null,
+    hardKeys: ['subtype', 'channels'],
+    exactNum: [{ row: 'channels', tol: 1e-9 }],
+    caveat: 'Pinout is NOT compared — same package does not mean same pinout, and it is the axis that decides an op-amp swap. Verify pin assignment before substituting.',
+    spec: (r) => ({ ...base(r), subtype: r.device_type ?? '', channels: nz(r.channels),
+      supply_min_V: nz(r.vsupply_min), supply_max_V: nz(r.vsupply_max),
+      gbw: nz(r.gain_bandwidth), slew_rate: nz(r.slew_rate),
+      input_offset_voltage: nz(r.input_offset_voltage), input_bias_current: nz(r.input_bias_current),
+      cmrr_db: nz(r.cmrr), resolution: nz(r.resolution), sample_rate: nz(r.sample_rate) }),
+    params: [
+      { key: 'channels', label: 'ch', row: 'channels', unit: '' },
+      { key: 'supply_max_V', label: 'Vs max', row: 'vsupply_max', unit: 'V' },
+      { key: 'gbw', label: 'GBW', row: 'gain_bandwidth', unit: 'Hz' },
+      { key: 'slew_rate', label: 'SR', row: 'slew_rate', unit: 'V/s' },
+      { key: 'input_offset_voltage', label: 'Vos', row: 'input_offset_voltage', unit: 'V' },
     ],
   },
   {
@@ -409,6 +433,7 @@ function openPart(r) {
         <p class="intro">Pick the part you need to replace, mark the manufacturer(s) you want the
         substitute from, and the deterministic cross-reference engine ranks their catalogue against
         the original — gates, penalties and honesty rules published, no AI.</p>
+        <p v-if="fam.caveat" class="caveat">{{ fam.caveat }}</p>
 
         <label class="field">
           <span>Search by MPN</span>
@@ -608,6 +633,7 @@ function openPart(r) {
 .split { display: grid; grid-template-columns: 340px 1fr; gap: 14px; flex: 1; min-height: 0; }
 .setup { padding: 16px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; max-height: calc(100vh - 210px); }
 .intro { font-size: 11px; color: var(--ink-dim); margin: 0; }
+.caveat { font-size: 11px; color: var(--warm); border-left: 2px solid var(--warm); padding-left: 8px; margin: 0; }
 .field { display: flex; flex-direction: column; gap: 4px; font-size: 11px; }
 .field span { color: var(--ink-dim); }
 .check { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--ink-dim); cursor: pointer; }
