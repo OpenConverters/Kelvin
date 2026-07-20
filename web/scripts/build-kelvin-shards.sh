@@ -18,6 +18,25 @@ if [[ ! -x "$KELVIN_INDEX" ]]; then
   echo "kelvin-index not found at $KELVIN_INDEX — build Kelvin (ninja -C build) or set KELVIN_INDEX" >&2
   exit 1
 fi
+
+# GUARD: refuse to index a catalogue containing fabricated (script-synthesized) parts.
+# A user found 177 invented Würth/Coilcraft/TDK magnetics on the live site in July 2026 —
+# they had been indexed and shipped because nothing stood between the data and the shard.
+# This is that something. Never make it non-fatal; a fabricated part must not be indexable.
+FAB_GUARD="${FAB_GUARD:-$(dirname "$TAS_DATA")/scripts/check_no_fabricated_parts.py}"
+if [[ -f "$FAB_GUARD" ]]; then
+  echo "checking catalogues for fabricated parts…"
+  python3 "$FAB_GUARD" --data "$TAS_DATA" || {
+    echo "REFUSING to build shards: fabricated parts in $TAS_DATA (see above)." >&2; exit 1; }
+  if [[ "$MAGNETICS_DATA" != "$TAS_DATA" ]]; then
+    python3 "$FAB_GUARD" --data "$MAGNETICS_DATA" || {
+      echo "REFUSING to build shards: fabricated parts in $MAGNETICS_DATA (see above)." >&2; exit 1; }
+  fi
+else
+  echo "REFUSING to build shards: fabrication guard not found at $FAB_GUARD" >&2
+  exit 1
+fi
+
 mkdir -p "$OUT"
 
 # ten families from the TAS data dir; magnetics live in their own dir
