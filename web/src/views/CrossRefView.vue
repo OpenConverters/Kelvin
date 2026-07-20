@@ -78,6 +78,7 @@ const XREF = [
     primary: null,
     sameFacet: { f: 'technology', label: 'technology' },
     hardKeys: ['frequency', 'technology', 'load_capacitance'],
+    exactNum: [{ row: 'frequency', tol: 1e-4 }],
     spec: (r) => ({ ...base(r), subtype: r.device_type ?? '', technology: r.technology ?? '',
       device_type: r.device_type ?? '', frequency: nz(r.frequency),
       load_capacitance: nz(r.load_capacitance),
@@ -101,6 +102,7 @@ const XREF = [
     primary: null,
     sameFacet: { f: 'family', label: 'family' },
     hardKeys: ['family', 'positions', 'rated_current_A'],
+    exactNum: [{ row: 'positions', tol: 1e-9 }],
     spec: (r) => ({ ...base(r), family: r.family ?? '', positions: nz(r.positions),
       polarity: r.polarity ?? '', interface_standard: r.interface_standard ?? '',
       rated_current_A: nz(r.rated_current), rated_voltage_V: nz(r.rated_voltage) }),
@@ -270,6 +272,14 @@ async function run() {
     for (const h of f.hardMin ?? []) {
       const o = nz(orig[h.row])
       if (o != null) filters[h.row] = { min: o * h.factor }
+    }
+    // IDENTITY parameters constrain the pool rather than just failing later: a
+    // 25 MHz crystal is not a near-match for a 48 MHz one, so ranking it and
+    // rejecting it fills the table with 25 rows of "no substitute" and buries
+    // the parts that could actually work.
+    for (const e of f.exactNum ?? []) {
+      const v = nz(orig[e.row])
+      if (v != null) filters[e.row] = { min: v * (1 - e.tol), max: v * (1 + e.tol) }
     }
     if (sameType.value && f.sameFacet && orig[f.sameFacet.f]) {
       filters[f.sameFacet.f] = [orig[f.sameFacet.f]]
@@ -473,7 +483,7 @@ function openPart(r) {
           <p v-if="!result.ranked.length" class="idle">
             No candidate from the marked manufacturer{{ marked.length > 1 ? 's' : '' }} passes the
             pre-gates<template v-if="fam.primary"> ({{ fam.primary.label }} within
-            {{ fam.primary.acceptLo }}×–{{ fam.primary.acceptHi }}× of the original</template><template v-if="fam.hardMin?.length">, critical ratings ≥ 0.9× the original</template>).
+            {{ fam.primary.acceptLo }}×–{{ fam.primary.acceptHi }}× of the original</template><template v-if="fam.hardMin?.length">, critical ratings ≥ 0.9× the original</template><template v-if="fam.exactNum?.length">, matching {{ fam.exactNum.map((e) => e.row).join(' and ') }}</template>).
             Widen the manufacturer marking or check the original's values.
           </p>
 
