@@ -120,11 +120,15 @@ const XREF = [
   },
   {
     key: 'analog', label: 'Op-Amps', category: 'analog',
-    // Identity is device subtype + channel count — a dual op-amp is not a quad.
+    // Identity is device subtype + channel count — a dual op-amp is not a quad,
+    // and an op-amp is not a multiplier or comparator. device_type MUST pre-gate
+    // the pool: without it the analog catalogue's multipliers/comparators fill
+    // the candidate list and every one correctly rejects on the subtype
+    // identity, leaving an all-'no substitute' result set that helps nobody.
     // Pinout is the axis that actually decides an IC swap and no catalogue
     // carries per-pin function, so it is NOT checked; the caveat says so.
     primary: null,
-    sameFacet: null,
+    sameFacet: { f: 'device_type', label: 'device type' },
     hardKeys: ['subtype', 'channels'],
     exactNum: [{ row: 'channels', tol: 1e-9 }],
     caveat: 'Pinout is NOT compared — same package does not mean same pinout, and it is the axis that decides an op-amp swap. Verify pin assignment before substituting.',
