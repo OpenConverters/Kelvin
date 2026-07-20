@@ -350,7 +350,12 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
         // in either direction matters: ExactMatch with a 30% band, wide enough
         // to tolerate curve-sampling differences and narrow enough to separate
         // parts that work in genuinely different bands.
-        {"impedance_peak", D::Higher, 0.8, std::nullopt, false, false, nullptr},
+        // Also exclude-if-missing: peak |Z| and its frequency are the curve. A
+        // candidate carrying neither the 100 MHz value NOR a curve takes both
+        // failures and therefore sorts below one that carries the curve and
+        // matches it — otherwise the part we know least about wins on having
+        // accrued the fewest penalties.
+        {"impedance_peak", D::Higher, 0.8, std::nullopt, false, true, nullptr},
         {"impedance_peak_freq", D::ExactMatch, 0.3, std::nullopt, false, false, nullptr},
         {"srf", D::Higher, 0.8, std::nullopt, false, false, nullptr},
         {"dcr", D::Lower, 1.3, std::nullopt, false, false, nullptr},

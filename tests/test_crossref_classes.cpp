@@ -376,4 +376,20 @@ TEST_CASE("a bead with no impedance data never outranks a curve-matched one",
                               [](const json& c) { return c["mpn"] == "NO_DATA"; });
     REQUIRE(blank != r["candidates"].end());
     CHECK((*blank)["grade"] != "drop_in");
+    // and it must sort strictly WORSE, not merely grade worse — a part we know
+    // nothing about cannot win by having accrued the fewest penalties
+    CHECK((*blank)["penalty"].get<double>() > r["candidates"][0]["penalty"].get<double>());
+}
+
+TEST_CASE("a partial-curve candidate still beats a no-data one", "[crossref][classes][rank]") {
+    // The realistic catalogue case: the original has Z@100MHz, most candidates
+    // only have the curve. Having SOME verifiable impedance must beat having none.
+    json original = {{"mpn", "ORIG"}, {"impedance_100mhz", 151.0}, {"impedance_peak", 939.0},
+                     {"impedance_peak_freq", 1038e6}, {"dcr", 0.325}, {"rated_current", 0.85}};
+    json cands = json::array({
+        {{"mpn", "NO_DATA"}, {"dcr", 0.009}, {"rated_current", 6.0}},
+        {{"mpn", "CURVE_ONLY"}, {"impedance_peak", 950.0}, {"impedance_peak_freq", 1000e6},
+         {"dcr", 0.17}, {"rated_current", 0.9}}});
+    auto r = cross_reference("chipBead", original, cands, Options{});
+    CHECK(r["candidates"][0]["mpn"] == "CURVE_ONLY");
 }
