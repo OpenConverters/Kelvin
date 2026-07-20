@@ -138,6 +138,11 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                             const Options& opt) {
     json out;
     out["mpn"] = str(cand, "mpn");
+    // Optional caller-supplied identity, echoed verbatim. Two vendors can ship
+    // the same MPN string, so a caller that needs to map a result back to its
+    // own row passes an `id` rather than overloading `mpn` — `mpn` must stay the
+    // REAL part number, because the AEC-Q and rated-voltage gates decode it.
+    if (!str(cand, "id").empty()) out["id"] = str(cand, "id");
     double penalty = 0.0;
     std::string status = "recommended";
     json params = json::array();

@@ -302,3 +302,21 @@ TEST_CASE("an explicit assembly type beats package-string inference", "[crossref
     CHECK(normalize_mount("tht") == "leaded");
     CHECK(normalize_mount("chassis").empty());
 }
+
+TEST_CASE("caller identity travels in `id`, leaving `mpn` decodable", "[crossref][rank]") {
+    // Two vendors can ship the same MPN string, so callers pass their own `id`.
+    // It must be echoed back UNCHANGED, and must not displace `mpn` — the AEC-Q
+    // and rated-voltage gates decode `mpn`, and a composite key decodes to
+    // nothing, silently disabling both gates.
+    json original = {{"mpn", "GCM188R71H104KA57D"}, {"id", "Murata|GCM188R71H104KA57D"},
+                     {"value_si", 1e-7}, {"voltage", 50.0}};
+    json cands = json::array({
+        {{"mpn", "GRM188R71H104KA93D"}, {"id", "Murata|GRM188R71H104KA93D"},
+         {"value_si", 1e-7}, {"voltage", 50.0}}});
+    auto r = cross_reference("capacitor", original, cands, Options{});
+    const json& c = r["candidates"][0];
+    CHECK(c["id"] == "Murata|GRM188R71H104KA93D");
+    CHECK(c["mpn"] == "GRM188R71H104KA93D");
+    // the automotive gate still fires, which it cannot do on a composite key
+    CHECK(c["status"] == "partial");
+}
