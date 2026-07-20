@@ -4,9 +4,11 @@
 //
 // Every case here encodes a documented real-world substitution failure, not a
 // characterisation of current behaviour.
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
 #include "../src/CrossRef.hpp"
+#include "../src/CrossRefDimensions.hpp"
 #include "../src/CrossRefClasses.hpp"
 
 using namespace kelvin::crossref;
@@ -220,4 +222,37 @@ TEST_CASE("direction reports upgrade, downgrade and mixed honestly",
     json same = json::array({{{"mpn", "SAME"}, {"vds", 60.0}, {"id", 10.0}, {"rds_on", 0.010}}});
     CHECK(cross_reference("mosfet", original, same, Options{})["candidates"][0]["direction"] ==
           "equivalent");
+}
+
+// ── case-code unit ambiguity ─────────────────────────────────────────────────
+// Imperial 0603 (1.6 x 0.8 mm) and metric 0603 (0.6 x 0.3 mm) are a 4x area
+// difference. These pin the disambiguation rules against the forms the
+// catalogue actually uses, so a future table edit cannot silently introduce the
+// collision.
+TEST_CASE("imperial and metric case codes cannot collide", "[crossref][dims][classes]") {
+    // The metric table deliberately holds only codes that are NOT also valid
+    // imperial codes, so a bare 4-digit code has exactly one reading.
+    auto imperial_0603 = resolve_dimensions("0603", "capacitor");
+    REQUIRE(imperial_0603.has_value());
+    CHECK(imperial_0603->length == Catch::Approx(1.60e-3));  // imperial, per distributor convention
+
+    // "1608" is unambiguously metric — and resolves to the same physical size as
+    // imperial 0603, which is the point: they are the same part.
+    auto metric_1608 = resolve_dimensions("1608", "capacitor");
+    REQUIRE(metric_1608.has_value());
+    CHECK(metric_1608->length == Catch::Approx(1.60e-3));
+    CHECK(metric_1608->width == Catch::Approx(0.80e-3));
+
+    // The catalogue's explicit dual form must resolve, not fall through.
+    auto dual = resolve_dimensions("1608M/0603", "capacitor");
+    REQUIRE(dual.has_value());
+    CHECK(dual->length == Catch::Approx(1.60e-3));
+    CHECK(dual->width == Catch::Approx(0.80e-3));
+
+    // A real electrolytic can code from the catalogue (diameter x height).
+    auto can = resolve_dimensions("10x16", "capacitor");
+    REQUIRE(can.has_value());
+    CHECK(can->length == Catch::Approx(10e-3));
+    REQUIRE(can->height.has_value());
+    CHECK(*can->height == Catch::Approx(16e-3));
 }
