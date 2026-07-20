@@ -26,7 +26,9 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // was measured — without them, comparing the numbers manufactures a verdict.
 // An older shard is rejected rather than read leniently: the field offsets
 // moved, so a lenient read would silently mis-parse every row.
-constexpr uint32_t kFormatVersion = 3;
+// v4 added chip-bead impedance-curve summaries (Z@100MHz, peak |Z| and its
+// frequency) derived from the measured curve — parameters no vendor tabulates.
+constexpr uint32_t kFormatVersion = 4;
 
 // ---- string pool -----------------------------------------------------------
 class StringPool {
@@ -242,6 +244,9 @@ void row_io(Ar& ar, MagneticRow& r) {
     ar.dbl(r.dcr);
     ar.dbl(r.srf);
     ar.dbl(r.turns_ratio);
+    ar.dbl(r.impedance_100mhz);
+    ar.dbl(r.impedance_peak);
+    ar.dbl(r.impedance_peak_freq);
     ar.str(r.device_type);
     ar.str(r.family);
     ar.boolean(r.is_production);

@@ -333,3 +333,29 @@ TEST_CASE("crystal mode and oscillator output type never cross", "[crossref][cla
     CHECK(cross_reference("timeBase", xo, same, Options{})["candidates"][0]["status"] !=
           "no_substitute");
 }
+
+// ── chip bead impedance curve ────────────────────────────────────────────────
+// A bead's published spec is |Z| at 100 MHz. TDK's own engineer: that spot value
+// "is irrelevant and misleading" alone — his two 120 Ohm beads peak at ~150 Ohm
+// @400 MHz and ~700 Ohm @700 MHz respectively, and swapping one for the other
+// turned 474 mV of undershoot into 750 mV, worse than fitting no bead at all.
+TEST_CASE("beads with equal Z@100MHz but different curves are separated",
+          "[crossref][classes][rank]") {
+    json original = {{"mpn", "B120"}, {"impedance_100mhz", 120.0},
+                     {"impedance_peak", 700.0}, {"impedance_peak_freq", 700e6},
+                     {"dcr", 0.1}, {"rated_current", 2.0}};
+    json cands = json::array({
+        // same headline impedance, same DCR, same current — different curve
+        {{"mpn", "SAME_CURVE"}, {"impedance_100mhz", 120.0}, {"impedance_peak", 690.0},
+         {"impedance_peak_freq", 690e6}, {"dcr", 0.1}, {"rated_current", 2.0}},
+        {{"mpn", "WRONG_BAND"}, {"impedance_100mhz", 120.0}, {"impedance_peak", 150.0},
+         {"impedance_peak_freq", 400e6}, {"dcr", 0.1}, {"rated_current", 2.0}}});
+    auto r = cross_reference("chipBead", original, cands, Options{});
+    // the curve-matched part must win
+    CHECK(r["candidates"][0]["mpn"] == "SAME_CURVE");
+    auto wrong = std::find_if(r["candidates"].begin(), r["candidates"].end(),
+                              [](const json& c) { return c["mpn"] == "WRONG_BAND"; });
+    REQUIRE(wrong != r["candidates"].end());
+    // it is offered, but never as a clean drop-in — it peaks in a different band
+    CHECK((*wrong)["grade"] != "drop_in");
+}

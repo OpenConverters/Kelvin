@@ -1,5 +1,6 @@
 #include "Views.hpp"
 
+#include <cmath>
 #include <regex>
 #include <unordered_map>
 
@@ -610,6 +611,33 @@ std::optional<MagneticRow> extract_magnetic(const json& env) {
         if (dcr && *dcr > 0) r.dcr = *dcr;
         auto srf = get_num(elec, "selfResonantFrequency");
         if (srf && *srf > 0) r.srf = *srf;
+        // Chip-bead impedance curve. A bead's published spec is |Z| at 100 MHz,
+        // and TDK's own engineer calls that spot value "irrelevant and
+        // misleading" on its own: parts with identical Z@100MHz routinely peak
+        // at very different heights and frequencies, which is what actually
+        // decides whether the bead suppresses the noise you have. Where the
+        // catalogue carries the measured curve we derive the peak and its
+        // frequency — neither is a field in any vendor's datasheet table.
+        if (const json* pts = obj_get(elec, "impedancePoints");
+            pts && pts->is_array() && !pts->empty()) {
+            double best_z = 0.0, best_f = 0.0, at_100m = 0.0, closest = 0.0;
+            for (const auto& pt : *pts) {
+                if (!pt.is_object()) continue;
+                auto f = get_num(pt, "frequency");
+                const json* z = obj_get(pt, "impedance");
+                if (!f || !z) continue;
+                auto mag = get_num(*z, "magnitude");
+                if (!mag || *mag <= 0 || *f <= 0) continue;
+                if (*mag > best_z) { best_z = *mag; best_f = *f; }
+                // nearest sample to the conventional 100 MHz test point
+                const double d = std::fabs(*f - 1e8);
+                if (closest == 0.0 || d < closest) { closest = d; at_100m = *mag; }
+            }
+            if (best_z > 0) { r.impedance_peak = best_z; r.impedance_peak_freq = best_f; }
+            // Only claim a 100 MHz value when a sample is actually near it —
+            // extrapolating from a distant point would invent a datum.
+            if (at_100m > 0 && closest <= 5e6) r.impedance_100mhz = at_100m;
+        }
         // Transformer turns ratio (primary:secondary): electrical[0].turnsRatios[0] (a dimWithTol). Lets
         // select_magnetic rank a catalog transformer by how close its ratio is to the design's required
         // ratio — the meaningful match for flyback/isolated transformers (TAS has no per-winding structure).

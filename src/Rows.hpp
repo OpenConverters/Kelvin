@@ -177,6 +177,15 @@ struct MagneticRow : RowBase {
     double dcr = kNaN();                  // Ω  — dcResistance (worst-case / maximum), else dcResistances[0]
     double srf = kNaN();                  // Hz — selfResonantFrequency
     double turns_ratio = kNaN();          // —  electrical[0].turnsRatios[0] (transformers): primary:secondary
+    // Chip beads: a bead's entire published spec is Z at 100 MHz (+/-25%), rated
+    // current, DCR and size — and the industry's own engineers say that scalar is
+    // "irrelevant and misleading" on its own, because parts with identical
+    // Z@100MHz can differ several-fold in where and how high they actually peak.
+    // Peak |Z| and its frequency are in NO vendor's datasheet table; they are
+    // derived here from the measured impedance curve where the catalogue has one.
+    double impedance_100mhz = kNaN();     // ohm
+    double impedance_peak = kNaN();       // ohm
+    double impedance_peak_freq = kNaN();  // Hz
     std::string device_type;              // electrical[0].subtype (inductor/transformer/…): annotated, never gated
     std::string family;                   // manufacturerInfo.family or part.family (series, for context)
     bool is_production = false;

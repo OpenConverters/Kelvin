@@ -178,7 +178,10 @@ inline const FieldTable<MagneticRow>& fields<MagneticRow>() {
          {"rated_current", &MagneticRow::rated_current},
          {"dcr", &MagneticRow::dcr},
          {"srf", &MagneticRow::srf},
-         {"turns_ratio", &MagneticRow::turns_ratio}},
+         {"turns_ratio", &MagneticRow::turns_ratio},
+         {"impedance_100mhz", &MagneticRow::impedance_100mhz},
+         {"impedance_peak", &MagneticRow::impedance_peak},
+         {"impedance_peak_freq", &MagneticRow::impedance_peak_freq}},
         {{"device_type", &MagneticRow::device_type}, {"family", &MagneticRow::family}},
         {{"is_production", &MagneticRow::is_production}},
         {}};

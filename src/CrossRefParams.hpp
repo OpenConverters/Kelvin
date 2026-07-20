@@ -338,6 +338,15 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
     };
     static const std::vector<ParamSpec> kChipBead = {
         {"impedance_100mhz", D::Higher, 0.8, std::nullopt, false, false, nullptr},
+        // Peak |Z| and — critically — the frequency it occurs at. Two beads with
+        // the same Z@100MHz can peak several-fold apart in height and in
+        // frequency, which is what decides whether the part suppresses the noise
+        // actually present. The peak FREQUENCY is a shape parameter, so a shift
+        // in either direction matters: ExactMatch with a 30% band, wide enough
+        // to tolerate curve-sampling differences and narrow enough to separate
+        // parts that work in genuinely different bands.
+        {"impedance_peak", D::Higher, 0.8, std::nullopt, false, false, nullptr},
+        {"impedance_peak_freq", D::ExactMatch, 0.3, std::nullopt, false, false, nullptr},
         {"srf", D::Higher, 0.8, std::nullopt, false, false, nullptr},
         {"dcr", D::Lower, 1.3, std::nullopt, false, false, nullptr},
         {"rated_current", D::Higher, 0.9, std::nullopt, false, false, nullptr},
