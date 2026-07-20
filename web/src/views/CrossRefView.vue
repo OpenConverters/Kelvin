@@ -21,6 +21,11 @@ const XREF = [
     primary: { row: 'inductance', label: 'L', unit: 'H', acceptLo: 0.80, acceptHi: 1.25 },
     sameFacet: { f: 'device_type', label: 'device type' },
     hardKeys: ['saturation_current', 'rated_current'],
+    // A ferrite bead lives in the magnetic catalogue but is not an inductor: it
+    // has no inductance value at all, and is characterised by its impedance
+    // CURVE. Ranking it against the inductor config would ask for a primary
+    // value that does not exist, so the family adapts to the chosen original.
+    variantFor: (orig) => (orig?.device_type === 'chipBead' ? BEAD_VARIANT : null),
     spec: (r) => ({ ...base(r), value_si: nz(r.inductance), saturation_current: nz(r.saturation_current), rated_current: nz(r.rated_current), dcr: nz(r.dcr) }),
     params: [
       { key: 'value', label: 'L', row: 'inductance', unit: 'H' },
@@ -128,6 +133,27 @@ const XREF = [
   },
 ]
 
+// Ferrite-bead view of the magnetic catalogue. Its primary axis is impedance at
+// 100 MHz — the number the whole industry quotes — but the ranker also compares
+// the peak of the measured curve and the frequency it occurs at, because parts
+// with identical Z@100MHz routinely peak in completely different bands.
+const BEAD_VARIANT = {
+  category: 'chipBead',
+  primary: null,
+  sameFacet: { f: 'device_type', label: 'device type' },
+  hardKeys: [],
+  spec: (r) => ({ ...base(r), impedance_100mhz: nz(r.impedance_100mhz),
+    impedance_peak: nz(r.impedance_peak), impedance_peak_freq: nz(r.impedance_peak_freq),
+    srf: nz(r.srf), dcr: nz(r.dcr), rated_current: nz(r.rated_current) }),
+  params: [
+    { key: 'impedance_100mhz', label: 'Z@100M', row: 'impedance_100mhz', unit: 'Ω' },
+    { key: 'impedance_peak', label: 'peak Z', row: 'impedance_peak', unit: 'Ω' },
+    { key: 'impedance_peak_freq', label: 'peak @', row: 'impedance_peak_freq', unit: 'Hz' },
+    { key: 'dcr', label: 'DCR', row: 'dcr', unit: 'Ω' },
+    { key: 'rated_current', label: 'I rated', row: 'rated_current', unit: 'A' },
+  ],
+}
+
 // Shard rows carry 0 (fixed fields) or null (nullable fields) for "not in the
 // datasheet" — both mean UNKNOWN to the ranker, never a real datum.
 function nz(v) { return v != null && v > 0 ? v : null }
@@ -149,7 +175,16 @@ function base(r) {
   }
 }
 
-const fam = computed(() => XREF.find((f) => f.key === store.family) ?? XREF[0])
+const original = ref(null)   // the chosen browse row (declared early: fam depends on it)
+const family = computed(() => XREF.find((f) => f.key === store.family) ?? XREF[0])
+// The config actually in force: the family, with any per-original variant applied.
+// `fam.key` stays the SHARD family (browse/drawer/pin key on it); only the
+// comparison model changes.
+const fam = computed(() => {
+  const f = family.value
+  const v = f.variantFor?.(original.value)
+  return v ? { ...f, ...v } : f
+})
 
 // candidate pool cap: browse can hand back thousands; scoring is cheap but the
 // pool is capped and the cap is REPORTED (no silent truncation).
@@ -160,7 +195,6 @@ const search = ref('')
 const searching = ref(false)
 const searchRows = ref(null) // null = untouched; [] = no hits
 const searchTotal = ref(0)
-const original = ref(null)   // the chosen browse row
 let searchToken = 0
 
 watch(() => fam.value.key, () => {
