@@ -92,7 +92,7 @@ inline std::vector<Rating> critical_ratings(const std::string& cat) {
 // op-amp is not a quad). Everything else demotes to 'partial'.
 inline bool is_hard_param(const std::string& cat, const std::string& key) {
     static const std::set<std::string> magnetic{"saturation_current", "rated_current"};
-    static const std::set<std::string> connector{"family", "positions", "rated_current_A"};
+    static const std::set<std::string> connector{"family", "positions"};
     static const std::set<std::string> analog{"subtype", "channels"};
     // mode: a 3rd-overtone crystal cannot cross with a fundamental one in either
     // direction — an overtone circuit's LC tank is inductive at the fundamental,

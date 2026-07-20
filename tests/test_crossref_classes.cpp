@@ -393,3 +393,45 @@ TEST_CASE("a partial-curve candidate still beats a no-data one", "[crossref][cla
     auto r = cross_reference("chipBead", original, cands, Options{});
     CHECK(r["candidates"][0]["mpn"] == "CURVE_ONLY");
 }
+
+// ── connector cross-reference realism ────────────────────────────────────────
+
+TEST_CASE("a blank optional identity field is unknown, not a mismatch",
+          "[crossref][classes][rank]") {
+    // present() counts "" as present, so two connectors with no
+    // interface_standard used to FAIL that exact-match spuriously. An empty
+    // string on both sides is "not specified", i.e. unverified.
+    json original = {{"mpn", "A"}, {"family", "terminalBlock"}, {"positions", 9},
+                     {"interface_standard", ""}, {"rated_current_A", 18.0}};
+    json cands = json::array({
+        {{"mpn", "B"}, {"family", "terminalBlock"}, {"positions", 9},
+         {"interface_standard", ""}, {"rated_current_A", 18.0}}});
+    auto r = cross_reference("connector", original, cands, Options{});
+    const json& c = r["candidates"][0];
+    for (const auto& p : c["params"])
+        if (p["name"] == "interface_standard") CHECK(p["verdict"] == UNVERIFIED);
+    CHECK(c["status"] != "no_substitute");
+}
+
+TEST_CASE("a connector current shortfall demotes, it does not reject",
+          "[crossref][classes][rank]") {
+    // Same family, same position count, slightly lower current: a real
+    // alternative the engineer may accept, not a no_substitute. A DIFFERENT
+    // position count is still a hard reject.
+    json original = {{"mpn", "O"}, {"family", "terminalBlock"}, {"positions", 9},
+                     {"rated_current_A", 18.0}};
+    json cands = json::array({
+        {{"mpn", "LOWER_I"}, {"family", "terminalBlock"}, {"positions", 9},
+         {"rated_current_A", 15.0}},
+        {{"mpn", "WRONG_POS"}, {"family", "terminalBlock"}, {"positions", 6},
+         {"rated_current_A", 18.0}}});
+    auto r = cross_reference("connector", original, cands, Options{});
+    auto lower = std::find_if(r["candidates"].begin(), r["candidates"].end(),
+                              [](const json& c) { return c["mpn"] == "LOWER_I"; });
+    auto wrong = std::find_if(r["candidates"].begin(), r["candidates"].end(),
+                              [](const json& c) { return c["mpn"] == "WRONG_POS"; });
+    REQUIRE(lower != r["candidates"].end());
+    REQUIRE(wrong != r["candidates"].end());
+    CHECK((*lower)["status"] == "partial");        // offered, flagged
+    CHECK((*wrong)["status"] == "no_substitute");  // different part
+}

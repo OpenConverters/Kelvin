@@ -145,6 +145,10 @@ inline const char* compare_exact(const ParamSpec& spec, const nlohmann::json& or
         return FAIL;
     }
     std::string on = norm_class(detail::jstr(orig, spec.key)), sn = norm_class(detail::jstr(sub, spec.key));
+    // Neither side states a value (both absent or empty strings): unknown, not a
+    // mismatch. present() counts "" as present, so without this a blank optional
+    // identity field (a connector with no interface_standard) FAILs spuriously.
+    if (on.empty() && sn.empty()) return UNVERIFIED;
     if (!on.empty() && on == sn) return PASS;
     return FAIL;
 }
