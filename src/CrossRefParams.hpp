@@ -337,7 +337,12 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
         {"rated_current", D::Higher, 0.9, std::nullopt, false, false, nullptr},
     };
     static const std::vector<ParamSpec> kChipBead = {
-        {"impedance_100mhz", D::Higher, 0.8, std::nullopt, false, false, nullptr},
+        // exclude_missing_sub: impedance IS what a bead is. A candidate with no
+        // impedance data cannot be verified as a substitute for one, so its
+        // absence FAILs rather than passing silently — otherwise a part with no
+        // curve at all accrues no penalty and outranks genuinely curve-matched
+        // parts, which is exactly the "missing data ranks best" pathology.
+        {"impedance_100mhz", D::Higher, 0.8, std::nullopt, false, true, nullptr},
         // Peak |Z| and — critically — the frequency it occurs at. Two beads with
         // the same Z@100MHz can peak several-fold apart in height and in
         // frequency, which is what decides whether the part suppresses the noise

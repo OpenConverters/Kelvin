@@ -359,3 +359,21 @@ TEST_CASE("beads with equal Z@100MHz but different curves are separated",
     // it is offered, but never as a clean drop-in — it peaks in a different band
     CHECK((*wrong)["grade"] != "drop_in");
 }
+
+TEST_CASE("a bead with no impedance data never outranks a curve-matched one",
+          "[crossref][classes][rank]") {
+    // Impedance is what a bead IS. A candidate carrying none cannot be verified
+    // as a substitute, and must not accrue zero penalty and win by default.
+    json original = {{"mpn", "ORIG"}, {"impedance_100mhz", 151.0}, {"impedance_peak", 939.0},
+                     {"impedance_peak_freq", 1038e6}, {"dcr", 0.325}, {"rated_current", 0.85}};
+    json cands = json::array({
+        {{"mpn", "NO_DATA"}, {"dcr", 0.009}, {"rated_current", 6.0}},
+        {{"mpn", "CURVE_MATCH"}, {"impedance_100mhz", 150.0}, {"impedance_peak", 950.0},
+         {"impedance_peak_freq", 1000e6}, {"dcr", 0.17}, {"rated_current", 0.9}}});
+    auto r = cross_reference("chipBead", original, cands, Options{});
+    CHECK(r["candidates"][0]["mpn"] == "CURVE_MATCH");
+    auto blank = std::find_if(r["candidates"].begin(), r["candidates"].end(),
+                              [](const json& c) { return c["mpn"] == "NO_DATA"; });
+    REQUIRE(blank != r["candidates"].end());
+    CHECK((*blank)["grade"] != "drop_in");
+}
