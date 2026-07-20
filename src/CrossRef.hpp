@@ -93,7 +93,16 @@ inline bool is_hard_param(const std::string& cat, const std::string& key) {
     static const std::set<std::string> magnetic{"saturation_current", "rated_current"};
     static const std::set<std::string> connector{"family", "positions", "rated_current_A"};
     static const std::set<std::string> analog{"subtype", "channels"};
-    static const std::set<std::string> timebase{"subtype", "technology", "frequency"};
+    // mode: a 3rd-overtone crystal cannot cross with a fundamental one in either
+    // direction — an overtone circuit's LC tank is inductive at the fundamental,
+    // so the loop cannot close there; drop an overtone part into a fundamental
+    // circuit and it either fails to start or runs near a third of the marking.
+    // output_type: LVDS / HCSL / LVPECL / CMOS are different termination
+    // networks, not a parameter — swapping one for another is a board respin.
+    // Both are self-selecting: mode is absent on oscillators and output_type on
+    // bare crystals, and an absent parameter is simply not compared.
+    static const std::set<std::string> timebase{"subtype", "technology", "frequency", "mode",
+                                                "output_type"};
     if (cat == "magnetic" || cat == "chipBead") return magnetic.count(key) > 0;
     if (cat == "connector") return connector.count(key) > 0;
     if (cat == "analog") return analog.count(key) > 0;
@@ -411,6 +420,31 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             penalty += opt.gate_weight * kVerdictWarnPenalty;
             notes.push_back("lower maximum gate-source voltage than the original — check the "
                             "existing gate drive cannot exceed it");
+        }
+    }
+
+    // ── crystal load capacitance ────────────────────────────────────────────
+    // A crystal is specified AT a load capacitance; the board's load network is
+    // built for that value. A substitute specified for a different CL runs off
+    // frequency in the existing circuit while looking entirely correct. Applies
+    // to passive resonators only — an oscillator carries its own circuit.
+    if (cat == "timeBase" &&
+        is_passive_resonator(str(original, "technology"), str(original, "device_type")) &&
+        is_passive_resonator(str(cand, "technology"), str(cand, "device_type"))) {
+        auto o_cl = num(original, "load_capacitance"), s_cl = num(cand, "load_capacitance");
+        if (auto ppm = crystal_pull_ppm(o_cl, s_cl)) {
+            const double mag = std::abs(*ppm);
+            if (mag > 5.0) {  // below this the pull is lost in the part's own tolerance
+                params.push_back({{"name", "load_capacitance"}, {"verdict", FAIL}});
+                notes.push_back(
+                    "specified for a different load capacitance (" +
+                    std::to_string(static_cast<int>(std::llround(*s_cl * 1e12))) + " pF vs " +
+                    std::to_string(static_cast<int>(std::llround(*o_cl * 1e12))) +
+                    " pF): in the original's load network it would run roughly " +
+                    std::to_string(static_cast<int>(std::llround(mag))) +
+                    " ppm off frequency (estimate, typical C0/C1)");
+                return reject("crystal specified for a different load capacitance");
+            }
         }
     }
 

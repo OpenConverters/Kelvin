@@ -196,6 +196,57 @@ inline std::string dielectric_regression(const std::string& original, const std:
     return out;
 }
 
+// ── Quartz crystal load capacitance ──────────────────────────────────────────
+// A crystal does not have a frequency on its own: it has a frequency AT a
+// specified load capacitance. The board's load network (two capacitors plus
+// stray) is designed for that CL, so dropping in a crystal specified for a
+// different CL leaves the same load network pulling it to the wrong frequency.
+// Nothing about the part looks wrong — the marking still says 16 MHz.
+//
+// For parallel resonance the pull is
+//     f_L = f_s * (1 + C1 / (2 * (C0 + C_L)))
+// so swapping C_L(orig) for C_L(sub) shifts the frequency by
+//     df/f ~= (C1/2) * (1/(C0 + CL_orig) - 1/(C0 + CL_sub))
+// Typical AT-cut values (C1 ~ 5 fF motional, C0 ~ 3 pF shunt) give tens of ppm
+// for a few pF of mismatch — usually several times a typical +/-20 ppm budget.
+// The estimate below uses those typical values and is reported as an ESTIMATE,
+// because the real C1/C0 are per-part and most catalogue records omit them.
+inline constexpr double kTypicalMotionalC = 5e-15;  // C1, farads
+inline constexpr double kTypicalShuntC = 3e-12;     // C0, farads
+
+// Frequency pull in ppm from using cl_sub where the board expects cl_orig.
+// Both in farads. Returns nullopt when either is missing or non-physical.
+inline std::optional<double> crystal_pull_ppm(std::optional<double> cl_orig,
+                                              std::optional<double> cl_sub) {
+    if (!cl_orig || !cl_sub || *cl_orig <= 0 || *cl_sub <= 0) return std::nullopt;
+    const double a = kTypicalShuntC + *cl_orig, b = kTypicalShuntC + *cl_sub;
+    if (a <= 0 || b <= 0) return std::nullopt;
+    return (kTypicalMotionalC / 2.0) * (1.0 / a - 1.0 / b) * 1e6;
+}
+
+// True when the record is a passive resonator, whose frequency depends on the
+// board's load network. An oscillator (XO/TCXO/VCXO/MEMS) contains its own
+// circuit and has no load-capacitance dependency, so the gate must not fire.
+//
+// `technology` is the authoritative discriminator and device_type is only a
+// fallback: in TAS every timing part sits under the `timeBase.oscillator`
+// container, so device_type reads "oscillator" even for a plain quartz crystal.
+// Treating that as disqualifying silently disabled this gate on all 518 crystals
+// in the catalogue. The data confirms the rule cleanly — load capacitance is
+// present on 99% of technology=quartzCrystal parts and on 0% of every active
+// type (crystalOscillator, mems, tcxo, ocxo, vcxo, programmable).
+inline bool is_passive_resonator(const std::string& technology, const std::string& device_type) {
+    const std::string t = lower_copy(technology);
+    if (!t.empty()) {
+        if (contains(t, "oscillator") || contains(t, "tcxo") || contains(t, "vcxo") ||
+            contains(t, "ocxo") || contains(t, "mems") || contains(t, "programmable"))
+            return false;
+        return contains(t, "crystal") || contains(t, "quartz") || contains(t, "resonator");
+    }
+    const std::string d = lower_copy(device_type);
+    return contains(d, "crystal") || contains(d, "resonator");
+}
+
 // ── Semiconductor process technology ─────────────────────────────────────────
 // Si, SiC and GaN are not drop-in for one another even at matching Vds/Id: gate
 // drive differs (GaN needs a tightly controlled, lower Vgs and has no body

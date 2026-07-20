@@ -256,3 +256,80 @@ TEST_CASE("imperial and metric case codes cannot collide", "[crossref][dims][cla
     REQUIRE(can->height.has_value());
     CHECK(*can->height == Catch::Approx(16e-3));
 }
+
+// ── crystal load capacitance ─────────────────────────────────────────────────
+
+TEST_CASE("crystal frequency pull is computed from the load mismatch", "[crossref][classes]") {
+    // 18 pF board network, 12 pF crystal: tens of ppm, several times a typical
+    // +/-20 ppm budget.
+    auto ppm = crystal_pull_ppm(18e-12, 12e-12);
+    REQUIRE(ppm.has_value());
+    CHECK(std::abs(*ppm) > 20.0);
+    // matching load -> no pull
+    CHECK(std::abs(*crystal_pull_ppm(18e-12, 18e-12)) < 1e-9);
+    // sign flips with the direction of the mismatch
+    CHECK((*crystal_pull_ppm(12e-12, 18e-12)) * (*crystal_pull_ppm(18e-12, 12e-12)) < 0);
+    CHECK_FALSE(crystal_pull_ppm(std::nullopt, 12e-12).has_value());
+}
+
+TEST_CASE("oscillators are not subject to the load-capacitance gate", "[crossref][classes]") {
+    CHECK(is_passive_resonator("quartzCrystal", ""));
+    CHECK(is_passive_resonator("", "crystal"));
+    CHECK_FALSE(is_passive_resonator("crystalOscillator", "oscillator"));
+    CHECK_FALSE(is_passive_resonator("tcxo", ""));
+    CHECK_FALSE(is_passive_resonator("mems", "oscillator"));
+    CHECK_FALSE(is_passive_resonator("ocxo", "oscillator"));
+
+    // THE real-data shape: in TAS every timing part sits under the
+    // `timeBase.oscillator` container, so a plain quartz crystal carries
+    // device_type "oscillator". Technology must win, or the gate silently
+    // disables itself on every crystal in the catalogue (it did).
+    CHECK(is_passive_resonator("quartzCrystal", "oscillator"));
+}
+
+TEST_CASE("a crystal for a different load capacitance is rejected", "[crossref][classes][rank]") {
+    json original = {{"mpn", "X18"}, {"technology", "quartzCrystal"}, {"device_type", "crystal"},
+                     {"subtype", "crystal"}, {"frequency", 16e6}, {"load_capacitance", 18e-12}};
+    json cands = json::array({
+        {{"mpn", "X12"}, {"technology", "quartzCrystal"}, {"device_type", "crystal"},
+         {"subtype", "crystal"}, {"frequency", 16e6}, {"load_capacitance", 12e-12}},
+        {{"mpn", "X18B"}, {"technology", "quartzCrystal"}, {"device_type", "crystal"},
+         {"subtype", "crystal"}, {"frequency", 16e6}, {"load_capacitance", 18e-12}}});
+    auto r = cross_reference("timeBase", original, cands, Options{});
+    // the matching-CL part wins; the mismatched one is not a substitute
+    CHECK(r["candidates"][0]["mpn"] == "X18B");
+    auto bad = std::find_if(r["candidates"].begin(), r["candidates"].end(),
+                            [](const json& c) { return c["mpn"] == "X12"; });
+    REQUIRE(bad != r["candidates"].end());
+    CHECK((*bad)["status"] == "no_substitute");
+    CHECK(std::string((*bad)["notes"][0]).find("ppm off frequency") != std::string::npos);
+}
+
+TEST_CASE("crystal mode and oscillator output type never cross", "[crossref][classes][rank]") {
+    // Fundamental vs 3rd overtone: an overtone circuit's tank is inductive at
+    // the fundamental, so the loop cannot close — it will not start, or runs
+    // near a third of the marked frequency.
+    json xtal = {{"mpn", "F"}, {"technology", "quartzCrystal"}, {"subtype", "crystal"},
+                 {"frequency", 27e6}, {"load_capacitance", 18e-12}, {"mode", "fundamental"}};
+    json overtone = json::array({
+        {{"mpn", "OT"}, {"technology", "quartzCrystal"}, {"subtype", "crystal"},
+         {"frequency", 27e6}, {"load_capacitance", 18e-12}, {"mode", "thirdOvertone"}}});
+    CHECK(cross_reference("timeBase", xtal, overtone, Options{})["candidates"][0]["status"] ==
+          "no_substitute");
+
+    // LVDS and HCSL are different termination networks, not a parameter.
+    json xo = {{"mpn", "A"}, {"technology", "crystalOscillator"}, {"subtype", "oscillator"},
+               {"frequency", 25e6}, {"output_type", "LVDS"}};
+    json other = json::array({
+        {{"mpn", "B"}, {"technology", "crystalOscillator"}, {"subtype", "oscillator"},
+         {"frequency", 25e6}, {"output_type", "HCSL"}}});
+    CHECK(cross_reference("timeBase", xo, other, Options{})["candidates"][0]["status"] ==
+          "no_substitute");
+
+    // Same output type still crosses.
+    json same = json::array({
+        {{"mpn", "C"}, {"technology", "crystalOscillator"}, {"subtype", "oscillator"},
+         {"frequency", 25e6}, {"output_type", "LVDS"}}});
+    CHECK(cross_reference("timeBase", xo, same, Options{})["candidates"][0]["status"] !=
+          "no_substitute");
+}

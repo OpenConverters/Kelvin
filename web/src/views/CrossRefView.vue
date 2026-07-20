@@ -70,6 +70,47 @@ const XREF = [
     ],
   },
   {
+    key: 'timing', label: 'Crystals', category: 'timeBase',
+    // Frequency is the identity here, not a value to rank near — a 16 MHz part
+    // is not a near-match for 12 MHz. The load-capacitance gate is the one that
+    // matters most: a crystal is specified AT a CL, and the board's load network
+    // is built for it.
+    primary: null,
+    sameFacet: { f: 'technology', label: 'technology' },
+    hardKeys: ['frequency', 'technology', 'load_capacitance'],
+    spec: (r) => ({ ...base(r), subtype: r.device_type ?? '', technology: r.technology ?? '',
+      device_type: r.device_type ?? '', frequency: nz(r.frequency),
+      load_capacitance: nz(r.load_capacitance),
+      load_capacitance_pF: r.load_capacitance != null ? r.load_capacitance * 1e12 : null,
+      esr: nz(r.esr), output_type: r.output_type ?? '', mode: r.mode ?? '',
+      tolerance_ppm: r.frequency_tolerance != null ? r.frequency_tolerance * 1e6 : null,
+      stability_ppm: r.frequency_stability != null ? r.frequency_stability * 1e6 : null }),
+    params: [
+      { key: 'frequency', label: 'f', row: 'frequency', unit: 'Hz' },
+      { key: 'load_capacitance_pF', label: 'CL', row: 'load_capacitance', unit: 'F' },
+      { key: 'esr', label: 'ESR', row: 'esr', unit: 'Ω' },
+      { key: 'tolerance_ppm', label: 'tol', row: 'frequency_tolerance', unit: 'ppm', scale: 1e6 },
+    ],
+  },
+  {
+    key: 'connector', label: 'Connectors', category: 'connector',
+    // Identity is family + position count; a 6-way terminal block is not a
+    // 4-way one. NOTE: the catalogue carries no pitch, plating, termination or
+    // mating-cycle data, so those cannot be checked — the tool says nothing
+    // about mating compatibility rather than implying it.
+    primary: null,
+    sameFacet: { f: 'family', label: 'family' },
+    hardKeys: ['family', 'positions', 'rated_current_A'],
+    spec: (r) => ({ ...base(r), family: r.family ?? '', positions: nz(r.positions),
+      polarity: r.polarity ?? '', interface_standard: r.interface_standard ?? '',
+      rated_current_A: nz(r.rated_current), rated_voltage_V: nz(r.rated_voltage) }),
+    params: [
+      { key: 'positions', label: 'pos', row: 'positions', unit: '' },
+      { key: 'rated_current_A', label: 'I/contact', row: 'rated_current', unit: 'A' },
+      { key: 'rated_voltage_V', label: 'V rated', row: 'rated_voltage', unit: 'V' },
+    ],
+  },
+  {
     key: 'diode', label: 'Diodes', category: 'diode',
     primary: null,
     sameFacet: { f: 'technology', label: 'type' },
