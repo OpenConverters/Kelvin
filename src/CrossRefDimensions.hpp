@@ -252,9 +252,15 @@ inline constexpr double kDimTolerance = 1.02;  // 2% slack for rounding/terminat
 inline constexpr double kSlightlyOversizeOverflow = 0.65;  // ~one EIA size up
 inline constexpr double kSlightlyOversizeBase = 1.0;
 inline constexpr double kSlightlyOversizeScale = 2.5;
+// "Case kept" band (strict_case, e.g. magnetics/chip beads). A substitute whose
+// every linear dimension is at least this fraction of the original's is the SAME
+// footprint — a true drop-in that keeps the land pattern. Below it the pads no
+// longer match, so it is a footprint CHANGE (FootprintTier::Smaller), not a fit.
+inline constexpr double kUndersizeBand = 0.85;
+inline constexpr double kUndersizeWeight = 2.0;  // ranks a same-size part above a smaller one
 
 inline double footprint_penalty(const std::optional<Dims>& source,
-                                const std::optional<Dims>& candidate) {
+                                const std::optional<Dims>& candidate, bool strict_case = false) {
     if (!source) return 0.0;  // cannot enforce; surfaced separately as a diagnostic
     if (!candidate) return kUnknownDimPenalty;
     double s_long = std::max(source->length, source->width);
@@ -266,7 +272,20 @@ inline double footprint_penalty(const std::optional<Dims>& source,
     bool fits = c_long <= s_long * kDimTolerance && c_short <= s_short * kDimTolerance;
     if (source->height && candidate->height)
         fits = fits && *candidate->height <= *source->height * kDimTolerance;
-    if (fits) return kFitAreaWeight * ((c_long * c_short) / (s_long * s_short));
+    if (fits) {
+        if (!strict_case)
+            // Historical right-sizing: a smaller part is mildly PREFERRED (it frees
+            // board space). Kept for chip passives that sit on standard pads.
+            return kFitAreaWeight * ((c_long * c_short) / (s_long * s_short));
+        // strict_case: the SAME footprint (case kept) is the true drop-in and must
+        // rank first, so score 0 at equal size and PENALISE undersize in proportion
+        // to how far under it is — a smaller body is a different land pattern, not a
+        // free win.
+        double lin = std::min(c_long / s_long, c_short / s_short);
+        if (source->height && candidate->height && *source->height > 0)
+            lin = std::min(lin, *candidate->height / *source->height);
+        return kUndersizeWeight * std::max(0.0, 1.0 - lin);
+    }
 
     double overflow = std::max(c_long / s_long, c_short / s_short);
     if (source->height && candidate->height && *source->height > 0)
@@ -277,21 +296,44 @@ inline double footprint_penalty(const std::optional<Dims>& source,
     return kOversizeBase + kOversizeScale * overflow;
 }
 
-// Categorise the fit. Derived from footprint_penalty so thresholds live in one place.
-enum class FootprintTier { Fits, OneSizeLarger, Overflows, Unknown };
+// Categorise the fit. `strict_case` (magnetics/chip beads) additionally splits out
+// a materially SMALLER body as its own tier — the pads won't match, so it is not a
+// drop-in even though it physically fits inside the original's area.
+enum class FootprintTier { Fits, Smaller, OneSizeLarger, Overflows, Unknown };
 
 inline FootprintTier footprint_tier(const std::optional<Dims>& source,
-                                    const std::optional<Dims>& candidate) {
+                                    const std::optional<Dims>& candidate, bool strict_case = false) {
     if (!source || !candidate) return FootprintTier::Unknown;
-    double pen = footprint_penalty(source, candidate);
-    if (pen >= kOversizeBase) return FootprintTier::Overflows;
-    if (pen >= kSlightlyOversizeBase) return FootprintTier::OneSizeLarger;
+    double s_long = std::max(source->length, source->width);
+    double s_short = std::min(source->length, source->width);
+    double c_long = std::max(candidate->length, candidate->width);
+    double c_short = std::min(candidate->length, candidate->width);
+    if (s_long <= 0 || s_short <= 0 || c_long <= 0 || c_short <= 0) return FootprintTier::Unknown;
+
+    bool fits = c_long <= s_long * kDimTolerance && c_short <= s_short * kDimTolerance;
+    if (source->height && candidate->height)
+        fits = fits && *candidate->height <= *source->height * kDimTolerance;
+    if (!fits) {
+        double overflow = std::max(c_long / s_long, c_short / s_short);
+        if (source->height && candidate->height && *source->height > 0)
+            overflow = std::max(overflow, *candidate->height / *source->height);
+        overflow = std::max(overflow - 1.0, 0.0);
+        return overflow <= kSlightlyOversizeOverflow ? FootprintTier::OneSizeLarger
+                                                     : FootprintTier::Overflows;
+    }
+    if (strict_case) {
+        double lin = std::min(c_long / s_long, c_short / s_short);
+        if (source->height && candidate->height && *source->height > 0)
+            lin = std::min(lin, *candidate->height / *source->height);
+        if (lin < kUndersizeBand) return FootprintTier::Smaller;
+    }
     return FootprintTier::Fits;
 }
 
 inline const char* footprint_tier_name(FootprintTier t) {
     switch (t) {
         case FootprintTier::Fits: return "fits";
+        case FootprintTier::Smaller: return "smaller";
         case FootprintTier::OneSizeLarger: return "one_size_larger";
         case FootprintTier::Overflows: return "overflows";
         case FootprintTier::Unknown: return "unknown";

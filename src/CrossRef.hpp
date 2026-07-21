@@ -153,7 +153,10 @@ inline const char* grade_for(const std::string& status, FootprintTier fit, bool 
     if (status == "no_substitute") return "no_substitute";
     if (fit == FootprintTier::Overflows) return "redesign";
     if (any_fail) return "major_review";
-    if (any_warn || fit == FootprintTier::OneSizeLarger || footprint_unverified)
+    // A materially smaller body (strict_case families) is a footprint CHANGE — the
+    // pads won't match — so it is a review, not a true drop-in.
+    if (any_warn || fit == FootprintTier::OneSizeLarger || fit == FootprintTier::Smaller ||
+        footprint_unverified)
         return "minor_review";
     return "drop_in";
 }
@@ -367,11 +370,17 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 "from cross-reference until its dimensions are added (catalogue data gap)");
             return reject("no dimensional data — cannot verify footprint fit");
         }
-        FootprintTier tier = footprint_tier(o_dims, s_dims);
+        // strict_case: magnetics and chip beads have custom land patterns, so ONLY
+        // a same-size substitute (the case kept) is a true drop-in — it scores 0 on
+        // footprint and thus ranks first, while a materially smaller body is a
+        // footprint change (FootprintTier::Smaller) that must be reviewed.
+        const bool strict_case = (cat == "magnetic" || cat == "chipBead");
+        FootprintTier tier = footprint_tier(o_dims, s_dims, strict_case);
         if (o_dims) {
-            penalty += opt.footprint_weight * footprint_penalty(o_dims, s_dims);
+            penalty += opt.footprint_weight * footprint_penalty(o_dims, s_dims, strict_case);
             out["footprint"] = footprint_tier_name(tier);
             const char* verdict = tier == FootprintTier::Fits            ? PASS
+                                  : tier == FootprintTier::Smaller       ? WARN
                                   : tier == FootprintTier::OneSizeLarger ? WARN
                                   : tier == FootprintTier::Overflows     ? FAIL
                                                                          : UNVERIFIED;
@@ -382,6 +391,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             if (tier == FootprintTier::OneSizeLarger) {
                 demote();
                 notes.push_back("about one case size larger — verify board fit");
+            } else if (tier == FootprintTier::Smaller) {
+                demote();
+                notes.push_back("smaller body than the original — the land pattern differs, so this "
+                                "is not a drop-in; verify the pads before substituting");
             } else if (tier == FootprintTier::Overflows) {
                 demote();
                 notes.push_back("larger than the original's footprint — board respin likely");
@@ -602,6 +615,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     if (out.contains("footprint")) {
         const std::string f = out["footprint"];
         tier = f == "fits"              ? FootprintTier::Fits
+               : f == "smaller"         ? FootprintTier::Smaller
                : f == "one_size_larger" ? FootprintTier::OneSizeLarger
                : f == "overflows"       ? FootprintTier::Overflows
                                         : FootprintTier::Unknown;

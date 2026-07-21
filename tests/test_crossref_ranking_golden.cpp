@@ -184,3 +184,31 @@ TEST_CASE("golden: a magnetic with no mechanical dimensions is excluded from cro
         }
     CHECK(found);
 }
+
+TEST_CASE("golden: keeping the case is the true drop-in and ranks above a smaller body",
+          "[crossref][golden]") {
+    // For a magnetic, only a substitute that KEEPS the footprint (same body size)
+    // is a true drop-in — it must rank first. An electrically identical part in a
+    // materially smaller body has a different land pattern (pads won't match), so
+    // it is a minor_review and ranks below the case-kept part, however tempting its
+    // smaller size is.
+    json original = {{"mpn", "O"}, {"value_si", 4.7e-6}, {"saturation_current", 9.0},
+                     {"rated_current", 7.0}, {"dcr", 0.026},  {"length_m", 0.0073},
+                     {"width_m", 0.0073},    {"height_m", 0.0043}};
+    json cands = json::array({
+        // Materially smaller body — fits inside the area but changes the pads.
+        {{"mpn", "SMALLER"}, {"value_si", 4.7e-6}, {"saturation_current", 9.0},
+         {"rated_current", 7.0}, {"dcr", 0.026}, {"length_m", 0.0044}, {"width_m", 0.0044},
+         {"height_m", 0.003}},
+        // Same body — the case kept, the honest drop-in.
+        {{"mpn", "CASE_KEPT"}, {"value_si", 4.7e-6}, {"saturation_current", 9.0},
+         {"rated_current", 7.0}, {"dcr", 0.026}, {"length_m", 0.0073}, {"width_m", 0.0073},
+         {"height_m", 0.0043}},
+    });
+    auto o = order("magnetic", original, cands);
+    REQUIRE(o.size() == 2);
+    CHECK(o[0] == "CASE_KEPT");  // same footprint ranks first
+    CHECK(o[1] == "SMALLER");
+    CHECK(grade_of("magnetic", original, cands, "CASE_KEPT") == "drop_in");
+    CHECK(grade_of("magnetic", original, cands, "SMALLER") == "minor_review");
+}

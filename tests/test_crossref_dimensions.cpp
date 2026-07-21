@@ -106,6 +106,22 @@ TEST_CASE("a smaller part fits and scores below any oversize part", "[crossref][
     CHECK(p_small < kSlightlyOversizeBase);
 }
 
+TEST_CASE("strict_case: the same footprint is the true drop-in, a smaller body is a change",
+          "[crossref][dims]") {
+    // Magnetics / chip beads have custom land patterns: only a same-size part keeps
+    // the pads. A materially smaller body must NOT rank as a free fit.
+    Dims source{7.3e-3, 7.3e-3, 4.3e-3};
+    Dims same{7.3e-3, 7.3e-3, 4.3e-3};   // case kept — the true drop-in
+    Dims tiny{4.45e-3, 4.45e-3, 3.0e-3}; // ~40% smaller — pads won't match
+    // same size scores 0 (best) and ranks first; the smaller body is penalised.
+    CHECK(footprint_penalty(source, same, /*strict*/ true) == 0.0);
+    CHECK(footprint_penalty(source, tiny, /*strict*/ true) > footprint_penalty(source, same, true));
+    CHECK(footprint_tier(source, same, true) == FootprintTier::Fits);
+    CHECK(footprint_tier(source, tiny, true) == FootprintTier::Smaller);
+    // Non-strict (chip passives) keeps the historical right-sizing: smaller still fits.
+    CHECK(footprint_tier(source, tiny) == FootprintTier::Fits);
+}
+
 TEST_CASE("one case size up is a partial, two sizes up is a respin", "[crossref][dims]") {
     Dims source{1.00e-3, 0.50e-3, std::nullopt};   // 0402
     Dims one_up{1.60e-3, 0.80e-3, std::nullopt};   // 0603: 0.6 linear overflow
