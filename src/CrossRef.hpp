@@ -142,12 +142,19 @@ inline constexpr double kVerdictFailPenalty = 3.0;
 //   redesign       — does not fit, or mount/family/process differs
 //   no_substitute  — a hard gate failed
 // direction: upgrade / equivalent / downgrade, from the per-parameter verdicts.
+//
+// `footprint_unverified` is set when the ORIGINAL has a known footprint but the
+// substitute's could not be established (no mechanical drawing). "drop_in" asserts
+// the part fits the original's land pattern — a claim we cannot make without the
+// substitute's dimensions — so an unverified footprint caps the grade at
+// minor_review however clean the electricals are.
 inline const char* grade_for(const std::string& status, FootprintTier fit, bool any_warn,
-                             bool any_fail) {
+                             bool any_fail, bool footprint_unverified = false) {
     if (status == "no_substitute") return "no_substitute";
     if (fit == FootprintTier::Overflows) return "redesign";
     if (any_fail) return "major_review";
-    if (any_warn || fit == FootprintTier::OneSizeLarger) return "minor_review";
+    if (any_warn || fit == FootprintTier::OneSizeLarger || footprint_unverified)
+        return "minor_review";
     return "drop_in";
 }
 
@@ -162,6 +169,16 @@ inline std::optional<Dims> dims_of(const json& p, const std::string& category) {
         if (h && *h > 0) d.height = *h;
         return d;
     }
+    // Magnetics and chip beads: a bare case code is NOT a reliable footprint. A
+    // 4-digit magnetic code like "1210" is ambiguous between an EIA chip
+    // (3.2 x 2.5 mm) and a molded power inductor (~12 x 10 mm) — resolving it
+    // either way fabricates a footprint the datasheet never gave us, and would let
+    // a physically larger part read as a drop-in. For these families the footprint
+    // is verified ONLY from an explicit mechanical drawing; absent that it stays
+    // unknown, so the part cannot be graded a drop-in. (Same reason these
+    // categories are excluded from the mount gate — their package strings vary too
+    // much by series to classify.)
+    if (category == "magnetic" || category == "chipBead") return std::nullopt;
     std::string code = str(p, "case_code");
     if (code.empty()) code = str(p, "package");
     return resolve_dimensions(code, category);
@@ -349,6 +366,15 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             } else if (tier == FootprintTier::Overflows) {
                 demote();
                 notes.push_back("larger than the original's footprint — board respin likely");
+            } else if (tier == FootprintTier::Unknown) {
+                // We know the original's footprint but could not establish the
+                // substitute's (no mechanical drawing; its case code is not a
+                // reliable footprint for this family). The fit is UNVERIFIED, so
+                // this must not read as a drop-in — the grade is capped below.
+                demote();
+                notes.push_back(
+                    "mechanical dimensions unavailable for the substitute — footprint fit "
+                    "could not be verified; confirm it fits the original's land pattern");
             }
         }
     }
@@ -553,14 +579,19 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         if (v == FAIL) any_fail = true;
     }
     FootprintTier tier = FootprintTier::Unknown;
+    bool footprint_unverified = false;
     if (out.contains("footprint")) {
         const std::string f = out["footprint"];
         tier = f == "fits"              ? FootprintTier::Fits
                : f == "one_size_larger" ? FootprintTier::OneSizeLarger
                : f == "overflows"       ? FootprintTier::Overflows
                                         : FootprintTier::Unknown;
+        // out["footprint"] is only recorded when the ORIGINAL has a footprint, so
+        // an "unknown" tier here means the substitute's could not be verified —
+        // which must block a drop-in claim (see grade_for).
+        footprint_unverified = (tier == FootprintTier::Unknown);
     }
-    out["grade"] = grade_for(status, tier, any_warn, any_fail);
+    out["grade"] = grade_for(status, tier, any_warn, any_fail, footprint_unverified);
 
     // Direction: on the directional parameters we could actually compare, did
     // the substitute come out ahead or behind? Mirrors the industry's upgrade /

@@ -139,3 +139,36 @@ TEST_CASE("golden: crystal load-capacitance ordering", "[crossref][golden]") {
     CHECK(o[0] == "MATCH_CL");
     CHECK(grade_of("timeBase", original, cands, "WRONG_CL") == "no_substitute");
 }
+
+TEST_CASE("golden: a magnetic with no mechanical dimensions is never a drop-in",
+          "[crossref][golden]") {
+    // Regression for a real report: crossing Würth 744777004 (7.3 x 7.3 x 4.3 mm,
+    // explicit mechanical drawing) surfaced 7847709047 as a "drop_in" even though
+    // that WE-PD part carries NO mechanical block — only an ambiguous case code
+    // ("1210"), which the resolver was reading as a tiny EIA-1210 chip (3.2 x 2.5)
+    // and thus "fitting". You cannot call a part a drop-in when you do not know its
+    // size, so a substitute with no verifiable footprint is capped at minor_review
+    // with a note, while an electrically-identical part WITH matching dimensions
+    // stays a clean drop-in.
+    json original = {{"mpn", "744777004"}, {"value_si", 4.7e-6}, {"saturation_current", 9.0},
+                     {"rated_current", 7.0}, {"dcr", 0.026},     {"length_m", 0.0073},
+                     {"width_m", 0.0073},    {"height_m", 0.0043}};
+    json cands = json::array({
+        // Same electricals, but only a bare (ambiguous) case code — no L/W/H.
+        {{"mpn", "7847709047"}, {"value_si", 4.7e-6}, {"saturation_current", 9.0},
+         {"rated_current", 7.0}, {"dcr", 0.026}, {"case_code", "1210"}},
+        // Same electricals WITH an explicit matching footprint — the honest drop-in.
+        {{"mpn", "SAME_SIZE"}, {"value_si", 4.7e-6}, {"saturation_current", 9.0},
+         {"rated_current", 7.0}, {"dcr", 0.026}, {"length_m", 0.0073}, {"width_m", 0.0073},
+         {"height_m", 0.0043}},
+    });
+    // The dimensioned equal ranks above the un-dimensioned one (the unknown-size
+    // footprint carries a penalty), and only it earns "drop_in".
+    auto o = order("magnetic", original, cands);
+    REQUIRE(o.size() == 2);
+    CHECK(o[0] == "SAME_SIZE");
+    CHECK(grade_of("magnetic", original, cands, "SAME_SIZE") == "drop_in");
+    const std::string g = grade_of("magnetic", original, cands, "7847709047");
+    CHECK(g != "drop_in");
+    CHECK(g == "minor_review");
+}
