@@ -348,6 +348,25 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             return reject("mount type incompatible (SMD vs leaded)");
         }
         auto o_dims = dims_of(original, cat), s_dims = dims_of(cand, cat);
+        // A part with NO dimensions must not be offered as a substitute for an
+        // original whose footprint we DO know: its fit can never be verified. For
+        // families where the footprint is the mechanical fit and the case code is
+        // not a reliable size (magnetics, chip beads), such a substitute is
+        // EXCLUDED — rejected and flagged as a data gap — rather than guessed at.
+        // The real remedy is to backfill its dimensions (datasheet Seeker); until
+        // then it is not a substitute anyone can trust. (Other families resolve
+        // dimensions reliably from their EIA/JEDEC case code, so this does not touch
+        // them. And when the ORIGINAL itself has no footprint there is nothing to
+        // fit to, so a dimensionless-vs-dimensionless compare — e.g. a part against
+        // itself — is left to the electrical verdicts, never rejected here.)
+        if ((cat == "magnetic" || cat == "chipBead") && o_dims && !s_dims) {
+            out["missing_dimensions"] = true;  // partial/incomplete catalogue record
+            params.push_back({{"name", "footprint"}, {"verdict", UNVERIFIED}});
+            notes.push_back(
+                "no mechanical dimensions on record — footprint fit cannot be verified; excluded "
+                "from cross-reference until its dimensions are added (catalogue data gap)");
+            return reject("no dimensional data — cannot verify footprint fit");
+        }
         FootprintTier tier = footprint_tier(o_dims, s_dims);
         if (o_dims) {
             penalty += opt.footprint_weight * footprint_penalty(o_dims, s_dims);
@@ -367,10 +386,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 demote();
                 notes.push_back("larger than the original's footprint — board respin likely");
             } else if (tier == FootprintTier::Unknown) {
-                // We know the original's footprint but could not establish the
-                // substitute's (no mechanical drawing; its case code is not a
-                // reliable footprint for this family). The fit is UNVERIFIED, so
-                // this must not read as a drop-in — the grade is capped below.
+                // Non-magnetic family whose original has a footprint but whose
+                // substitute's case code did not resolve to one: the fit is
+                // UNVERIFIED (magnetics/chip beads are already excluded above). It
+                // must not read as a drop-in, so the grade is capped below.
                 demote();
                 notes.push_back(
                     "mechanical dimensions unavailable for the substitute — footprint fit "

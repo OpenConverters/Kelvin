@@ -140,16 +140,16 @@ TEST_CASE("golden: crystal load-capacitance ordering", "[crossref][golden]") {
     CHECK(grade_of("timeBase", original, cands, "WRONG_CL") == "no_substitute");
 }
 
-TEST_CASE("golden: a magnetic with no mechanical dimensions is never a drop-in",
+TEST_CASE("golden: a magnetic with no mechanical dimensions is excluded from cross-ref",
           "[crossref][golden]") {
     // Regression for a real report: crossing Würth 744777004 (7.3 x 7.3 x 4.3 mm,
     // explicit mechanical drawing) surfaced 7847709047 as a "drop_in" even though
     // that WE-PD part carries NO mechanical block — only an ambiguous case code
     // ("1210"), which the resolver was reading as a tiny EIA-1210 chip (3.2 x 2.5)
-    // and thus "fitting". You cannot call a part a drop-in when you do not know its
-    // size, so a substitute with no verifiable footprint is capped at minor_review
-    // with a note, while an electrically-identical part WITH matching dimensions
-    // stays a clean drop-in.
+    // and thus "fitting". A magnetic whose footprint we cannot verify must NOT be
+    // offered as a substitute: it is rejected (no_substitute) and flagged with
+    // `missing_dimensions` so the gap can be backfilled, while an electrically
+    // identical part WITH matching dimensions stays a clean drop-in.
     json original = {{"mpn", "744777004"}, {"value_si", 4.7e-6}, {"saturation_current", 9.0},
                      {"rated_current", 7.0}, {"dcr", 0.026},     {"length_m", 0.0073},
                      {"width_m", 0.0073},    {"height_m", 0.0043}};
@@ -162,13 +162,25 @@ TEST_CASE("golden: a magnetic with no mechanical dimensions is never a drop-in",
          {"rated_current", 7.0}, {"dcr", 0.026}, {"length_m", 0.0073}, {"width_m", 0.0073},
          {"height_m", 0.0043}},
     });
-    // The dimensioned equal ranks above the un-dimensioned one (the unknown-size
-    // footprint carries a penalty), and only it earns "drop_in".
+    // The dimensioned equal is a drop-in and ranks first; the un-dimensioned part
+    // is excluded (no_substitute) and marked as a data gap, so it sinks.
     auto o = order("magnetic", original, cands);
     REQUIRE(o.size() == 2);
     CHECK(o[0] == "SAME_SIZE");
+    CHECK(o[1] == "7847709047");  // excluded -> sinks to the bottom
     CHECK(grade_of("magnetic", original, cands, "SAME_SIZE") == "drop_in");
-    const std::string g = grade_of("magnetic", original, cands, "7847709047");
-    CHECK(g != "drop_in");
-    CHECK(g == "minor_review");
+    CHECK(grade_of("magnetic", original, cands, "7847709047") == "no_substitute");
+
+    // The excluded part is flagged as an incomplete record for backfill.
+    Options opt;
+    opt.max_results = 50;
+    auto r = cross_reference("magnetic", original, cands, opt);
+    bool found = false;
+    for (const auto& c : r["candidates"])
+        if (c.value("mpn", std::string()) == "7847709047") {
+            found = true;
+            CHECK(c.value("status", std::string()) == "no_substitute");
+            CHECK(c.value("missing_dimensions", false) == true);
+        }
+    CHECK(found);
 }
