@@ -18,6 +18,7 @@
 // fields (datasheetInfo.mechanical.length et al are metres).
 #pragma once
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <map>
@@ -405,6 +406,18 @@ inline bool mount_incompatible(const std::string& o_mount, const std::string& s_
     const std::string om = normalize_mount(o_mount), sm = normalize_mount(s_mount);
     if (!om.empty() && !sm.empty()) return om != sm;
     return mount_type_incompatible(o_pkg, s_pkg);
+}
+
+// Normalise a case/package code for IDENTITY comparison ("case kept?"): keep only
+// letters and digits, upper-cased. "QFN (8x8)" -> "QFN8X8", "SOT-23" -> "SOT23",
+// "DO-214AB" -> "DO214AB". A conservative signal — genuinely different packages
+// (different pinout/pads) compare unequal; the rare vendor alias (e.g. SMA vs
+// DO-214AC) compares unequal too and is surfaced as "verify package", not hidden.
+inline std::string normalize_case_code(const std::string& s) {
+    std::string out;
+    for (unsigned char c : s)
+        if (std::isalnum(c)) out += static_cast<char>(std::toupper(c));
+    return out;
 }
 
 // Categories whose package strings vary too much by series for the generic mount

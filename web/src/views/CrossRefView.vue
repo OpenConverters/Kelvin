@@ -378,11 +378,13 @@ const DIRECTION_TITLE = {
   mixed: 'better on some parameters, worse on others',
 }
 const FOOTPRINT_LABEL = {
-  fits: 'fits', smaller: 'smaller', one_size_larger: '+1 size', overflows: 'larger', unknown: '?',
+  fits: 'fits', smaller: 'smaller', different_case: 'diff. case', one_size_larger: '+1 size',
+  overflows: 'larger', unknown: '?',
 }
 const FOOTPRINT_TITLE = {
   fits: 'fits within the original’s footprint (orientation-agnostic, height checked when known)',
   smaller: 'smaller body than the original — the land pattern differs, so it is not a drop-in; verify the pads',
+  different_case: 'different package/case than the original — different land pattern (pinout/pads); a substitute to re-lay-out, not a drop-in',
   one_size_larger: 'about one case size larger — works electrically, verify board space',
   overflows: 'larger than the original’s footprint — board respin likely',
   unknown: 'no dimensions or resolvable case code on this part',
@@ -689,6 +691,7 @@ function openPart(r) {
 .xref-tbl td[class^="fp-"] { font-size: 10px; }
 .fp-fits { color: var(--ok); }
 .fp-smaller { color: var(--warm); }
+.fp-different_case { color: var(--warm); }
 .fp-one_size_larger { color: var(--warm); }
 .fp-overflows { color: var(--fault); }
 .fp-unknown { color: #4a5b6e; }

@@ -212,3 +212,26 @@ TEST_CASE("golden: keeping the case is the true drop-in and ranks above a smalle
     CHECK(grade_of("magnetic", original, cands, "CASE_KEPT") == "drop_in");
     CHECK(grade_of("magnetic", original, cands, "SMALLER") == "minor_review");
 }
+
+TEST_CASE("golden: a different IC package is a substitute, not a drop-in",
+          "[crossref][golden]") {
+    // Catalogue audit finding: MOSFET/diode "drop_in"s across a changed package
+    // (e.g. a diode DO-214AB -> SMA) — different pinout/pads, so not a drop-in even
+    // when the exact body dimensions are not on record. A SAME-package part is the
+    // true drop-in; a different package is a minor_review to re-lay-out.
+    json original = {{"mpn", "MBRS340"}, {"vrrm", 40.0}, {"if_avg", 3.0},
+                     {"technology", "schottky"}, {"case_code", "DO-214AB"}};
+    json cands = json::array({
+        // Different package — electrically strong, but the land pattern changes.
+        {{"mpn", "B340A"}, {"vrrm", 40.0}, {"if_avg", 3.0}, {"technology", "schottky"},
+         {"case_code", "SMA"}},
+        // Same package (spelled with a dash) — the genuine drop-in.
+        {{"mpn", "SAME_PKG"}, {"vrrm", 40.0}, {"if_avg", 3.0}, {"technology", "schottky"},
+         {"case_code", "DO214AB"}},
+    });
+    auto o = order("diode", original, cands);
+    REQUIRE(o.size() == 2);
+    CHECK(o[0] == "SAME_PKG");  // case kept ranks first
+    CHECK(grade_of("diode", original, cands, "SAME_PKG") == "drop_in");
+    CHECK(grade_of("diode", original, cands, "B340A") == "minor_review");
+}

@@ -370,13 +370,37 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 "from cross-reference until its dimensions are added (catalogue data gap)");
             return reject("no dimensional data — cannot verify footprint fit");
         }
-        // strict_case: magnetics and chip beads have custom land patterns, so ONLY
-        // a same-size substitute (the case kept) is a true drop-in — it scores 0 on
-        // footprint and thus ranks first, while a materially smaller body is a
-        // footprint change (FootprintTier::Smaller) that must be reviewed.
-        const bool strict_case = (cat == "magnetic" || cat == "chipBead");
+        // strict_case: a true drop-in KEEPS the footprint. Only a same-size
+        // substitute (the case kept) scores 0 on footprint and ranks first; a
+        // materially smaller body is a different land pattern (different pinout/pads
+        // for an IC package, different pad geometry for a chip) — a footprint change
+        // (FootprintTier::Smaller) that must be reviewed, never a clean drop-in.
+        // Applied to every family (a catalogue audit found ~3k "drop_in"s across a
+        // changed package — e.g. a MOSFET QFN 8x8 -> QFN 6x5). Chip passives lose
+        // the old "smaller frees board space" right-sizing by deliberate choice.
+        const bool strict_case = true;
+        // "Case kept" gate for the families whose CASE CODE is the footprint (chip
+        // passives + IC packages, i.e. everything except magnetics/chip beads whose
+        // codes are unreliable). A true drop-in keeps the package; a DIFFERENT case
+        // is a different land pattern (pinout/pads), so it is a substitute to review,
+        // not a drop-in — and this is caught even when neither part's exact body
+        // dimensions resolve (DO-214AB, SOD-128, QFN NxN … are often not in the
+        // dimension tables). Magnetics/chip beads fall through to the SIZE check.
+        if (cat != "magnetic" && cat != "chipBead") {
+            const std::string oc = str(original, "case_code"), sc = str(cand, "case_code");
+            if (!oc.empty() && !sc.empty() &&
+                normalize_case_code(oc) != normalize_case_code(sc)) {
+                out["footprint"] = "different_case";
+                params.push_back({{"name", "footprint"}, {"verdict", WARN}});
+                demote();
+                penalty += opt.footprint_weight * kVerdictWarnPenalty;
+                notes.push_back("different package/case (" + oc + " -> " + sc +
+                                ") — different land pattern; a substitute to re-lay-out, not a "
+                                "drop-in (verify pads/pinout)");
+            }
+        }
         FootprintTier tier = footprint_tier(o_dims, s_dims, strict_case);
-        if (o_dims) {
+        if (o_dims && !out.contains("footprint")) {
             penalty += opt.footprint_weight * footprint_penalty(o_dims, s_dims, strict_case);
             out["footprint"] = footprint_tier_name(tier);
             const char* verdict = tier == FootprintTier::Fits            ? PASS
@@ -619,10 +643,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                : f == "one_size_larger" ? FootprintTier::OneSizeLarger
                : f == "overflows"       ? FootprintTier::Overflows
                                         : FootprintTier::Unknown;
-        // out["footprint"] is only recorded when the ORIGINAL has a footprint, so
-        // an "unknown" tier here means the substitute's could not be verified —
-        // which must block a drop-in claim (see grade_for).
-        footprint_unverified = (tier == FootprintTier::Unknown);
+        // Only a literal "unknown" (dims/case-code missing) is UNVERIFIED and blocks
+        // a drop-in via grade_for; "different_case" already carries a WARN param
+        // (any_warn -> minor_review), so it must not also read as unverified.
+        footprint_unverified = (f == "unknown");
     }
     out["grade"] = grade_for(status, tier, any_warn, any_fail, footprint_unverified);
 
