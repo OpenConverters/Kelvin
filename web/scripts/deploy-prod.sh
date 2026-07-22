@@ -16,6 +16,25 @@ HOST=root@51.15.253.66
 SSH="ssh -i $HOME/.ssh/om_scaleway -o StrictHostKeyChecking=no"
 DOCROOT=/opt/kelvin/dist
 
+# 0. Guarantee the WASM engine is CURRENT. `sync-wasm` only COPIES
+# build-wasm/kelvin.js into public/ — it does NOT rebuild it — so a stale local
+# build would silently ship an out-of-date engine (e.g. one whose shard format no
+# longer matches the deployed .kidx shards). Rebuild it incrementally here: a no-op
+# when already fresh, a real rebuild when stale, and a LOUD failure if it is stale
+# but the WASM toolchain is unavailable. Override with SKIP_WASM_BUILD=1 only if you
+# just built it. (Kirchhoff embeds this same engine and was bitten by a stale copy
+# on 2026-07-22 — "unsupported shard format version".)
+WASM_DIR="$HERE/../build-wasm"
+if [[ -z "${SKIP_WASM_BUILD:-}" ]]; then
+  if [[ ! -f "$WASM_DIR/build.ninja" ]]; then
+    echo "REFUSING to deploy: $WASM_DIR is not a configured emscripten build dir — the WASM" >&2
+    echo "engine cannot be verified current. Configure + build it, or set SKIP_WASM_BUILD=1." >&2
+    exit 1
+  fi
+  echo "Ensuring the WASM engine is up to date (ninja, incremental)…"
+  ninja -C "$WASM_DIR" kelvin.js
+fi
+
 # 1. Clean-HEAD build (refuse to ship uncommitted work — the byte-verify rule).
 if [[ -n "$(git -C "$HERE" status --porcelain -- . 2>/dev/null)" ]]; then
   echo "REFUSING to deploy: web/ has uncommitted changes (a build bundles the working tree)." >&2
