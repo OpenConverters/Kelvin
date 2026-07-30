@@ -85,6 +85,22 @@ const coverage = computed(() => {
 
 // ── bar lists (vendor share, facet mixes) ─────────────────────────────────────
 const TOP = 12
+
+// What an EMPTY facet value means, per field. A blank is not always a data hole:
+// 77% of connectors have no interfaceStandard because they ARE not a standardised
+// interface — a Micro-Fit or a terminal block has no USB/RJ45/D-Sub to name — so
+// rendering that bar as a bare "—" reads as "we failed to populate this", when it is
+// the largest legitimate category in the chart. Say what the blank actually means and
+// let the reader judge; fall back to "not specified" where a blank really is unknown.
+const EMPTY_LABEL = {
+  interface_standard: 'no standard interface',
+  polarity: 'polarity not stated',
+  family: 'family not stated',
+  dielectric_code: 'dielectric not stated',
+  technology: 'technology not stated',
+}
+const emptyLabel = (field) => EMPTY_LABEL[field] ?? 'not specified'
+
 function barList(field) {
   const f = base.value?.facets?.[field]
   if (!f || !f.values.length) return null
@@ -93,7 +109,7 @@ function barList(field) {
   const rest = (base.value.total - shown)
   const max = Math.max(...top.map(([, n]) => n), 1)
   return {
-    rows: top.map(([v, n]) => ({ label: v || '—', n, w: n / max })),
+    rows: top.map(([v, n]) => ({ label: v || emptyLabel(field), empty: !v, n, w: n / max })),
     rest: rest > 0 ? rest : 0,
     restDistinct: f.values.length - top.length + f.omitted,
   }
@@ -196,7 +212,7 @@ const hoverBucket = ref(null) // {histField, i, ...bar}
         <section v-for="fb in facetBars" :key="fb.f" class="panel pane">
           <p class="section-label">{{ fb.label }} mix</p>
           <div v-for="row in fb.bars.rows" :key="row.label" class="bar-row">
-            <span class="bar-label" :title="row.label">{{ row.label }}</span>
+            <span class="bar-label" :class="{ 'is-empty': row.empty }" :title="row.label">{{ row.label }}</span>
             <span class="bar-track"><i :style="{ width: pct(row.w) }" /></span>
             <span class="bar-n mono">{{ row.n.toLocaleString() }}</span>
           </div>
@@ -288,4 +304,5 @@ const hoverBucket = ref(null) // {histField, i, ...bar}
 .hbar.hot { fill: var(--k); opacity: 1; }
 .ticks text { fill: var(--ink-dim); font-family: var(--mono); font-size: 10px; }
 .hist-readout { font-size: 10px; color: var(--k-hi); min-height: 14px; margin: 3px 0 0; }
+.bar-label.is-empty { font-style: italic; opacity: .72 }
 </style>
