@@ -17,6 +17,26 @@ test.describe('kelvin site', () => {
     expect(errors).toEqual([])
   })
 
+  test('a shard that cannot be cached still loads', async ({ page }) => {
+    // The Cache API is an OPTIMISATION. Chrome refuses Cache entries for large
+    // responses under some quota conditions, and every Kelvin family above ~2 MB
+    // hit it (magnetic 12.5 MB, capacitor 31.7 MB). The put was unguarded, so the
+    // rejection propagated out of the shard loader and the catalogue showed
+    // "0/12 shards" and no parts — with the bytes already fetched and intact.
+    // Force that failure and assert the catalogue still populates.
+    await page.addInitScript(() => {
+      // Break ONLY put(); match()/keys() must keep working, or the loader fails
+      // for a different reason and the test proves nothing.
+      Cache.prototype.put = async () => {
+        throw new DOMException('forced for test', 'NetworkError')
+      }
+    })
+    await page.goto('/#/catalog/magnetic')
+    await expect(page.locator('tbody tr').first()).toBeVisible({ timeout: 30_000 })
+    const rows = await page.locator('tbody tr').count()
+    expect(rows).toBeGreaterThan(1)
+  })
+
   test('numeric filter narrows the result set', async ({ page }) => {
     await page.goto('/#/catalog/magnetic')
     await expect(page.locator('tbody tr').first()).toBeVisible({ timeout: 20_000 })

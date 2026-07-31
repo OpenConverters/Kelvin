@@ -92,7 +92,18 @@ async function fetchShardBytes(family, buildId) {
   }
   const res = await fetch(url)
   if (!res.ok) throw new Error(`Kelvin shard '${family}' not hosted (HTTP ${res.status})`)
-  await cache.put(url, res.clone())
+  // The cache is an OPTIMISATION. Its failure must cost speed, never correctness:
+  // the bytes are already in `res`, so a shard that cannot be cached still loads.
+  // Unguarded, this put took the whole family down — Chrome refuses Cache entries
+  // for large responses under some quota conditions, and every family above ~2 MB
+  // (magnetic 12.5 MB, capacitor 31.7 MB) threw NetworkError here, propagated to
+  // ensureShard's catch, and left the catalogue showing "0/12 shards" and no parts
+  // while the data sat fetched and intact.
+  try {
+    await cache.put(url, res.clone())
+  } catch (e) {
+    console.warn(`Kelvin: shard '${family}' not cached (${e.name}); loading without cache`)
+  }
   return new Uint8Array(await res.arrayBuffer())
 }
 
