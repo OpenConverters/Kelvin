@@ -153,22 +153,33 @@ json select_diode(const Shard<DiodeRow>& shard, const DiodeConstraints& c, Diode
     std::vector<const DiodeRow*> passing;
     for (const auto& d : shard.rows) {
         if (c.exclude_discontinued && !d.is_production) { rej["discontinued"]++; continue; }
-        if (d.vrrm_rated < c.vrrm_min) { rej["vrrm_low"]++; continue; }
-        if (d.if_avg_rated < c.if_avg_min) { rej["if_avg_low"]++; continue; }
+        // Negated form on purpose: zener/TVS/ESD rows carry NaN where the subtype
+        // publishes no forward rating, and `NaN < min` is FALSE — the natural-looking
+        // `if (x < min) reject` therefore lets an UNKNOWN value pass a numeric gate.
+        // Caught by the parity golden when TVS parts became selectable for a 1.5 A
+        // requirement they say nothing about. Absent must fail the bound, not skip it.
+        if (!(d.vrrm_rated >= c.vrrm_min)) { rej["vrrm_low"]++; continue; }
+        if (!(d.if_avg_rated >= c.if_avg_min)) { rej["if_avg_low"]++; continue; }
         if (c.qrr_max.has_value() && d.qrr > *c.qrr_max) { rej["qrr_high"]++; continue; }
         passing.push_back(&d);
     }
     if (passing.empty())
         throw NoCandidates("DiodeConstraints", emit_rejections(rej), shard.meta.source_line_count);
 
+    // A NaN metric would make this comparator violate strict weak ordering, which is UB
+    // in std::sort — not merely a wrong order. vf_typ is NaN on subtypes that publish no
+    // forward voltage (a zener may pass both gates and still have none), so an unknown
+    // metric sorts LAST rather than being fed to the comparator.
+    auto worst = std::numeric_limits<double>::infinity();
     auto metric = [&](const DiodeRow* d) -> double {
+        double m = 0;
         switch (tb) {
-            case DiodeTiebreaker::LowestVf: return d->vf_typ;
-            case DiodeTiebreaker::LowestQrr: return d->qrr;
-            case DiodeTiebreaker::HighestVrrmMargin: return -d->vrrm_rated / c.vrrm_min;
-            case DiodeTiebreaker::HighestIfMargin: return -d->if_avg_rated / c.if_avg_min;
+            case DiodeTiebreaker::LowestVf: m = d->vf_typ; break;
+            case DiodeTiebreaker::LowestQrr: m = d->qrr; break;
+            case DiodeTiebreaker::HighestVrrmMargin: m = -d->vrrm_rated / c.vrrm_min; break;
+            case DiodeTiebreaker::HighestIfMargin: m = -d->if_avg_rated / c.if_avg_min; break;
         }
-        return 0;
+        return std::isnan(m) ? worst : m;
     };
     std::sort(passing.begin(), passing.end(), [&](const DiodeRow* a, const DiodeRow* b) {
         return std::make_tuple(a->no_thermal() ? 1 : 0, metric(a), a->lineno) <

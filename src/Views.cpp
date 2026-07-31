@@ -230,10 +230,32 @@ std::optional<DiodeRow> extract_diode(const json& env) {
     auto manuf = get_str(*mi, "name");
     if (!mpn || !manuf) return std::nullopt;
 
+    // Diode subtypes are characterised by DIFFERENT parameters, and demanding the
+    // rectifier set from all of them silently emptied the catalogue of whole families:
+    // 8,173 of 8,274 zeners, 2,025 of 2,025 TVS and 720 of 720 ESD parts were dropped
+    // as "unreadable", so kelvin.openconverters.com offered no transient-suppression or
+    // ESD-protection parts at all (ABT #423). Measured over TAS diodes.ndjson:
+    //   zener    carries breakdownVoltage (its Vz); only 101/8,274 carry reverseVoltage
+    //   tvs/esd  carry standoffVoltage; NEITHER carries forwardCurrent at all
+    // So take each subtype's own reverse-direction rating, and require forward
+    // parameters only where the subtype actually has them.
+    const std::string sub = get_str(*part, "subType").value_or("");
+    const bool rectifier_like = (sub != "zener" && sub != "tvs" && sub != "esd");
+
     auto vrrm = get_num(*elec, "reverseVoltage");
     auto if_avg = get_num(*elec, "forwardCurrent");
     auto vf = get_num(*elec, "forwardVoltage");
-    if (!pos(vrrm) || !pos(if_avg) || !pos(vf)) return std::nullopt;
+    if (!pos(vrrm)) {
+        // resolve_field, NOT get_num: a zener's breakdownVoltage is a
+        // dimensionWithTolerance ({minimum, nominal, maximum} — Vz is a graded range, so
+        // all 8,274 of them are objects), and get_num reads none of it. Using it left
+        // every zener unindexed even after the subtype gate was fixed, which looked like
+        // the gate had not worked at all.
+        if (sub == "zener") vrrm = resolve_field(*elec, "breakdownVoltage");
+        else if (sub == "tvs" || sub == "esd") vrrm = resolve_field(*elec, "standoffVoltage");
+    }
+    if (!pos(vrrm)) return std::nullopt;
+    if (rectifier_like && (!pos(if_avg) || !pos(vf))) return std::nullopt;
 
     auto qrr_o = get_num(*elec, "reverseRecoveryCharge");
     double qrr = (qrr_o && *qrr_o >= 0) ? *qrr_o : 0.0;
@@ -245,8 +267,11 @@ std::optional<DiodeRow> extract_diode(const json& env) {
     r.manufacturer = *manuf;
     fill_dimensions(r, *di, *part);
     r.vrrm_rated = *vrrm;
-    r.if_avg_rated = *if_avg;
-    r.vf_typ = *vf;
+    // NaN, not 0: a zener publishes no average forward current, and "0 A" is a
+    // plausible-looking number where NaN is unmistakably absent. Same convention the
+    // thermal fields in this struct already use.
+    r.if_avg_rated = pos(if_avg) ? *if_avg : kNaN();
+    r.vf_typ = pos(vf) ? *vf : kNaN();
     r.qrr = qrr;
     r.trr = trr;
     r.technology = get_str(*part, "subType").value_or("");
