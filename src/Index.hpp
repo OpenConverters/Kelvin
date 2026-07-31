@@ -33,6 +33,7 @@ struct ShardMeta {
     Family family{};
     uint64_t source_size = 0;         // bytes of the source NDJSON at build time
     uint64_t content_hash = 0;        // fnv1a64 of the whole source file
+    uint64_t extractor_hash = 0;      // identity of the extract_* code that produced the rows
     uint64_t row_count = 0;           // readable (indexed) rows
     uint64_t unreadable_row_count = 0;
     uint64_t source_line_count = 0;   // non-blank lines considered (== Python `total`)
@@ -128,6 +129,14 @@ Shard<TimingRow> deserialize_timing_shard(const std::string& bytes);
 Shard<ConnectorRow> deserialize_connector_shard(const std::string& bytes);
 
 // Staleness: size-first (the nightly append always changes size), hash as confirmation.
+// Is this shard's cached content still usable? False only when the source bytes AND the
+// extractor code both match what is running now. A shard built by older extract_* code is
+// stale even for a byte-identical catalogue — otherwise a fix to an extractor silently has
+// no effect until someone deletes the .kidx by hand (ABT #426).
 bool shard_is_stale(const ShardMeta& meta, const std::string& ndjson_path);
+
+// Identity of the extract_* code compiled into this binary (see kExtractorHash in
+// Index.cpp). Exposed so tests can forge a shard from a different build.
+uint64_t extractor_version();
 
 }  // namespace kelvin

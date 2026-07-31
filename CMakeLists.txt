@@ -49,6 +49,27 @@ if (NOT EXISTS "${KELVIN_PEAS_DIR}/DimensionJson.hpp")
     message(FATAL_ERROR "PEAS headers not found (need DimensionJson.hpp). Init deps/PEAS or set -DKELVIN_PEAS_DIR.")
 endif()
 
+# ---- extractor identity (ABT #426) -----------------------------------------
+# A cached .kidx must record WHICH CODE produced its rows, not only which bytes it read
+# from. Without that, changing an extract_* function silently has no effect on any part
+# already indexed: the shard is reused verbatim for an unchanged catalogue, and reused for
+# the whole prefix on an append. Hash the extractor sources and compile the digest in, so
+# the cache invalidates itself exactly when that code changes.
+#
+# CMAKE_CONFIGURE_DEPENDS re-runs configure when one of these files is edited, so the
+# digest cannot go stale behind a plain `make`. Deterministic for a given tree (unlike
+# __DATE__/__TIME__), which keeps two builds of the same commit byte-identical.
+set(KELVIN_EXTRACTOR_SOURCES src/Views.cpp src/Views.hpp src/Rows.hpp)
+set(_kelvin_extractor_digest "")
+foreach(_f IN LISTS KELVIN_EXTRACTOR_SOURCES)
+    file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/${_f}" _h)
+    string(APPEND _kelvin_extractor_digest "${_h}")
+endforeach()
+string(SHA256 _kelvin_extractor_digest "${_kelvin_extractor_digest}")
+string(SUBSTRING "${_kelvin_extractor_digest}" 0 16 _kelvin_extractor_hash)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${KELVIN_EXTRACTOR_SOURCES})
+message(STATUS "Kelvin extractor hash: 0x${_kelvin_extractor_hash}")
+
 add_library(kelvin STATIC
     src/Views.cpp
     src/Index.cpp
@@ -59,7 +80,8 @@ add_library(kelvin STATIC
 target_include_directories(kelvin PUBLIC src)
 target_include_directories(kelvin SYSTEM PUBLIC "${KELVIN_PEAS_DIR}")
 target_link_libraries(kelvin PUBLIC nlohmann_json::nlohmann_json)
-target_compile_definitions(kelvin PUBLIC _USE_MATH_DEFINES)
+target_compile_definitions(kelvin PUBLIC _USE_MATH_DEFINES
+    KELVIN_EXTRACTOR_HASH=0x${_kelvin_extractor_hash}ULL)
 if (NOT MSVC)
     target_compile_options(kelvin PRIVATE -Wall -Wextra)
 endif()

@@ -144,3 +144,47 @@ TEST_CASE("index: staleness detects append", "[index]") {
     REQUIRE(shard_is_stale(shard.meta, path));
     fs::remove(path);
 }
+
+// ---- ABT #426 --------------------------------------------------------------
+// A shard is keyed on the code that produced it, not only on the bytes it read. Both
+// cache paths used to key on the source alone, so an extract_* change was invisible:
+// an unchanged catalogue returned the cached shard verbatim, and an appended one reused
+// every pre-existing row. The symptom was a real extractor fix landing as a no-op with
+// an unchanged row count and a freshly recomputed buildId, hiding the staleness.
+TEST_CASE("index: a shard from different extractor code is stale", "[index][abt426]") {
+    std::string path = tmp_path("extractor_stale.ndjson");
+    write_file(path, mosfet_line("A", 100, 10, 0.01, 2e-9) + "\n");
+    auto shard = build_mosfet_shard(path);
+
+    REQUIRE(shard.meta.extractor_hash == extractor_version());
+    REQUIRE_FALSE(shard_is_stale(shard.meta, path));
+
+    // Same bytes, shard built by a different build of the extractors.
+    ShardMeta forged = shard.meta;
+    forged.extractor_hash ^= 0x9e3779b97f4a7c15ULL;
+    REQUIRE(shard_is_stale(forged, path));
+    fs::remove(path);
+}
+
+TEST_CASE("index: incremental build refuses to reuse foreign extractor rows",
+          "[index][abt426][incremental]") {
+    std::string path = tmp_path("extractor_incr.ndjson");
+    std::string base = mosfet_line("A", 100, 10, 0.01, 2e-9) + "\n" +
+                       mosfet_line("B", 60, 5, 0.05, 1e-9) + "\n";
+    write_file(path, base);
+    auto prev = build_mosfet_shard(path);
+
+    // Pretend prev came from an older extractor, then append — exactly the nightly's
+    // shape after someone edits a view. The prefix must be RE-PARSED, not reused.
+    prev.meta.extractor_hash ^= 0x9e3779b97f4a7c15ULL;
+    prev.rows[0].mpn = "STALE-ROW-THAT-MUST-NOT-SURVIVE";
+
+    write_file(path, base + mosfet_line("C", 200, 20, 0.005, 4e-9) + "\n");
+    auto incremental = build_mosfet_shard(path, &prev);
+    auto full = build_mosfet_shard(path);
+
+    REQUIRE(incremental.rows[0].mpn == "A");  // re-parsed, not carried over from prev
+    REQUIRE(incremental.meta.extractor_hash == extractor_version());
+    REQUIRE(serialize_shard(incremental) == serialize_shard(full));
+    fs::remove(path);
+}

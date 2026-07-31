@@ -28,7 +28,36 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // moved, so a lenient read would silently mis-parse every row.
 // v4 added chip-bead impedance-curve summaries (Z@100MHz, peak |Z| and its
 // frequency) derived from the measured curve — parameters no vendor tabulates.
-constexpr uint32_t kFormatVersion = 4;
+// v5 added extractor_hash: WHICH CODE produced the rows, not just which bytes
+// they came from. See the comment on kExtractorHash below.
+constexpr uint32_t kFormatVersion = 5;
+
+// Identity of the code that produces rows, so a cached shard can be recognised as
+// having been built by a DIFFERENT extractor than the one running now (ABT #426).
+//
+// Both cache paths keyed on the source bytes alone and said nothing about the code:
+//   * load_or_build() returns a cached shard verbatim when the NDJSON has not changed,
+//     so an extractor fix on an unchanged catalogue was a total no-op;
+//   * build_generic()'s incremental tail build reuses prev's rows for the whole prefix
+//     and parses only appended lines with the new extractor.
+// Concretely: extract_diode was fixed to index zener/tvs/esd, the rebuild reported
+// 'diode: rows=7148 unreadable=10918' byte-identical to before, and the buildId changed
+// (it is recomputed), so nothing looked stale. Only deleting diode.kidx by hand revealed
+// the real result, rows=18066 unreadable=0.
+//
+// The value is a hash of the extractor SOURCES (Views.cpp/Views.hpp/Rows.hpp), computed
+// by CMake and re-computed whenever those files change. That is deliberate over the two
+// obvious alternatives: a hand-bumped constant relies on remembering — the exact failure
+// this is meant to end — and __DATE__/__TIME__ would make two builds of the same commit
+// produce different bytes, which breaks the byte-for-byte deploy verification.
+//
+// There is NO default. A build that does not define it is a build whose cache would be
+// silently dishonest again, so it fails to compile instead.
+#ifndef KELVIN_EXTRACTOR_HASH
+#error "KELVIN_EXTRACTOR_HASH is not defined -- configure via CMake (see CMakeLists.txt). \
+Without it a cached shard cannot be told apart from one built by different extractor code."
+#endif
+constexpr uint64_t kExtractorHash = KELVIN_EXTRACTOR_HASH;
 
 // ---- string pool -----------------------------------------------------------
 class StringPool {
@@ -313,7 +342,7 @@ void row_io(Ar& ar, ControllerRow& r) {
     ar.boolean(r.integrated_driver);
 }
 
-// ---- header (fixed 80 bytes, all little-endian) ----------------------------
+// ---- header (fixed 88 bytes, all little-endian) ----------------------------
 #pragma pack(push, 1)
 struct Header {
     char magic[8];
@@ -321,6 +350,7 @@ struct Header {
     uint32_t family_id;
     uint64_t source_size;
     uint64_t content_hash;
+    uint64_t extractor_hash;  // v5: identity of the code that produced the rows
     uint64_t row_count;
     uint64_t unreadable_row_count;
     uint64_t source_line_count;
@@ -364,6 +394,7 @@ std::string serialize_impl(const Shard<Row>& shard) {
     h.family_id = static_cast<uint32_t>(shard.meta.family);
     h.source_size = shard.meta.source_size;
     h.content_hash = shard.meta.content_hash;
+    h.extractor_hash = shard.meta.extractor_hash;
     h.row_count = shard.meta.row_count;
     h.unreadable_row_count = shard.meta.unreadable_row_count;
     h.source_line_count = shard.meta.source_line_count;
@@ -409,6 +440,7 @@ Shard<Row> deserialize_impl(const std::string& bytes, Family expected) {
     shard.meta.family = expected;
     shard.meta.source_size = h.source_size;
     shard.meta.content_hash = h.content_hash;
+    shard.meta.extractor_hash = h.extractor_hash;
     shard.meta.row_count = h.row_count;
     shard.meta.unreadable_row_count = h.unreadable_row_count;
     shard.meta.source_line_count = h.source_line_count;
@@ -515,9 +547,13 @@ Shard<Row> build_generic(Family fam, const std::string& path, Extract&& extract,
     shard.meta.family = fam;
     shard.meta.source_size = content.size();
     shard.meta.content_hash = fnv1a64(content.data(), content.size());
+    shard.meta.extractor_hash = kExtractorHash;
 
-    // Incremental tail build: new file is an append-only extension of prev's source.
-    if (prev != nullptr && content.size() > prev->meta.source_size &&
+    // Incremental tail build: new file is an append-only extension of prev's source AND
+    // prev's rows were produced by the extractor running now. Without the second
+    // condition the reused prefix carries the OLD extractor's output forever (ABT #426).
+    if (prev != nullptr && prev->meta.extractor_hash == kExtractorHash &&
+        content.size() > prev->meta.source_size &&
         fnv1a64(content.data(), prev->meta.source_size) == prev->meta.content_hash) {
         shard.rows = prev->rows;  // reuse prefix rows verbatim
         shard.meta.row_count = prev->meta.row_count;
@@ -638,7 +674,13 @@ Shard<AnalogRow> read_analog_shard(const std::string& p) { return deserialize_an
 Shard<TimingRow> read_timing_shard(const std::string& p) { return deserialize_timing_shard(read_file(p)); }
 Shard<ConnectorRow> read_connector_shard(const std::string& p) { return deserialize_connector_shard(read_file(p)); }
 
+uint64_t extractor_version() { return kExtractorHash; }
+
 bool shard_is_stale(const ShardMeta& meta, const std::string& ndjson_path) {
+    // A shard built by different extractor code is stale even when every source byte is
+    // identical — this is the path that made a working extractor fix look like a no-op,
+    // because load_or_build() returns the cached shard verbatim when this says "fresh".
+    if (meta.extractor_hash != kExtractorHash) return true;
     std::ifstream f(ndjson_path, std::ios::binary | std::ios::ate);
     if (!f) return true;  // source gone -> a rebuild (or error) is warranted
     uint64_t size = static_cast<uint64_t>(f.tellg());
