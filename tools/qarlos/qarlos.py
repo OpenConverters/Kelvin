@@ -49,6 +49,11 @@ CLAUDE = os.environ.get("QARLOS_CLAUDE") or str(Path.home() / ".local/bin/claude
 ABT = os.environ.get("QARLOS_ABT") or str(Path.home() / ".local/bin/abt")
 NODE = os.environ.get("QARLOS_NODE") or shutil.which("node") or "/usr/bin/node"
 
+# Opus with the 1M window: a case payload carries several full catalogue records plus the
+# ranker's verdicts, and the judge is the part of this whose quality decides whether a
+# human's time gets spent. Runs through the Claude Code subscription, not an API key.
+DEFAULT_MODEL = os.environ.get("QARLOS_MODEL", "opus[1m]")
+
 SYSTEM = """You are a power-electronics application engineer auditing a component \
 cross-reference tool. You are the last check before an engineer swaps a part into a \
 production board, so a wrong substitute you wave through is a field failure.
@@ -352,8 +357,9 @@ instructed to refute it. Verdict: {verdict.get('verdict')}.
 {verdict.get('reason','')}
 {('Corrected evidence: ' + verdict['corrected_evidence']) if verdict.get('corrected_evidence') else ''}
 
-REPRODUCE (deterministic — the seed pins the part selection)
+REPRODUCE (the seed pins the part selection; the model pins the judgement)
   cd Kelvin && {repro}
+  judged and verified by: {os.environ.get('QARLOS_MODEL_USED', DEFAULT_MODEL)} (Claude Code)
 
 The auditor drives web/src/crossref.js and the kelvin.js WASM directly, so this is
 the same ranking path the site renders from, not a re-implementation of it.
@@ -389,7 +395,12 @@ def main():
     ap.add_argument("--families", default="")
     ap.add_argument("--shards", default="")
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--model", default="")
+    # PINNED, not inherited. With no --model the CLI falls back to whatever
+    # ~/.claude/settings.json says, so changing an editor preference would silently
+    # change the auditor's judgement — and a ticket that says "reproduce with --seed N"
+    # would not reproduce, because the seed pins the PART SELECTION and nothing else.
+    # The model used is recorded in the ticket and in --json for that reason.
+    ap.add_argument("--model", default=DEFAULT_MODEL)
     # A judge call reads several full catalogue records; 300 s was not enough and the
     # timeout showed up as a lost case rather than a slow one.
     ap.add_argument("--timeout", type=int, default=900)
@@ -399,6 +410,7 @@ def main():
                     help="write the run result here so a caller can re-test exactly")
     a = ap.parse_args()
     os.environ["QARLOS_PF"] = str(a.per_family)
+    os.environ["QARLOS_MODEL_USED"] = a.model
 
     for tool, path in (("claude", CLAUDE), ("abt", ABT), ("node", NODE)):
         if not Path(path).exists() and not shutil.which(path):
@@ -478,7 +490,8 @@ def main():
         save_seen(seen)
     if a.json:
         Path(a.json).write_text(json.dumps(
-            {"seed": seed, "families": a.families, "per_family": a.per_family,
+            {"seed": seed, "model": a.model,
+             "families": a.families, "per_family": a.per_family,
              "clean": n_ok, "claimed": n_find, "refuted": n_refuted,
              "errors": n_err, "findings": results}, ensure_ascii=False, indent=1))
     print(f"\nclean {n_ok} | claimed {n_find} | refuted by self-check {n_refuted} | "

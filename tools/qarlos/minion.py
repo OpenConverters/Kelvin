@@ -138,7 +138,11 @@ def main():
     ap.add_argument("id", type=int)
     ap.add_argument("--commit", action="store_true")
     ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument("--model", default="opus")
+    # The 1M window explicitly: Minion reads full catalogue records, a whole ticket and
+    # multi-file diffs. The bare "opus" alias resolves to the standard context and is not
+    # what this workload wants. Pinned rather than inherited so a settings change cannot
+    # quietly alter what an autonomous fixer is running on.
+    ap.add_argument("--model", default=os.environ.get("MINION_MODEL", "opus[1m]"))
     ap.add_argument("--timeout", type=int, default=3600)
     a = ap.parse_args()
 
