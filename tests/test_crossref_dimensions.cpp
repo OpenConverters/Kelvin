@@ -131,10 +131,38 @@ TEST_CASE("one case size up is a partial, two sizes up is a respin", "[crossref]
     CHECK(footprint_penalty(source, way_up) >= kOversizeBase);
 }
 
-TEST_CASE("height is enforced when both sides know it", "[crossref][dims]") {
+TEST_CASE("height is enforced when both sides know it — on its own axis", "[crossref][dims]") {
     Dims source{4.0e-3, 4.0e-3, 2.0e-3};
-    Dims tall{4.0e-3, 4.0e-3, 6.0e-3};  // same footprint, three times the height
-    CHECK(footprint_tier(source, tall) != FootprintTier::Fits);
+    Dims tall{4.0e-3, 4.0e-3, 6.0e-3};   // same footprint, three times the height
+    Dims short_{4.0e-3, 4.0e-3, 1.0e-3};  // same footprint, half the height
+    // The land pattern is unchanged, so the FOOTPRINT still fits — the height is a
+    // clearance question and is answered by its own verdict, which is not "fits".
+    CHECK(footprint_tier(source, tall, /*strict*/ true) == FootprintTier::Fits);
+    CHECK(height_fit(source, tall) == HeightFit::MuchTaller);
+    CHECK(height_penalty(source, tall) >= kOversizeBase);
+    // A SHORTER part keeps the pads and asks less of the enclosure — not a defect.
+    CHECK(height_fit(source, short_) == HeightFit::Fits);
+    CHECK(height_penalty(source, short_) == 0.0);
+    CHECK(footprint_tier(source, short_, /*strict*/ true) == FootprintTier::Fits);
+    // Neither side stating a height is UNVERIFIED, never a silent pass.
+    Dims no_h{4.0e-3, 4.0e-3, std::nullopt};
+    CHECK(height_fit(source, no_h) == HeightFit::Unknown);
+    CHECK(height_fit(no_h, tall) == HeightFit::Unknown);
+}
+
+TEST_CASE("a smaller-but-taller body is smaller, never 'one size larger'", "[crossref][dims]") {
+    // ABT #513: Würth 74439346100 (6.36 x 6.56 x 6.0 mm) offered for Abracon
+    // ASPI-104S-100N-T (10.3 x 10.4 x 4.0 mm) came out "one_size_larger". Height
+    // rode in the same scalar as the two land axes, so its overshoot both cleared
+    // the `fits` test — skipping the undersize check — and named the tier. The land
+    // is 39% of the original's: it cannot be one case size larger.
+    Dims source{10.3e-3, 10.4e-3, 4.0e-3};
+    Dims smaller_taller{6.36e-3, 6.56e-3, 6.0e-3};
+    CHECK(footprint_tier(source, smaller_taller, /*strict*/ true) == FootprintTier::Smaller);
+    CHECK(height_fit(source, smaller_taller) == HeightFit::Taller);
+    // Both risks are priced; neither is allowed to hide the other.
+    CHECK(footprint_penalty(source, smaller_taller, /*strict*/ true) > 0.0);
+    CHECK(height_penalty(source, smaller_taller) > 0.0);
 }
 
 TEST_CASE("unknown dimensions are penalised, not silently passed", "[crossref][dims]") {

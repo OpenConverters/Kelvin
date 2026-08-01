@@ -77,6 +77,26 @@ inline std::string plain_pct(double v) {
 // The same, sign always shown — a shift has a direction and it matters.
 inline std::string signed_pct(double v) { return (v >= 0 ? "+" : "") + plain_pct(v); }
 
+// A length as a mechanical drawing states it: metres in, millimetres out, two
+// decimals at most, no trailing zeros ("6.36", "4"). Bare, so a note can write
+// the unit once for a pair ("10.4 x 10.3 mm").
+inline std::string mm(double metres) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.2f", metres * 1000.0);
+    std::string s(buf);
+    if (s.find('.') != std::string::npos) {
+        s.erase(s.find_last_not_of('0') + 1);
+        if (!s.empty() && s.back() == '.') s.pop_back();
+    }
+    return s;
+}
+
+// The land a footprint note is talking about, longest axis first — the same way
+// round the fit test compares them, so two parts read comparably.
+inline std::string land_mm(const Dims& d) {
+    return mm(std::max(d.length, d.width)) + " x " + mm(std::min(d.length, d.width)) + " mm";
+}
+
 // ── Critical ratings ─────────────────────────────────────────────────────────
 // Directional ratings that PARAM_SPECS leaves out because Heaviside gates them
 // in its stress guardrails (G7 voltage stress, G8 current stress). `hard` means
@@ -191,9 +211,12 @@ inline constexpr double kEstablishedFootprintMismatchPenalty =
 // it takes the same major_review cap a real regression would.
 inline const char* grade_for(const std::string& status, FootprintTier fit, bool any_warn,
                              bool any_fail, bool footprint_unverified = false,
-                             bool missing_required_data = false) {
+                             bool missing_required_data = false,
+                             HeightFit height = HeightFit::Unknown) {
     if (status == "no_substitute") return "no_substitute";
-    if (fit == FootprintTier::Overflows) return "redesign";
+    // Either axis can put the part outside the original's board space: the land
+    // overhanging the pads, or the body no longer clearing what is above it.
+    if (fit == FootprintTier::Overflows || height == HeightFit::MuchTaller) return "redesign";
     if (any_fail || missing_required_data) return "major_review";
     // A materially smaller body (strict_case families) is a footprint CHANGE — the
     // pads won't match — so it is a review, not a true drop-in.
@@ -554,16 +577,24 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             // Heaviside demotes rather than rejects an oversize part: it is a
             // real part that works electrically and needs a board-space check.
             // The engineer decides whether the board has room.
+            // Each note states the land it is talking about. Four geometrically
+            // different outcomes used to carry the same sentence, so an engineer
+            // could not tell a part that overhangs the pads from one that no longer
+            // covers them (ABT #513).
             if (tier == FootprintTier::OneSizeLarger) {
                 demote();
-                notes.push_back("about one case size larger — verify board fit");
+                notes.push_back("about one case size larger (" + land_mm(*s_dims) + " vs " +
+                                land_mm(*o_dims) + ") — verify board fit");
             } else if (tier == FootprintTier::Smaller) {
                 demote();
-                notes.push_back("smaller body than the original — the land pattern differs, so this "
-                                "is not a drop-in; verify the pads before substituting");
+                notes.push_back("smaller body than the original (" + land_mm(*s_dims) + " vs " +
+                                land_mm(*o_dims) +
+                                ") — the land pattern differs, so this is not a drop-in; it needs "
+                                "a new land pattern, verify the pads before substituting");
             } else if (tier == FootprintTier::Overflows) {
                 demote();
-                notes.push_back("larger than the original's footprint — board respin likely");
+                notes.push_back("larger than the original's footprint (" + land_mm(*s_dims) +
+                                " vs " + land_mm(*o_dims) + ") — board respin likely");
             } else if (tier == FootprintTier::Unknown) {
                 // Non-magnetic family whose original has a footprint but whose
                 // substitute's case code did not resolve to one: the fit is
@@ -573,6 +604,37 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 notes.push_back(
                     "mechanical dimensions unavailable for the substitute — footprint fit "
                     "could not be verified; confirm it fits the original's land pattern");
+            }
+        }
+        // ── height / clearance, its own axis ─────────────────────────────────
+        // Not part of the land pattern, so it is judged and reported separately
+        // and runs whatever the footprint verdict was — a part can need a new land
+        // pattern AND more headroom, and an engineer has to be told both. Only a
+        // TALLER substitute is a risk; a shorter one keeps the pads and asks less
+        // of the enclosure.
+        HeightFit hfit = height_fit(o_dims, s_dims);
+        if (hfit != HeightFit::Unknown) {
+            out["height_fit"] = height_fit_name(hfit);
+            params.push_back({{"name", "height"},
+                              {"verdict", hfit == HeightFit::Fits         ? PASS
+                                          : hfit == HeightFit::Taller     ? WARN
+                                                                          : FAIL}});
+            if (hfit != HeightFit::Fits) {
+                // Same ladder floor the footprint term takes: an ESTABLISHED
+                // clearance overshoot is a worse answer than one nobody could
+                // verify, never a cheaper one.
+                penalty += opt.footprint_weight *
+                           std::max(height_penalty(o_dims, s_dims),
+                                    kEstablishedFootprintMismatchPenalty);
+                demote();
+                const std::string delta = mm(*o_dims->height) + " -> " + mm(*s_dims->height) +
+                                          " mm (" +
+                                          signed_pct(100.0 * height_overflow(o_dims, s_dims)) + ")";
+                notes.push_back(hfit == HeightFit::Taller
+                                    ? "taller than the original: " + delta +
+                                          " — verify vertical clearance"
+                                    : "much taller than the original: " + delta +
+                                          " — will not fit the original's height envelope");
             }
         }
     }
@@ -790,8 +852,19 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // (any_warn -> minor_review), so it must not also read as unverified.
         footprint_unverified = (f == "unknown");
     }
-    out["grade"] =
-        grade_for(status, tier, any_warn, any_fail, footprint_unverified, missing_required_data);
+    // The clearance axis, carried alongside the land one: a body that no longer
+    // clears the enclosure is outside the original's board space just as surely as
+    // one that overhangs the pads.
+    HeightFit hfit = HeightFit::Unknown;
+    if (out.contains("height_fit")) {
+        const std::string h = out["height_fit"];
+        hfit = h == "fits"          ? HeightFit::Fits
+               : h == "taller"      ? HeightFit::Taller
+               : h == "much_taller" ? HeightFit::MuchTaller
+                                    : HeightFit::Unknown;
+    }
+    out["grade"] = grade_for(status, tier, any_warn, any_fail, footprint_unverified,
+                             missing_required_data, hfit);
 
     // Direction: on the directional parameters we could actually compare, did
     // the substitute come out ahead or behind? Mirrors the industry's upgrade /

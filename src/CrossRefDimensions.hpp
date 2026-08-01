@@ -242,9 +242,14 @@ inline std::optional<Dims> resolve_dimensions(const std::string& case_code,
 
 // ── Footprint-fit penalty (Heaviside _footprint_penalty) ─────────────────────
 // Orientation-agnostic on the footprint (a rotated part that still fits is not
-// penalised) and 3-axis when both heights are known. Weights are Heaviside's:
-// any candidate that fits outranks any candidate that doesn't, yet an oversize
-// part stays finite-scored so it can still win when it is the only option.
+// penalised). Weights are Heaviside's: any candidate that fits outranks any
+// candidate that doesn't, yet an oversize part stays finite-scored so it can
+// still win when it is the only option.
+//
+// The two LAND axes decide the footprint and nothing else does. Height is a
+// separate axis with a separate question (clearance under the enclosure, not
+// which pads the part sits on) and is scored by height_fit / height_penalty
+// below.
 inline constexpr double kFitAreaWeight = 0.5;
 inline constexpr double kOversizeBase = 10.0;
 inline constexpr double kOversizeScale = 8.0;
@@ -254,7 +259,7 @@ inline constexpr double kSlightlyOversizeOverflow = 0.65;  // ~one EIA size up
 inline constexpr double kSlightlyOversizeBase = 1.0;
 inline constexpr double kSlightlyOversizeScale = 2.5;
 // "Case kept" band (strict_case, e.g. magnetics/chip beads). A substitute whose
-// every linear dimension is at least this fraction of the original's is the SAME
+// every LAND dimension is at least this fraction of the original's is the SAME
 // footprint — a true drop-in that keeps the land pattern. Below it the pads no
 // longer match, so it is a footprint CHANGE (FootprintTier::Smaller), not a fit.
 inline constexpr double kUndersizeBand = 0.85;
@@ -271,8 +276,6 @@ inline double footprint_penalty(const std::optional<Dims>& source,
     if (s_long <= 0 || s_short <= 0 || c_long <= 0 || c_short <= 0) return kUnknownDimPenalty;
 
     bool fits = c_long <= s_long * kDimTolerance && c_short <= s_short * kDimTolerance;
-    if (source->height && candidate->height)
-        fits = fits && *candidate->height <= *source->height * kDimTolerance;
     if (fits) {
         if (!strict_case)
             // Historical right-sizing: a smaller part is mildly PREFERRED (it frees
@@ -283,23 +286,19 @@ inline double footprint_penalty(const std::optional<Dims>& source,
         // to how far under it is — a smaller body is a different land pattern, not a
         // free win.
         double lin = std::min(c_long / s_long, c_short / s_short);
-        if (source->height && candidate->height && *source->height > 0)
-            lin = std::min(lin, *candidate->height / *source->height);
         return kUndersizeWeight * std::max(0.0, 1.0 - lin);
     }
 
-    double overflow = std::max(c_long / s_long, c_short / s_short);
-    if (source->height && candidate->height && *source->height > 0)
-        overflow = std::max(overflow, *candidate->height / *source->height);
-    overflow = std::max(overflow - 1.0, 0.0);
+    double overflow = std::max(std::max(c_long / s_long, c_short / s_short) - 1.0, 0.0);
     if (overflow <= kSlightlyOversizeOverflow)
         return kSlightlyOversizeBase + kSlightlyOversizeScale * overflow;
     return kOversizeBase + kOversizeScale * overflow;
 }
 
-// Categorise the fit. `strict_case` (magnetics/chip beads) additionally splits out
-// a materially SMALLER body as its own tier — the pads won't match, so it is not a
-// drop-in even though it physically fits inside the original's area.
+// Categorise the fit of the LAND PATTERN. `strict_case` (magnetics/chip beads)
+// additionally splits out a materially SMALLER body as its own tier — the pads
+// won't match, so it is not a drop-in even though it physically fits inside the
+// original's area. Height is NOT consulted: see height_fit.
 enum class FootprintTier { Fits, Smaller, OneSizeLarger, Overflows, Unknown };
 
 inline FootprintTier footprint_tier(const std::optional<Dims>& source,
@@ -312,20 +311,13 @@ inline FootprintTier footprint_tier(const std::optional<Dims>& source,
     if (s_long <= 0 || s_short <= 0 || c_long <= 0 || c_short <= 0) return FootprintTier::Unknown;
 
     bool fits = c_long <= s_long * kDimTolerance && c_short <= s_short * kDimTolerance;
-    if (source->height && candidate->height)
-        fits = fits && *candidate->height <= *source->height * kDimTolerance;
     if (!fits) {
-        double overflow = std::max(c_long / s_long, c_short / s_short);
-        if (source->height && candidate->height && *source->height > 0)
-            overflow = std::max(overflow, *candidate->height / *source->height);
-        overflow = std::max(overflow - 1.0, 0.0);
+        double overflow = std::max(std::max(c_long / s_long, c_short / s_short) - 1.0, 0.0);
         return overflow <= kSlightlyOversizeOverflow ? FootprintTier::OneSizeLarger
                                                      : FootprintTier::Overflows;
     }
     if (strict_case) {
         double lin = std::min(c_long / s_long, c_short / s_short);
-        if (source->height && candidate->height && *source->height > 0)
-            lin = std::min(lin, *candidate->height / *source->height);
         if (lin < kUndersizeBand) return FootprintTier::Smaller;
     }
     return FootprintTier::Fits;
@@ -338,6 +330,63 @@ inline const char* footprint_tier_name(FootprintTier t) {
         case FootprintTier::OneSizeLarger: return "one_size_larger";
         case FootprintTier::Overflows: return "overflows";
         case FootprintTier::Unknown: return "unknown";
+    }
+    return "unknown";
+}
+
+// ── Height / clearance: the OTHER axis, judged on its own ────────────────────
+// Height used to ride in the same scalar as the two land dimensions, which made
+// the tool say the opposite of the geometry (ABT #513): Würth 74439346100
+// (6.36 x 6.56 x 6.0 mm) against Abracon ASPI-104S-100N-T (10.3 x 10.4 x 4.0 mm)
+// came out "one_size_larger — about one case size larger, verify board fit". The
+// height overshoot cleared `fits`, which skipped the undersize test that would
+// have called the 39%-of-the-land body Smaller, and then supplied the only ratio
+// the tier was named from. A part cannot be both 37% narrower and one size
+// larger; and the real risk — +50% of height — was never mentioned.
+//
+// The two axes ask different questions: the land decides WHICH PADS the part sits
+// on, the height decides whether it clears whatever is above the board. Neither
+// answers for the other, so each is classified and reported separately.
+enum class HeightFit { Fits, Taller, MuchTaller, Unknown };
+
+// How much taller the substitute is, as a fraction of the original's height
+// (0.5 = +50%). 0 when it is no taller; 0 when either side does not state one,
+// which is Unknown, not "fits" — callers must test height_fit for that.
+inline double height_overflow(const std::optional<Dims>& source,
+                              const std::optional<Dims>& candidate) {
+    if (!source || !candidate || !source->height || !candidate->height) return 0.0;
+    if (*source->height <= 0 || *candidate->height <= 0) return 0.0;
+    return std::max(*candidate->height / *source->height - 1.0, 0.0);
+}
+
+inline HeightFit height_fit(const std::optional<Dims>& source,
+                            const std::optional<Dims>& candidate) {
+    if (!source || !candidate || !source->height || !candidate->height) return HeightFit::Unknown;
+    if (*source->height <= 0 || *candidate->height <= 0) return HeightFit::Unknown;
+    if (*candidate->height <= *source->height * kDimTolerance) return HeightFit::Fits;
+    return height_overflow(source, candidate) <= kSlightlyOversizeOverflow ? HeightFit::Taller
+                                                                          : HeightFit::MuchTaller;
+}
+
+// Clearance penalty, on the same ladder the land oversize term uses so a taller
+// part costs what it always cost — only now it ADDS to the land verdict instead
+// of replacing it. A SHORTER part is not penalised: it keeps the pads and asks
+// less of the enclosure.
+inline double height_penalty(const std::optional<Dims>& source,
+                             const std::optional<Dims>& candidate) {
+    const HeightFit hf = height_fit(source, candidate);
+    if (hf == HeightFit::Fits || hf == HeightFit::Unknown) return 0.0;
+    const double overflow = height_overflow(source, candidate);
+    return hf == HeightFit::Taller ? kSlightlyOversizeBase + kSlightlyOversizeScale * overflow
+                                   : kOversizeBase + kOversizeScale * overflow;
+}
+
+inline const char* height_fit_name(HeightFit h) {
+    switch (h) {
+        case HeightFit::Fits: return "fits";
+        case HeightFit::Taller: return "taller";
+        case HeightFit::MuchTaller: return "much_taller";
+        case HeightFit::Unknown: return "unknown";
     }
     return "unknown";
 }

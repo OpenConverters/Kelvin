@@ -159,12 +159,15 @@ const FOOTPRINT_LABEL = {
   fits: 'fits', smaller: 'smaller', different_case: 'diff. case', one_size_larger: '+1 size',
   overflows: 'larger', different_land_pattern: 'diff. pads', unknown: '?',
 }
+// The LAND pattern only — which pads the part sits on. Height is a separate
+// question (clearance above the board) and is reported in the notes, so neither
+// axis can be read as an answer to the other.
 const FOOTPRINT_TITLE = {
-  fits: 'fits within the original’s footprint (orientation-agnostic, height checked when known)',
-  smaller: 'smaller body than the original — the land pattern differs, so it is not a drop-in; verify the pads',
+  fits: 'the land pattern fits within the original’s (orientation-agnostic); height is judged separately and reported in the notes',
+  smaller: 'smaller land than the original — the pads differ, so it is not a drop-in; it needs a new land pattern',
   different_case: 'different package/case than the original — different land pattern (pinout/pads); a substitute to re-lay-out, not a drop-in',
-  one_size_larger: 'about one case size larger — works electrically, verify board space',
-  overflows: 'larger than the original’s footprint — board respin likely',
+  one_size_larger: 'about one case size larger on the board — works electrically, verify board space',
+  overflows: 'larger land than the original’s footprint — board respin likely',
   different_land_pattern: 'the body outline matches but the pads do not: a multi-element resistor array and a discrete resistor do not share a land pattern',
   unknown: 'no dimensions or resolvable case code on this part',
 }

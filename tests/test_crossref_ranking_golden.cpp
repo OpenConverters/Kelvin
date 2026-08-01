@@ -301,3 +301,85 @@ TEST_CASE("golden: the footprint ladder is monotone — fits < unverified < esta
     CHECK(std::find(o.begin(), o.end(), "DIFFERENT_CASE") > o.begin() + 1);
     CHECK(o[4] == "OVERHANGS");
 }
+
+TEST_CASE("golden: land and height are two verdicts, not one — ABT #513",
+          "[crossref][golden]") {
+    // Abracon ASPI-104S-100N-T (10.3 x 10.4 x 4.0 mm) crossed against four Würth
+    // inductors returned ONE footprint class and ONE note — "one_size_larger,
+    // about one case size larger — verify board fit" — for four geometrically
+    // different parts, because height rode in the same scalar as the two land
+    // axes. 74439346100 is 6.36 x 6.56 mm: 39% of the original's land and 50%
+    // taller, i.e. the OPPOSITE of one case size larger on the axis that governs
+    // the pads, while the real risk (the height) went unmentioned.
+    //
+    // Each part must now read as the geometry it has, and a part needing a new
+    // land pattern AND more headroom must say both.
+    json original = {{"mpn", "ASPI-104S-100N-T"}, {"value_si", 1e-5},
+                     {"saturation_current", 4.4}, {"rated_current", 4.4},
+                     {"dcr", 0.035},              {"length_m", 0.0103},
+                     {"width_m", 0.0104},         {"height_m", 0.004}};
+    json cands = json::array({
+        // 39% of the land, +50% height — a new land pattern plus a clearance check.
+        {{"mpn", "74439346100"}, {"value_si", 1e-5}, {"saturation_current", 5.05},
+         {"rated_current", 5.0}, {"dcr", 0.02915}, {"length_m", 0.00636},
+         {"width_m", 0.00656}, {"height_m", 0.006}},
+        // Essentially the original's land, 1 mm taller — the pads keep, the height
+        // does not.
+        {{"mpn", "7847714100"}, {"value_si", 1e-5}, {"saturation_current", 4.4},
+         {"rated_current", 4.4}, {"dcr", 0.035}, {"length_m", 0.01}, {"width_m", 0.01},
+         {"height_m", 0.005}},
+        // Larger on all three axes — the only one "one case size larger" describes.
+        {{"mpn", "784771100"}, {"value_si", 1e-5}, {"saturation_current", 4.4},
+         {"rated_current", 4.4}, {"dcr", 0.035}, {"length_m", 0.012}, {"width_m", 0.012},
+         {"height_m", 0.006}},
+        // The case kept in every axis — the true drop-in.
+        {{"mpn", "CASE_KEPT"}, {"value_si", 1e-5}, {"saturation_current", 4.4},
+         {"rated_current", 4.4}, {"dcr", 0.035}, {"length_m", 0.0103}, {"width_m", 0.0104},
+         {"height_m", 0.004}},
+    });
+    Options opt;
+    opt.max_results = 50;
+    auto r = cross_reference("magnetic", original, cands, opt);
+    auto by_mpn = [&](const std::string& m) {
+        for (const auto& c : r["candidates"])
+            if (c.value("mpn", std::string()) == m) return c;
+        return json(nullptr);
+    };
+    auto notes_of = [&](const json& c) {
+        std::string all;
+        for (const auto& n : c.value("notes", json::array())) all += n.get<std::string>() + " | ";
+        return all;
+    };
+
+    const json small_tall = by_mpn("74439346100");
+    REQUIRE(!small_tall.is_null());
+    CHECK(small_tall["footprint"] == "smaller");       // NOT one_size_larger
+    CHECK(small_tall["height_fit"] == "taller");
+    CHECK(notes_of(small_tall).find("smaller body") != std::string::npos);
+    CHECK(notes_of(small_tall).find("new land pattern") != std::string::npos);
+    // The +50% height is named with its numbers, the risk the old note omitted.
+    CHECK(notes_of(small_tall).find("4 -> 6 mm (+50 %)") != std::string::npos);
+
+    const json same_land = by_mpn("7847714100");
+    CHECK(same_land["footprint"] == "fits");           // the pads keep
+    CHECK(same_land["height_fit"] == "taller");
+    CHECK(notes_of(same_land).find("4 -> 5 mm (+25 %)") != std::string::npos);
+    CHECK(notes_of(same_land).find("one case size larger") == std::string::npos);
+
+    const json bigger = by_mpn("784771100");
+    CHECK(bigger["footprint"] == "one_size_larger");   // the one it really describes
+    CHECK(bigger["height_fit"] == "taller");
+
+    // Four parts, four distinct messages — the collapse is what the ticket reported.
+    CHECK(notes_of(small_tall) != notes_of(same_land));
+    CHECK(notes_of(small_tall) != notes_of(bigger));
+    CHECK(notes_of(same_land) != notes_of(bigger));
+
+    // The part that keeps both the land AND the height is the only drop-in, and
+    // leads: every other candidate owes the board some work.
+    auto o = order("magnetic", original, cands);
+    REQUIRE(o.size() == 4);
+    CHECK(o[0] == "CASE_KEPT");
+    CHECK(grade_of("magnetic", original, cands, "CASE_KEPT") == "drop_in");
+    CHECK(grade_of("magnetic", original, cands, "74439346100") == "minor_review");
+}
