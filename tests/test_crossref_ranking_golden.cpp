@@ -7,6 +7,7 @@
 // If a case here changes, the reviewer must confirm the NEW order is more
 // correct than the old one and update the expectation with a reason — never
 // blindly re-pin to green.
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -234,4 +235,69 @@ TEST_CASE("golden: a different IC package is a substitute, not a drop-in",
     CHECK(o[0] == "SAME_PKG");  // case kept ranks first
     CHECK(grade_of("diode", original, cands, "SAME_PKG") == "drop_in");
     CHECK(grade_of("diode", original, cands, "B340A") == "minor_review");
+}
+
+TEST_CASE("golden: an established land-pattern change never outranks an unverified fit",
+          "[crossref][golden]") {
+    // Audit finding on Panasonic ERA2AEC2152X (0402, 21.5 kOhm, 0.25 %, 63 mW):
+    // the Vishay SMM0102 MELF parts headed the list at penalty 0.726 while the
+    // exact-value YAGEO 0402 thin films sat at 2.057, because a footprint the tool
+    // itself annotates as "a substitute to re-lay-out, not a drop-in" cost one
+    // categorical warn (0.5) and a footprint nobody could verify cost the
+    // dimensional kUnknownDimPenalty (2.0) — two unrelated scales. The engineer
+    // reading top-down was handed the re-layout part first (ABT #498).
+    //
+    // A known "no" must rank below a "cannot tell", so the exact-value part whose
+    // record merely omits a width now leads, whatever its footprint verdict.
+    json original = {{"mpn", "ERA2AEC2152X"}, {"value_si", 21500.0}, {"power_rating", 0.063},
+                     {"tolerance_pct", 0.25},  {"case_code", "0402"},  {"length_m", 0.001},
+                     {"width_m", 0.0005}};
+    json cands = json::array({
+        // 0102 MELF: a different land pattern AND +2.33 % on a 0.25 % part.
+        {{"mpn", "SMM01020E2202BB300"}, {"value_si", 22000.0}, {"power_rating", 0.2},
+         {"tolerance_pct", 0.1}, {"case_code", "0102"}},
+        // Exact value, exact power, same stated length — but no width and no case
+        // code on record, so its fit cannot be verified.
+        {{"mpn", "AT0402BRD0721K5L"}, {"value_si", 21500.0}, {"power_rating", 0.063},
+         {"tolerance_pct", 0.1}, {"length_m", 0.001}},
+    });
+    auto o = order("resistor", original, cands);
+    REQUIRE(o.size() == 2);
+    CHECK(o[0] == "AT0402BRD0721K5L");   // unverified fit, exact value
+    CHECK(o[1] == "SMM01020E2202BB300"); // established re-layout, value off
+}
+
+TEST_CASE("golden: the footprint ladder is monotone — fits < unverified < established miss",
+          "[crossref][golden]") {
+    // The ordering rule behind ABT #498, stated directly: for one otherwise
+    // identical part, a VERIFIED fit beats a footprint nobody could verify, which
+    // beats every footprint the ranker has established to be a different land
+    // pattern (another case code, a body that no longer covers the pads, one that
+    // overhangs them). Each of those was scored on its own scale before, so the
+    // rungs could and did cross.
+    json original = {{"mpn", "O"},        {"value_si", 21500.0}, {"power_rating", 0.063},
+                     {"tolerance_pct", 1.0}, {"case_code", "0402"}, {"length_m", 0.001},
+                     {"width_m", 0.0005}};
+    json cands = json::array({
+        {{"mpn", "OVERHANGS"}, {"value_si", 21500.0}, {"power_rating", 0.063},
+         {"tolerance_pct", 1.0}, {"length_m", 0.0032}, {"width_m", 0.0016}},
+        {{"mpn", "DIFFERENT_CASE"}, {"value_si", 21500.0}, {"power_rating", 0.063},
+         {"tolerance_pct", 1.0}, {"case_code", "0603"}},
+        {{"mpn", "UNVERIFIED"}, {"value_si", 21500.0}, {"power_rating", 0.063},
+         {"tolerance_pct", 1.0}},
+        {{"mpn", "SMALLER_BODY"}, {"value_si", 21500.0}, {"power_rating", 0.063},
+         {"tolerance_pct", 1.0}, {"length_m", 0.0006}, {"width_m", 0.0003}},
+        {{"mpn", "FITS"}, {"value_si", 21500.0}, {"power_rating", 0.063},
+         {"tolerance_pct", 1.0}, {"case_code", "0402"}, {"length_m", 0.001},
+         {"width_m", 0.0005}},
+    });
+    auto o = order("resistor", original, cands);
+    REQUIRE(o.size() == 5);
+    CHECK(o[0] == "FITS");
+    CHECK(o[1] == "UNVERIFIED");
+    // The three established mismatches follow; a body that grossly overhangs the
+    // pads stays the worst of them (the continuous term still separates them).
+    CHECK(std::find(o.begin(), o.end(), "SMALLER_BODY") > o.begin() + 1);
+    CHECK(std::find(o.begin(), o.end(), "DIFFERENT_CASE") > o.begin() + 1);
+    CHECK(o[4] == "OVERHANGS");
 }

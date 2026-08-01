@@ -146,6 +146,23 @@ struct Options {
 inline constexpr double kVerdictWarnPenalty = 0.5;
 inline constexpr double kVerdictFailPenalty = 3.0;
 
+// The footprint term is a LADDER whose rungs must be monotone in how much board
+// work the verdict implies, and the UNVERIFIED rung (kUnknownDimPenalty) is its
+// hinge: the substitute might still drop in, the record just does not say. A
+// footprint the ranker has ESTABLISHED to be a different land pattern — another
+// case code, a body that no longer covers the pads, one that overhangs them — is
+// a strictly WORSE answer than "cannot tell", because the answer is known and it
+// is "no". So an established mismatch costs the unverified fit plus a warn step,
+// and never less.
+//
+// Left unfloored, the categorical warn (0.5) and the dimensional scale (2.0 for
+// an unverified fit) were two unrelated scales: a 0402 -> 0102 MELF the tool
+// itself annotates as "a substitute to re-lay-out, not a drop-in" scored 0.5,
+// while the exact-value, exact-power 0402 thin films whose records merely omit a
+// width scored 2.0, and the re-layout parts headed the list (ABT #498).
+inline constexpr double kEstablishedFootprintMismatchPenalty =
+    kUnknownDimPenalty + kVerdictWarnPenalty;
+
 // ── Match grade ──────────────────────────────────────────────────────────────
 // The industry cross-reference graders (SiliconExpert A / A-U / A-D / B / C / D
 // / SF, Z2Data Drop-In A / B / C) all express two things our status alone does
@@ -505,7 +522,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 out["footprint"] = "different_case";
                 params.push_back({{"name", "footprint"}, {"verdict", WARN}});
                 demote();
-                penalty += opt.footprint_weight * kVerdictWarnPenalty;
+                // An ESTABLISHED land-pattern change, so it sits above the
+                // unverified rung of the footprint ladder — never below it.
+                penalty += opt.footprint_weight * kEstablishedFootprintMismatchPenalty;
                 notes.push_back("different package/case (" + oc + " -> " + sc +
                                 ") — different land pattern; a substitute to re-lay-out, not a "
                                 "drop-in (verify pads/pinout)");
@@ -513,7 +532,18 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         }
         FootprintTier tier = footprint_tier(o_dims, s_dims, strict_case);
         if (o_dims && !out.contains("footprint")) {
-            penalty += opt.footprint_weight * footprint_penalty(o_dims, s_dims, strict_case);
+            double fit_penalty = footprint_penalty(o_dims, s_dims, strict_case);
+            // Same ladder rule as the case-code gate above: a body the compare has
+            // ESTABLISHED not to match the pads (smaller than them, or overhanging
+            // them) is a worse answer than one nobody could verify, so it is
+            // floored onto the rung above UNVERIFIED. The continuous term stands
+            // wherever it is already higher — a 3x-oversize part must still cost
+            // more than a 1.1x one — and below the rung the parts tie on footprint
+            // and are ordered by their electricals, which is what separates two
+            // substitutes that both need a re-layout anyway.
+            if (tier != FootprintTier::Fits && tier != FootprintTier::Unknown)
+                fit_penalty = std::max(fit_penalty, kEstablishedFootprintMismatchPenalty);
+            penalty += opt.footprint_weight * fit_penalty;
             out["footprint"] = footprint_tier_name(tier);
             const char* verdict = tier == FootprintTier::Fits            ? PASS
                                   : tier == FootprintTier::Smaller       ? WARN
