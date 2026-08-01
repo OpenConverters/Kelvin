@@ -11,11 +11,11 @@
    },
    "expect": {
     "alternatives": 142,
-    "chosen": "861011086027",
+    "chosen": "860010275020",
     "margins": {
-     "capacitance_ratio": 1.3888888888888888,
+     "capacitance_ratio": 2.0370370370370368,
      "ripple_headroom": null,
-     "v_margin": 40.0
+     "v_margin": 2.0
     }
    },
    "tiebreaker": "lowest_esr"
@@ -231,11 +231,11 @@
    },
    "expect": {
     "alternatives": 177,
-    "chosen": "861011086027",
+    "chosen": "860010275019",
     "margins": {
-     "capacitance_ratio": 1.6666666666666665,
+     "capacitance_ratio": 1.9999999999999998,
      "ripple_headroom": null,
-     "v_margin": 40.0
+     "v_margin": 2.0
     }
    },
    "tiebreaker": "lowest_esr"

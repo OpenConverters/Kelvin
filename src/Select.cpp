@@ -228,8 +228,14 @@ json select_capacitor(const Shard<CapacitorRow>& shard, const CapacitorConstrain
         if (x.v_rated < c.v_rated_min) { rej["v_rated_low"]++; continue; }
         if (x.capacitance < c.capacitance_min) { rej["capacitance_low"]++; continue; }
         if (x.capacitance > c.capacitance_max) { rej["capacitance_high"]++; continue; }
-        if (c.ripple_current_min.has_value() && x.ripple_current_rms < *c.ripple_current_min) {
-            rej["ripple_low"]++; continue;
+        if (c.ripple_current_min.has_value()) {
+            // An UNKNOWN ripple rating cannot satisfy a ripple requirement. Since absence
+            // became NaN (ABT #455), `NaN < min` is false, so this test alone would have
+            // waved every part with no published ripple current straight through as if it
+            // met the requirement. Rejected under its own reason so the histogram says
+            // "no published rating" rather than burying it in ripple_low.
+            if (!present(x.ripple_current_rms)) { rej["ripple_unknown"]++; continue; }
+            if (x.ripple_current_rms < *c.ripple_current_min) { rej["ripple_low"]++; continue; }
         }
         passing.push_back(&x);
     }
@@ -249,9 +255,15 @@ json select_capacitor(const Shard<CapacitorRow>& shard, const CapacitorConstrain
         }
         return 0;
     };
+    // A NaN metric (the tiebreaker's parameter is not published for this part) must not
+    // reach the comparison: NaN compares false both ways, which breaks the strict weak
+    // ordering std::sort requires and is undefined behaviour, not merely a wrong order.
+    // Rank unknown LAST behind a flag, exactly as no_thermal already does — and never by
+    // substituting a number for the absent one, which is the defect being fixed.
+    auto unknown_metric = [&](const CapacitorRow* x) { return std::isnan(metric(x)) ? 1 : 0; };
     std::sort(passing.begin(), passing.end(), [&](const CapacitorRow* a, const CapacitorRow* b) {
-        return std::make_tuple(a->no_thermal() ? 1 : 0, metric(a), a->lineno) <
-               std::make_tuple(b->no_thermal() ? 1 : 0, metric(b), b->lineno);
+        return std::make_tuple(a->no_thermal() ? 1 : 0, unknown_metric(a), metric(a), a->lineno) <
+               std::make_tuple(b->no_thermal() ? 1 : 0, unknown_metric(b), metric(b), b->lineno);
     });
 
     json result;

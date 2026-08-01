@@ -124,7 +124,15 @@ struct DiodeRow : RowBase {
 };
 
 struct CapacitorRow : RowBase {
-    double capacitance = 0, v_rated = 0, ripple_current_rms = 0, esr = 0;
+    double capacitance = 0, v_rated = 0;
+    // NOT 0. Most of the catalogue does not publish these — 204,060 records carry no ESR
+    // and 218,775 no ripple current — and writing 0.0 for "not stated" is an in-band
+    // sentinel: nothing downstream can tell an absent value from a real one, because they
+    // are the same bits. A 0 ohm ESR is also physically impossible, and it sorted every
+    // part with NO data above the genuinely low-ESR parts a user was looking for
+    // (ABT #455). Absence travels as NaN, which browse renders as null and numeric
+    // filters exclude.
+    double ripple_current_rms = kNaN(), esr = kNaN();
     double rth = kNaN();
     std::string technology;      // part.technology (ceramic-class-2, film-…)
     std::string dielectric_code; // part.dielectricCode (X7R / C0G / X5R …)

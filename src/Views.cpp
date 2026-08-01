@@ -338,10 +338,12 @@ std::optional<CapacitorRow> extract_capacitor(const json& env) {
     auto v_rated = get_num(*elec, "ratedVoltage");
     if (!pos(cap_nom) || !pos(v_rated)) return std::nullopt;
 
+    // Leave both ABSENT (NaN) when the record does not state them. `>= 0` used to accept
+    // a stated 0 as real and substitute 0.0 for a missing one, which are the two ways to
+    // land on the same impossible value from opposite causes. `pos` treats a stated 0 as
+    // not-stated too, which is what it is: no capacitor has zero ESR.
     auto ripple_o = get_num(*elec, "rippleCurrent");
-    double ripple = (ripple_o && *ripple_o >= 0) ? *ripple_o : 0.0;
     auto esr_o = get_num(*elec, "esr");
-    double esr = (esr_o && *esr_o >= 0) ? *esr_o : 0.0;
 
     CapacitorRow r;
     r.mpn = *mpn;
@@ -349,8 +351,8 @@ std::optional<CapacitorRow> extract_capacitor(const json& env) {
     fill_dimensions(r, *di, *part);
     r.capacitance = *cap_nom;
     r.v_rated = *v_rated;
-    r.ripple_current_rms = ripple;
-    r.esr = esr;
+    if (pos(ripple_o)) r.ripple_current_rms = *ripple_o;
+    if (pos(esr_o)) r.esr = *esr_o;
     // Technology is `part.technology` — a real comparable class
     // ("ceramic-class-2", "aluminum-electrolytic-wet", "film-polypropylene"),
     // present on every record. The family/subType/series chain below is only a
