@@ -147,6 +147,14 @@ struct CapacitorRow : RowBase {
 
 struct ResistorRow : RowBase {
     double resistance = 0, tolerance = 0, power_rating = 0;
+    // manufacturerInfo.family, else part.series — the ONLY device-class evidence a RAS
+    // resistor record carries (the schema has no element- or terminal-count field). A chip
+    // resistor ARRAY ("Chip Resistor Array", "Chip Resistor Networks", YAGEO YC/TC) is N
+    // isolated elements and 2N terminals in a body whose OUTLINE is an ordinary chip size,
+    // rated per element. Dropping the string left the cross-reference judging a 4-element
+    // array by body size alone and grading discrete two-terminal chips as drop-ins for it
+    // (ABT #481).
+    std::string family;
     bool is_production = false;  // not filtered on today, carried for completeness/evidence
 };
 

@@ -196,6 +196,67 @@ inline std::string dielectric_regression(const std::string& original, const std:
     return out;
 }
 
+// ── Resistor device class: discrete chip vs multi-element array/network ──────
+// A catalogue "resistor" is normally a two-terminal discrete. A chip resistor
+// ARRAY (network) is a different device: N isolated elements in one body, 2N
+// terminals along the long edges, and a power rating quoted PER ELEMENT. Its
+// body OUTLINE is an ordinary chip size — a Panasonic EXB-V8V is 3.2 x 1.6 mm,
+// exactly a 1206 — so a footprint check made on the outline alone reports "fits"
+// for a discrete 1206 whose two end terminations land on none of the array's
+// eight pads: three of the four nets are left open. Replacing one array takes a
+// discrete PER ELEMENT and a new land pattern (ABT #481).
+//
+// The only device-class evidence a RAS resistor record carries is
+// manufacturerInfo.family / part.series — the schema has no element- or
+// terminal-count field — so that string is what is read. It comes in two forms:
+//   * self-describing: "Chip Resistor Array", "Chip Resistor Networks",
+//     "Anti-Sulfurated Chip Resistor Array", "AF_Array" (2,724 records);
+//   * a vendor series designator that names an array line without saying so in
+//     English (1,183 records), listed below — each confirmed against the
+//     datasheet the catalogue record ITSELF links, and each verified to be
+//     carried by every record of that line and by no other part.
+// A record matching neither is NOT asserted to be discrete: it carries no
+// declaration, and the gate below only fires when exactly one side declares a
+// network. An undeclared array offered against a discrete original therefore
+// still slips through — that is a catalogue data gap, not something to guess at.
+inline bool declares_resistor_network(const std::string& family, const std::string& mpn) {
+    const std::string f = lower_copy(family);
+    if (contains(f, "array") || contains(f, "network")) return true;
+    const std::string m = lower_copy(mpn);
+    auto starts = [&m](const char* p) { return m.rfind(p, 0) == 0; };
+    // YAGEO YC / TC — "Chip Resistor Arrays", datasheet PYU-YC_TC_GROUP_51_ROHS_L.
+    // Family designator and MPN prefix agree on all 1,172 records and no other
+    // part carries either, so both are required rather than either alone.
+    if ((f == "yc" && starts("yc")) || (f == "tc" && starts("tc"))) return true;
+    // Bourns CAT / CAY — "Chip Resistor Arrays", datasheet CATCAY.pdf. These
+    // records carry no family and no series at all, so the MPN is the only handle.
+    if ((starts("cat") || starts("cay")) && m.size() > 3 &&
+        std::isdigit(static_cast<unsigned char>(m[3])))
+        return true;
+    // Panasonic EXB — the whole EXB line is chip resistor arrays/networks
+    // (datasheets AOC0000C12 / C14 / C20). 2,605 of the 2,606 EXB records say so
+    // in their family string; this catches the one that does not.
+    if (starts("exb")) return true;
+    return false;
+}
+
+// Why an array <-> discrete swap is not a substitution, phrased for the direction
+// it actually happened in. Empty when the two sides agree, or when neither side
+// declares a class.
+inline std::string resistor_network_conflict(bool original_is_network, bool substitute_is_network) {
+    if (original_is_network == substitute_is_network) return "";
+    if (original_is_network)
+        return "the original is a multi-element chip resistor array/network and this is a "
+               "discrete two-terminal resistor: the body outline may match, but the land "
+               "pattern does not — one discrete covers two of the array's pads and leaves the "
+               "other elements' nets open. It takes one discrete PER ELEMENT plus a new PCB "
+               "land pattern to replace the array, and the array's power rating is per "
+               "element, not per package";
+    return "this is a multi-element chip resistor array/network and the original is a discrete "
+           "two-terminal resistor: it carries several isolated elements on a land pattern the "
+           "original's two pads cannot connect";
+}
+
 // ── Quartz crystal load capacitance ──────────────────────────────────────────
 // A crystal does not have a frequency on its own: it has a frequency AT a
 // specified load capacitance. The board's load network (two capacitors plus

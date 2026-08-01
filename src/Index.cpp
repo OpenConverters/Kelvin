@@ -30,7 +30,11 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // frequency) derived from the measured curve — parameters no vendor tabulates.
 // v5 added extractor_hash: WHICH CODE produced the rows, not just which bytes
 // they came from. See the comment on kExtractorHash below.
-constexpr uint32_t kFormatVersion = 5;
+// v6 added the resistor family/series string — the device class, i.e. whether the
+// part is a discrete two-terminal chip or a multi-element array/network. Without it
+// the cross-reference compared body outlines only and graded discrete 1206 chips as
+// drop-ins for a 4-element 3.2 x 1.6 mm array (ABT #481).
+constexpr uint32_t kFormatVersion = 6;
 
 // Identity of the code that produces rows, so a cached shard can be recognised as
 // having been built by a DIFFERENT extractor than the one running now (ABT #426).
@@ -225,6 +229,7 @@ void row_io(Ar& ar, ResistorRow& r) {
     ar.dbl(r.resistance);
     ar.dbl(r.tolerance);
     ar.dbl(r.power_rating);
+    ar.str(r.family);
     ar.boolean(r.is_production);
 }
 

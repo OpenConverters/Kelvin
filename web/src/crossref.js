@@ -60,7 +60,11 @@ export const XREF = [
     primary: { row: 'resistance', label: 'R', unit: 'Ω', acceptLo: 0.95, acceptHi: 1.05 },
     sameFacet: null,
     hardKeys: [],
-    spec: (r) => ({ ...base(r), value_si: nz(r.resistance), power_rating: nz(r.power_rating), tolerance_pct: r.tolerance != null && r.tolerance > 0 ? r.tolerance * 100 : null }),
+    // `family` is the device class: a chip resistor ARRAY ("Chip Resistor Array",
+    // YAGEO YC/TC) is N isolated elements on 2N pads inside an ordinary chip
+    // outline, so without it the ranker judged a 4-element array by body size
+    // alone and called discrete 1206 chips drop-ins for it (ABT #481).
+    spec: (r) => ({ ...base(r), value_si: nz(r.resistance), power_rating: nz(r.power_rating), tolerance_pct: r.tolerance != null && r.tolerance > 0 ? r.tolerance * 100 : null, family: r.family ?? '' }),
     params: [
       { key: 'value', label: 'R', row: 'resistance', unit: 'Ω' },
       { key: 'power_rating', label: 'P', row: 'power_rating', unit: 'W' },

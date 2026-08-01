@@ -270,6 +270,25 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             return reject("different capacitor construction family");
         }
     }
+    // A chip resistor ARRAY is not a discrete resistor: same body outline, a
+    // different land pattern, and a rating that is per element rather than per
+    // package. Surfaced rather than rejected — N discretes DO replace one array
+    // once the board changes — so it lands as a FAIL on the device class, which
+    // caps the grade at major_review and sinks the candidate below any genuine
+    // array-for-array match.
+    bool resistor_class_conflict = false;
+    if (cat == "resistor") {
+        const std::string conflict = resistor_network_conflict(
+            declares_resistor_network(str(original, "family"), str(original, "mpn")),
+            declares_resistor_network(str(cand, "family"), str(cand, "mpn")));
+        if (!conflict.empty()) {
+            params.push_back({{"name", "configuration"}, {"verdict", FAIL}});
+            demote();
+            penalty += opt.gate_weight * kVerdictFailPenalty;
+            notes.push_back(conflict);
+            resistor_class_conflict = true;
+        }
+    }
     // Si / SiC / GaN differ in gate-drive requirements — a driver redesign, not
     // a drop-in, so it is surfaced loudly rather than scored away.
     if (cat == "mosfet" || cat == "igbt" || cat == "diode") {
@@ -388,6 +407,16 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // changed package — e.g. a MOSFET QFN 8x8 -> QFN 6x5). Chip passives lose
         // the old "smaller frees board space" right-sizing by deliberate choice.
         const bool strict_case = true;
+        // A device-class conflict decides the footprint, and the body outline must not
+        // be allowed to overrule it: an EXB-V8V array and a discrete 1206 share a
+        // 3.2 x 1.6 mm outline, so the size compare below would report "fits" for a
+        // part that lands on two pads out of eight. Claiming the slot first is what
+        // stops that — every compare below is guarded on it still being free.
+        if (resistor_class_conflict) {
+            out["footprint"] = "different_land_pattern";
+            params.push_back({{"name", "footprint"}, {"verdict", FAIL}});
+            penalty += opt.footprint_weight * kVerdictFailPenalty;
+        }
         // "Case kept" gate for the families whose CASE CODE is the footprint (chip
         // passives + IC packages, i.e. everything except magnetics/chip beads whose
         // codes are unreliable). A true drop-in keeps the package; a DIFFERENT case
@@ -395,7 +424,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // not a drop-in — and this is caught even when neither part's exact body
         // dimensions resolve (DO-214AB, SOD-128, QFN NxN … are often not in the
         // dimension tables). Magnetics/chip beads fall through to the SIZE check.
-        if (cat != "magnetic" && cat != "chipBead") {
+        if (cat != "magnetic" && cat != "chipBead" && !out.contains("footprint")) {
             const std::string oc = str(original, "case_code"), sc = str(cand, "case_code");
             if (!oc.empty() && !sc.empty() &&
                 normalize_case_code(oc) != normalize_case_code(sc)) {

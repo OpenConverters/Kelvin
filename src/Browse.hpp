@@ -116,7 +116,7 @@ inline const FieldTable<ResistorRow>& fields<ResistorRow>() {
         {{"resistance", &ResistorRow::resistance},
          {"tolerance", &ResistorRow::tolerance},
          {"power_rating", &ResistorRow::power_rating}},
-        {},
+        {{"family", &ResistorRow::family}},
         {{"is_production", &ResistorRow::is_production}},
         {}};
     return t;

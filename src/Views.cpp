@@ -441,6 +441,11 @@ std::optional<ResistorRow> extract_resistor(const json& env) {
     r.resistance = *r_nom;
     r.tolerance = tol;
     r.power_rating = pw;
+    // The device class travels with the row. Panasonic writes it into both slots
+    // ("Chip Resistor Array"), YAGEO into `family` alone ("YC" / "AF_Array"), KOA and
+    // Stackpole into `series` alone — so read family first and fall back to series.
+    r.family = get_str(*mi, "family").value_or("");
+    if (r.family.empty()) r.family = get_str(*part, "series").value_or("");
     auto status = get_str(*mi, "status");
     r.is_production = status.has_value() && *status == "production";
     return r;

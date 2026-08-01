@@ -435,3 +435,151 @@ TEST_CASE("a connector current shortfall demotes, it does not reject",
     CHECK((*lower)["status"] == "partial");        // offered, flagged
     CHECK((*wrong)["status"] == "no_substitute");  // different part
 }
+
+// ── resistor device class: array/network vs discrete (ABT #481) ──────────────
+// A Panasonic EXB-V8V is four isolated 51 ohm elements on eight terminals in a
+// 3.2 x 1.6 mm body — the same OUTLINE as a discrete 1206. Judging fit on the
+// outline alone returned three discrete chips as drop_in / footprint "fits" with
+// no caveat, when one of them lands on two of the array's eight pads and leaves
+// the other three nets open.
+
+#include "../src/Browse.hpp"
+#include "../src/Index.hpp"
+
+TEST_CASE("a resistor's device class is read from what its record declares",
+          "[crossref][classes][abt481]") {
+    // Self-describing family strings, the form 2,724 catalogue records use.
+    CHECK(declares_resistor_network("Chip Resistor Array", "EXBV8V510JV"));
+    CHECK(declares_resistor_network("Chip Resistor Networks", "EXBE10C103J"));
+    CHECK(declares_resistor_network("Anti-Sulfurated Chip Resistor Array", "EXBN8V510JX"));
+    CHECK(declares_resistor_network("AF_Array", "AF164-JR-0751RL"));
+    // Vendor series designators that name an array line without saying so:
+    // YAGEO YC/TC (datasheet PYU-YC_TC_GROUP), Bourns CAT/CAY (CATCAY.pdf),
+    // Panasonic EXB (AOC0000C12/C14/C20 — the backstop for the one EXB record
+    // whose family string is empty).
+    CHECK(declares_resistor_network("YC", "YC164-JR-0751RL"));
+    CHECK(declares_resistor_network("TC", "TC122-JR-0739RL"));
+    CHECK(declares_resistor_network("", "CAY16-180J4LF"));
+    CHECK(declares_resistor_network("", "EXB-E10C103J"));
+    // Plain discretes must NOT trip it — 145k records ride on this.
+    CHECK_FALSE(declares_resistor_network("CR", "CR1206-JW-510ELF"));
+    CHECK_FALSE(declares_resistor_network("RC", "RC1206JR-0751RL"));
+    CHECK_FALSE(declares_resistor_network("RMCF0603", "RMCF0603JT33R0"));
+    CHECK_FALSE(declares_resistor_network("RK73B1JTTD", "RK73B1JTTD330J"));
+    CHECK_FALSE(declares_resistor_network("", ""));
+    // The YC/TC rule needs the family AND the MPN to agree, so neither a stray
+    // family letter pair nor an unrelated MPN prefix can fire it alone.
+    CHECK_FALSE(declares_resistor_network("YC", "RC1206JR-0751RL"));
+    CHECK_FALSE(declares_resistor_network("RC", "YC164-JR-0751RL"));
+    // Bourns' rule keys on the digit that follows the series letters, so a part
+    // named "CATHODE…" or "CAY" alone does not read as an array.
+    CHECK_FALSE(declares_resistor_network("", "CAYX-180J4LF"));
+}
+
+TEST_CASE("a discrete chip is not a drop-in for a resistor array", "[crossref][classes][abt481]") {
+    // The ticket's case, as the ranker sees it. Same value, same tolerance, the
+    // discrete's power rating comfortably above the array's PER-ELEMENT 0.063 W,
+    // and a body outline that matches to the micron — every electrical column
+    // agrees, which is exactly why the device class has to be the thing that
+    // decides it.
+    json original = {{"mpn", "EXBV8V510JV"}, {"family", "Chip Resistor Array"},
+                     {"value_si", 51.0},     {"power_rating", 0.063},
+                     {"tolerance_pct", 5.0}, {"length_m", 0.0032},
+                     {"width_m", 0.0016}};
+    json cands = json::array({
+        {{"mpn", "CR1206-JW-510ELF"}, {"family", "CR"}, {"value_si", 51.0},
+         {"power_rating", 0.25}, {"tolerance_pct", 5.0}, {"case_code", "1206"}},
+        // Another array: the class agrees, so this one is free to rank normally.
+        {{"mpn", "YC164-JR-0751RL"}, {"family", "YC"}, {"value_si", 51.0},
+         {"power_rating", 0.063}, {"tolerance_pct", 5.0}, {"length_m", 0.0032},
+         {"width_m", 0.0016}}});
+    auto r = cross_reference("resistor", original, cands, Options{});
+    auto find = [&](const char* mpn) {
+        for (const auto& c : r["candidates"])
+            if (c["mpn"] == mpn) return c;
+        FAIL("candidate " << mpn << " missing from the result");
+        return json{};
+    };
+
+    const json discrete = find("CR1206-JW-510ELF");
+    CHECK(discrete["status"] == "partial");
+    CHECK(discrete["grade"] == "major_review");  // never drop_in
+    // The outline matches, so the SIZE compare would have said "fits". The land
+    // pattern is what actually differs, and that is what the verdict must name.
+    CHECK(discrete["footprint"] == "different_land_pattern");
+    bool fp_fail = false, class_fail = false;
+    for (const auto& p : discrete["params"]) {
+        if (p["name"] == "footprint") fp_fail = p["verdict"] == "fail";
+        if (p["name"] == "configuration") class_fail = p["verdict"] == "fail";
+    }
+    CHECK(fp_fail);
+    CHECK(class_fail);
+    // And it says WHY, rather than leaving tool_notes null as it did.
+    REQUIRE(discrete.contains("notes"));
+    const std::string note = discrete["notes"][0];
+    CHECK(note.find("array") != std::string::npos);
+    CHECK(note.find("land pattern") != std::string::npos);
+    CHECK(note.find("PER ELEMENT") != std::string::npos);
+
+    const json array_sub = find("YC164-JR-0751RL");
+    CHECK(array_sub["status"] == "recommended");
+    CHECK(array_sub["grade"] == "drop_in");
+    // Array-for-array must outrank array-for-discrete, not merely differ from it.
+    CHECK(array_sub["penalty"].get<double>() < discrete["penalty"].get<double>());
+}
+
+TEST_CASE("an array offered for a discrete original is flagged the other way round",
+          "[crossref][classes][abt481]") {
+    // The mirror case: dropping a four-element network onto a two-pad land
+    // pattern connects one element and shorts nothing to the rest.
+    json original = {{"mpn", "RC1206JR-0751RL"}, {"family", "RC"}, {"value_si", 51.0},
+                     {"power_rating", 0.25}, {"tolerance_pct", 5.0}, {"case_code", "1206"}};
+    json cands = json::array({
+        {{"mpn", "EXBV8V510JV"}, {"family", "Chip Resistor Array"}, {"value_si", 51.0},
+         {"power_rating", 0.063}, {"tolerance_pct", 5.0}, {"length_m", 0.0032},
+         {"width_m", 0.0016}}});
+    auto r = cross_reference("resistor", original, cands, Options{});
+    const json& c = r["candidates"][0];
+    CHECK(c["status"] == "partial");
+    CHECK(c["grade"] == "major_review");
+    REQUIRE(c.contains("notes"));
+    CHECK(std::string(c["notes"][0]).find("array") != std::string::npos);
+}
+
+TEST_CASE("the device class survives extraction into the browse row",
+          "[crossref][classes][browse][abt481]") {
+    // The loss was in EXTRACTION: the raw record declares the class twice
+    // (manufacturerInfo.family and part.series) and neither reached the row, so
+    // the ranker could not gate on a field it never received. Real catalogue
+    // records, copied verbatim.
+    auto shard = kelvin::build_resistor_shard(std::string(KELVIN_TEST_DIR) +
+                                              "/fixtures/resistors_arrays.ndjson");
+    json all = kelvin::browse::browse_rows(shard, json{{"limit", 100}});
+    std::map<std::string, json> by_mpn;
+    for (const auto& row : all.at("rows")) by_mpn[row.at("mpn").get<std::string>()] = row;
+    REQUIRE(by_mpn.size() == 8);
+
+    CHECK(by_mpn.at("EXBV8V510JV").at("family") == "Chip Resistor Array");
+    CHECK(by_mpn.at("EXBE10C103J").at("family") == "Chip Resistor Networks");
+    CHECK(by_mpn.at("YC164-JR-0751RL").at("family") == "YC");
+    CHECK(by_mpn.at("AF164-JR-0751RL").at("family") == "AF_Array");
+    CHECK(by_mpn.at("CR1206-JW-510ELF").at("family") == "CR");
+    // No family on the record: `part.series` is read next, and where the record
+    // states neither the row carries "" — an honest blank, not a guess.
+    CHECK(by_mpn.at("CAY16-180J4LF").at("family") == "");
+    CHECK(by_mpn.at("EXB-E10C103J").at("family") == "");
+
+    // End to end on the real rows: the array original, the discrete substitute.
+    auto spec = [](const json& row) {
+        return json{{"mpn", row.at("mpn")},
+                    {"family", row.at("family")},
+                    {"value_si", row.at("resistance")},
+                    {"power_rating", row.at("power_rating")},
+                    {"length_m", row.at("lengthM")},
+                    {"width_m", row.at("widthM")}};
+    };
+    auto r = cross_reference("resistor", spec(by_mpn.at("EXBV8V510JV")),
+                             json::array({spec(by_mpn.at("CR1206-JW-510ELF"))}), Options{});
+    CHECK(r["candidates"][0]["grade"] == "major_review");
+    CHECK(r["candidates"][0]["footprint"] == "different_land_pattern");
+}
