@@ -72,6 +72,13 @@ These are NOT defects:
   - Over-dimensioned parts (higher voltage/current rating than the original) unless the
     tool called that a downgrade, or the over-dimensioning breaks the circuit (e.g. a
     much higher Vf, Rds(on), or ESR).
+  - A capacitor substitute with MORE capacitance than the original, inside the ranker's
+    accept window (0.80x to 4.00x). Oversizing bulk and decoupling capacitance is normal
+    engineering practice — the usual acceptance there is about +/-20% and upward
+    deviation is routinely fine — so a "value: pass" at, say, +47% is the tool working as
+    designed. Do NOT measure the substitute against the ORIGINAL PART'S OWN tolerance
+    band and call the difference a defect: a part's manufacturing tolerance and the
+    window within which a substitution is acceptable are different questions.
   - Ranking order you merely disagree with. Only flag order when a candidate the tool
     ranked as 'recommended'/'drop_in' is clearly WORSE than one it ranked below.
 
@@ -85,6 +92,13 @@ These ARE defects:
     inductor).
   - A note whose prose contradicts the numeric table.
   - A physically impossible or nonsensical value reaching the user.
+  - A large capacitance increase offered with NO caveat at all. The 0.80-4.00x window is
+    right for bulk/decoupling duty and wrong everywhere else: a timing RC wants +/-5-10%,
+    a resonant tank or a crystal load capacitor must be matched because the value SETS
+    the frequency, and inrush current scales with capacitance (a 100 uF part can peak
+    at several amps and drag a rail down far enough to reset the board). So the ratio
+    itself is not the defect — silence about it is, when the substitute is multiples of
+    the original. Judge the presentation, not the number.
 
 Each case gives you three views of the same parts, and WHICH ONE is wrong decides who
 fixes it, so say which:
@@ -143,7 +157,17 @@ Work only from the evidence given. Check, in order:
      them field by field; if they agree, it is not extraction. "ranking" needs both to
      be fine and the verdict still wrong.
   4. Is it really a defect, or is it the tool being deliberately honest (an "unverified"
-     param, a refusal to recommend, a declared caveat, a noted package change)?
+     param, a refusal to recommend, a declared caveat, a noted package change)? Or is it
+     deliberate DESIGN? The capacitor ranker accepts 0.80x to 4.00x the original's
+     capacitance on purpose, because oversizing bulk and decoupling capacitance is normal
+     practice. A complaint that a larger bulk capacitor was graded 'pass', or that it
+     exceeds the original part's own tolerance band, is REFUTED — a manufacturing
+     tolerance and a substitution window are different things.
+     That defence does NOT cover a capacitor whose value sets a frequency or a time
+     constant: a picofarad-scale class-1/C0G part, a crystal load capacitor, a resonant
+     tank or a timing RC is chosen for its value, and there a large increase IS a defect.
+     Nor does it cover total silence — offering a multiple of the original with no note
+     about inrush or resonant duty is worth reporting even when the ratio is allowed.
 
 Confirm ONLY a claim that survives all four. If the substance is right but `defect_in`
 is wrong, confirm it and give the corrected value. When you cannot tell, REFUTE — a
