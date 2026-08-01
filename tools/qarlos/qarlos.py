@@ -91,6 +91,28 @@ fixes it, so say which:
     drawn from them is wrong.
 Bad catalogue data is fully in scope — finding it is part of the job, not a distraction.
 
+YOU ARE LOOKING AT A SAMPLE. You were given one part because that is how sampling works,
+but a catalogue defect is almost never one record — a units error is whatever the importer
+wrote that day. So for defect_in "catalogue" you MUST also describe every record that has
+the same defect, as a declarative query. Fixing the one part you were shown, and leaving
+its siblings, is the failure this field exists to prevent.
+
+  "population_query": {"file": "<capacitors.ndjson|mosfets.ndjson|connectors.ndjson|...>",
+                       "all": [{"path": "<dotted path from the record root>",
+                                "op": "<|<=|>|>=|==|!=|exists|startswith|contains|in",
+                                "value": <literal>}, ...]}
+
+Paths start at the raw record root, so they include the discriminator, e.g.
+"capacitor.manufacturerInfo.datasheetInfo.electrical.esr" or
+"semiconductor.mosfet.manufacturerInfo.datasheetInfo.electrical.totalGateCharge".
+Use "[]" for "any element of this array", e.g. "…electrical.[].onResistance".
+
+Make the query describe the DEFECT, not the one part: the conditions that make a record
+wrong (an impossible value, in the technology where it is impossible), never the specific
+MPN. It will be run over the whole catalogue and the count goes in the ticket, so a query
+that is too broad slanders good records and one that is too narrow hides the problem.
+Omit population_query for "extraction" and "ranking" — one code fix covers every part.
+
 Reply with STRICT JSON, no prose outside it:
 {"ok": true}
 or
@@ -99,7 +121,8 @@ or
   "title": "<one line>", "candidate": "<candidate MPN, or the original's MPN>",
   "what_is_wrong": "<what the tool said>",
   "evidence": "<the numbers that contradict it, quoting the raw record>",
-  "expected": "<what it should have said>"}]}"""
+  "expected": "<what it should have said>",
+  "population_query": <the query, or null for code defects>}]}"""
 
 
 VERIFY_SYSTEM = """You are verifying a claimed defect in a component cross-reference tool, and your job is to REFUTE it. The claim was made by another reviewer who saw the same data. Most claims that reach you are wrong in some detail, and filing a wrong one wastes an engineer's day.
@@ -262,13 +285,49 @@ SEV_TO_PRIORITY = {"critical": "critical", "high": "high", "medium": "medium",
                    "low": "low"}
 
 
+def population_of(f):
+    """How many records share this defect. A finding without this is a sample, not a scope."""
+    q = f.get("population_query")
+    if not q or not isinstance(q, dict) or not q.get("file"):
+        return None
+    try:
+        from sweep import run as sweep_run
+        return sweep_run(q, limit=8)
+    except SystemExit as e:
+        return {"error": str(e)}
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"{type(e).__name__}: {e}"}
+
+
 def file_abt(case, f, seed, dry, verdict):
     o = case["original"]
     repro = (f"node tools/qarlos/probe.mjs --seed {seed} "
              f"--families {case['family']} --per-family {os.environ.get('QARLOS_PF','2')}")
     where = f.get("defect_in", "ranking")
     route = DEFECT_ROUTE.get(where, "kelvin")
+    pop = f.get("_population")
+    if pop and pop.get("population") is not None:
+        scope = (f"""
+SCOPE — THIS IS NOT ONE RECORD
+{pop['population']} of {pop['scanned']} records in {pop['file']} match this defect.
+The part below is the sample that exposed it. A fix that repairs only that part leaves
+{max(0, pop['population'] - 1)} others broken AND closes the ticket, which is worse than
+not looking. Repair or quarantine the whole population.
+
+  population query: {json.dumps(f.get('population_query'), ensure_ascii=False)}
+  examples: {', '.join(pop.get('samples') or [])}
+  recheck:  python3 tools/qarlos/sweep.py --query '{json.dumps(f.get('population_query'), ensure_ascii=False)}'
+""")
+    elif pop and pop.get("error"):
+        scope = f"\nSCOPE  population query could not be run: {pop['error']}\n"
+    elif where == "catalogue":
+        scope = ("\nSCOPE  no population query was produced, so the blast radius of this "
+                 "defect is UNKNOWN — check for siblings before closing.\n")
+    else:
+        scope = ("\nSCOPE  code defect: one fix in the extractor/ranker covers every part "
+                 "in the family.\n")
     body = f"""Found by Qarlos, the standing cross-reference auditor.
+{scope}
 
 DEFECT IS IN: {where}   (catalogue = the TAS record itself; extraction = the shard row
 Kelvin built from it; ranking = the verdict drawn from them)
@@ -381,6 +440,12 @@ def main():
                 print("    (already reported — not filing again)")
                 n_dupe += 1
                 continue
+            # Scope it before judging worth: "one bad record" and "1,691 bad records"
+            # are different tickets, and the second is the one that matters.
+            f["_population"] = population_of(f)
+            if f["_population"] and f["_population"].get("population") is not None:
+                print(f"    population: {f['_population']['population']} of "
+                      f"{f['_population']['scanned']} in {f['_population']['file']}")
             # Qarlos checks its own work: an independent pass, told to refute the
             # claim against the RAW record, decides whether it is worth a human's time.
             vv = verify(case, f, a.model, a.timeout)
@@ -401,6 +466,10 @@ def main():
                 "severity": f.get("severity"), "defect_in": f.get("defect_in"),
                 "repro": {"seed": seed, "families": case["family"],
                           "per_family": a.per_family},
+                # loop.py re-runs this after the fix. A catalogue ticket is not closed
+                # by the sampled part going clean — the population must go to zero.
+                "population_query": f.get("population_query"),
+                "population_before": (f.get("_population") or {}).get("population"),
             })
             if tid:
                 seen.add(sig)

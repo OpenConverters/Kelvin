@@ -44,6 +44,17 @@ def log(msg):
     print(f"[{datetime.now(timezone.utc).strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
+def sweep(query):
+    """How many records still match the defect. None if the query cannot be run."""
+    sys.path.insert(0, str(HERE))
+    try:
+        from sweep import run as sweep_run
+        return sweep_run(query, limit=5)["population"]
+    except Exception as e:  # noqa: BLE001
+        log(f"   population query failed: {e}")
+        return None
+
+
 def qarlos(args, out_json):
     cmd = [sys.executable, str(QARLOS), "--json", str(out_json)] + args
     p = subprocess.run(cmd, text=True)
@@ -121,6 +132,26 @@ def main():
                     subprocess.run([ABT, "comment", str(tid), "--body",
                                     "Re-test skipped: rebuilding Kelvin/shards failed, so "
                                     "the auditor would have re-read the OLD extraction."])
+                    continue
+
+            # A catalogue fix is judged on the POPULATION, not on the sampled part.
+            # Repairing the one row Qarlos happened to draw would otherwise pass the
+            # seeded re-test and close a ticket covering thousands of siblings.
+            if f.get("population_query"):
+                after = sweep(f["population_query"])
+                before = f.get("population_before")
+                log(f"   population {before} -> {after}")
+                if after:
+                    log(f"   {after} records still match — NOT closing #{tid}")
+                    subprocess.run([ABT, "comment", str(tid), "--body",
+                                    f"Qarlos re-ran the population query after the fix: "
+                                    f"{before} -> {after} records still match.\n\n"
+                                    "The sampled part may be repaired, but this defect is "
+                                    "not one record. The ticket stays open until the "
+                                    "population is zero (repaired or quarantined).\n\n"
+                                    f"  python3 tools/qarlos/sweep.py --query "
+                                    f"'{json.dumps(f['population_query'])}'"])
+                    subprocess.run([ABT, "update", str(tid), "--status", "reported"])
                     continue
 
             log(f"   re-testing seed {f['repro']['seed']} / {f['repro']['families']}")

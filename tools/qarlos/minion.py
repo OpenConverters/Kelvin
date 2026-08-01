@@ -63,8 +63,15 @@ HOW TO WORK
 1. Reproduce first. The ticket carries a deterministic repro command; run it and see the
    defect before you change anything. If you cannot reproduce it, do NOT invent a fix —
    report that and stop.
-2. Fix the root cause, not the symptom. If one record has a units error, ask whether the
-   importer that wrote it put the same error in others, and say so in your report.
+2. Fix the root cause, not the symptom, and fix the WHOLE POPULATION. The part named in
+   the ticket is the sample that exposed the defect, not the defect. If the ticket has a
+   SCOPE section with a population query, that number is your job — repairing the sampled
+   part and leaving the rest both fails the re-test and closes a ticket that covered
+   thousands of records, which is worse than never having looked. Run the query, fix or
+   quarantine every match, re-run it, and do not report fixed until it returns zero:
+     python3 <kelvin>/tools/qarlos/sweep.py --query '<the query from the ticket>'
+   Where the defect came from an importer, fix the importer too so the next run does not
+   reintroduce it, and name it in root_cause.
 3. Change as little as possible, and match the surrounding code's style and comments.
 4. Verify. Run the gates for this repo and paste the real output.
 
@@ -90,6 +97,7 @@ WHEN YOU ARE DONE, reply with STRICT JSON as your final message, no prose around
  "summary": "<what you changed and why, 1-3 sentences>",
  "files_changed": ["<path>", ...],
  "root_cause": "<the actual cause>",
+ "population_before": <int or null>, "population_after": <int or null>,
  "wider_impact": "<other records/sites with the same defect, or 'none found'>",
  "gates_run": "<the commands you ran and their result>",
  "blocked_by": "<what stopped you, if fixed is false>"}"""
