@@ -74,6 +74,7 @@ void fill_dimensions(RowBase& r, const json& di, const json& part) {
         if (auto v = resolve_field(src, "length"); pos(v)) r.length_m = *v;
         if (auto v = resolve_field(src, "width"); pos(v)) r.width_m = *v;
         if (auto v = resolve_field(src, "height"); pos(v)) r.height_m = *v;
+        std::optional<double> dia = resolve_field(src, "diameter");
         if (nested) {  // a nested block may still leave siblings on `mechanical`
             if (!present(r.length_m))
                 if (auto v = resolve_field(*mech, "length"); pos(v)) r.length_m = *v;
@@ -81,6 +82,21 @@ void fill_dimensions(RowBase& r, const json& di, const json& part) {
                 if (auto v = resolve_field(*mech, "width"); pos(v)) r.width_m = *v;
             if (!present(r.height_m))
                 if (auto v = resolve_field(*mech, "height"); pos(v)) r.height_m = *v;
+            if (!pos(dia)) dia = resolve_field(*mech, "diameter");
+        }
+        // A cylindrical body (an electrolytic can, an axial part) states a DIAMETER
+        // instead of a footprint: the board area it occupies is diameter x diameter,
+        // and the one axis left over is the can's length — which records name
+        // `height` (Würth) or `length` (Vishay) for the very same axis. Fold it the
+        // way the "DxL" case-code resolver already does (LWH{d, d, len}) so an
+        // explicit drawing and a case code yield the same box instead of two
+        // incomparable ones. Dropping the diameter left every can in the catalogue
+        // with no seat at all, and the footprint check with nothing to compare.
+        if (pos(dia)) {
+            const double axial = present(r.height_m) ? r.height_m : r.length_m;
+            r.length_m = *dia;
+            r.width_m = *dia;
+            r.height_m = axial;
         }
     }
     // Case code: `part.case` is the field the catalogue actually populates
@@ -93,8 +109,20 @@ void fill_dimensions(RowBase& r, const json& di, const json& part) {
         if (auto c = get_str(part, "caseCode")) r.case_code = *c;
         else if (auto p = get_str(part, "package")) r.case_code = *p;
     }
-    // Explicit mount type when the record states it (smt / tht / chassis).
-    if (mech) { if (auto a = get_str(*mech, "assemblyType")) r.mount = *a; }
+    // Explicit mount type when the record states it (smt / tht / chassis). Three
+    // schemas spell the SAME fact three ways: `mechanical.assemblyType`
+    // (semiconductors, magnetics), `mechanical.shape.assembly` (CAS capacitors —
+    // THT / SMT / Snap-In, stated on every record) and `mechanical.mountingStyle`
+    // (CONAS connectors). Reading only the first left the mount unknown for the
+    // whole capacitor and connector catalogues, so the mount gate never fired
+    // there even though the record said outright which one the part is.
+    if (mech) {
+        if (auto a = get_str(*mech, "assemblyType")) r.mount = *a;
+        else if (auto a = get_str(*mech, "mountingStyle")) r.mount = *a;
+        else if (const json* shape = obj_get(*mech, "shape")) {
+            if (auto a = get_str(*shape, "assembly")) r.mount = *a;
+        }
+    }
 }
 
 }  // namespace

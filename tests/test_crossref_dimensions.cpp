@@ -214,6 +214,19 @@ TEST_CASE("a mount-type mismatch rejects the candidate", "[crossref][rank][dims]
         {{"mpn", "THT"}, {"value_si", 1e-7}, {"voltage", 50.0}, {"package", "RADIAL"}}});
     auto r = cross_reference("capacitor", original, cands, Options{});
     CHECK(r["candidates"][0]["status"] == "no_substitute");
+
+    // Decided by the STATED assembly types -> the note must name those. A can that
+    // states its mount often carries no package string, and quoting the packages
+    // regardless printed a half-empty "mount type incompatible:  -> 8x8x10".
+    json radial = {{"mpn", "O"}, {"value_si", 1e-7}, {"voltage", 50.0}, {"mount", "THT"}};
+    json smd = json::array({{{"mpn", "S"},
+                             {"value_si", 1e-7},
+                             {"voltage", 50.0},
+                             {"mount", "SMT"},
+                             {"case_code", "8x8x10"}}});
+    auto r2 = cross_reference("capacitor", radial, smd, Options{});
+    CHECK(r2["candidates"][0]["status"] == "no_substitute");
+    CHECK(r2["candidates"][0]["notes"][0] == "mount type incompatible: THT -> SMT");
 }
 
 TEST_CASE("an oversize part is demoted to partial, not dropped", "[crossref][rank][dims]") {
@@ -303,6 +316,40 @@ TEST_CASE("dimensions survive the shard round-trip and reach browse rows",
     }
     // The fixture carries mechanical drawings; if none survived, indexing dropped them.
     CHECK(with_dims > 0);
+}
+
+// A cylindrical can states a DIAMETER, never a length/width, and CAS states its
+// mount as mechanical.shape.assembly rather than the flat mechanical.assemblyType
+// the extractor used to read. Dropping both left every electrolytic in the
+// catalogue with no seat and no mount, so a Ø8.2 mm can and an SMD square-seat case
+// went out as unremarked substitutes for a Ø6.3 mm THT radial (ABT #440).
+TEST_CASE("a can's diameter and stated assembly reach the browse row",
+          "[crossref][dims][browse]") {
+    auto shard =
+        kelvin::build_capacitor_shard(std::string(KELVIN_TEST_DIR) + "/fixtures/capacitors.ndjson");
+    // 850617021001: Ø10 x 20 mm THT can. The seat is diameter x diameter and the
+    // axial height is the third axis — the same box the case code "10x20" resolves
+    // to, so a drawing and a code stay comparable.
+    json r = kelvin::browse::browse_rows(
+        shard, json{{"filters", {{"mpn", "850617021001"}}}, {"limit", 1}});
+    REQUIRE(r.at("rows").size() == 1);
+    const json& can = r.at("rows")[0];
+    CHECK_THAT(can.at("lengthM").get<double>(), WithinRel(0.010, 1e-9));
+    CHECK_THAT(can.at("widthM").get<double>(), WithinRel(0.010, 1e-9));
+    CHECK_THAT(can.at("heightM").get<double>(), WithinRel(0.020, 1e-9));
+    CHECK(can.at("mount") == "THT");
+    auto code = resolve_dimensions("10x20", "capacitor");
+    REQUIRE(code.has_value());
+    CHECK_THAT(code->length, WithinRel(can.at("lengthM").get<double>(), 1e-9));
+
+    // Every CAS capacitor states shape.assembly, so no row may come back without a
+    // mount — reading only the flat spelling silently emptied the whole catalogue.
+    json all = kelvin::browse::browse_rows(shard, json{{"limit", 1000}});
+    REQUIRE(all.at("rows").size() > 0);
+    size_t with_mount = 0;
+    for (const auto& row : all.at("rows"))
+        if (row.contains("mount")) ++with_mount;
+    CHECK(with_mount == all.at("rows").size());
 }
 
 TEST_CASE("an explicit assembly type beats package-string inference", "[crossref][dims]") {

@@ -347,7 +347,16 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         if (mount_gate_applies(cat) &&
             mount_incompatible(str(original, "mount"), str(cand, "mount"), o_pkg, s_pkg)) {
             params.push_back({{"name", "mounting"}, {"verdict", FAIL}});
-            notes.push_back("mount type incompatible: " + o_pkg + " -> " + s_pkg);
+            // Name the pair that actually decided it — the EXPLICIT assembly types
+            // when both records state one, the package strings otherwise (the same
+            // order mount_incompatible uses). Always quoting the packages printed a
+            // half-empty "mount type incompatible:  -> 8x8x10" for the many records
+            // that state a mount type but carry no package string.
+            const std::string o_mt = str(original, "mount"), s_mt = str(cand, "mount");
+            const bool by_mount =
+                !normalize_mount(o_mt).empty() && !normalize_mount(s_mt).empty();
+            notes.push_back("mount type incompatible: " + (by_mount ? o_mt : o_pkg) + " -> " +
+                            (by_mount ? s_mt : s_pkg));
             return reject("mount type incompatible (SMD vs leaded)");
         }
         auto o_dims = dims_of(original, cat), s_dims = dims_of(cand, cat);
