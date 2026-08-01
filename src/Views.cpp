@@ -4,7 +4,8 @@
 #include <regex>
 #include <unordered_map>
 
-#include "DimensionJson.hpp"  // PEAS::resolve_dimensional_values (json overload)
+#include "CrossRefDimensions.hpp"  // crossref::normalize_mount (smd / leaded)
+#include "DimensionJson.hpp"       // PEAS::resolve_dimensional_values (json overload)
 
 namespace kelvin {
 namespace {
@@ -67,7 +68,21 @@ bool pos(const std::optional<double>& x) { return x.has_value() && *x > 0.0; }
 // being hand-read. Absent stays NaN — the ranker then falls back to resolving
 // the case code, and reports "unknown" if that fails too, never assuming a fit.
 void fill_dimensions(RowBase& r, const json& di, const json& part) {
-    if (const json* mech = obj_get(di, "mechanical")) {
+    // Mount type first: `thickness` below needs it, because the same T label names a
+    // different axis on a chip than on a leaded body. Three schemas spell the SAME fact
+    // three ways: `mechanical.assemblyType` (semiconductors, magnetics),
+    // `mechanical.shape.assembly` (CAS capacitors — THT / SMT / Snap-In, stated on every
+    // record) and `mechanical.mountingStyle` (CONAS connectors). Reading only the first
+    // left the mount unknown for the whole capacitor and connector catalogues, so the
+    // mount gate never fired there even though the record said outright which one the
+    // part is.
+    const json* mech = obj_get(di, "mechanical");
+    if (mech) {
+        if (auto a = get_str(*mech, "assemblyType")) r.mount = *a;
+        else if (auto a = get_str(*mech, "mountingStyle")) r.mount = *a;
+        else if (const json* shape = obj_get(*mech, "shape")) {
+            if (auto a = get_str(*shape, "assembly")) r.mount = *a;
+        }
         // Some records nest the drawing one level deeper under `dimensions`.
         const json* nested = obj_get(*mech, "dimensions");
         const json& src = nested ? *nested : *mech;
@@ -97,31 +112,41 @@ void fill_dimensions(RowBase& r, const json& di, const json& part) {
             r.length_m = *dia;
             r.width_m = *dia;
             r.height_m = axial;
+        } else {
+            // `thickness` is the body's T dimension, and WHICH axis that is depends on how
+            // the part mounts, so the mount decides the slot:
+            //   chip-style SMT (MLCC, chip film) — CAS spells it out: "the dimension
+            //     perpendicular to the mounting plane", i.e. the HEIGHT of an L x W x T body;
+            //   leaded box (R73 / F5A radial film, radial-moulded tantalum) — the drawing's
+            //     H is the height above the board and T is the body DEPTH, the second
+            //     FOOTPRINT axis.
+            // Reading it into neither dropped the third dimension of 33k capacitors:
+            // R73TN2150SE00K states 26.5 x 17 x 8.5 mm and reached the ranker as a 26.5 mm
+            // box of unknown width, so no footprint or body-width gate could fire on it
+            // (ABT #480). Only ever fills a slot the record left empty, and never on a
+            // cylindrical body — there the diameter fold above already defines the box and a
+            // stated T is not one of its axes. An unclassified mount fills nothing: which
+            // axis T is would be a guess, and an honest "unknown" beats a plausible number.
+            std::optional<double> thk = resolve_field(src, "thickness");
+            if (nested && !pos(thk)) thk = resolve_field(*mech, "thickness");
+            if (pos(thk)) {
+                const std::string mount = crossref::normalize_mount(r.mount);
+                if (mount == "smd") {
+                    if (!present(r.height_m)) r.height_m = *thk;
+                } else if (mount == "leaded") {
+                    if (!present(r.width_m)) r.width_m = *thk;
+                }
+            }
         }
     }
     // Case code: `part.case` is the field the catalogue actually populates
     // (100% of sampled capacitors/mosfets/resistors/diodes); `mechanical.case`
     // and the caseCode/package spellings are accepted as fallbacks.
-    const json* mech = obj_get(di, "mechanical");
     if (auto c = get_str(part, "case")) r.case_code = *c;
     else if (mech) { if (auto c = get_str(*mech, "case")) r.case_code = *c; }
     if (r.case_code.empty()) {
         if (auto c = get_str(part, "caseCode")) r.case_code = *c;
         else if (auto p = get_str(part, "package")) r.case_code = *p;
-    }
-    // Explicit mount type when the record states it (smt / tht / chassis). Three
-    // schemas spell the SAME fact three ways: `mechanical.assemblyType`
-    // (semiconductors, magnetics), `mechanical.shape.assembly` (CAS capacitors —
-    // THT / SMT / Snap-In, stated on every record) and `mechanical.mountingStyle`
-    // (CONAS connectors). Reading only the first left the mount unknown for the
-    // whole capacitor and connector catalogues, so the mount gate never fired
-    // there even though the record said outright which one the part is.
-    if (mech) {
-        if (auto a = get_str(*mech, "assemblyType")) r.mount = *a;
-        else if (auto a = get_str(*mech, "mountingStyle")) r.mount = *a;
-        else if (const json* shape = obj_get(*mech, "shape")) {
-            if (auto a = get_str(*shape, "assembly")) r.mount = *a;
-        }
     }
 }
 

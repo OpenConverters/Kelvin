@@ -352,6 +352,52 @@ TEST_CASE("a can's diameter and stated assembly reach the browse row",
     CHECK(with_mount == all.at("rows").size());
 }
 
+// The third dimension of a box film capacitor is stated as `thickness`, and reading it
+// into no slot at all dropped it: R73TN2150SE00K states 26.5 x 17 x 8.5 mm and reached the
+// ranker as a 26.5 mm box of unknown width, so no footprint or body-width gate could fire
+// on it (ABT #480). Which slot T fills depends on the mount, and where the record does not
+// say which axis T is, nothing is filled — see the tantalum and screw-terminal rows below.
+TEST_CASE("a stated body thickness reaches the browse row as the axis it names",
+          "[crossref][dims][browse]") {
+    auto shard = kelvin::build_capacitor_shard(std::string(KELVIN_TEST_DIR) +
+                                               "/fixtures/capacitors_thickness.ndjson");
+    json all = kelvin::browse::browse_rows(shard, json{{"limit", 100}});
+    std::map<std::string, json> by_mpn;
+    for (const auto& row : all.at("rows")) by_mpn[row.at("mpn").get<std::string>()] = row;
+    REQUIRE(by_mpn.size() == 5);
+
+    // Leaded box (KEMET R73, 22.5 mm pitch): the drawing's H is the height above the board,
+    // so T is the body DEPTH — the second footprint axis. 8.5 mm at 15 nF, 10 mm at 22 nF on
+    // an unchanged 26.5 mm length: the wound-film stack thickening, not a lead or film.
+    const json& r73 = by_mpn.at("R73TN2150SE00K");
+    CHECK_THAT(r73.at("lengthM").get<double>(), WithinRel(0.0265, 1e-9));
+    CHECK_THAT(r73.at("widthM").get<double>(), WithinRel(0.0085, 1e-9));
+    CHECK_THAT(r73.at("heightM").get<double>(), WithinRel(0.017, 1e-9));
+    CHECK_THAT(by_mpn.at("R73TN2220SE00K").at("widthM").get<double>(), WithinRel(0.010, 1e-9));
+
+    // Chip-style SMT: CAS defines T as "the dimension perpendicular to the mounting plane",
+    // which is the height. F161ZS105K250V states only L and T, so the width stays unknown —
+    // one honest axis gained, none invented.
+    const json& chip = by_mpn.at("F161ZS105K250V");
+    CHECK_THAT(chip.at("heightM").get<double>(), WithinRel(0.007, 1e-9));
+    CHECK(chip.at("widthM").is_null());
+
+    // An SMT chip that already states its height: T is then not an axis of the box (0.13 mm
+    // on a 7.3 mm tantalum is a termination, not a body dimension), so it fills nothing.
+    // Guessing it into the free width slot would put a 0.13 mm-wide body in front of the
+    // footprint check.
+    const json& tant = by_mpn.at("T495X475K050AH4095");
+    CHECK_THAT(tant.at("heightM").get<double>(), WithinRel(0.004, 1e-9));
+    CHECK(tant.at("widthM").is_null());
+
+    // A cylindrical body: the diameter fold already defines the box (Ø36 x 82 mm), and a
+    // stated T is not one of its axes.
+    const json& can = by_mpn.at("ALS30A472DE100");
+    CHECK_THAT(can.at("lengthM").get<double>(), WithinRel(0.036, 1e-9));
+    CHECK_THAT(can.at("widthM").get<double>(), WithinRel(0.036, 1e-9));
+    CHECK_THAT(can.at("heightM").get<double>(), WithinRel(0.082, 1e-9));
+}
+
 TEST_CASE("an explicit assembly type beats package-string inference", "[crossref][dims]") {
     // Both records state their mount type -> use it, ignore the package strings.
     CHECK(mount_incompatible("smt", "tht", "", ""));
