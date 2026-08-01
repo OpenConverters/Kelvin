@@ -10,6 +10,7 @@
 // compressing large ratios. No fabrication — a missing value yields UNVERIFIED,
 // never a silent pass.
 #pragma once
+#include <algorithm>
 #include <cmath>
 #include <optional>
 #include <string>
@@ -108,16 +109,42 @@ struct PrimaryValueSpec {
     Mode mode;
     double tight_lo, tight_hi, accept_lo, accept_hi;  // RANGE windows
     double warn_factor, gate_factor;                  // HIGHER/LOWER thresholds
+    // The ORIGINAL's stated tolerance narrows the PASS window (narrow_to_tolerance).
+    // Set only where the tolerance IS the value's guarantee.
+    bool tolerance_bounds_pass = false;
 };
+
+// A drop-in on VALUE must satisfy two independent things, and the tight window
+// above expresses only the first: that the substitute carries the same CATALOGUE
+// value (21.0k, 21.3k and 21.5k are three distinct E96 values, however loose the
+// part). The second is the original's own guarantee — a 0.25% part promises
+// +/-0.25%, so a 0.93% shift is nearly 4x the entire band the board was designed
+// around and the two guaranteed windows do not even overlap. A fixed +/-1% band
+// silently called that a pass, indistinguishable from an exact-value sibling
+// (ABT #497). So the PASS window is the tighter of the two.
+//
+// It only ever NARROWS: a loose original keeps the catalogue window, because a
+// wide tolerance does not make a different catalogue value the same value.
+inline void narrow_to_tolerance(PrimaryValueSpec& spec, std::optional<double> tolerance_pct) {
+    if (!spec.tolerance_bounds_pass || !tolerance_pct || !(*tolerance_pct > 0)) return;
+    const double f = *tolerance_pct / 100.0;
+    spec.tight_lo = std::max(spec.tight_lo, 1.0 - f);
+    spec.tight_hi = std::min(spec.tight_hi, 1.0 + f);
+}
 
 // Returns the spec + true, or {} + false when the category has no primary-value
 // gate (mosfet/diode/connector/analog/timeBase match on other axes).
 inline bool primary_value_spec(const std::string& category, PrimaryValueSpec& out) {
     if (category == "resistor") {
-        out = {Mode::Range, 0.99, 1.01, 0.95, 1.05, 0.9, 0.8};
+        // tolerance-bounded: a resistor's whole function is its value, and the
+        // tolerance is exactly the band the circuit was designed to tolerate.
+        out = {Mode::Range, 0.99, 1.01, 0.95, 1.05, 0.9, 0.8, true};
         return true;
     }
     if (category == "capacitor") {
+        // NOT tolerance-bounded: the asymmetric 0.90-1.50 window is a deliberate
+        // oversizing allowance (more bulk C is usually fine), not a restatement
+        // of the part's +/-20% marking, so a tolerance must not shrink it.
         out = {Mode::Range, 0.90, 1.50, 0.80, 4.00, 0.9, 0.8};
         return true;
     }
@@ -133,13 +160,18 @@ inline bool primary_value_spec(const std::string& category, PrimaryValueSpec& ou
 }
 
 // Score the primary electrical value for a category (SI base units). has_spec is
-// false when the category has no primary-value gate.
-inline ScoreResult score_primary_value(const std::string& category, std::optional<double> original,
-                                       std::optional<double> substitute, bool& has_spec) {
+// false when the category has no primary-value gate. `original_tolerance_pct` is
+// the ORIGINAL's stated tolerance in percent, which narrows the PASS window for
+// the categories whose tolerance bounds it; absent, the category window stands
+// (nothing is assumed about a part that states no tolerance).
+inline ScoreResult score_primary_value(
+    const std::string& category, std::optional<double> original, std::optional<double> substitute,
+    bool& has_spec, std::optional<double> original_tolerance_pct = std::nullopt) {
     PrimaryValueSpec spec{};
     has_spec = primary_value_spec(category, spec);
     if (!has_spec) return {0.0, UNVERIFIED, std::nullopt};
     if (spec.mode == Mode::Range) {
+        narrow_to_tolerance(spec, original_tolerance_pct);
         return score_range(original, substitute, spec.tight_lo, spec.tight_hi, spec.accept_lo,
                            spec.accept_hi);
     }

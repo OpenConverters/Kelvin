@@ -95,13 +95,15 @@ PYBIND11_MODULE(PyKelvin, m) {
     m.def(
         "score_primary_value",
         [](const std::string& category, std::optional<double> original,
-           std::optional<double> substitute) -> json {
+           std::optional<double> substitute, std::optional<double> original_tolerance_pct) -> json {
             bool has = false;
-            auto r = kelvin::crossref::score_primary_value(category, original, substitute, has);
+            auto r = kelvin::crossref::score_primary_value(category, original, substitute, has,
+                                                           original_tolerance_pct);
             if (!has) return json(nullptr);  // category has no primary-value spec
             return json{{"verdict", r.verdict}, {"penalty", r.penalty}};
         },
-        py::arg("category"), py::arg("original"), py::arg("substitute"));
+        py::arg("category"), py::arg("original"), py::arg("substitute"),
+        py::arg("original_tolerance_pct") = std::nullopt);
 
     m.def(
         "over_dimensioning_penalty",

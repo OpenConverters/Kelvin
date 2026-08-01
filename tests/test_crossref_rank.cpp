@@ -135,3 +135,45 @@ TEST_CASE("a hard gate the substitute has no data for is rejected as unverified,
     REQUIRE(c.contains("notes"));
     CHECK(std::string(c["notes"][0]).find("saturation current") != std::string::npos);
 }
+
+TEST_CASE("a shifted resistor value cannot tie its exact-value siblings, and says why",
+          "[crossref][rank][abt497]") {
+    // ABT #497: ERA2AEC2152X, 21.5 kOhm +/-0.25 %, 0402. The 21.3 kOhm YAGEO part
+    // scored value=pass at exactly the penalty of the 21.5 kOhm siblings, with no
+    // note about the resistance at all — the wrong-value part and the exact-value
+    // ones were indistinguishable in the output.
+    json original = {{"mpn", "ERA2AEC2152X"}, {"value_si", 21500.0}, {"power_rating", 0.063},
+                     {"tolerance_pct", 0.25}, {"case_code", "0402"}};
+    json cands = json::array({
+        {{"mpn", "RT0402BRD0721K3L"}, {"value_si", 21300.0}, {"power_rating", 0.063},
+         {"tolerance_pct", 0.1}, {"case_code", "0402"}},
+        {{"mpn", "RT0402BRD0721K5L"}, {"value_si", 21500.0}, {"power_rating", 0.063},
+         {"tolerance_pct", 0.1}, {"case_code", "0402"}},
+    });
+    auto r = cross_reference("resistor", original, cands, Options{});
+    auto find = [&](const char* mpn) {
+        for (const auto& c : r["candidates"])
+            if (c["mpn"] == mpn) return c;
+        FAIL("candidate " << mpn << " missing from the result");
+        return json{};
+    };
+    const json shifted = find("RT0402BRD0721K3L"), exact = find("RT0402BRD0721K5L");
+
+    std::string shifted_value, exact_value;
+    for (const auto& p : shifted["params"])
+        if (p["name"] == "value") shifted_value = p["verdict"];
+    for (const auto& p : exact["params"])
+        if (p["name"] == "value") exact_value = p["verdict"];
+    CHECK(shifted_value == "warn");
+    CHECK(exact_value == "pass");
+    // Strictly worse than the exact-value sibling — it must not tie it.
+    CHECK(shifted["penalty"].get<double>() > exact["penalty"].get<double>());
+    CHECK_FALSE(exact.contains("notes"));
+
+    REQUIRE(shifted.contains("notes"));
+    const std::string note = shifted["notes"][0];
+    INFO("note: " << note);
+    CHECK(note.find("-0.93 %") != std::string::npos);
+    CHECK(note.find("0.25 % part") != std::string::npos);
+    CHECK(note.find("do not overlap") != std::string::npos);
+}

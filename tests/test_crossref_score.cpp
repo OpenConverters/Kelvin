@@ -85,3 +85,33 @@ TEST_CASE("missing value is unverified, never a silent pass", "[crossref][score]
     REQUIRE(score_range(1.5e-6, std::nullopt, 0.9, 1.1, 0.8, 1.25).verdict == UNVERIFIED);
     REQUIRE(score_primary_value("magnetic", std::nullopt, 1.5e-6, has).verdict == UNVERIFIED);
 }
+
+TEST_CASE("the original's tolerance bounds the resistor PASS window",
+          "[crossref][score][abt497]") {
+    bool has = false;
+    // ABT #497: ERA2AEC2152X, a 21.5 kOhm 0.25 % thin-film part, offered a
+    // 21.3 kOhm substitute. -0.93 % is inside the catalogue-wide +/-1 % band but
+    // 3.7x the original's entire guarantee, and the two guaranteed windows are
+    // disjoint (21279-21321 vs 21446-21554 Ohm) — not a pass.
+    auto tight = score_primary_value("resistor", 21500.0, 21300.0, has, 0.25);
+    REQUIRE(tight.verdict == WARN);
+    REQUIRE(tight.penalty > 0.0);
+    // The exact-value sibling still passes at zero penalty, so the two can never tie.
+    auto exact = score_primary_value("resistor", 21500.0, 21500.0, has, 0.25);
+    REQUIRE(exact.verdict == PASS);
+    REQUIRE(exact.penalty < tight.penalty);
+    // Inside the original's own band is still a pass.
+    REQUIRE(score_primary_value("resistor", 21500.0, 21460.0, has, 0.25).verdict == PASS);
+
+    // It NARROWS only, never widens: 21.0k stays a different E96 value from
+    // 21.5k however wide the original's tolerance is (-2.33 %, still a warn on
+    // a 5 % part), and the same shift on a 0.25 % part keeps its pass window.
+    REQUIRE(score_primary_value("resistor", 21500.0, 21000.0, has, 5.0).verdict == WARN);
+    REQUIRE(score_primary_value("resistor", 21500.0, 21300.0, has, 5.0).verdict == PASS);
+    REQUIRE(score_primary_value("resistor", 47000.0, 46800.0, has, 1.0).verdict == PASS);
+    // No tolerance stated: nothing is assumed, the category window stands.
+    REQUIRE(score_primary_value("resistor", 47000.0, 46800.0, has).verdict == PASS);
+    // A capacitor's asymmetric window is an oversizing allowance, not a
+    // restatement of its marking, so a stated tolerance must not shrink it.
+    REQUIRE(score_primary_value("capacitor", 1e-6, 1.2e-6, has, 10.0).verdict == PASS);
+}

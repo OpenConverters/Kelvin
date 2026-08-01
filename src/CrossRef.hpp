@@ -28,6 +28,8 @@
 // parameters differ, or whose mount type is incompatible, is rejected outright.
 #pragma once
 #include <algorithm>
+#include <cmath>
+#include <cstdio>
 #include <optional>
 #include <set>
 #include <stdexcept>
@@ -58,6 +60,22 @@ inline std::string str(const json& o, const char* k) {
     if (it == o.end() || it->is_null() || !it->is_string()) return "";
     return it->get<std::string>();
 }
+
+// A percentage as an engineer writes it in a note: two decimals at most, no
+// trailing zeros ("0.93 %", "5 %"). The other numeric notes here round to whole
+// units, which would print a 0.25 % tolerance as "0 %".
+inline std::string plain_pct(double v) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.2f", v);
+    std::string s(buf);
+    if (s.find('.') != std::string::npos) {
+        s.erase(s.find_last_not_of('0') + 1);
+        if (!s.empty() && s.back() == '.') s.pop_back();
+    }
+    return s + " %";
+}
+// The same, sign always shown — a shift has a direction and it matters.
+inline std::string signed_pct(double v) { return (v >= 0 ? "+" : "") + plain_pct(v); }
 
 // ── Critical ratings ─────────────────────────────────────────────────────────
 // Directional ratings that PARAM_SPECS leaves out because Heaviside gates them
@@ -258,13 +276,40 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     };
 
     // ── primary value ────────────────────────────────────────────────────────
+    const auto o_val = num(original, "value_si"), s_val = num(cand, "value_si");
+    const auto o_tol = num(original, "tolerance_pct"), s_tol = num(cand, "tolerance_pct");
     bool has_pv = false;
-    auto pv = score_primary_value(cat, num(original, "value_si"), num(cand, "value_si"), has_pv);
+    // The original's tolerance bounds the pass window where the tolerance IS the
+    // value's guarantee (resistors): a 0.25 % part cannot have a 0.93 % shift
+    // called a drop-in on the strength of a catalogue-wide +/-1 % band.
+    auto pv = score_primary_value(cat, o_val, s_val, has_pv, o_tol);
     if (has_pv) {
         params.push_back({{"name", "value"}, {"verdict", pv.verdict}});
         if (pv.verdict == FAIL) return reject("primary value out of range");
         penalty += opt.primary_weight * pv.penalty;
-        if (pv.verdict == WARN) demote();
+        if (pv.verdict == WARN) {
+            demote();
+            // Say WHAT moved and by how much. A bare "value: warn" left the row
+            // silent about the one parameter the part exists for, so a shifted
+            // value read exactly like an exact-value match (ABT #497).
+            if (o_val && s_val && *o_val > 0) {
+                const double shift = (*s_val / *o_val - 1.0) * 100.0;
+                std::string note = signed_pct(shift) + " shift from the original's nominal value";
+                if (o_tol && *o_tol > 0 && std::fabs(shift) > *o_tol) {
+                    note += "; the original is a " + plain_pct(*o_tol) +
+                            " part, so this sits outside the band it guarantees";
+                    // The stronger claim — that no unit of either part can meet the
+                    // other's spec — is about the GUARANTEED bands, so it is tested
+                    // on the bands themselves rather than on the nominal shift.
+                    if (s_tol && *s_tol >= 0 &&
+                        (*s_val * (1.0 + *s_tol / 100.0) < *o_val * (1.0 - *o_tol / 100.0) ||
+                         *s_val * (1.0 - *s_tol / 100.0) > *o_val * (1.0 + *o_tol / 100.0)))
+                        note += " and the two guaranteed windows do not overlap";
+                    note += " — not a drop-in anywhere the value sets a ratio or a reference";
+                }
+                notes.push_back(note);
+            }
+        }
     }
 
     // ── construction family (hard) ───────────────────────────────────────────
