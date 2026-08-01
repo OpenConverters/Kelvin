@@ -51,6 +51,15 @@ REPOS = {
         "path": Path.home() / "PSMA" / "TAS",
         "gates": [
             ["python3", "-m", "pytest", "tests/test_schemas.py", "-q"],
+            # The schema tests never look at DATA — they prove the schemas parse and
+            # cross-refer. Without this second gate an autonomous fixer editing a
+            # catalogue had nothing standing between it and the data except its own
+            # instructions, which is not a gate. This validates every record of any
+            # catalogue file the change touched against BOTH the family schema and the
+            # Blade Runner physics validator. Slow on purpose (~7 min for capacitors):
+            # it cannot use the diff, because data/*.ndjson is git-LFS and `git diff`
+            # renders the 3-line pointer rather than the records.
+            ["python3", "scripts/changed_records_gate.py"],
         ],
     },
 }
@@ -125,7 +134,9 @@ def run_gates(repo, gates):
     out = []
     ok = True
     for g in gates:
-        p = subprocess.run(g, cwd=str(repo), capture_output=True, text=True, timeout=3600)
+        # A full-catalogue gate can legitimately run for many minutes; a timeout that
+        # kills it would read as "gate failed" and block a good fix.
+        p = subprocess.run(g, cwd=str(repo), capture_output=True, text=True, timeout=7200)
         out.append(f"$ {' '.join(g)}\n{(p.stdout or '')[-1500:]}{(p.stderr or '')[-800:]}")
         if p.returncode != 0:
             ok = False
