@@ -30,7 +30,7 @@ struct ParamSpec {
     double tol_factor;
     std::optional<double> abs_tol;     // additive band (temps, dB) — overrides tol_factor
     bool magnitude = false;            // compare |value| (TCR, offset, bias)
-    bool exclude_missing_sub = false;  // missing substitute value -> FAIL (not UNVERIFIED)
+    bool exclude_missing_sub = false;  // missing substitute value disqualifies (ParamOutcome)
     const ClassRank* rank = nullptr;   // class-equivalence map (dielectric / family / y-n)
 };
 
@@ -92,11 +92,30 @@ inline std::string jstr(const nlohmann::json& p, const std::string& k) {
 }
 }  // namespace detail
 
+// The outcome of one parameter comparison. `verdict` is the reported vocabulary
+// (pass/warn/fail/unverified) and converts implicitly from a bare verdict, so the
+// comparators below read as they always did.
+//
+// `missing_required_sub` carries the one thing a verdict must NOT say: the
+// original states the parameter, the substitute's record does not carry it at
+// all, and the spec is one whose absence is disqualifying (exclude_missing_sub).
+// That is not a FAIL — a FAIL asserts a comparison, and this comparison had no
+// substitute-side operand — so it is reported UNVERIFIED, exactly as the same
+// known-vs-absent situation is reported on every other spec. The disqualifying
+// consequence (penalty, demotion, grade cap, and a note naming what must be
+// confirmed) is applied from this flag instead, in CrossRef.hpp.
+struct ParamOutcome {
+    ParamOutcome(const char* v) : verdict(v) {}  // NOLINT(google-explicit-constructor)
+    ParamOutcome(const char* v, bool missing) : verdict(v), missing_required_sub(missing) {}
+    const char* verdict;
+    bool missing_required_sub = false;
+};
+
 // Mirrors _compare_numeric: LOWER/HIGHER with abs_tol (additive) or tol_factor.
-inline const char* compare_numeric(const ParamSpec& spec, std::optional<double> o,
-                                   std::optional<double> s) {
+inline ParamOutcome compare_numeric(const ParamSpec& spec, std::optional<double> o,
+                                    std::optional<double> s) {
     if (!o && !s) return UNVERIFIED;
-    if (!s) return spec.exclude_missing_sub ? FAIL : UNVERIFIED;
+    if (!s) return {UNVERIFIED, spec.exclude_missing_sub};
     if (!o) return UNVERIFIED;
     double ov = *o, sv = *s;
     if (spec.dir == Dir::Lower) {
@@ -126,11 +145,11 @@ inline const char* compare_class(const ParamSpec& spec, const std::string& o_raw
 }
 
 // Mirrors _compare_exact: identity — equivalence groups, numeric tol, or string.
-inline const char* compare_exact(const ParamSpec& spec, const nlohmann::json& orig,
-                                 const nlohmann::json& sub) {
+inline ParamOutcome compare_exact(const ParamSpec& spec, const nlohmann::json& orig,
+                                  const nlohmann::json& sub) {
     bool o_pres = detail::present(orig, spec.key), s_pres = detail::present(sub, spec.key);
     if (!o_pres && !s_pres) return UNVERIFIED;
-    if (!s_pres) return spec.exclude_missing_sub ? FAIL : UNVERIFIED;
+    if (!s_pres) return {UNVERIFIED, spec.exclude_missing_sub};
     if (!o_pres) return UNVERIFIED;
     if (spec.rank) {
         std::string og = exact_group(norm_class(detail::jstr(orig, spec.key)), *spec.rank);
@@ -276,12 +295,12 @@ inline Verdict compare(const std::vector<Point>& op, const std::vector<Point>& s
 // saturation_current gate: %-drop-normalized when either side states a real
 // inductance-drop basis; otherwise the raw HIGHER_BETTER numeric compare (legacy
 // basis-unknown scalars — preserves existing pass/warn/fail granularity).
-inline const char* compare_saturation_current(const ParamSpec& spec, const nlohmann::json& orig,
-                                              const nlohmann::json& sub) {
+inline ParamOutcome compare_saturation_current(const ParamSpec& spec, const nlohmann::json& orig,
+                                               const nlohmann::json& sub) {
     std::vector<isat::Point> op = isat::resolve_points(orig), sp = isat::resolve_points(sub);
     bool o_has = !op.empty(), s_has = !sp.empty();
     if (!o_has && !s_has) return UNVERIFIED;
-    if (!s_has) return spec.exclude_missing_sub ? FAIL : UNVERIFIED;
+    if (!s_has) return {UNVERIFIED, spec.exclude_missing_sub};
     if (!o_has) return UNVERIFIED;
     if (!isat::has_basis(op) && !isat::has_basis(sp))
         return compare_numeric(spec, detail::jnum(orig, spec.key), detail::jnum(sub, spec.key));
@@ -293,8 +312,8 @@ inline const char* compare_saturation_current(const ParamSpec& spec, const nlohm
     return WARN;  // unreachable
 }
 
-inline const char* compare_param(const ParamSpec& spec, const nlohmann::json& orig,
-                                 const nlohmann::json& sub) {
+inline ParamOutcome compare_param(const ParamSpec& spec, const nlohmann::json& orig,
+                                  const nlohmann::json& sub) {
     if (spec.key == "saturation_current") return compare_saturation_current(spec, orig, sub);
     if (spec.dir == Dir::ClassMatch)
         return compare_class(spec, detail::jstr(orig, spec.key), detail::jstr(sub, spec.key));
@@ -343,9 +362,10 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
     static const std::vector<ParamSpec> kChipBead = {
         // exclude_missing_sub: impedance IS what a bead is. A candidate with no
         // impedance data cannot be verified as a substitute for one, so its
-        // absence FAILs rather than passing silently — otherwise a part with no
-        // curve at all accrues no penalty and outranks genuinely curve-matched
-        // parts, which is exactly the "missing data ranks best" pathology.
+        // absence is disqualifying rather than passing silently — otherwise a
+        // part with no curve at all accrues no penalty and outranks genuinely
+        // curve-matched parts, which is exactly the "missing data ranks best"
+        // pathology.
         {"impedance_100mhz", D::Higher, 0.8, std::nullopt, false, true, nullptr},
         // Peak |Z| and — critically — the frequency it occurs at. Two beads with
         // the same Z@100MHz can peak several-fold apart in height and in
@@ -356,7 +376,7 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
         // parts that work in genuinely different bands.
         // Also exclude-if-missing: peak |Z| and its frequency are the curve. A
         // candidate carrying neither the 100 MHz value NOR a curve takes both
-        // failures and therefore sorts below one that carries the curve and
+        // penalties and therefore sorts below one that carries the curve and
         // matches it — otherwise the part we know least about wins on having
         // accrued the fewest penalties.
         {"impedance_peak", D::Higher, 0.8, std::nullopt, false, true, nullptr},
@@ -439,8 +459,31 @@ inline std::vector<std::pair<std::string, std::string>> evaluate_params(
             has_data = has_data || detail::present(orig, "saturation_points") ||
                        detail::present(sub, "saturation_points");
         if (!has_data) continue;
-        out.emplace_back(spec.key, compare_param(spec, orig, sub));
+        out.emplace_back(spec.key, compare_param(spec, orig, sub).verdict);
     }
+    return out;
+}
+
+// How a spec key is spelled in a note an engineer reads. Only the keys whose
+// bare form reads badly are listed; anything else is the key with its
+// underscores opened out (dcr, srf, positions, …).
+inline std::string param_label(const std::string& key) {
+    static const std::vector<std::pair<std::string, std::string>> kLabels = {
+        {"esr", "ESR"},
+        {"ripple_current", "RMS ripple current rating"},
+        {"saturation_current", "saturation current"},
+        {"impedance_100mhz", "impedance at 100 MHz"},
+        {"impedance_peak", "peak impedance"},
+        {"impedance_peak_freq", "peak impedance frequency"},
+        {"positions", "position count"},
+        {"channels", "channel count"},
+        {"rated_current_A", "rated current"},
+        {"rated_voltage_V", "rated voltage"},
+    };
+    for (const auto& [k, label] : kLabels)
+        if (k == key) return label;
+    std::string out = key;
+    std::replace(out.begin(), out.end(), '_', ' ');
     return out;
 }
 

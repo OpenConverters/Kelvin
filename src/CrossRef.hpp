@@ -148,11 +148,18 @@ inline constexpr double kVerdictFailPenalty = 3.0;
 // the part fits the original's land pattern — a claim we cannot make without the
 // substitute's dimensions — so an unverified footprint caps the grade at
 // minor_review however clean the electricals are.
+//
+// `missing_required_data` is the electrical twin of that: the substitute's record
+// carries no value at all for a parameter whose absence is disqualifying (ESR on
+// a capacitor, Isat on a magnetic). Nothing FAILED — nothing was compared — but a
+// part nobody can check on the spec that defines it is not a drop-in either, so
+// it takes the same major_review cap a real regression would.
 inline const char* grade_for(const std::string& status, FootprintTier fit, bool any_warn,
-                             bool any_fail, bool footprint_unverified = false) {
+                             bool any_fail, bool footprint_unverified = false,
+                             bool missing_required_data = false) {
     if (status == "no_substitute") return "no_substitute";
     if (fit == FootprintTier::Overflows) return "redesign";
-    if (any_fail) return "major_review";
+    if (any_fail || missing_required_data) return "major_review";
     // A materially smaller body (strict_case families) is a footprint CHANGE — the
     // pads won't match — so it is a review, not a true drop-in.
     if (any_warn || fit == FootprintTier::OneSizeLarger || fit == FootprintTier::Smaller ||
@@ -220,6 +227,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     std::string status = "recommended";
     json params = json::array();
     std::vector<std::string> notes;
+    // A parameter whose absence disqualifies was absent on the substitute — an
+    // unknown, not a regression, so it caps the grade rather than reading as one.
+    bool missing_required_data = false;
     // Direction bookkeeping: on each directional parameter we could compare,
     // did the substitute come out strictly ahead of the original, or behind?
     int better = 0, worse = 0;
@@ -309,15 +319,34 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             has_data = has_data || detail::present(original, "saturation_points") ||
                        detail::present(cand, "saturation_points");
         if (!has_data) continue;
-        const std::string verdict = compare_param(spec, original, cand);
+        const ParamOutcome outcome = compare_param(spec, original, cand);
+        const std::string verdict = outcome.verdict;
         params.push_back({{"name", spec.key}, {"verdict", verdict}});
 
         const bool numeric = (spec.dir == Dir::Lower || spec.dir == Dir::Higher);
         auto o = numeric ? detail::jnum(original, spec.key) : std::nullopt;
         auto s = numeric ? detail::jnum(cand, spec.key) : std::nullopt;
+        const bool hard_gate =
+            is_hard_param(cat, spec.key) && (o || detail::present(original, spec.key));
 
-        if (verdict == FAIL) {
-            if (is_hard_param(cat, spec.key) && (o || detail::present(original, spec.key)))
+        if (outcome.missing_required_sub) {
+            // The substitute's record carries no value for this parameter at all,
+            // so nothing was compared: the verdict stays UNVERIFIED rather than
+            // claiming a regression that had no substitute-side operand. The
+            // consequence is still the FAIL's — same penalty, same demotion, and
+            // a grade capped at major_review — so a part we cannot check never
+            // outranks one we could. Say so in a note, or the engineer reads an
+            // unexplained downgrade (ABT #496).
+            notes.push_back("substitute's record carries no " + param_label(spec.key) +
+                            " — the original states one, so this comparison could not be made; "
+                            "confirm it from the datasheet before this swap");
+            if (hard_gate) return reject("a parameter the match turns on is absent from the "
+                                         "substitute's record — cannot be verified");
+            demote();
+            penalty += opt.gate_weight * kVerdictFailPenalty;
+            missing_required_data = true;
+        } else if (verdict == FAIL) {
+            if (hard_gate)
                 return reject(spec.dir == Dir::ExactMatch
                                   ? "an identity parameter differs from the original"
                                   : "a critical rating falls far below the original");
@@ -686,7 +715,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // (any_warn -> minor_review), so it must not also read as unverified.
         footprint_unverified = (f == "unknown");
     }
-    out["grade"] = grade_for(status, tier, any_warn, any_fail, footprint_unverified);
+    out["grade"] =
+        grade_for(status, tier, any_warn, any_fail, footprint_unverified, missing_required_data);
 
     // Direction: on the directional parameters we could actually compare, did
     // the substitute come out ahead or behind? Mirrors the industry's upgrade /
