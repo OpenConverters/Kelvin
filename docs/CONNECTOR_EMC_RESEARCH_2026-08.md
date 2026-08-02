@@ -172,9 +172,11 @@ All counts re-measured against the file; record shape is `{connector:{manufactur
 
 ## 4. Recommended tool
 
-# Neumann — the pin-field delta comparator
+# Ampère — the pin-field delta comparator
 
-**One line:** given a real catalog part with a *measured* pin lattice, Neumann reports how much the coupling and ground-return inductance change between two ground/signal patterns on that same part — and refuses to report anything absolute.
+> **Naming (2026-08-02):** this tool was named *Neumann* in the first draft (after Neumann's mutual-inductance formula, still the physics kernel — see "Grover/Neumann kernel"); renamed **Ampère** for a more famous name that still points at the core physics (current-to-current magnetic coupling between adjacent pins = the crosstalk).
+
+**One line:** given a real catalog part with a *measured* pin lattice, Ampère reports how much the coupling and ground-return inductance change between two ground/signal patterns on that same part — and refuses to report anything absolute.
 
 The entire design rests on one observation that survived all 24 critiques: **on a fixed lattice, a ratio cancels ε_eff, pin cross-section, conductor length, dV/dt, dI/dt, victim impedance, noise margin, cable length and Z_cm.** Every one of those is a thing we do not have. A difference is computable from data we own; a number is not.
 
@@ -258,7 +260,7 @@ Evaluate the gate at ε_eff = 1.0 (the most permissive bound) so the *refusal* i
 
 Plus a per-part badge that is never silently defaulted: **MEASURED LATTICE** (rows present, 40,551 parts) vs **ASSUMED LATTICE** (rows imputed) vs **NO LATTICE — REFUSED**.
 
-### 4.5 What Neumann deliberately does NOT claim
+### 4.5 What Ampère deliberately does NOT claim
 
 This list is the credibility spine and belongs on the tool's front page.
 
@@ -289,7 +291,7 @@ New repo, sibling to Kelvin/Faraday/Hertz/Kirchhoff, linking `faraday` and `hert
 **Two corrections to the concept's stated reuse plan:**
 
 1. **Do not replace `find_connector_ground_spread` (Screener.hpp:1933).** Reading the source: it gates on `conns.size() >= 2`, takes the max pairwise distance between *two different* edge-mounted connectors' ground centroids, requires `worst >= 0.4*diag`, and does print millimetres. Its mechanism is Franz's series-ground structure across board copper — tens of nH — not intra-connector inductance of 1–15 nH. **Add a sibling rule; deleting that one removes a defect it was written to catch.**
-2. **Do not add a third radiated-field implementation.** `faraday::emc::cm_e_field` and `Hertz::radiated_efield_dbuvm` are already the same Ott monopole expression differing by whether the ×2 ground reflection is conditional. If Neumann ever touches that path, pick one and add a Catch2 test asserting agreement.
+2. **Do not add a third radiated-field implementation.** `faraday::emc::cm_e_field` and `Hertz::radiated_efield_dbuvm` are already the same Ott monopole expression differing by whether the ×2 ground reflection is conditional. If Ampère ever touches that path, pick one and add a Catch2 test asserting agreement.
 
 Catch2 binaries run directly, never `ctest`. Playwright always headless.
 
@@ -301,11 +303,11 @@ Catch2 binaries run directly, never `ctest`. Playwright always headless.
 
 **2. Volta-lite — the standards spine.** The ~30 public interface-standard net-map tables, the shield-evidence enum, and `matedHeight` republished as **276 series-pair records with [min,max] ranges and a `skuFanout` count** instead of 53,674 rows implying 53,674 measurements. *Lost because* it is the dependency, not the product — and because DigiKey [cat 315](https://www.digikey.com/en/products/filter/rectangular-connectors-headers-receptacles-female-sockets/315) / [cat 314](https://www.digikey.com/en/products/filter/rectangular-connectors-headers-male-pins/314) already expose `Mated Stacking Heights`, `Contact Shape` and `Contact Length` as free facets over 506k parts. **This is Phase 0 of the recommendation.**
 
-**3. Poynting-lite — L_g,eff as a Faraday finding in nanohenries.** Today a 26-way ribbon with one ground pin and one with thirteen interleaved grounds are literally indistinguishable to Faraday. *Lost because* it is a sub-feature of Neumann (the same `1ᵀA⁻¹1` falls out of the same factorization), and because attaching dBµV/m to it is the credibility hazard every lens flagged.
+**3. Poynting-lite — L_g,eff as a Faraday finding in nanohenries.** Today a 26-way ribbon with one ground pin and one with thirteen interleaved grounds are literally indistinguishable to Faraday. *Lost because* it is a sub-feature of Ampère (the same `1ᵀA⁻¹1` falls out of the same factorization), and because attaching dBµV/m to it is the credibility hazard every lens flagged.
 
 **4. Zobel-inverse — a max-tolerable-pin-capacitance gate inside Hertz.** ~200 lines, no transcription, no maintenance tail: max C from rise-time and source impedance, max total C from **touch/leakage current** (IEC 60601/62368 — 25 pins × 1000 pF = 25 nF to chassis, which the original concept never mentioned), then the 20 dB/dec (C) vs 40–60 dB/dec (Pi) envelope to say feasible / infeasible / needs a bulkhead feedthrough. *Lost because* the market is mil-aero/medical, not power converters, and the catalog contributes 46 records.
 
-**5. Grover-as-calculator.** Same physics as Neumann, exposed interactively inside Faraday where the layout supplies both pin positions and the ground assignment, writing nothing to disk. *Lost because* it is Neumann's degenerate case: no catalog, no cross-part comparison, no answer without a board.
+**5. Grover-as-calculator.** Same physics as Ampère, exposed interactively inside Faraday where the layout supplies both pin positions and the ground assignment, writing nothing to disk. *Lost because* it is Ampère's degenerate case: no catalog, no cross-part comparison, no answer without a board.
 
 ---
 
@@ -321,7 +323,7 @@ Catch2 binaries run directly, never `ctest`. Playwright always headless.
 
 **Zobel — Filtered-Connector Selector.** *Killed by:* the catalog contributes **46 records**, from 2 vendors, with 6 capacitance values, all in prose. Ten of the fourteen named vendors have **zero parts** in the catalog; Würth's own WE-D-SUB filtered line is absent despite Würth being an ingested manufacturer. Physically: an ideal 1000 pF shunt in the MIL-STD-220 50/50 Ω jig gives **0.002 dB at 150 kHz and 13.7 dB at 30 MHz** — approximately nothing across the entire conducted band Hertz owns, and the vendors' lowest tabulated point is 20 MHz. Meanwhile [EESeal Builder](https://www.eeseal.com/) is free, configures a filter for your connector, and mails a custom sample in under 48 h.
 
-**Neumann as originally scoped** (absolute millivolts + an optimizer-as-oracle). *Killed by:* `v = Z_v·C_m·dV/dt` has no victim capacitance, so at Z_v = 20 kΩ it returns 5.2 V from a 40 V aggressor through 0.128 pF — larger than the aggressor swing. The correct charge-divider limit with a realistically compensated FB node (100 pF) is 52 mV: **100× over**. The "capacitive coupling is 9× inductive" differentiator was an artifact of omitting the one component guaranteed to be present on a feedback node.
+**Ampère as originally scoped** (absolute millivolts + an optimizer-as-oracle). *Killed by:* `v = Z_v·C_m·dV/dt` has no victim capacitance, so at Z_v = 20 kΩ it returns 5.2 V from a 40 V aggressor through 0.128 pF — larger than the aggressor swing. The correct charge-divider limit with a realistically compensated FB node (100 pF) is 52 mV: **100× over**. The "capacitive coupling is 9× inductive" differentiator was an artifact of omitting the one component guaranteed to be present on a feedback node.
 
 **Volta as a published data product.** *Killed by:* **941,041 of 1,024,515 `matesWith` edges (91.9%) point at a series that does not exist under that manufacturer**; 87,712 `matedHeight` edges are 1,244 distinct facts across 276 series pairs, 126 of which carry conflicting heights; and the headline inductance claim (14.8 nH) is a single pin's *partial self*-inductance, not a loop, and ignores that a mezzanine has dozens of parallel grounds.
 
@@ -335,7 +337,7 @@ Ranked by leverage per week. Note the counter-intuitive result at the bottom.
 
 **A. Row count and row pitch, per series — 3–4 weeks. HARD DEPENDENCY.**
 102,971 parts have pitch+positions but no rows; `rowPitch` exists on 57 records against 70,829 multi-row parts. Molex (94,255), Samtec (55,450) and TE (35,192) publish rows on **zero** records. This is a **series-level** target — 1,110 series, not 392k parts — and both fields are on every 2-row datasheet drawing.
-*Feasibility:* Samtec HTML product pages return 200 to curl; TE's `DocumentDelivery` PDFs work with the full `Sec-Fetch-*` + `sec-ch-ua` header set (4/4 sampled returned real PDFs, avg 36 kB of text); Molex and Amphenol CS are Cloudflare/Akamai-gated and need the Playwright-MCP in-page-`fetch` trick. **Without this, Neumann's addressable population stays at 40,551.**
+*Feasibility:* Samtec HTML product pages return 200 to curl; TE's `DocumentDelivery` PDFs work with the full `Sec-Fetch-*` + `sec-ch-ua` header set (4/4 sampled returned real PDFs, avg 36 kB of text); Molex and Amphenol CS are Cloudflare/Akamai-gated and need the Playwright-MCP in-page-`fetch` trick. **Without this, Ampère's addressable population stays at 40,551.**
 
 **B. Interface-standard pinout join — ~1 week, clerical, fully citable.**
 ~30 public tables: USB-C (A1/A12/B1/B12 GND), TIA-568 T568A/B with the (3,6) split pair, HDMI grounds at 2/5/8/11/17, DisplayPort at 2/5/8/11/16, SATA 1/4/7, PCIe CEM, M12 codings A/B/C/D/X/K/L/T/Y, IEC 60320, DE-9 TIA-574, DB-25 pin 7. **Realistic yield ~9,000 parts, not the 22,000 originally claimed** — 4,157 of 9,510 D-Subs lack a position count so DE-9 vs DB-25 cannot be chosen, and "USB" is a generic 561-part bucket. Backfilling positions raises the ceiling to ~16,800. This is the only route to a *real* ground pattern instead of a user guess.
@@ -343,7 +345,7 @@ Ranked by leverage per week. Note the counter-intuitive result at the bottom.
 **C. Electrical parametrics from datasheet PDFs — 4–6 weeks.**
 312,456 URLs → **167,613 unique documents** (1.86 parts/doc), so ~168k fetches not 312k. **118,119 (37.8%) return a real PDF to plain curl** (Sullins 82,518, TE 21,909, Harwin 5,173, JST 4,039, CUI 2,589, Würth 1,891); 86,541 are genuine PDFs behind a WAF (Molex, Amphenol CS → Playwright); 103,913 are HTML pages needing one extra hop. Text-layer yield 22/24 sampled; **Harwin drawings are frequently vector-only and need OCR**. Projected: DWV 4.4% → ~45%, insulation resistance 11.4% → ~55%, contact resistance 12.0% → ~62%, recommended footprint 0% → 50–70%.
 
-**D. Per-series derating curves — 4–6 weeks, high value but not for Neumann.**
+**D. Per-series derating curves — 4–6 weeks, high value but not for Ampère.**
 The only path that converts the derating column from Tier C to Tier A. Target the ~46,068 power-family parts ≥5 A. Current rating appears in 10 of 24 sampled PDFs; the *curve* in maybe 25%.
 
 **E. Pin cross-section from drawings — DEPRIORITISE.**
@@ -375,7 +377,7 @@ Our two secondary sources disagree by 1.6× at 250 V PD2/IIIa. That is not a pay
 
 ### Phase 1 — the delta engine (8–10 weeks). Hard gate.
 
-**Deliverables:** the Grover/Neumann kernel, minimum-energy return solve, `L_g,eff`, Schur-complemented C_m, and the ground-ratio sweep (1:1 / 2:1 / 3:1 / all-signal) reported **only as Δ dB with a Tier badge and a MEASURED/ASSUMED lattice flag**. The `t_r ≥ 6·T_d` refusal. Optional MNA-terminated victim waveforms when the user supplies R and C. WASM + Vue shell on the Faraday pattern.
+**Deliverables:** the Grover Ampère kernel, minimum-energy return solve, `L_g,eff`, Schur-complemented C_m, and the ground-ratio sweep (1:1 / 2:1 / 3:1 / all-signal) reported **only as Δ dB with a Tier badge and a MEASURED/ASSUMED lattice flag**. The `t_r ≥ 6·T_d` refusal. Optional MNA-terminated victim waveforms when the user supplies R and C. WASM + Vue shell on the Faraday pattern.
 
 **Validation gate — all four must pass:**
 1. **Independent solver cross-check.** Partial-L and capacitance matrices reproduced within 5% against **FastHenry2 + FasterCap** on 5–10 canonical pin fields. Two algebraic routes through the same magnetostatic assumption agreeing to 1.7% is a unit test, not validation — that claim must be retired.

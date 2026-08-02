@@ -518,13 +518,13 @@ Six tools were rejected in the earlier round. Here is exactly what revives each,
 
 **Survives — CONDITIONALLY, and it is marginal.** Filtered connectors are a genuinely small population. Expect **EST low thousands, not tens of thousands**. The Schurter pull is cheap (E-difficulty, no gate) and lands in W3 anyway for other reasons, so the marginal cost is near zero — but it should not be sold as a headline capability. Ship it as a filter tab if the record count clears ~1,500; otherwise leave it dead.
 
-### 4.6 Neumann — limited to 40,551 parts by missing rows
+### 4.6 Ampère — limited to 40,551 parts by missing rows
 
 ✅ **Re-verified: `rows` present on 142,393 of 392,346 (36.3%), and exactly 0 on Molex (94,255), Samtec (55,450), TE (35,192), JAE (4,106), Amphenol RF (5,776), Adam Tech (561) = 195,340 parts.**
 
 **Revived by:** `rows` from the Samtec PN grammar (`-S/-P/-D/-T/-Q`, confirmed from the vendor's own configurator), Sullins (already ✅ 82,518/82,518), and a Molex/TE re-pull with a wider field set.
 
-**Survives — this is the one clean, unambiguous win.** `rows` genuinely is published by all three, genuinely is decodable for Samtec locally, and its acquisition is bounded. **But it does not get you to a pin field**, because `rowPitch` (✅ 57 records) remains missing. Neumann's part count goes up; the *geometry* coverage does not move until **G-RP** passes. Do not let the `rows` win be reported as a geometry win — that conflation is the single most misleading thing in the original plan.
+**Survives — this is the one clean, unambiguous win.** `rows` genuinely is published by all three, genuinely is decodable for Samtec locally, and its acquisition is bounded. **But it does not get you to a pin field**, because `rowPitch` (✅ 57 records) remains missing. Ampère's part count goes up; the *geometry* coverage does not move until **G-RP** passes. Do not let the `rows` win be reported as a geometry win — that conflation is the single most misleading thing in the original plan.
 
 ---
 
