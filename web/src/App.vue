@@ -111,7 +111,8 @@ const VIEWS = [
       <dl class="cal mono" aria-label="index calibration">
         <div><dt>PARTS</dt><dd>{{ totalParts ? totalParts.toLocaleString() : '—' }}</dd></div>
         <div><dt>FAMILIES</dt><dd>{{ Object.keys(counts).length || '—' }}</dd></div>
-        <div><dt>INDEX</dt><dd>{{ buildTag || '—' }}</dd></div>
+        <!-- INDEX (the shard buildId hash) is an internal integrity stamp, not
+             user-facing — kept out of the metrology sticker on purpose. -->
         <div class="led-cell">
           <dt>STATUS</dt>
           <dd><i class="led" :class="boot.error ? 'fault' : boot.phase === 'ready' ? 'ok' : 'warm'" />{{ boot.error ? 'FAULT' : boot.phase === 'ready' ? 'READY' : 'BOOT' }}</dd>
