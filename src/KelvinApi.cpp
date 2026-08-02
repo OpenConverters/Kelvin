@@ -318,6 +318,9 @@ json Engine::select(const std::string& category, const json& req, const json& op
     if (f == Family::Mosfet) {
         auto op_fsw = op_fsw_of(options);
         MosfetConstraints c = mosfet_constraints(req, op_fsw);
+        // Optional gate-charge ceiling (Heaviside assemble.py's qg_max =
+        // 0.02*pout/(10*fsw)); absent -> stays INFINITY (kirchhoff_fill's no-limit).
+        if (auto v = opt_num(options, "qgMax")) c.qg_max = *v;
         if (options.contains("technologyAllowed") && options.at("technologyAllowed").is_array()) {
             c.technology_allowed.clear();
             for (const auto& t : options.at("technologyAllowed"))
@@ -354,6 +357,10 @@ json Engine::select(const std::string& category, const json& req, const json& op
     if (f == Family::Capacitor) {
         CapacitorConstraints c = capacitor_constraints(req);
         c.exclude_discontinued = opt_bool(options, "excludeDiscontinued", true);
+        // Optional absolute capacitance-window override (Heaviside assemble.py's
+        // 0.8x..10x target); absent -> the req-derived cnom..kCapOversizeMax window.
+        if (auto v = opt_num(options, "capacitanceMin")) c.capacitance_min = *v;
+        if (auto v = opt_num(options, "capacitanceMax")) c.capacitance_max = *v;
         if (options.contains("technologyAllowed") && options.at("technologyAllowed").is_array()) {
             for (const auto& t : options.at("technologyAllowed"))
                 if (t.is_string()) c.technology_allowed.insert(t.get<std::string>());
@@ -367,6 +374,11 @@ json Engine::select(const std::string& category, const json& req, const json& op
     }
     if (f == Family::Resistor) {
         ResistorConstraints c = resistor_constraints(req);
+        // Optional tighter value/tolerance windows (Heaviside assemble.py uses
+        // max_value_deviation=0.05, max_tolerance=0.01); absent -> resistor_constraints'
+        // kirchhoff_fill defaults (0.2 deviation, req.tolerance-or-0.05 tolerance).
+        if (auto v = opt_num(options, "maxValueDeviation")) c.max_value_deviation = *v;
+        if (auto v = opt_num(options, "maxTolerance")) c.max_tolerance = *v;
         const Shard<ResistorRow>& sh = resistor_shard();
         std::optional<FileRecordFetcher> fetch;
         if (include_env) fetch.emplace(ndjson_path(Family::Resistor));
@@ -427,6 +439,10 @@ json Engine::select(const std::string& category, const json& req, const json& op
         throw InvalidOptions(
             "controller select needs options.topology + inputVoltage + switchingFrequency");
     ControllerConstraints c = controller_constraints(req, *topo, *vin, *fsw);
+    // Optional integrated-FET filter (Heaviside assemble.py passes integrated_fet=False
+    // for discrete-switch designs); absent -> nullopt = don't-care (kirchhoff_fill).
+    if (options.contains("integratedFet") && options.at("integratedFet").is_boolean())
+        c.integrated_fet = options.at("integratedFet").get<bool>();
     const Shard<ControllerRow>& sh = controller_shard();
     std::optional<FileRecordFetcher> fetch;
     if (include_env) fetch.emplace(ndjson_path(Family::Controller));
