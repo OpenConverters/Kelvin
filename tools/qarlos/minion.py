@@ -200,6 +200,8 @@ def main():
         sys.exit(f"{repo} does not exist")
 
     dirty_before = set(git_status(repo))
+    head_before = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                                 capture_output=True, text=True).stdout.strip()
     prompt = (f"Fix this issue. You are working in {repo}.\n\n"
               f"{body}\n\n"
               f"Reproduce it, fix the cause, run the gates, then reply with the strict "
@@ -231,7 +233,22 @@ def main():
         print(f"minion: no JSON report.\n{txt[-1200:]}")
         return 2
 
-    touched = [f for f in git_status(repo) if f not in dirty_before]
+    # What this run changed = still-dirty files PLUS anything it committed itself.
+    # Minion's agent frequently commits its own work before returning, which left the
+    # dirty-set diff empty and reported "Files: (none)" for a run that had just repaired
+    # 183 records, fixed two importers and added a validator rule (ABT #524, 2026-08-02).
+    # Every guard hangs off this list, so an empty one silently disabled all of them and
+    # skipped the pathspec commit and the clean-HEAD check.
+    head_now = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                              capture_output=True, text=True).stdout.strip()
+    committed_here = []
+    if head_before and head_now and head_before != head_now:
+        d = subprocess.run(["git", "-C", str(repo), "diff", "--name-only",
+                            f"{head_before}..{head_now}"], capture_output=True, text=True)
+        committed_here = [f for f in d.stdout.split() if f]
+    touched = sorted(set(f for f in git_status(repo) if f not in dirty_before)
+                     | set(committed_here))
+    self_committed = bool(committed_here)
     print(f"  fixed={report.get('fixed')}  files={touched}")
     print(f"  root cause: {report.get('root_cause','')[:300]}")
     print(f"  wider impact: {report.get('wider_impact','')[:300]}")
@@ -269,7 +286,16 @@ def main():
                         "Kelvin/tools/qarlos/lessons.py.\n\n- " + "\n- ".join(failed_guards)])
         return 1
 
-    ok, gate_out = run_gates(repo, cfg["gates"])
+    # Gate against where the run STARTED. changed_records_gate defaults to --base HEAD,
+    # so once the agent has committed its own work the changed files no longer look
+    # changed and the gate validates the wrong file — in ABT #524 it reported on
+    # mosfets.ndjson while the diode repair it was supposed to check sailed past.
+    gates = [list(g) for g in cfg["gates"]]
+    if self_committed and head_before:
+        for g in gates:
+            if any("changed_records_gate" in part for part in g):
+                g.extend(["--base", head_before])
+    ok, gate_out = run_gates(repo, gates)
     print(f"  gates: {'PASS' if ok else 'FAIL'}")
     if not ok:
         print(gate_out[-2000:])
@@ -278,7 +304,23 @@ def main():
                         f"committed.\n\n{gate_out[-3000:]}"])
         return 1
 
-    if a.commit and touched:
+    if self_committed:
+        # The agent already landed it, so commit_only never sees it and the pathspec
+        # protection did not apply. Verifying HEAD is the one check still available.
+        code_touched = [f for f in touched if not DATA_ONLY.match(f)]
+        chg = cfg.get("clean_head_gates")
+        if code_touched and chg:
+            hok, hmsg = guards.verify_clean_head(repo, chg)
+            print(f"  clean-HEAD (agent self-committed): {'PASS' if hok else 'FAIL'}")
+            if not hok:
+                print(hmsg[-1500:])
+                subprocess.run([ABT, "comment", str(a.id), "--body",
+                                "CRITICAL: the agent committed its own fix and HEAD does "
+                                "NOT pass its own gates from a clean checkout.\n\n"
+                                f"{hmsg[-2500:]}"])
+                return 4
+
+    if a.commit and touched and not self_committed:
         msg = (f"{report.get('summary','fix')}\n\n"
                f"Root cause: {report.get('root_cause','')}\n"
                f"Wider impact: {report.get('wider_impact','')}\n\n"

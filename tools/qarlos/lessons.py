@@ -243,6 +243,29 @@ LESSONS: List[Lesson] = [
         tags=["provenance"],
     ),
 
+    Lesson(
+        id="the-agent-commits-its-own-work",
+        audience="minion",
+        rule="Do not infer 'what this run changed' from the dirty working tree alone. An "
+             "agent that commits its own fix leaves the tree clean, and every check that "
+             "hangs off that list then silently does nothing.",
+        incident="2026-08-02, the first production run with these lessons loaded. It "
+                 "repaired 183 diode records, fixed two importers and added a Blade Runner "
+                 "rule — genuinely good work, visibly shaped by the lessons — and the "
+                 "harness reported 'Files: (none)', because the agent had committed before "
+                 "returning. Consequences: the rule-calibration guard saw no validator "
+                 "paths and did not fire on a run that ADDED A RULE; the pathspec commit "
+                 "never ran; the clean-HEAD check never ran; and changed_records_gate, "
+                 "which defaults to --base HEAD, found nothing changed and validated "
+                 "mosfets.ndjson while the diode repair it existed to check went ungated.",
+        apply="Compute the change set as (still-dirty files) UNION (files in "
+              "head_before..head_now), and pass --base <head_before> to any gate that "
+              "diffs against HEAD. A guard that quietly evaluates an empty list is "
+              "indistinguishable from a guard that passed.",
+        enforced_by="minion.py (touched/self_committed)",
+        tags=["harness", "git"],
+    ),
+
     # ---- reporting ---------------------------------------------------------
     Lesson(
         id="do-not-starve-the-newest-findings",

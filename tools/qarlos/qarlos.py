@@ -39,6 +39,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+import lessons     # noqa: E402  — the rules previous runs paid for
 KELVIN = HERE.parent.parent
 PROBE = HERE / "probe.mjs"
 STATE = Path.home() / ".qarlos"
@@ -152,7 +154,9 @@ or
   "what_is_wrong": "<what the tool said>",
   "evidence": "<the numbers that contradict it, quoting the raw record>",
   "expected": "<what it should have said>",
-  "population_query": <the query, or null for code defects>}]}"""
+  "population_query": <the query, or null for code defects>}]}
+
+""" + lessons.render("qarlos")
 
 
 VERIFY_SYSTEM = """You are verifying a claimed defect in a component cross-reference tool, and your job is to REFUTE it. The claim was made by another reviewer who saw the same data. Most claims that reach you are wrong in some detail, and filing a wrong one wastes an engineer's day.
