@@ -407,6 +407,25 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             resistor_class_conflict = true;
         }
     }
+    // A single-phase bridge rectifier is not a discrete diode: four dies on four
+    // terminals (AC, AC, +, -), a Vf quoted per element against a path that runs
+    // through two of them, and an If(AV) that is the bridge's OUTPUT current. It
+    // takes the same treatment as the resistor array above — a FAIL on the device
+    // class, which caps the grade at major_review — rather than a rejection, because
+    // four discretes DO replace a bridge once the board changes (ABT #521).
+    bool diode_class_conflict = false;
+    if (cat == "diode") {
+        const std::string conflict =
+            diode_configuration_conflict(str(original, "case_code"), str(original, "mpn"),
+                                         str(cand, "case_code"), str(cand, "mpn"));
+        if (!conflict.empty()) {
+            params.push_back({{"name", "configuration"}, {"verdict", FAIL}});
+            demote();
+            penalty += opt.gate_weight * kVerdictFailPenalty;
+            notes.push_back(conflict);
+            diode_class_conflict = true;
+        }
+    }
     // Si / SiC / GaN differ in gate-drive requirements — a driver redesign, not
     // a drop-in, so it is surfaced loudly rather than scored away.
     if (cat == "mosfet" || cat == "igbt" || cat == "diode") {
@@ -562,8 +581,11 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // be allowed to overrule it: an EXB-V8V array and a discrete 1206 share a
         // 3.2 x 1.6 mm outline, so the size compare below would report "fits" for a
         // part that lands on two pads out of eight. Claiming the slot first is what
-        // stops that — every compare below is guarded on it still being free.
-        if (resistor_class_conflict) {
+        // stops that — every compare below is guarded on it still being free. A
+        // four-terminal bridge module is the same story one rung coarser: the
+        // case-code gate below would have called SMC -> SIP-4 an ordinary
+        // "different_case" WARN, when the pads cannot be made to match at all.
+        if (resistor_class_conflict || diode_class_conflict) {
             out["footprint"] = "different_land_pattern";
             params.push_back({{"name", "footprint"}, {"verdict", FAIL}});
             penalty += opt.footprint_weight * kVerdictFailPenalty;

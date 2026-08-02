@@ -649,3 +649,197 @@ TEST_CASE("the device class survives extraction into the browse row",
     CHECK(r["candidates"][0]["grade"] == "major_review");
     CHECK(r["candidates"][0]["footprint"] == "different_land_pattern");
 }
+
+// ── diode device configuration: bridge module vs discrete (ABT #521) ─────────
+// GBU8KS is a 4-die single-phase bridge on four terminals (AC, AC, +, -). Offered
+// against Vishay's S8J — a two-terminal SMC rectifier — it was graded
+// minor_review, the only candidate in a 307-part pool above major_review, on a
+// single note that reduced the difference to a land-pattern change. Its 1.0 V Vf
+// is per element (two in series: ~2.0 V in circuit, not the +18 % the vf=warn
+// implied) and its 8 A If(AV) is bridge OUTPUT current, ~4 A per element, against
+// S8J's 8 A per-diode rating that if_avg=pass equated it to.
+
+TEST_CASE("a diode's device configuration is read from what its package declares",
+          "[crossref][classes][abt521]") {
+    // Outlines that exist only as single-phase bridges (112 catalogue records).
+    CHECK(declares_diode_module("GBU"));
+    CHECK(declares_diode_module("GBJ"));
+    CHECK(declares_diode_module("KBPC"));
+    CHECK(declares_diode_module("KBP"));
+    CHECK(declares_diode_module("MBS"));
+    // The trailing digits of GBPC4 are the outline's current rating, not leads.
+    CHECK(declares_diode_module("GBPC4 28.75x28.75x11.10"));
+    // Generic packages whose NAME states the four terminals (22 records).
+    CHECK(declares_diode_module("SIP-4"));
+    CHECK(declares_diode_module("DIP-4"));
+    CHECK(declares_diode_module("SOIC-4"));
+    CHECK(declares_diode_module("SOIC4 W"));
+    CHECK(declares_diode_module("TSSOP-4"));
+    // Two-terminal outlines must NOT trip it — 17,931 records ride on this, and
+    // the trailing number on a chip/JEDEC code is a size or a registration
+    // number, never a terminal count.
+    CHECK_FALSE(declares_diode_module("SMC (DO-214AB)"));
+    CHECK_FALSE(declares_diode_module("SOD-123"));
+    CHECK_FALSE(declares_diode_module("SOT-23 (TO-236) 2.90x1.30x1.00, 1.90P"));
+    CHECK_FALSE(declares_diode_module("DO-201AD"));
+    CHECK_FALSE(declares_diode_module("TO-220AB"));
+    CHECK_FALSE(declares_diode_module("SMA-2"));
+    CHECK_FALSE(declares_diode_module(""));
+    // FOUR leads only. SO-8 duals and SOT-363-6 arrays are multi-die parts too,
+    // but nothing in their case string states a terminal count, so this gate does
+    // not judge them rather than guessing (see CrossRefClasses.hpp).
+    CHECK_FALSE(declares_diode_module("SOIC-8"));
+    CHECK_FALSE(declares_diode_module("TSSOP6"));
+    CHECK_FALSE(declares_diode_module("SC-88-6 / SC-70-6 / SOT-363-6"));
+
+    // The MPN only ever sharpens the WORDING once the package has spoken, so it
+    // is checked on the shape that separates a bridge line from a part that
+    // merely starts with the same letters.
+    CHECK(names_bridge_series("GBU8KS"));
+    CHECK(names_bridge_series("MB6S"));
+    CHECK(names_bridge_series("MDB10S"));
+    CHECK(names_bridge_series("DF02M"));
+    CHECK(names_bridge_series("DB107"));
+    CHECK_FALSE(names_bridge_series("MBRS340"));   // schottky, not a bridge line
+    CHECK_FALSE(names_bridge_series("DFB25100"));  // no digit after "DF"
+    CHECK_FALSE(names_bridge_series(""));
+}
+
+TEST_CASE("a bridge rectifier module is not a substitute for a two-terminal diode",
+          "[crossref][classes][abt521]") {
+    // The ticket's case as the ranker sees it: S8J, and the two candidates that
+    // headed its list. Every electrical column of GBU8KS reads BETTER than the
+    // discrete's, which is exactly why the device class has to decide it.
+    json original = {{"mpn", "S8J"},   {"vrrm", 600.0},          {"if_avg", 8.0},
+                     {"vf", 0.85},     {"technology", "rectifier"},
+                     {"case_code", "SMC (DO-214AB)"}};
+    json cands = json::array({
+        {{"mpn", "GBU8KS"}, {"vrrm", 800.0}, {"if_avg", 8.0}, {"vf", 1.0},
+         {"technology", "rectifier"}, {"case_code", "SIP-4"}},
+        // A genuine two-terminal discrete whose only deficit is a higher Vf.
+        {{"mpn", "IDV08E65D2"}, {"vrrm", 650.0}, {"if_avg", 8.0}, {"vf", 1.6},
+         {"technology", "rectifier"}},
+    });
+    auto r = cross_reference("diode", original, cands, Options{});
+    auto find = [&](const char* mpn) {
+        for (const auto& c : r["candidates"])
+            if (c["mpn"] == mpn) return c;
+        FAIL("candidate " << mpn << " missing from the result");
+        return json{};
+    };
+
+    const json bridge = find("GBU8KS");
+    CHECK(bridge["status"] == "partial");
+    CHECK(bridge["grade"] == "major_review");  // never minor_review
+    // "different_case" said the pads move; they cannot be made to match at all.
+    CHECK(bridge["footprint"] == "different_land_pattern");
+    bool fp_fail = false, class_fail = false;
+    for (const auto& p : bridge["params"]) {
+        if (p["name"] == "footprint") fp_fail = p["verdict"] == "fail";
+        if (p["name"] == "configuration") class_fail = p["verdict"] == "fail";
+    }
+    CHECK(fp_fail);
+    CHECK(class_fail);
+    // And the note says what it is and why the table's own numbers are not
+    // comparable, instead of "verify pads/pinout".
+    REQUIRE(bridge.contains("notes"));
+    const std::string note = bridge["notes"][0];
+    CHECK(note.find("BRIDGE RECTIFIER") != std::string::npos);
+    CHECK(note.find("AC, AC, +, -") != std::string::npos);
+    CHECK(note.find("PER ELEMENT") != std::string::npos);
+    CHECK(note.find("OUTPUT current") != std::string::npos);
+
+    // The whole point of the ticket: the bridge must not head the list over a
+    // discrete whose only deficit is a real, comparable Vf regression.
+    const json discrete = find("IDV08E65D2");
+    CHECK(bridge["penalty"].get<double>() > discrete["penalty"].get<double>());
+    CHECK(r["candidates"][0]["mpn"] == "IDV08E65D2");
+}
+
+TEST_CASE("a discrete offered for a bridge original is flagged the other way round",
+          "[crossref][classes][abt521]") {
+    // The mirror case: one discrete replaces ONE of the bridge's four elements,
+    // and the original's ratings are per element / bridge output.
+    json original = {{"mpn", "GBU8K"}, {"vrrm", 800.0}, {"if_avg", 8.0}, {"vf", 1.0},
+                     {"technology", "rectifier"}, {"case_code", "GBU"}};
+    json cands = json::array({{{"mpn", "S8K"},
+                               {"vrrm", 800.0},
+                               {"if_avg", 8.0},
+                               {"vf", 0.85},
+                               {"technology", "rectifier"},
+                               {"case_code", "SMC (DO-214AB)"}}});
+    auto r = cross_reference("diode", original, cands, Options{});
+    const json& c = r["candidates"][0];
+    CHECK(c["status"] == "partial");
+    CHECK(c["grade"] == "major_review");
+    CHECK(c["footprint"] == "different_land_pattern");
+    REQUIRE(c.contains("notes"));
+    const std::string note = c["notes"][0];
+    CHECK(note.find("the original is a single-phase BRIDGE RECTIFIER") != std::string::npos);
+    CHECK(note.find("four discretes") != std::string::npos);
+}
+
+TEST_CASE("a package that states four leads but no bridge series says only what it knows",
+          "[crossref][classes][abt521]") {
+    // DFB25100 (onsemi, SIP-4) declares four leads; its MPN matches no bridge
+    // series in the table, so the note claims the terminals and not the topology.
+    json original = {{"mpn", "S8J"}, {"vrrm", 600.0}, {"if_avg", 8.0}, {"vf", 0.85},
+                     {"technology", "rectifier"}, {"case_code", "SMC (DO-214AB)"}};
+    json cands = json::array({{{"mpn", "DFB25100"},
+                               {"vrrm", 1000.0},
+                               {"if_avg", 25.0},
+                               {"vf", 1.1},
+                               {"technology", "rectifier"},
+                               {"case_code", "SIP-4"}}});
+    auto r = cross_reference("diode", original, cands, Options{});
+    const json& c = r["candidates"][0];
+    CHECK(c["grade"] == "major_review");
+    CHECK(c["footprint"] == "different_land_pattern");
+    const std::string note = c["notes"][0];
+    CHECK(note.find("states four leads") != std::string::npos);
+    CHECK(note.find("BRIDGE") == std::string::npos);  // not asserted, not known
+}
+
+TEST_CASE("the four-lead package survives extraction into the browse row",
+          "[crossref][classes][browse][abt521]") {
+    // The class evidence was already in the row — this pins that, so a later
+    // extractor change cannot quietly take the gate's only input away. Real
+    // catalogue records, copied verbatim.
+    auto shard = kelvin::build_diode_shard(std::string(KELVIN_TEST_DIR) +
+                                           "/fixtures/diodes_bridges.ndjson");
+    json all = kelvin::browse::browse_rows(shard, json{{"limit", 100}});
+    std::map<std::string, json> by_mpn;
+    for (const auto& row : all.at("rows")) by_mpn[row.at("mpn").get<std::string>()] = row;
+    REQUIRE(by_mpn.size() == 8);
+
+    CHECK(by_mpn.at("GBU8KS").at("caseCode") == "SIP-4");
+    CHECK(by_mpn.at("GBU8K").at("caseCode") == "GBU");
+    CHECK(by_mpn.at("MB6S").at("caseCode") == "SOIC-4");
+    CHECK(by_mpn.at("DF02M").at("caseCode") == "DIP-4");
+    CHECK(by_mpn.at("MDB6S").at("caseCode") == "TSSOP-4");
+    CHECK(by_mpn.at("S8J").at("caseCode") == "SMC (DO-214AB)");
+
+    // End to end on the real rows: the two-terminal original, every bridge in the
+    // fixture as a candidate, and the one genuine discrete.
+    // Exactly what crossref.js's diode `spec` builds, including its `caseCode ?? ''`
+    // — browse omits the key on a record that states no case.
+    auto spec = [](const json& row) {
+        return json{{"mpn", row.at("mpn")},
+                    {"vrrm", row.at("vrrm_rated")},
+                    {"if_avg", row.at("if_avg_rated")},
+                    {"vf", row.at("vf_typ")},
+                    {"technology", row.at("technology")},
+                    {"case_code", row.value("caseCode", "")}};
+    };
+    json cands = json::array();
+    for (const char* m : {"GBU8KS", "GBU8K", "MB6S", "DF02M", "MDB6S", "IDV08E65D2"})
+        cands.push_back(spec(by_mpn.at(m)));
+    auto r = cross_reference("diode", spec(by_mpn.at("S8J")), cands, Options{});
+    for (const auto& c : r["candidates"]) {
+        const std::string mpn = c["mpn"];
+        if (mpn == "IDV08E65D2") continue;
+        INFO("candidate " << mpn);
+        CHECK(c["grade"] != "drop_in");
+        CHECK(c["grade"] != "minor_review");
+    }
+}

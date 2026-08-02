@@ -257,6 +257,145 @@ inline std::string resistor_network_conflict(bool original_is_network, bool subs
            "original's two pads cannot connect";
 }
 
+// ── Diode device configuration: two-terminal discrete vs bridge module ───────
+// The ranker models a catalogue "diode" as a two-terminal device: one Vrrm, one
+// Vf, one If(AV), two pads. A single-phase BRIDGE RECTIFIER is a different
+// device — four dies on four terminals (AC, AC, +, -) in one body — and its
+// catalogue columns do not mean the same thing. Vf is quoted PER ELEMENT while
+// the current path runs through TWO elements in series, so the real in-circuit
+// drop is about twice the number being compared; If(AV) is the bridge's DC
+// OUTPUT current, about twice what any one element carries. Offered against a
+// two-terminal original the whole verdict table compares the wrong quantities,
+// and no land pattern makes a four-terminal part sit on two pads (ABT #521).
+//
+// The only device-class evidence a TAS diode record carries is its PACKAGE — the
+// schema has no terminal- or element-count field — so that string is what is
+// read. It comes in two forms, both counted over the whole diode catalogue
+// (134 of 18,065 records):
+//   * an outline that exists only as a single-phase bridge — GBPC (51), GBU (21),
+//     GBJ (18), KBPC (12), KBP (5), MBS (5): 112 records;
+//   * a generic package whose NAME states four leads — DIP-4 (11), SOIC-4 (5),
+//     TSSOP-4 (3), SIP-4 (2), SOIC4 W (1): 22 records, every one of them a bridge
+//     (Diodes DF/DB and MB*S/MB*M, onsemi MB1S, MDB*S, GBU8KS, DFB25100).
+// A package that states neither declares nothing, and is NOT asserted to be a
+// discrete: the gate below fires only when exactly one side declares a module.
+// It also judges FOUR leads only — the dual/array outlines (SO-8, SOT-363-6,
+// three-lead TO-220 common-cathode pairs) are multi-die parts too, but their
+// case strings do not state a terminal count, so they are a separate catalogue
+// gap rather than something to guess at here.
+
+// The leading package token of a case string, lowercased:
+// "GBPC4 28.75x28.75x11.10" -> "gbpc4", "SMC (DO-214AB)" -> "smc",
+// "SOIC4 W" -> "soic4", "SC-88-6 / SC-70-6" -> "sc-88-6".
+inline std::string case_token(const std::string& case_code) {
+    std::string t;
+    for (char ch : lower_copy(case_code)) {
+        if (ch == ' ' || ch == '(' || ch == '/' || ch == ',') break;
+        t += ch;
+    }
+    return t;
+}
+
+// True when the package IS a single-phase bridge outline. The trailing digits of
+// "GBPC4" are the current rating of the outline, not a lead count, so they are
+// stripped before the family is matched.
+inline bool bridge_outline(const std::string& case_code) {
+    std::string t = case_token(case_code);
+    while (!t.empty() && std::isdigit(static_cast<unsigned char>(t.back()))) t.pop_back();
+    static const char* kBridgeOutlines[] = {"gbpc", "gbu", "gbj", "kbpc", "kbp", "mbs"};
+    for (const char* o : kBridgeOutlines)
+        if (t == o) return true;
+    return false;
+}
+
+// The lead count a GENERIC package name states, when it states one. Only the
+// families whose trailing number IS the lead count are read this way: on a chip
+// or JEDEC diode outline that number is a size or a registration number
+// ("SOD-123", "SOT-23", "DO-214AB"), and reading it as terminals would turn most
+// of the catalogue into a module.
+inline std::optional<int> declared_lead_count(const std::string& case_code) {
+    const std::string t = case_token(case_code);
+    static const char* kLeadCountFamilies[] = {"dip",   "sip",  "soic", "ssop",
+                                               "tssop", "msop", "sop"};
+    for (const char* fam : kLeadCountFamilies) {
+        const std::string f(fam);
+        if (t.size() <= f.size() || t.compare(0, f.size(), f) != 0) continue;
+        std::string rest = t.substr(f.size());
+        if (rest[0] == '-') rest.erase(0, 1);
+        if (rest.empty() || rest.size() > 3) continue;
+        bool digits = true;
+        for (char ch : rest)
+            if (!std::isdigit(static_cast<unsigned char>(ch))) digits = false;
+        if (!digits) continue;
+        return std::stoi(rest);
+    }
+    return std::nullopt;
+}
+
+// True when the record's package declares a device that is not a two-terminal
+// diode: a bridge outline, or a generic package stating the four terminals a
+// single-phase bridge needs.
+inline bool declares_diode_module(const std::string& case_code) {
+    if (bridge_outline(case_code)) return true;
+    const auto leads = declared_lead_count(case_code);
+    return leads.has_value() && *leads == 4;
+}
+
+// Which four-terminal device it is — consulted ONLY once the package has already
+// declared a module, so it can sharpen the wording and can never widen the gate.
+// The series letters are required to be followed by a digit, which is what
+// separates the bridge lines (GBU8K, MB6S, DF02M, DB107, MDB10S) from every other
+// part whose MPN happens to start with the same letters.
+inline bool names_bridge_series(const std::string& mpn) {
+    const std::string m = lower_copy(mpn);
+    static const char* kBridgeSeries[] = {"gbpc", "gbu", "gbj", "kbpc", "kbp", "mdb", "mb", "df",
+                                          "db"};
+    for (const char* s : kBridgeSeries) {
+        const std::string p(s);
+        if (m.size() > p.size() && m.compare(0, p.size(), p) == 0 &&
+            std::isdigit(static_cast<unsigned char>(m[p.size()])))
+            return true;
+    }
+    return false;
+}
+
+// Why a module <-> discrete swap is not a substitution, phrased for the direction
+// it actually happened in. Empty when the two sides agree, or when neither
+// package declares a module.
+inline std::string diode_configuration_conflict(const std::string& original_case,
+                                                const std::string& original_mpn,
+                                                const std::string& substitute_case,
+                                                const std::string& substitute_mpn) {
+    const bool original_is_module = declares_diode_module(original_case);
+    const bool substitute_is_module = declares_diode_module(substitute_case);
+    if (original_is_module == substitute_is_module) return "";
+    const std::string& mod_case = original_is_module ? original_case : substitute_case;
+    const std::string& mod_mpn = original_is_module ? original_mpn : substitute_mpn;
+    const bool bridge = bridge_outline(mod_case) || names_bridge_series(mod_mpn);
+    const std::string what =
+        bridge ? "a single-phase BRIDGE RECTIFIER module: four dies on four terminals "
+                 "(AC, AC, +, -)"
+               : "a multi-terminal module: its package (" + mod_case +
+                     ") states four leads, where a two-terminal diode has two";
+    const std::string ratings =
+        bridge ? "its Vf is quoted PER ELEMENT and the current runs through TWO elements in "
+                 "series, so the real in-circuit drop is about twice the figure compared here, "
+                 "and its If(AV) is the bridge's DC OUTPUT current, about twice what any one "
+                 "element carries — neither is a per-diode rating comparable to the other side's"
+               : "its Vf and If(AV) are the MODULE's ratings, not the per-diode ratings this "
+                 "table has put beside them";
+    if (substitute_is_module)
+        return "this is " + what +
+               ", and the original is a two-terminal diode: no land pattern makes it sit on the "
+               "original's two pads, and " +
+               ratings;
+    return "the original is " + what +
+           ", and this is a two-terminal diode: it replaces ONE of the module's elements on a "
+           "different land pattern — a bridge takes four discretes plus a new land pattern to "
+           "replace — and " +
+           ratings;
+}
+
 // ── Quartz crystal load capacitance ──────────────────────────────────────────
 // A crystal does not have a frequency on its own: it has a frequency AT a
 // specified load capacitance. The board's load network (two capacitors plus
