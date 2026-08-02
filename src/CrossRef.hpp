@@ -91,6 +91,20 @@ inline std::string mm(double metres) {
     return s;
 }
 
+// A temperature as a datasheet states it, sign always shown ("+125", "-55"): the
+// sign is half the meaning of an operating limit. Bare, so a note can write the
+// unit once for a pair ("+105 vs +125 degC").
+inline std::string degc(double c) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.1f", c);
+    std::string s(buf);
+    if (s.find('.') != std::string::npos) {
+        s.erase(s.find_last_not_of('0') + 1);
+        if (!s.empty() && s.back() == '.') s.pop_back();
+    }
+    return (c > 0 ? "+" : "") + s;
+}
+
 // The land a footprint note is talking about, longest axis first — the same way
 // round the fit test compares them, so two parts read comparably. A record that
 // states only one land axis says which axis it is and that the other is absent,
@@ -758,20 +772,33 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     }
 
     // ── operating temperature range ─────────────────────────────────────────
-    // A substitute must cover the original's whole rated range, at both ends.
+    // A substitute must cover the original's whole rated range, at both ends, and
+    // the note names both temperatures: "does not reach the original's maximum" is
+    // true of 1 degC and of 40 degC, and the engineer has to size the gap against
+    // the enclosure ambient, not against the adjective.
     {
+        // temp_min_C / temp_max_C are also PARAM_SPECS entries for some categories
+        // (connector, timeBase). One physical fact gets one verdict and one penalty,
+        // so where that table already ruled, this block adds the note only.
+        auto already_judged = [&](const char* name) {
+            for (const auto& p : params)
+                if (p.value("name", "") == name) return true;
+            return false;
+        };
         auto o_lo = num(original, "temp_min_C"), s_lo = num(cand, "temp_min_C");
         auto o_hi = num(original, "temp_max_C"), s_hi = num(cand, "temp_max_C");
         if (o_lo && s_lo && *s_lo > *o_lo + 1e-9) {
-            params.push_back({{"name", "temp_min_C"}, {"verdict", FAIL}});
-            demote();
-            penalty += opt.gate_weight * kVerdictFailPenalty;
-            notes.push_back("does not reach the original's minimum operating temperature");
+            if (!already_judged("temp_min_C")) {
+                params.push_back({{"name", "temp_min_C"}, {"verdict", FAIL}});
+                demote();
+                penalty += opt.gate_weight * kVerdictFailPenalty;
+            }
+            notes.push_back("rated only down to " + degc(*s_lo) + " degC vs the original's " +
+                            degc(*o_lo) + " degC — does not cover the original's cold end");
         }
         if (o_hi && s_hi && *s_hi < *o_hi - 1e-9) {
-            // temp_max_C may also be covered by PARAM_SPECS for some categories;
-            // the note is what carries the meaning either way.
-            notes.push_back("does not reach the original's maximum operating temperature");
+            notes.push_back("rated only to " + degc(*s_hi) + " degC vs the original's " +
+                            degc(*o_hi) + " degC — verify the enclosure ambient");
         }
     }
 

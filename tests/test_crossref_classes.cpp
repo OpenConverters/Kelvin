@@ -502,6 +502,85 @@ TEST_CASE("a connector pitch mismatch is a footprint failure, never a drop_in",
     CHECK(notes.find("6.48 mm off its pad") != std::string::npos);
 }
 
+// ── connector operating temperature: a hard environmental limit (ABT #520) ───
+
+TEST_CASE("a connector rated 20 degC cooler than the original is not an upgrade",
+          "[crossref][classes][rank][abt520]") {
+    // The reported case: Molex MM-214-025-161-00WE, -55/+125 degC, 3 A per contact.
+    // All six Amphenol candidates are -55/+105 degC and 5 A, and every one came back
+    // direction "upgrade" with no temperature entry in the verdict table — the label
+    // rested on the current alone while the only other comparable limit moved the
+    // wrong way by 20 degC.
+    json original = {{"mpn", "MM-214-025-161-00WE"}, {"family", "dataInterface"},
+                     {"positions", 25},              {"polarity", "male"},
+                     {"rated_current_A", 3.0},       {"rated_voltage_V", 600.0},
+                     {"temp_min_C", -55.0},          {"temp_max_C", 125.0}};
+    json cands = json::array({
+        {{"mpn", "SAME_RANGE"}, {"family", "dataInterface"}, {"positions", 25},
+         {"polarity", "male"}, {"rated_current_A", 5.0}, {"rated_voltage_V", 600.0},
+         {"temp_min_C", -55.0}, {"temp_max_C", 125.0}},
+        {{"mpn", "DERATED_105"}, {"family", "dataInterface"}, {"positions", 25},
+         {"polarity", "male"}, {"rated_current_A", 5.0}, {"rated_voltage_V", 600.0},
+         {"temp_min_C", -55.0}, {"temp_max_C", 105.0}},
+        {{"mpn", "COLD_SHORT"}, {"family", "dataInterface"}, {"positions", 25},
+         {"polarity", "male"}, {"rated_current_A", 5.0}, {"rated_voltage_V", 600.0},
+         {"temp_min_C", -25.0}, {"temp_max_C", 125.0}},
+        {{"mpn", "NO_TEMP"}, {"family", "dataInterface"}, {"positions", 25},
+         {"polarity", "male"}, {"rated_current_A", 5.0}, {"rated_voltage_V", 600.0}}});
+    auto r = cross_reference("connector", original, cands, Options{});
+    auto by_mpn = [&](const char* m) {
+        auto it = std::find_if(r["candidates"].begin(), r["candidates"].end(),
+                               [&](const json& c) { return c["mpn"] == m; });
+        REQUIRE(it != r["candidates"].end());
+        return *it;
+    };
+    auto verdict_of = [](const json& c, const char* name) {
+        for (const auto& p : c["params"])
+            if (p["name"] == name) return p["verdict"].get<std::string>();
+        return std::string("<absent>");
+    };
+    auto count_of = [](const json& c, const char* name) {
+        int n = 0;
+        for (const auto& p : c["params"])
+            if (p["name"] == name) ++n;
+        return n;
+    };
+
+    // Same range, more current: an upgrade, and it stays one.
+    const json same = by_mpn("SAME_RANGE");
+    CHECK(verdict_of(same, "temp_max_C") == PASS);
+    CHECK(same["direction"] == "upgrade");
+    CHECK(same["grade"] == "drop_in");
+
+    // 20 degC of lost headroom: judged, penalised, explained, and NOT an upgrade.
+    const json hot = by_mpn("DERATED_105");
+    CHECK(verdict_of(hot, "temp_max_C") == FAIL);
+    CHECK(hot["direction"] != "upgrade");
+    CHECK(hot["grade"] != "drop_in");
+    CHECK(hot["status"] == "partial");
+    CHECK(hot["penalty"].get<double>() > same["penalty"].get<double>());
+    REQUIRE(hot.contains("notes"));
+    // the note sizes the gap — "does not reach the maximum" is true of 1 degC too
+    CHECK(hot["notes"].dump().find("+105 degC vs the original's +125 degC") !=
+          std::string::npos);
+    // and it must not outrank the part that keeps the whole range
+    CHECK(r["candidates"][0]["mpn"] == "SAME_RANGE");
+
+    // The cold end is a limit too, and it is reported once: the category's own
+    // PARAM_SPECS rules it, so the shared temperature block adds the note only.
+    const json cold = by_mpn("COLD_SHORT");
+    CHECK(verdict_of(cold, "temp_min_C") == FAIL);
+    CHECK(count_of(cold, "temp_min_C") == 1);
+    CHECK(cold["notes"].dump().find("-25 degC vs the original's -55 degC") !=
+          std::string::npos);
+
+    // A record that states no temperature is UNVERIFIED — an unknown, not a
+    // regression. Kelvin does not invent the rating, and does not fail it either.
+    const json unknown = by_mpn("NO_TEMP");
+    CHECK(verdict_of(unknown, "temp_max_C") == UNVERIFIED);
+    CHECK(verdict_of(unknown, "temp_min_C") == UNVERIFIED);
+}
+
 // ── resistor device class: array/network vs discrete (ABT #481) ──────────────
 // A Panasonic EXB-V8V is four isolated 51 ohm elements on eight terminals in a
 // 3.2 x 1.6 mm body — the same OUTLINE as a discrete 1206. Judging fit on the

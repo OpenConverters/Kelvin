@@ -226,3 +226,45 @@ TEST_CASE("index: connector pitch reaches the shard row and survives a round-tri
     REQUIRE(rows[2].at("pitch").is_null());
     fs::remove(path);
 }
+
+// ABT #520: connector.manufacturerInfo.datasheetInfo.environmental.operatingTemperature is
+// stated on 365,680 of the 391,073 catalogue connectors and reached nothing — extract_connector
+// never opened the environmental block. Both ends were lost, so a +105 degC substitute for a
+// +125 degC original carried no temperature verdict at all and was reported an "upgrade".
+TEST_CASE("index: connector operating temperature reaches the shard row and round-trips",
+          "[index][connector][abt520]") {
+    auto connector_line = [](const std::string& mpn, const std::string& temps) {
+        return "{\"connector\":{\"manufacturerInfo\":{\"name\":\"ACME\",\"reference\":\"" + mpn +
+               "\",\"status\":\"production\",\"datasheetInfo\":{\"part\":{\"partNumber\":\"" + mpn +
+               "\",\"matingPolarity\":\"male\"},\"mechanical\":{\"positions\":25}," +
+               (temps.empty() ? "" : "\"environmental\":{\"operatingTemperature\":" + temps + "},") +
+               "\"familyDetails\":{\"family\":\"dataInterface\"}}}}}";
+    };
+    std::string path = tmp_path("connector_temp.ndjson");
+    write_file(path, connector_line("HOT", "{\"minimum\":-55,\"maximum\":125}") + "\n" +
+                         connector_line("COLD_ZERO", "{\"minimum\":0,\"maximum\":105}") + "\n" +
+                         connector_line("NOTEMP", "") + "\n");
+    auto shard = build_connector_shard(path);
+    REQUIRE(shard.meta.row_count == 3);
+    REQUIRE(shard.rows[0].temp_min_c == -55);   // negative is a value, not absence
+    REQUIRE(shard.rows[0].temp_max_c == 125);
+    REQUIRE(shard.rows[1].temp_min_c == 0);     // and so is 0 degC
+    REQUIRE(shard.rows[1].temp_max_c == 105);
+    REQUIRE(std::isnan(shard.rows[2].temp_min_c));  // absent stays UNKNOWN, never 0
+    REQUIRE(std::isnan(shard.rows[2].temp_max_c));
+
+    auto back = deserialize_connector_shard(serialize_shard(shard));
+    REQUIRE(back.rows[0].temp_min_c == -55);
+    REQUIRE(back.rows[0].temp_max_c == 125);
+    REQUIRE(back.rows[1].temp_min_c == 0);
+    REQUIRE(std::isnan(back.rows[2].temp_max_c));
+
+    // and it is visible to the caller that builds the cross-reference spec block
+    nlohmann::json rows =
+        browse::browse_rows(shard, nlohmann::json{{"limit", 10}}).at("rows");
+    REQUIRE(rows[0].at("temp_min_c").get<double>() == -55);
+    REQUIRE(rows[0].at("temp_max_c").get<double>() == 125);
+    REQUIRE(rows[1].at("temp_min_c").get<double>() == 0);
+    REQUIRE(rows[2].at("temp_max_c").is_null());
+    fs::remove(path);
+}

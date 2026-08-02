@@ -38,7 +38,10 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // Without it the cross-reference had nothing to compare and graded a 5.00 mm-pitch part a
 // drop_in for a 2.00 mm one, with the caveat asserting the catalogue had no pitch at all
 // while every raw record held it (ABT #485).
-constexpr uint32_t kFormatVersion = 7;
+// v8 added the connector operating-temperature range — the environmental limit 365,680 of
+// the 391,073 records state. Without it the cross-reference had no temperature verdict at
+// all and called a +105 degC part an "upgrade" over a +125 degC original (ABT #520).
+constexpr uint32_t kFormatVersion = 8;
 
 // Identity of the code that produces rows, so a cached shard can be recognised as
 // having been built by a DIFFERENT extractor than the one running now (ABT #426).
@@ -335,6 +338,8 @@ void row_io(Ar& ar, ConnectorRow& r) {
     ar.dbl(r.rated_voltage);
     ar.dbl(r.positions);
     ar.dbl(r.pitch);
+    ar.dbl(r.temp_min_c);
+    ar.dbl(r.temp_max_c);
     ar.str(r.family);
     ar.str(r.interface_standard);
     ar.str(r.polarity);

@@ -892,6 +892,17 @@ std::optional<ConnectorRow> extract_connector(const json& env) {
         set_if_pos(r.positions, get_num(*mech, "positions"));
         set_if_pos(r.pitch, get_num(*mech, "pitch"));
     }
+    // Operating temperature range: a substitute must cover the original's, at both
+    // ends. Read straight out of the object — NOT through set_if_pos, because a cold
+    // limit is normally negative and 0 degC is a real rating, so "positive" is not a
+    // presence test for a temperature.
+    const json* envir = obj_get(*di, "environmental");
+    if (envir && envir->is_object()) {
+        if (const json* t = obj_get(*envir, "operatingTemperature")) {
+            if (auto v = get_num(*t, "minimum")) r.temp_min_c = *v;
+            if (auto v = get_num(*t, "maximum")) r.temp_max_c = *v;
+        }
+    }
     const json* fd = obj_get(*di, "familyDetails");
     if (fd && fd->is_object()) {
         r.family = get_str(*fd, "family").value_or("");

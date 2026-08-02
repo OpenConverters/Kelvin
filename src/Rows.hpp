@@ -248,8 +248,8 @@ struct TimingRow : RowBase {
 };
 
 // A catalogue connector. Browse-only projection of connector.manufacturerInfo.datasheetInfo
-// (electrical.ratedCurrentPerContact/ratedVoltage, mechanical.positions/pitch, familyDetails,
-// part).
+// (electrical.ratedCurrentPerContact/ratedVoltage, mechanical.positions/pitch,
+// environmental.operatingTemperature, familyDetails, part).
 struct ConnectorRow : RowBase {
     double rated_current = kNaN();  // A per contact
     double rated_voltage = kNaN();  // V
@@ -259,6 +259,14 @@ struct ConnectorRow : RowBase {
     // state one and it was dropped on the way into the shard, which is why 2.54 mm parts were
     // graded drop_in against a 2.00 mm original (ABT #485).
     double pitch = kNaN();
+    // degC — environmental.operatingTemperature, a HARD environmental limit and the only
+    // rating a connector carries besides current and voltage. 365,680 of the 391,073
+    // catalogue rows state one and it was dropped on the way into the shard, so a +105 degC
+    // substitute for a +125 degC original was reported "upgrade" with no temperature verdict
+    // anywhere in the table (ABT #520). Negative and zero are ordinary values here, not
+    // absence — a cold limit is normally below 0 degC.
+    double temp_min_c = kNaN();
+    double temp_max_c = kNaN();
     std::string family;             // familyDetails.family (boardToBoard / terminalBlock / …)
     std::string interface_standard; // familyDetails.interfaceStandard (when standardised)
     std::string polarity;           // part.matingPolarity (male / female / hermaphroditic)
