@@ -797,6 +797,46 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                   ") — what is stated does not rule the fit out, but does not "
                                   "confirm it either; verify the land pattern");
             }
+        } else if (!o_dims && footprint_is_the_body(cat) && !out.contains("footprint")) {
+            // The same rung, seen from the ORIGINAL's side. Every branch above needs a
+            // footprint for the ORIGINAL; with none, the package axis vanished from the
+            // verdict table entirely and "drop_in" — the grade that asserts the part
+            // solders into the existing land pattern — was awarded with zero mechanical
+            // information about the original. Murata LQP02HQ30NHZ2E, a 01005 (0402
+            // metric, 0.4 x 0.2 mm) chip, came back drop_in / penalty 0 / notes null
+            // against a Pulse BSCH0010050533NJCP whose 1005-metric body is stated only
+            // in its free-text description — indistinguishable from the two candidates
+            // that ARE the original's size (ABT #545). The axis is always reported now:
+            // silence is what let the top grade through, and reporting UNVERIFIED is
+            // what the tool already does for an electrical parameter nobody can check.
+            const std::string oc = str(original, "case_code"), sc = str(cand, "case_code");
+            // The case-kept gate above only publishes its NEGATIVE. Its positive is a
+            // verdict too, and for the families whose case code IS the land pattern it
+            // is the one way the fit can be established with no drawing on either side:
+            // two records naming the same package name the same pads. Magnetics and
+            // chip beads are excluded here exactly as they are there — a magnetic
+            // "1210" is an EIA chip or a molded power inductor, so equal codes are not
+            // an equal land.
+            if (cat != "magnetic" && cat != "chipBead" && !oc.empty() && !sc.empty() &&
+                normalize_case_code(oc) == normalize_case_code(sc)) {
+                out["footprint"] = "fits";
+                params.push_back({{"name", "footprint"}, {"verdict", PASS}});
+            } else {
+                out["footprint"] = "unknown";
+                params.push_back({{"name", "footprint"}, {"verdict", UNVERIFIED}});
+                // Name what the substitute IS, so an engineer can see the two case
+                // sizes for themselves even though the ranker cannot compare them.
+                // Only where the substitute states a package at all: where neither
+                // record states one the UNVERIFIED verdict is the whole story, and the
+                // gap belongs to the catalogue, not to this candidate.
+                std::string what = s_pkg;
+                if (s_dims && has_land(*s_dims)) what += (what.empty() ? "" : ", ") + land_mm(*s_dims);
+                if (!what.empty())
+                    notes.push_back(
+                        "the original's record states no package dimensions, so its land pattern "
+                        "could not be established — this substitute is " + what +
+                        "; footprint fit is UNVERIFIED, confirm the pads before substituting");
+            }
         }
         // ── height / clearance, its own axis ─────────────────────────────────
         // Not part of the land pattern, so it is judged and reported separately

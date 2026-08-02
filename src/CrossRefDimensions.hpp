@@ -517,6 +517,15 @@ inline std::string normalize_case_code(const std::string& s) {
     return out;
 }
 
+// Categories whose land pattern is the part's BODY, so an original with no body
+// on record has no land pattern on record either. Connectors are the exception:
+// their records carry no outline at all and their land IS the contact pitch,
+// which is compared on its own axis and reported as the footprint verdict — for
+// them "no dimensions" is not "no land datum" (ABT #485).
+inline bool footprint_is_the_body(const std::string& category) {
+    return category != "connector";
+}
+
 // Categories whose package strings vary too much by series for the generic mount
 // rule to be safe (mirrors Heaviside's GFoot skip list).
 inline bool mount_gate_applies(const std::string& category) {

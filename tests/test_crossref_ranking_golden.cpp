@@ -436,3 +436,112 @@ TEST_CASE("golden: one missing axis on the original does not blank the footprint
     CHECK(o[0] == "GRM2195C1H153JA01");
     CHECK(o[1] == "GRM3195C1H153JA01");
 }
+
+TEST_CASE("golden: an original with no land pattern still reports the package axis — ABT #545",
+          "[crossref][golden]") {
+    // Pulse BSCH0010050533NJCP (a 1005-metric, 1.0 x 0.5 mm RF chip inductor whose
+    // size is stated only in the free-text description, so the shard row carries no
+    // case code and no drawing) crossed against Murata returned SIX candidates that
+    // were bit-for-bit identical in the verdict table: grade "drop_in", penalty 0,
+    // footprint null, notes null, and no footprint entry in params at all. Two of
+    // them are 01005 (0402 metric) chips — 0.4 x 0.2 mm, a body shorter than the
+    // pad-to-pad gap of the original's land — and two are 0302 (0804 metric). Every
+    // branch of the footprint block needed a footprint for the ORIGINAL, so with none
+    // the axis simply vanished and "drop_in", the grade that asserts the part solders
+    // into the existing land pattern, was awarded with no mechanical information about
+    // the original whatsoever.
+    json original = {{"mpn", "BSCH0010050533NJCP"}, {"value_si", 3.3e-8}, {"dcr", 0.58}};
+    json cands = json::array({
+        // Same size as the original — but nothing on record says so.
+        {{"mpn", "LQG15HS33NH02D"}, {"value_si", 3.3e-8}, {"dcr", 0.58},
+         {"case_code", "0402 (1005 Metric)"}, {"length_m", 0.001}, {"width_m", 0.0005}},
+        // Two case sizes down: 0.4 x 0.2 mm, stated as a case code only.
+        {{"mpn", "LQP02HQ30NHZ2E"}, {"value_si", 3.0e-8}, {"dcr", 0.58},
+         {"case_code", "01005 (0402 Metric)"}},
+        // Neither side states a package: the gap is the catalogue's, not the part's.
+        {{"mpn", "NO_PACKAGE"}, {"value_si", 3.3e-8}, {"dcr", 0.58}},
+    });
+    Options opt;
+    opt.max_results = 50;
+    auto r = cross_reference("magnetic", original, cands, opt);
+    auto by_mpn = [&](const std::string& m) {
+        for (const auto& c : r["candidates"])
+            if (c.value("mpn", std::string()) == m) return c;
+        return json(nullptr);
+    };
+    auto verdict_of = [](const json& c, const char* name) {
+        for (const auto& p : c["params"])
+            if (p["name"] == name) return p["verdict"].get<std::string>();
+        return std::string("<absent>");
+    };
+    auto notes_of = [&](const json& c) {
+        std::string all;
+        for (const auto& n : c.value("notes", json::array())) all += n.get<std::string>() + " | ";
+        return all;
+    };
+
+    // Every candidate carries the axis, and none of them is a drop-in: the claim
+    // "fits the original's land pattern" cannot be made about a land nobody stated.
+    for (const char* mpn : {"LQG15HS33NH02D", "LQP02HQ30NHZ2E", "NO_PACKAGE"}) {
+        const json c = by_mpn(mpn);
+        REQUIRE(!c.is_null());
+        CHECK(verdict_of(c, "footprint") == UNVERIFIED);
+        CHECK(c["footprint"] == "unknown");
+        CHECK(c["grade"] != "drop_in");
+    }
+
+    // The note names what the substitute IS, so the two case sizes are readable even
+    // though the ranker cannot compare them.
+    CHECK(notes_of(by_mpn("LQP02HQ30NHZ2E")).find("01005 (0402 Metric)") != std::string::npos);
+    CHECK(notes_of(by_mpn("LQG15HS33NH02D")).find("1 x 0.5 mm") != std::string::npos);
+    // Where NEITHER record states a package there is nothing to name: the UNVERIFIED
+    // verdict is the whole story and a sentence blaming the candidate would be wrong.
+    CHECK_FALSE(by_mpn("NO_PACKAGE").contains("notes"));
+
+    // The axis is reported, not scored: with no original to compare against, the
+    // footprint term is the same for every candidate and must not reorder them.
+    CHECK(by_mpn("LQG15HS33NH02D")["penalty"].get<double>() ==
+          by_mpn("NO_PACKAGE")["penalty"].get<double>());
+}
+
+TEST_CASE("golden: with no drawing on either side, the kept case IS the land pattern — ABT #545",
+          "[crossref][golden]") {
+    // The other half of the same gap. For the families whose case code is the
+    // footprint, two records naming the same package name the same pads — that is
+    // the one way the fit can be established with no dimensions on either side, and
+    // it is what keeps a genuine same-package substitute a drop-in. Magnetics and
+    // chip beads are excluded, exactly as they are from the case-kept gate: a
+    // magnetic "1210" is an EIA chip or a molded power inductor, so equal codes there
+    // are not an equal land.
+    json original = {{"mpn", "MBRS340"}, {"vrrm", 40.0}, {"if_avg", 3.0},
+                     {"technology", "schottky"}, {"case_code", "DO-214AB"}};
+    json cands = json::array({
+        {{"mpn", "SAME_PKG"}, {"vrrm", 40.0}, {"if_avg", 3.0}, {"technology", "schottky"},
+         {"case_code", "DO214AB"}},
+        {{"mpn", "NO_PKG"}, {"vrrm", 40.0}, {"if_avg", 3.0}, {"technology", "schottky"}},
+    });
+    Options opt;
+    opt.max_results = 50;
+    auto r = cross_reference("diode", original, cands, opt);
+    auto by_mpn = [&](const std::string& m) {
+        for (const auto& c : r["candidates"])
+            if (c.value("mpn", std::string()) == m) return c;
+        return json(nullptr);
+    };
+    const json same = by_mpn("SAME_PKG");
+    REQUIRE(!same.is_null());
+    CHECK(same["footprint"] == "fits");
+    CHECK(same["grade"] == "drop_in");
+    // The candidate that names no package at all cannot claim the same.
+    const json bare = by_mpn("NO_PKG");
+    REQUIRE(!bare.is_null());
+    CHECK(bare["footprint"] == "unknown");
+    CHECK(bare["grade"] == "minor_review");
+
+    // The magnetic exclusion holds: identical codes, still unverified.
+    json m_orig = {{"mpn", "O"}, {"value_si", 4.7e-6}, {"case_code", "1210"}};
+    json m_cands = json::array({{{"mpn", "SAME_CODE"}, {"value_si", 4.7e-6}, {"case_code", "1210"}}});
+    auto rm = cross_reference("magnetic", m_orig, m_cands, opt);
+    CHECK(rm["candidates"][0]["footprint"] == "unknown");
+    CHECK(rm["candidates"][0]["grade"] != "drop_in");
+}
