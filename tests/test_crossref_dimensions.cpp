@@ -20,8 +20,8 @@ using Catch::Matchers::WithinRel;
 TEST_CASE("chip EIA codes resolve to the published footprint", "[crossref][dims]") {
     auto d = resolve_dimensions("0603", "capacitor");
     REQUIRE(d.has_value());
-    CHECK_THAT(d->length, WithinRel(1.60e-3, 1e-9));
-    CHECK_THAT(d->width, WithinRel(0.80e-3, 1e-9));
+    CHECK_THAT(*d->length, WithinRel(1.60e-3, 1e-9));
+    CHECK_THAT(*d->width, WithinRel(0.80e-3, 1e-9));
     // MLCC height varies with value/dielectric and is NOT encoded in the code.
     CHECK_FALSE(d->height.has_value());
 }
@@ -39,15 +39,15 @@ TEST_CASE("4020 is a chip footprint on a capacitor but a cube on an inductor",
           "[crossref][dims]") {
     auto chip = resolve_dimensions("2010", "capacitor");  // imperial EIA chip
     REQUIRE(chip.has_value());
-    CHECK_THAT(chip->length, WithinRel(5.00e-3, 1e-9));
-    CHECK_THAT(chip->width, WithinRel(2.50e-3, 1e-9));
+    CHECK_THAT(*chip->length, WithinRel(5.00e-3, 1e-9));
+    CHECK_THAT(*chip->width, WithinRel(2.50e-3, 1e-9));
 
     // "4020" is not a standard chip code, so on a magnetic it reads as a molded
     // power inductor: 4.0 x 4.0 mm square footprint x 2.0 mm high.
     auto ind = resolve_dimensions("4020", "magnetic");
     REQUIRE(ind.has_value());
-    CHECK_THAT(ind->length, WithinRel(4.0e-3, 1e-9));
-    CHECK_THAT(ind->width, WithinRel(4.0e-3, 1e-9));
+    CHECK_THAT(*ind->length, WithinRel(4.0e-3, 1e-9));
+    CHECK_THAT(*ind->width, WithinRel(4.0e-3, 1e-9));
     REQUIRE(ind->height.has_value());
     CHECK_THAT(*ind->height, WithinRel(2.0e-3, 1e-9));
 }
@@ -55,12 +55,12 @@ TEST_CASE("4020 is a chip footprint on a capacitor but a cube on an inductor",
 TEST_CASE("molded tantalum letters and can DxL codes resolve", "[crossref][dims]") {
     auto b = resolve_dimensions("B", "capacitor");  // 3528-21
     REQUIRE(b.has_value());
-    CHECK_THAT(b->length, WithinRel(3.50e-3, 1e-9));
-    CHECK_THAT(b->width, WithinRel(2.80e-3, 1e-9));
+    CHECK_THAT(*b->length, WithinRel(3.50e-3, 1e-9));
+    CHECK_THAT(*b->width, WithinRel(2.80e-3, 1e-9));
 
     auto can = resolve_dimensions("10x20", "capacitor");  // diameter x height
     REQUIRE(can.has_value());
-    CHECK_THAT(can->length, WithinRel(10e-3, 1e-9));
+    CHECK_THAT(*can->length, WithinRel(10e-3, 1e-9));
     REQUIRE(can->height.has_value());
     CHECK_THAT(*can->height, WithinRel(20e-3, 1e-9));
 }
@@ -68,15 +68,15 @@ TEST_CASE("molded tantalum letters and can DxL codes resolve", "[crossref][dims]
 TEST_CASE("JEDEC packages and their aliases resolve", "[crossref][dims]") {
     auto sot = resolve_dimensions("SOT-23", "mosfet");
     REQUIRE(sot.has_value());
-    CHECK_THAT(sot->length, WithinRel(2.90e-3, 1e-9));
+    CHECK_THAT(*sot->length, WithinRel(2.90e-3, 1e-9));
     // alias: SC-59 is the same outline
     auto alias = resolve_dimensions("SC-59", "mosfet");
     REQUIRE(alias.has_value());
-    CHECK_THAT(alias->length, WithinRel(sot->length, 1e-9));
+    CHECK_THAT(*alias->length, WithinRel(*sot->length, 1e-9));
     // separator normalisation
     auto loose = resolve_dimensions("sc 70", "diode");
     REQUIRE(loose.has_value());
-    CHECK_THAT(loose->length, WithinRel(2.00e-3, 1e-9));
+    CHECK_THAT(*loose->length, WithinRel(2.00e-3, 1e-9));
 }
 
 TEST_CASE("an unrecognised code resolves to nothing rather than a guess",
@@ -171,6 +171,52 @@ TEST_CASE("unknown dimensions are penalised, not silently passed", "[crossref][d
     CHECK(footprint_tier(source, std::nullopt) == FootprintTier::Unknown);
     // An unknown SOURCE cannot be enforced at all — no penalty, surfaced elsewhere.
     CHECK(footprint_penalty(std::nullopt, source) == 0.0);
+}
+
+TEST_CASE("one stated land axis refutes a fit but never confirms one — ABT #516",
+          "[crossref][dims]") {
+    // KEMET C0805C103M5GECTU states length 2.0 mm and no width. A 3.2 mm 1206 body
+    // does not sit on that land however the unstated axis went, so the missing width
+    // must not blank the comparison the stated axis already settles.
+    Dims orig_len_only{};
+    orig_len_only.length = 2.00e-3;
+    Dims c_1206{3.20e-3, 1.60e-3, std::nullopt};
+    Dims c_0805{2.00e-3, 1.25e-3, std::nullopt};
+    Dims c_0603{1.60e-3, 0.80e-3, std::nullopt};
+
+    CHECK(footprint_tier(orig_len_only, c_1206, /*strict*/ true) == FootprintTier::OneSizeLarger);
+    // The axes that match cannot vouch for the one nobody stated: an 0805 body is
+    // UNVERIFIED, never a confirmed fit.
+    CHECK(footprint_tier(orig_len_only, c_0805, /*strict*/ true) == FootprintTier::Unknown);
+    // A materially shorter body cannot reach the same pads — refuted from below.
+    CHECK(footprint_tier(orig_len_only, c_0603, /*strict*/ true) == FootprintTier::Smaller);
+    // ... and the established mismatch must cost more than the unverified one, which
+    // is what separated the 1206 parts from the true 0805 ones.
+    CHECK(footprint_penalty(orig_len_only, c_1206, true) >
+          footprint_penalty(orig_len_only, c_0805, true));
+    CHECK(footprint_penalty(orig_len_only, c_0805, true) == kUnknownDimPenalty);
+
+    // The same rule the other way round (the SUBSTITUTE half-stated), and on the
+    // width axis — 4001 connector rows state a width and no length.
+    Dims sub_len_only{};
+    sub_len_only.length = 3.20e-3;
+    CHECK(footprint_tier(c_0805, sub_len_only, true) == FootprintTier::OneSizeLarger);
+    Dims orig_wid_only{}, sub_wid_only{};
+    orig_wid_only.width = 1.25e-3;
+    sub_wid_only.width = 2.50e-3;
+    CHECK(footprint_tier(orig_wid_only, sub_wid_only, true) == FootprintTier::Overflows);
+
+    // Two records that share no land axis at all stay Unknown — nothing to compare.
+    CHECK(footprint_tier(orig_len_only, sub_wid_only, true) == FootprintTier::Unknown);
+    CHECK(footprint_penalty(orig_len_only, sub_wid_only, true) == kUnknownDimPenalty);
+
+    // The height axis is judged on its own and is unaffected by a half-stated land.
+    Dims orig_len_h{}, sub_len_h{};
+    orig_len_h.length = 2.00e-3;
+    orig_len_h.height = 0.90e-3;
+    sub_len_h.length = 2.00e-3;
+    sub_len_h.height = 1.60e-3;
+    CHECK(height_fit(orig_len_h, sub_len_h) == HeightFit::MuchTaller);
 }
 
 // ── mount type ───────────────────────────────────────────────────────────────
@@ -368,7 +414,7 @@ TEST_CASE("a can's diameter and stated assembly reach the browse row",
     CHECK(can.at("mount") == "THT");
     auto code = resolve_dimensions("10x20", "capacitor");
     REQUIRE(code.has_value());
-    CHECK_THAT(code->length, WithinRel(can.at("lengthM").get<double>(), 1e-9));
+    CHECK_THAT(*code->length, WithinRel(can.at("lengthM").get<double>(), 1e-9));
 
     // Every CAS capacitor states shape.assembly, so no row may come back without a
     // mount — reading only the flat spelling silently emptied the whole catalogue.

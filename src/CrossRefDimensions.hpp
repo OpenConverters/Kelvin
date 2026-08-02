@@ -29,11 +29,14 @@
 
 namespace kelvin::crossref {
 
-// (length, width, height) in metres; height nullopt when the code fixes only a
-// footprint (chip MLCC height varies with value/dielectric and is not encoded).
+// (length, width, height) in metres. EVERY axis is optional, because catalogue
+// records are: a drawing may state a length and no width, and height is nullopt
+// whenever the code fixes only a footprint (chip MLCC height varies with
+// value/dielectric and is not encoded). An axis the record DOES state still
+// settles what it settles — see compare_land.
 struct Dims {
-    double length = 0.0;
-    double width = 0.0;
+    std::optional<double> length;
+    std::optional<double> width;
     std::optional<double> height;
 };
 
@@ -265,34 +268,61 @@ inline constexpr double kSlightlyOversizeScale = 2.5;
 inline constexpr double kUndersizeBand = 0.85;
 inline constexpr double kUndersizeWeight = 2.0;  // ranks a same-size part above a smaller one
 
-inline double footprint_penalty(const std::optional<Dims>& source,
-                                const std::optional<Dims>& candidate, bool strict_case = false) {
-    if (!source) return 0.0;  // cannot enforce; surfaced separately as a diagnostic
-    if (!candidate) return kUnknownDimPenalty;
-    double s_long = std::max(source->length, source->width);
-    double s_short = std::min(source->length, source->width);
-    double c_long = std::max(candidate->length, candidate->width);
-    double c_short = std::min(candidate->length, candidate->width);
-    if (s_long <= 0 || s_short <= 0 || c_long <= 0 || c_short <= 0) return kUnknownDimPenalty;
+// True when BOTH land axes are on record: only then is the box a footprint that
+// can be rotated and whose area is known.
+inline bool has_land(const Dims& d) {
+    return d.length && *d.length > 0 && d.width && *d.width > 0;
+}
 
-    bool fits = c_long <= s_long * kDimTolerance && c_short <= s_short * kDimTolerance;
-    if (fits) {
-        if (!strict_case)
-            // Historical right-sizing: a smaller part is mildly PREFERRED (it frees
-            // board space). Kept for chip passives that sit on standard pads.
-            return kFitAreaWeight * ((c_long * c_short) / (s_long * s_short));
-        // strict_case: the SAME footprint (case kept) is the true drop-in and must
-        // rank first, so score 0 at equal size and PENALISE undersize in proportion
-        // to how far under it is — a smaller body is a different land pattern, not a
-        // free win.
-        double lin = std::min(c_long / s_long, c_short / s_short);
-        return kUndersizeWeight * std::max(0.0, 1.0 - lin);
+// What two boxes can actually be compared on.
+//
+// When both records state both land axes the compare is orientation-agnostic —
+// longest against longest — so a part that fits once rotated still fits. When
+// either side states only ONE axis there is no orientation left to choose, so the
+// axes are compared BY NAME: length against length, width against width. That is
+// a comparison of the same physical axis, not a guess at the missing one.
+//
+// A partial compare is decisive in ONE direction only. A 3.2 mm body does not sit
+// on a 2 mm land however the unstated axis went — turning it to make room puts the
+// terminations across the pads, which is a different land pattern either way — and
+// a body 40% short of the stated axis cannot reach the same pads. But two axes
+// that match say nothing about the axis nobody stated. `fit_known` carries that
+// asymmetry: false means "can refute a fit, cannot confirm one". Blanking the
+// whole compare instead reported a 1206 body against an 0805 original as
+// "footprint": null with no note (ABT #516).
+struct LandCompare {
+    bool comparable = false;  // the records share at least one land axis
+    bool fit_known = false;   // ... and enough of them to CONFIRM a fit
+    double overflow = 0.0;    // largest fraction the substitute exceeds by (0 = none)
+    double lin = 1.0;         // smallest substitute/original axis ratio (undersize test)
+    double area = 1.0;        // substitute/original land area; only meaningful if fit_known
+};
+
+inline LandCompare compare_land(const Dims& source, const Dims& candidate) {
+    LandCompare r;
+    if (has_land(source) && has_land(candidate)) {
+        const double s_long = std::max(*source.length, *source.width);
+        const double s_short = std::min(*source.length, *source.width);
+        const double c_long = std::max(*candidate.length, *candidate.width);
+        const double c_short = std::min(*candidate.length, *candidate.width);
+        r.comparable = r.fit_known = true;
+        r.overflow = std::max({c_long / s_long - 1.0, c_short / s_short - 1.0, 0.0});
+        r.lin = std::min(c_long / s_long, c_short / s_short);
+        r.area = (c_long * c_short) / (s_long * s_short);
+        return r;
     }
-
-    double overflow = std::max(std::max(c_long / s_long, c_short / s_short) - 1.0, 0.0);
-    if (overflow <= kSlightlyOversizeOverflow)
-        return kSlightlyOversizeBase + kSlightlyOversizeScale * overflow;
-    return kOversizeBase + kOversizeScale * overflow;
+    // Half-stated land: the like-named axes both records give, and nothing else.
+    // `lin` stays capped at 1.0 so an axis that grew never reads as undersize.
+    for (const std::optional<double> Dims::*axis : {&Dims::length, &Dims::width}) {
+        const std::optional<double>& s = source.*axis;
+        const std::optional<double>& c = candidate.*axis;
+        if (!s || !c || *s <= 0 || *c <= 0) continue;
+        const double ratio = *c / *s;
+        r.comparable = true;
+        r.overflow = std::max(r.overflow, ratio - 1.0);
+        r.lin = std::min(r.lin, ratio);
+    }
+    return r;
 }
 
 // Categorise the fit of the LAND PATTERN. `strict_case` (magnetics/chip beads)
@@ -304,23 +334,41 @@ enum class FootprintTier { Fits, Smaller, OneSizeLarger, Overflows, Unknown };
 inline FootprintTier footprint_tier(const std::optional<Dims>& source,
                                     const std::optional<Dims>& candidate, bool strict_case = false) {
     if (!source || !candidate) return FootprintTier::Unknown;
-    double s_long = std::max(source->length, source->width);
-    double s_short = std::min(source->length, source->width);
-    double c_long = std::max(candidate->length, candidate->width);
-    double c_short = std::min(candidate->length, candidate->width);
-    if (s_long <= 0 || s_short <= 0 || c_long <= 0 || c_short <= 0) return FootprintTier::Unknown;
+    const LandCompare lc = compare_land(*source, *candidate);
+    if (!lc.comparable) return FootprintTier::Unknown;
+    if (lc.overflow > kDimTolerance - 1.0)
+        return lc.overflow <= kSlightlyOversizeOverflow ? FootprintTier::OneSizeLarger
+                                                        : FootprintTier::Overflows;
+    if (strict_case && lc.lin < kUndersizeBand) return FootprintTier::Smaller;
+    // The axes that matched cannot vouch for an axis nobody stated.
+    return lc.fit_known ? FootprintTier::Fits : FootprintTier::Unknown;
+}
 
-    bool fits = c_long <= s_long * kDimTolerance && c_short <= s_short * kDimTolerance;
-    if (!fits) {
-        double overflow = std::max(std::max(c_long / s_long, c_short / s_short) - 1.0, 0.0);
-        return overflow <= kSlightlyOversizeOverflow ? FootprintTier::OneSizeLarger
-                                                     : FootprintTier::Overflows;
+inline double footprint_penalty(const std::optional<Dims>& source,
+                                const std::optional<Dims>& candidate, bool strict_case = false) {
+    if (!source) return 0.0;  // cannot enforce; surfaced separately as a diagnostic
+    if (!candidate) return kUnknownDimPenalty;
+    const LandCompare lc = compare_land(*source, *candidate);
+    switch (footprint_tier(source, candidate, strict_case)) {
+        case FootprintTier::Fits:
+            // Historical right-sizing: a smaller part is mildly PREFERRED (it frees
+            // board space). Kept for chip passives that sit on standard pads.
+            if (!strict_case) return kFitAreaWeight * lc.area;
+            [[fallthrough]];
+        case FootprintTier::Smaller:
+            // strict_case: the SAME footprint (case kept) is the true drop-in and must
+            // rank first, so score 0 at equal size and PENALISE undersize in proportion
+            // to how far under it is — a smaller body is a different land pattern, not a
+            // free win.
+            return kUndersizeWeight * std::max(0.0, 1.0 - lc.lin);
+        case FootprintTier::OneSizeLarger:
+            return kSlightlyOversizeBase + kSlightlyOversizeScale * lc.overflow;
+        case FootprintTier::Overflows:
+            return kOversizeBase + kOversizeScale * lc.overflow;
+        case FootprintTier::Unknown:
+            break;
     }
-    if (strict_case) {
-        double lin = std::min(c_long / s_long, c_short / s_short);
-        if (lin < kUndersizeBand) return FootprintTier::Smaller;
-    }
-    return FootprintTier::Fits;
+    return kUnknownDimPenalty;
 }
 
 inline const char* footprint_tier_name(FootprintTier t) {

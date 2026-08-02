@@ -234,25 +234,25 @@ TEST_CASE("imperial and metric case codes cannot collide", "[crossref][dims][cla
     // imperial codes, so a bare 4-digit code has exactly one reading.
     auto imperial_0603 = resolve_dimensions("0603", "capacitor");
     REQUIRE(imperial_0603.has_value());
-    CHECK(imperial_0603->length == Catch::Approx(1.60e-3));  // imperial, per distributor convention
+    CHECK(*imperial_0603->length == Catch::Approx(1.60e-3));  // imperial, per distributor convention
 
     // "1608" is unambiguously metric — and resolves to the same physical size as
     // imperial 0603, which is the point: they are the same part.
     auto metric_1608 = resolve_dimensions("1608", "capacitor");
     REQUIRE(metric_1608.has_value());
-    CHECK(metric_1608->length == Catch::Approx(1.60e-3));
-    CHECK(metric_1608->width == Catch::Approx(0.80e-3));
+    CHECK(*metric_1608->length == Catch::Approx(1.60e-3));
+    CHECK(*metric_1608->width == Catch::Approx(0.80e-3));
 
     // The catalogue's explicit dual form must resolve, not fall through.
     auto dual = resolve_dimensions("1608M/0603", "capacitor");
     REQUIRE(dual.has_value());
-    CHECK(dual->length == Catch::Approx(1.60e-3));
-    CHECK(dual->width == Catch::Approx(0.80e-3));
+    CHECK(*dual->length == Catch::Approx(1.60e-3));
+    CHECK(*dual->width == Catch::Approx(0.80e-3));
 
     // A real electrolytic can code from the catalogue (diameter x height).
     auto can = resolve_dimensions("10x16", "capacitor");
     REQUIRE(can.has_value());
-    CHECK(can->length == Catch::Approx(10e-3));
+    CHECK(*can->length == Catch::Approx(10e-3));
     REQUIRE(can->height.has_value());
     CHECK(*can->height == Catch::Approx(16e-3));
 }

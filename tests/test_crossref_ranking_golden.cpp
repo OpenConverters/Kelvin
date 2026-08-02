@@ -383,3 +383,56 @@ TEST_CASE("golden: land and height are two verdicts, not one — ABT #513",
     CHECK(grade_of("magnetic", original, cands, "CASE_KEPT") == "drop_in");
     CHECK(grade_of("magnetic", original, cands, "74439346100") == "minor_review");
 }
+
+TEST_CASE("golden: one missing axis on the original does not blank the footprint — ABT #516",
+          "[crossref][golden]") {
+    // KEMET C0805C103M5GECTU (2.0 mm long, no width on record) crossed against
+    // Murata returned GRM3195C1H153JA01 and GCM3195C1H153JA16 — 3.2 x 1.6 mm 1206
+    // bodies — at "footprint": null, penalty 3, direction "equivalent" and no note:
+    // bit-for-bit what the true 2012M/0805 candidates scored, so nothing said the
+    // land pattern differs, and the two 1206 parts ranked above two of the 0805
+    // ones. dims_of() required BOTH land axes and dropped the box when either was
+    // missing, so the axis the record DOES state — the one that settles this — was
+    // never compared.
+    json original = {{"mpn", "C0805C103M5GECTU"}, {"value_si", 1e-8},   {"voltage", 50.0},
+                     {"technology", "ceramic-class-1"}, {"length_m", 0.002}};
+    json cands = json::array({
+        {{"mpn", "GRM3195C1H153JA01"}, {"value_si", 1e-8}, {"voltage", 50.0},
+         {"technology", "ceramic-class-1"}, {"case_code", "3216M/1206"}, {"length_m", 0.0032},
+         {"width_m", 0.0016}},
+        {{"mpn", "GRM2195C1H153JA01"}, {"value_si", 1e-8}, {"voltage", 50.0},
+         {"technology", "ceramic-class-1"}, {"case_code", "2012M/0805"}, {"length_m", 0.002},
+         {"width_m", 0.00125}},
+    });
+    Options opt;
+    opt.max_results = 50;
+    auto r = cross_reference("capacitor", original, cands, opt);
+    auto by_mpn = [&](const std::string& m) {
+        for (const auto& c : r["candidates"])
+            if (c.value("mpn", std::string()) == m) return c;
+        return json(nullptr);
+    };
+    auto notes_of = [&](const json& c) {
+        std::string all;
+        for (const auto& n : c.value("notes", json::array())) all += n.get<std::string>() + " | ";
+        return all;
+    };
+
+    const json big = by_mpn("GRM3195C1H153JA01");
+    const json same = by_mpn("GRM2195C1H153JA01");
+    REQUIRE(!big.is_null());
+    REQUIRE(!same.is_null());
+    // The stated axis settles it: a 3.2 mm body is one case size up from a 2 mm land.
+    CHECK(big["footprint"] == "one_size_larger");
+    CHECK(notes_of(big).find("one case size larger") != std::string::npos);
+    CHECK(notes_of(big).find("3.2 x 1.6 mm vs 2 mm long") != std::string::npos);
+    // The 0805 part is NOT declared a fit — the original's width is still unstated —
+    // but "cannot tell" outranks "established different land pattern", and both now
+    // carry a footprint verdict where the pair used to be indistinguishable.
+    CHECK(same["footprint"] == "unknown");
+    CHECK(same["penalty"].get<double>() < big["penalty"].get<double>());
+    auto o = order("capacitor", original, cands);
+    REQUIRE(o.size() == 2);
+    CHECK(o[0] == "GRM2195C1H153JA01");
+    CHECK(o[1] == "GRM3195C1H153JA01");
+}

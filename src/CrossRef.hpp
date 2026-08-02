@@ -92,9 +92,16 @@ inline std::string mm(double metres) {
 }
 
 // The land a footprint note is talking about, longest axis first — the same way
-// round the fit test compares them, so two parts read comparably.
+// round the fit test compares them, so two parts read comparably. A record that
+// states only one land axis says which axis it is and that the other is absent,
+// rather than inventing it.
 inline std::string land_mm(const Dims& d) {
-    return mm(std::max(d.length, d.width)) + " x " + mm(std::min(d.length, d.width)) + " mm";
+    if (has_land(d))
+        return mm(std::max(*d.length, *d.width)) + " x " + mm(std::min(*d.length, *d.width)) +
+               " mm";
+    if (d.length) return mm(*d.length) + " mm long, width not stated";
+    if (d.width) return mm(*d.width) + " mm wide, length not stated";
+    return "no land dimensions on record";
 }
 
 // ── Critical ratings ─────────────────────────────────────────────────────────
@@ -228,15 +235,25 @@ inline const char* grade_for(const std::string& status, FootprintTier fit, bool 
 
 // Physical size of a part: an explicit mechanical drawing when the record has
 // one, else the category-aware case-code resolution. Metres.
+//
+// A drawing that states only ONE land axis is kept, not thrown away: the axis it
+// does state settles what it settles (see compare_land). Requiring both blanked
+// the footprint verdict entirely for the ~8.6k catalogue rows that state one —
+// 3.2 x 1.6 mm 1206 bodies were offered against a 2.0 mm 0805 original with
+// "footprint": null, no note, and the same penalty as the true 0805 parts (ABT
+// #516). A case code that resolves to a COMPLETE outline still wins over a
+// half-stated drawing; the partial drawing is the fallback, never the loser.
 inline std::optional<Dims> dims_of(const json& p, const std::string& category) {
     auto l = num(p, "length_m"), w = num(p, "width_m"), h = num(p, "height_m");
-    if (l && w && *l > 0 && *w > 0) {
-        Dims d;
-        d.length = *l;
-        d.width = *w;
-        if (h && *h > 0) d.height = *h;
-        return d;
-    }
+    Dims drawn;
+    if (l && *l > 0) drawn.length = *l;
+    if (w && *w > 0) drawn.width = *w;
+    if (h && *h > 0) drawn.height = *h;
+    if (has_land(drawn)) return drawn;
+    const auto partial = [&]() -> std::optional<Dims> {
+        if (drawn.length || drawn.width) return drawn;
+        return std::nullopt;
+    };
     // Magnetics and chip beads: a bare case code is NOT a reliable footprint. A
     // 4-digit magnetic code like "1210" is ambiguous between an EIA chip
     // (3.2 x 2.5 mm) and a molded power inductor (~12 x 10 mm) — resolving it
@@ -246,10 +263,16 @@ inline std::optional<Dims> dims_of(const json& p, const std::string& category) {
     // unknown, so the part cannot be graded a drop-in. (Same reason these
     // categories are excluded from the mount gate — their package strings vary too
     // much by series to classify.)
-    if (category == "magnetic" || category == "chipBead") return std::nullopt;
+    if (category == "magnetic" || category == "chipBead") return partial();
     std::string code = str(p, "case_code");
     if (code.empty()) code = str(p, "package");
-    return resolve_dimensions(code, category);
+    if (auto coded = resolve_dimensions(code, category)) {
+        // The drawing's own height still stands where the table fixes no height —
+        // a chip's height is not encoded in its case code.
+        if (!coded->height) coded->height = drawn.height;
+        return coded;
+    }
+    return partial();
 }
 
 // Score one candidate against the original. Returns a per-candidate JSON verdict.
@@ -503,12 +526,18 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // dimensions reliably from their EIA/JEDEC case code, so this does not touch
         // them. And when the ORIGINAL itself has no footprint there is nothing to
         // fit to, so a dimensionless-vs-dimensionless compare — e.g. a part against
-        // itself — is left to the electrical verdicts, never rejected here.)
-        if ((cat == "magnetic" || cat == "chipBead") && o_dims && !s_dims) {
+        // itself — is left to the electrical verdicts, never rejected here. The same
+        // goes for an original that states only one land axis: one axis is not a
+        // footprint to fit to, so it grades the substitute rather than excluding it.)
+        // Both sides are tested on a COMPLETE land, which is what "has a footprint"
+        // meant before a half-stated drawing could reach here at all: for a custom
+        // land pattern one axis verifies nothing, so this stays exactly as strict.
+        if ((cat == "magnetic" || cat == "chipBead") && o_dims && has_land(*o_dims) &&
+            (!s_dims || !has_land(*s_dims))) {
             out["missing_dimensions"] = true;  // partial/incomplete catalogue record
             params.push_back({{"name", "footprint"}, {"verdict", UNVERIFIED}});
             notes.push_back(
-                "no mechanical dimensions on record — footprint fit cannot be verified; excluded "
+                "no complete land pattern on record — footprint fit cannot be verified; excluded "
                 "from cross-reference until its dimensions are added (catalogue data gap)");
             return reject("no dimensional data — cannot verify footprint fit");
         }
@@ -599,11 +628,19 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 // Non-magnetic family whose original has a footprint but whose
                 // substitute's case code did not resolve to one: the fit is
                 // UNVERIFIED (magnetics/chip beads are already excluded above). It
-                // must not read as a drop-in, so the grade is capped below.
+                // must not read as a drop-in, so the grade is capped below. The same
+                // rung takes a half-stated land on either side: the axes that COULD
+                // be compared did not rule the fit out, which is not the same as
+                // ruling it in.
                 demote();
                 notes.push_back(
-                    "mechanical dimensions unavailable for the substitute — footprint fit "
-                    "could not be verified; confirm it fits the original's land pattern");
+                    !s_dims ? "mechanical dimensions unavailable for the substitute — footprint "
+                              "fit could not be verified; confirm it fits the original's land "
+                              "pattern"
+                            : "only part of the land is on record (" + land_mm(*s_dims) + " vs " +
+                                  land_mm(*o_dims) +
+                                  ") — what is stated does not rule the fit out, but does not "
+                                  "confirm it either; verify the land pattern");
             }
         }
         // ── height / clearance, its own axis ─────────────────────────────────
