@@ -96,8 +96,17 @@ def verify_clean_head(repo: Path, gates: Iterable[Sequence[str]],
     if _git(repo, "rev-parse", "HEAD").returncode != 0:
         return False, "verify_clean_head: not a git repo"
 
-    tmp = Path(tempfile.mkdtemp(prefix="cleanhead_"))
-    wt = tmp / "wt"
+    # The worktree MUST be a sibling of the repo, not somewhere under /tmp. TAS resolves
+    # every schema it validates against from REPO.parent — PEAS, CIAS, CAS, RAS, MAS… — so
+    # a checkout in /tmp has no siblings and `pytest tests/test_schemas.py` comes back
+    # "1 failed, 64 errors, FileNotFound" on a HEAD that is perfectly healthy. That false
+    # positive halted the production drain on 2026-08-02 (the real checkout: 70 passed).
+    # A clean-HEAD check has to reproduce the repo's ENVIRONMENT, not just its contents.
+    # A DIRECT child of the repo's parent, so that the checkout's own REPO.parent is the
+    # same directory the real one sees. Nesting it one level deeper (parent/.cleanhead/TAS)
+    # is not enough — REPO.parent then points at .cleanhead, which has no siblings either.
+    wt = repo.parent / f".cleanhead_{repo.name}_{os.getpid()}"
+    tmp = wt
     add = _git(repo, "worktree", "add", "-q", "--detach", str(wt), "HEAD", timeout=600)
     if add.returncode != 0:
         shutil.rmtree(tmp, ignore_errors=True)
@@ -121,6 +130,7 @@ def verify_clean_head(repo: Path, gates: Iterable[Sequence[str]],
     finally:
         _git(repo, "worktree", "remove", "--force", str(wt), timeout=300)
         shutil.rmtree(tmp, ignore_errors=True)
+        _git(repo, "worktree", "prune")
 
 
 # ---------------------------------------------------------------------------

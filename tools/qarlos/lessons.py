@@ -208,6 +208,29 @@ LESSONS: List[Lesson] = [
         tags=["validator"],
     ),
 
+    Lesson(
+        id="a-clean-checkout-is-not-a-clean-environment",
+        audience="minion",
+        rule="Verifying from a clean checkout means reproducing the repo's ENVIRONMENT, not "
+             "just its contents. A checkout in the wrong place fails for reasons that have "
+             "nothing to do with the code.",
+        incident="2026-08-02, first production firing of verify_clean_head. It put the "
+                 "detached worktree under /tmp and got '1 failed, 5 passed, 64 errors, "
+                 "FileNotFound' — then halted the nightly drain with 'main does not pass "
+                 "its own gates'. main was fine: the same command in the real checkout "
+                 "returned 70 passed. TAS resolves every sibling schema repo it validates "
+                 "against from REPO.parent (PEAS, CIAS, CAS, RAS, MAS…), so a worktree with "
+                 "no siblings cannot possibly pass. Nesting it one level deeper "
+                 "(parent/.cleanhead/TAS) was still wrong for the same reason.",
+        apply="Place the worktree as a DIRECT child of the repo's parent, so the checkout's "
+              "own REPO.parent is the directory the real one sees. More generally: before "
+              "believing a clean-room failure, run the identical command in the real tree. "
+              "If it passes there, the harness is the suspect, not the code — and a guard "
+              "that stops the line on a false positive is worse than no guard.",
+        enforced_by="guards.verify_clean_head",
+        tags=["harness", "gate"],
+    ),
+
     # ---- what to fix -------------------------------------------------------
     Lesson(
         id="fix-the-producer",
