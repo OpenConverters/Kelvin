@@ -289,8 +289,16 @@ inline std::optional<Dims> dims_of(const json& p, const std::string& category) {
     if (w && *w > 0) drawn.width = *w;
     if (h && *h > 0) drawn.height = *h;
     if (has_land(drawn)) return drawn;
+    // Every axis the drawing states is kept, land or not. A record that states a
+    // HEIGHT and no land is not a record with no dimensions: throwing it away made
+    // the ranker print "mechanical dimensions unavailable for the substitute" beside
+    // the height it had just listed, and silently disabled the clearance axis that
+    // judges that height — an Abracon ALFB-01 (5.0 mm tall) came back minor_review
+    // against a 0.35 mm chip bead with no height verdict at all (ABT #499). What a
+    // land-less drawing cannot do is answer a FOOTPRINT question; that is what
+    // has_any_land guards, not what is kept here.
     const auto partial = [&]() -> std::optional<Dims> {
-        if (drawn.length || drawn.width) return drawn;
+        if (drawn.length || drawn.width || drawn.height) return drawn;
         return std::nullopt;
     };
     // Magnetics and chip beads: a bare case code is NOT a reliable footprint. A
@@ -738,7 +746,12 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             }
         }
         FootprintTier tier = footprint_tier(o_dims, s_dims, strict_case);
-        if (o_dims && !out.contains("footprint")) {
+        // A LAND to fit to is what this branch needs, not merely a drawing. An
+        // original whose record states only a height has no pads to compare
+        // against, so it belongs to the "original states no package dimensions"
+        // branch below — which is where it went before a land-less drawing could
+        // reach here at all.
+        if (o_dims && has_any_land(*o_dims) && !out.contains("footprint")) {
             double fit_penalty = footprint_penalty(o_dims, s_dims, strict_case);
             // Same ladder rule as the case-code gate above: a body the compare has
             // ESTABLISHED not to match the pads (smaller than them, or overhanging
@@ -788,16 +801,35 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 // be compared did not rule the fit out, which is not the same as
                 // ruling it in.
                 demote();
-                notes.push_back(
-                    !s_dims ? "mechanical dimensions unavailable for the substitute — footprint "
-                              "fit could not be verified; confirm it fits the original's land "
-                              "pattern"
-                            : "only part of the land is on record (" + land_mm(*s_dims) + " vs " +
-                                  land_mm(*o_dims) +
-                                  ") — what is stated does not rule the fit out, but does not "
-                                  "confirm it either; verify the land pattern");
+                // Three different silences, and the note must name the right one.
+                // "mechanical dimensions unavailable" is true only of a record that
+                // states NONE; printing it beside a row that lists a height (or a
+                // length) overstates the gap and buries the fact that the stated
+                // axis matches (ABT #499). What is missing is named instead.
+                if (!s_dims || (!has_any_land(*s_dims) && !s_dims->height)) {
+                    notes.push_back(
+                        "mechanical dimensions unavailable for the substitute — footprint fit "
+                        "could not be verified; confirm it fits the original's land pattern");
+                } else if (has_any_land(*s_dims)) {
+                    notes.push_back("only part of the land is on record (" + land_mm(*s_dims) +
+                                    " vs " + land_mm(*o_dims) +
+                                    ") — what is stated does not rule the fit out, but does not "
+                                    "confirm it either; verify the land pattern");
+                } else {
+                    // A drawing with a height and no land. It says something real —
+                    // the clearance axis above judges it — but nothing at all about
+                    // the pads, so the footprint stays unverified and the note says
+                    // which of the two it is talking about.
+                    notes.push_back("the substitute's record states its height (" +
+                                    mm(*s_dims->height) +
+                                    " mm) but neither land dimension, so its fit to the "
+                                    "original's " +
+                                    land_mm(*o_dims) +
+                                    " land could not be verified; confirm the land pattern");
+                }
             }
-        } else if (!o_dims && footprint_is_the_body(cat) && !out.contains("footprint")) {
+        } else if ((!o_dims || !has_any_land(*o_dims)) && footprint_is_the_body(cat) &&
+                   !out.contains("footprint")) {
             // The same rung, seen from the ORIGINAL's side. Every branch above needs a
             // footprint for the ORIGINAL; with none, the package axis vanished from the
             // verdict table entirely and "drop_in" — the grade that asserts the part
@@ -833,7 +865,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 if (s_dims && has_land(*s_dims)) what += (what.empty() ? "" : ", ") + land_mm(*s_dims);
                 if (!what.empty())
                     notes.push_back(
-                        "the original's record states no package dimensions, so its land pattern "
+                        "the original's record states no land dimensions, so its land pattern "
                         "could not be established — this substitute is " + what +
                         "; footprint fit is UNVERIFIED, confirm the pads before substituting");
             }

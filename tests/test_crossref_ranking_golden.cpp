@@ -545,3 +545,76 @@ TEST_CASE("golden: with no drawing on either side, the kept case IS the land pat
     CHECK(rm["candidates"][0]["footprint"] == "unknown");
     CHECK(rm["candidates"][0]["grade"] != "drop_in");
 }
+
+TEST_CASE("golden: the footprint note names what is missing, not 'no dimensions' — ABT #499",
+          "[crossref][golden]") {
+    // Panasonic ERA2AEC2152X (1.0 x 0.5 mm) returned YAGEO AT0402BRD0721K5L with
+    // "mechanical dimensions unavailable for the substitute" printed beside the row
+    // that listed lengthM 0.001 and heightM 0.0003 — both faithfully carried from the
+    // raw record. One canned sentence covered three different silences, so it
+    // overstated the gap on every record that states SOME of its outline and buried
+    // the useful fact that the stated length equals the original's. Worse, a record
+    // stating only a HEIGHT had its drawing thrown away entirely by dims_of, which
+    // also disabled the clearance axis that judges that very height.
+    json original = {{"mpn", "ERA2AEC2152X"}, {"value_si", 21500.0},   {"tolerance_pct", 0.25},
+                     {"power_rating", 0.063}, {"case_code", "0402"},   {"length_m", 0.001},
+                     {"width_m", 0.0005},     {"height_m", 0.00035}};
+    json cands = json::array({
+        // The ticket's part: length and height stated, width and case code absent.
+        {{"mpn", "AT0402BRD0721K5L"}, {"value_si", 21500.0}, {"tolerance_pct", 0.1},
+         {"power_rating", 0.063}, {"length_m", 0.001}, {"height_m", 0.0003}},
+        // A height and no land at all — 1,167 catalogue rows look like this.
+        {{"mpn", "HEIGHT_ONLY"}, {"value_si", 21500.0}, {"tolerance_pct", 0.1},
+         {"power_rating", 0.063}, {"height_m", 0.0009}},
+        // Nothing on record: the canned sentence is TRUE here and must stay.
+        {{"mpn", "NO_DIMS"}, {"value_si", 21500.0}, {"tolerance_pct", 0.1},
+         {"power_rating", 0.063}},
+    });
+    Options opt;
+    opt.max_results = 50;
+    auto r = cross_reference("resistor", original, cands, opt);
+    auto by_mpn = [&](const std::string& m) {
+        for (const auto& c : r["candidates"])
+            if (c.value("mpn", std::string()) == m) return c;
+        return json(nullptr);
+    };
+    auto notes_of = [&](const json& c) {
+        std::string all;
+        for (const auto& n : c.value("notes", json::array())) all += n.get<std::string>() + " | ";
+        return all;
+    };
+    auto verdict_of = [](const json& c, const char* name) {
+        for (const auto& p : c["params"])
+            if (p["name"] == name) return p["verdict"].get<std::string>();
+        return std::string("<absent>");
+    };
+
+    // The stated length is compared and quoted; the missing axis is what the note is
+    // about. The footprint verdict itself is unchanged — width is genuinely absent,
+    // so the fit is still UNVERIFIED.
+    const json partial = by_mpn("AT0402BRD0721K5L");
+    REQUIRE(!partial.is_null());
+    CHECK(partial["footprint"] == "unknown");
+    CHECK(verdict_of(partial, "footprint") == UNVERIFIED);
+    CHECK(notes_of(partial).find("mechanical dimensions unavailable") == std::string::npos);
+    CHECK(notes_of(partial).find("1 mm long, width not stated vs 1 x 0.5 mm") != std::string::npos);
+
+    // A height and no land says nothing about the pads — but it is not "no
+    // dimensions", and the clearance axis it DOES settle is now judged.
+    const json h_only = by_mpn("HEIGHT_ONLY");
+    REQUIRE(!h_only.is_null());
+    CHECK(h_only["footprint"] == "unknown");
+    CHECK(notes_of(h_only).find("mechanical dimensions unavailable") == std::string::npos);
+    CHECK(notes_of(h_only).find("states its height (0.9 mm) but neither land dimension") !=
+          std::string::npos);
+    CHECK(h_only["height_fit"] == "much_taller");
+    CHECK(verdict_of(h_only, "height") == FAIL);
+
+    // ... and a record that really states nothing still gets the sentence that is
+    // true of it, so the fix narrows the claim rather than deleting it.
+    const json bare = by_mpn("NO_DIMS");
+    REQUIRE(!bare.is_null());
+    CHECK(bare["footprint"] == "unknown");
+    CHECK(notes_of(bare).find("mechanical dimensions unavailable") != std::string::npos);
+    CHECK(verdict_of(bare, "height") == "<absent>");
+}

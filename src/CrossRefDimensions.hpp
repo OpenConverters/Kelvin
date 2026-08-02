@@ -274,6 +274,14 @@ inline bool has_land(const Dims& d) {
     return d.length && *d.length > 0 && d.width && *d.width > 0;
 }
 
+// True when at least ONE land axis is on record — the least a drawing can state
+// and still say something about the land pattern. A drawing that states only a
+// HEIGHT is a real drawing (its clearance is judged, see height_fit) but it is
+// not a land: nothing about the pads can be compared to it, either way.
+inline bool has_any_land(const Dims& d) {
+    return (d.length && *d.length > 0) || (d.width && *d.width > 0);
+}
+
 // What two boxes can actually be compared on.
 //
 // When both records state both land axes the compare is orientation-agnostic —
