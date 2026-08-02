@@ -34,7 +34,11 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // part is a discrete two-terminal chip or a multi-element array/network. Without it
 // the cross-reference compared body outlines only and graded discrete 1206 chips as
 // drop-ins for a 4-element 3.2 x 1.6 mm array (ABT #481).
-constexpr uint32_t kFormatVersion = 6;
+// v7 added the connector pitch — the only land-pattern datum a connector record carries.
+// Without it the cross-reference had nothing to compare and graded a 5.00 mm-pitch part a
+// drop_in for a 2.00 mm one, with the caveat asserting the catalogue had no pitch at all
+// while every raw record held it (ABT #485).
+constexpr uint32_t kFormatVersion = 7;
 
 // Identity of the code that produces rows, so a cached shard can be recognised as
 // having been built by a DIFFERENT extractor than the one running now (ABT #426).
@@ -330,6 +334,7 @@ void row_io(Ar& ar, ConnectorRow& r) {
     ar.dbl(r.rated_current);
     ar.dbl(r.rated_voltage);
     ar.dbl(r.positions);
+    ar.dbl(r.pitch);
     ar.str(r.family);
     ar.str(r.interface_standard);
     ar.str(r.polarity);

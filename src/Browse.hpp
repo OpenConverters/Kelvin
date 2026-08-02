@@ -234,7 +234,8 @@ inline const FieldTable<ConnectorRow>& fields<ConnectorRow>() {
     static const FieldTable<ConnectorRow> t{
         {{"rated_current", &ConnectorRow::rated_current},
          {"rated_voltage", &ConnectorRow::rated_voltage},
-         {"positions", &ConnectorRow::positions}},
+         {"positions", &ConnectorRow::positions},
+         {"pitch", &ConnectorRow::pitch}},
         {{"family", &ConnectorRow::family},
          {"interface_standard", &ConnectorRow::interface_standard},
          {"polarity", &ConnectorRow::polarity},

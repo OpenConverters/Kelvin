@@ -261,6 +261,7 @@ FAMILIES.push(
     glyph: 'J',
     columns: [
       { f: 'positions', label: 'pos', unit: '', plain: true },
+      { f: 'pitch', label: 'pitch', unit: 'm' },
       { f: 'rated_current', label: 'I/contact', unit: 'A' },
       { f: 'rated_voltage', label: 'V rated', unit: 'V' },
       { f: 'family', label: 'Family', str: true },

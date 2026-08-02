@@ -6,6 +6,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 
+#include "Browse.hpp"
 #include "Index.hpp"
 
 using namespace kelvin;
@@ -186,5 +187,42 @@ TEST_CASE("index: incremental build refuses to reuse foreign extractor rows",
     REQUIRE(incremental.rows[0].mpn == "A");  // re-parsed, not carried over from prev
     REQUIRE(incremental.meta.extractor_hash == extractor_version());
     REQUIRE(serialize_shard(incremental) == serialize_shard(full));
+    fs::remove(path);
+}
+
+// ABT #485: connector.manufacturerInfo.datasheetInfo.mechanical.pitch is stated on 246k of
+// the 392k catalogue connectors and was extracted by nothing, so the shard row — and every
+// consumer of it — behaved as though the catalogue had no pitch at all. A connector record
+// carries no body outline, so pitch IS its land pattern: dropping it left the cross-reference
+// with nothing to compare and it graded 2.54 mm parts drop_in against a 2.00 mm original.
+TEST_CASE("index: connector pitch reaches the shard row and survives a round-trip",
+          "[index][connector][abt485]") {
+    auto connector_line = [](const std::string& mpn, int positions, const std::string& pitch) {
+        return "{\"connector\":{\"manufacturerInfo\":{\"name\":\"ACME\",\"reference\":\"" + mpn +
+               "\",\"status\":\"production\",\"datasheetInfo\":{\"part\":{\"partNumber\":\"" + mpn +
+               "\",\"matingPolarity\":\"male\"},\"mechanical\":{\"positions\":" +
+               std::to_string(positions) + (pitch.empty() ? "" : ",\"pitch\":" + pitch) +
+               "},\"familyDetails\":{\"family\":\"boardToBoard\"}}}}}";
+    };
+    std::string path = tmp_path("connector_pitch.ndjson");
+    write_file(path, connector_line("P200", 13, "0.002") + "\n" +
+                         connector_line("P254", 13, "0.00254") + "\n" +
+                         connector_line("NOPITCH", 13, "") + "\n");
+    auto shard = build_connector_shard(path);
+    REQUIRE(shard.meta.row_count == 3);
+    REQUIRE(shard.rows[0].pitch == 0.002);       // metres, as the catalogue states it
+    REQUIRE(shard.rows[1].pitch == 0.00254);
+    REQUIRE(std::isnan(shard.rows[2].pitch));    // absent stays UNKNOWN, never 0
+
+    auto back = deserialize_connector_shard(serialize_shard(shard));
+    REQUIRE(back.rows[0].pitch == shard.rows[0].pitch);
+    REQUIRE(back.rows[1].pitch == shard.rows[1].pitch);
+    REQUIRE(std::isnan(back.rows[2].pitch));
+
+    // and it is visible to the caller that builds the cross-reference spec block
+    nlohmann::json rows =
+        browse::browse_rows(shard, nlohmann::json{{"limit", 10}}).at("rows");
+    REQUIRE(rows[0].at("pitch").get<double>() == 0.002);
+    REQUIRE(rows[2].at("pitch").is_null());
     fs::remove(path);
 }

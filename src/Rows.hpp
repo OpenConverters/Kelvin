@@ -248,11 +248,17 @@ struct TimingRow : RowBase {
 };
 
 // A catalogue connector. Browse-only projection of connector.manufacturerInfo.datasheetInfo
-// (electrical.ratedCurrentPerContact/ratedVoltage, mechanical.positions, familyDetails, part).
+// (electrical.ratedCurrentPerContact/ratedVoltage, mechanical.positions/pitch, familyDetails,
+// part).
 struct ConnectorRow : RowBase {
     double rated_current = kNaN();  // A per contact
     double rated_voltage = kNaN();  // V
     double positions = kNaN();      // contact count
+    // m — contact-to-contact spacing. A connector record carries no body outline, so this IS
+    // its land pattern: pin N sits (N-1) x pitch from pin 1. 246k of the 392k catalogue rows
+    // state one and it was dropped on the way into the shard, which is why 2.54 mm parts were
+    // graded drop_in against a 2.00 mm original (ABT #485).
+    double pitch = kNaN();
     std::string family;             // familyDetails.family (boardToBoard / terminalBlock / …)
     std::string interface_standard; // familyDetails.interfaceStandard (when standardised)
     std::string polarity;           // part.matingPolarity (male / female / hermaphroditic)

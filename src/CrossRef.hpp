@@ -420,6 +420,12 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         }
     }
 
+    // A connector's PITCH is its land pattern — the record carries no body outline,
+    // so nothing else settles the fit. Captured from the PARAM_SPECS verdict below
+    // (one tolerance, stated once) and reported as the footprint verdict, because a
+    // "footprint": null next to a known pitch mismatch reads as "we could not check
+    // the fit" when it has just been checked and failed (ABT #485).
+    bool connector_pitch_conflict = false;
     // ── PARAM_SPECS verdicts (the shared Heaviside table) ────────────────────
     for (const ParamSpec& spec : params_for(cat)) {
         bool has_data = detail::present(original, spec.key) || detail::present(cand, spec.key);
@@ -430,6 +436,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         const ParamOutcome outcome = compare_param(spec, original, cand);
         const std::string verdict = outcome.verdict;
         params.push_back({{"name", spec.key}, {"verdict", verdict}});
+        if (cat == "connector" && spec.key == "pitch_mm" && verdict == FAIL)
+            connector_pitch_conflict = true;
 
         const bool numeric = (spec.dir == Dir::Lower || spec.dir == Dir::Higher);
         auto o = numeric ? detail::jnum(original, spec.key) : std::nullopt;
@@ -559,6 +567,26 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             out["footprint"] = "different_land_pattern";
             params.push_back({{"name", "footprint"}, {"verdict", FAIL}});
             penalty += opt.footprint_weight * kVerdictFailPenalty;
+        }
+        // The connector equivalent, and for the same reason: the pitch decides the land
+        // pattern and there is no body outline to weigh against it. Say WHERE the last
+        // contact ends up — "pitch differs" is abstract, "pin 13 sits 6.5 mm off its pad"
+        // is the reason the board does not accept the part.
+        auto o_pitch = num(original, "pitch_mm"), s_pitch = num(cand, "pitch_mm");
+        if (connector_pitch_conflict && o_pitch && s_pitch && !out.contains("footprint")) {
+            out["footprint"] = "different_land_pattern";
+            params.push_back({{"name", "footprint"}, {"verdict", FAIL}});
+            penalty += opt.footprint_weight * kVerdictFailPenalty;
+            std::string note = "pitch differs: " + mm(*o_pitch * 1e-3) + " -> " +
+                               mm(*s_pitch * 1e-3) + " mm (" +
+                               signed_pct(100.0 * (*s_pitch / *o_pitch - 1.0)) + ")";
+            auto n = num(original, "positions");
+            if (n && *n >= 2.0)
+                note += "; over " + std::to_string(static_cast<long>(*n)) +
+                        " positions the last contact sits " +
+                        mm(std::fabs(*s_pitch - *o_pitch) * (*n - 1.0) * 1e-3) +
+                        " mm off its pad";
+            notes.push_back(note + " — a different land pattern, not a drop-in");
         }
         // "Case kept" gate for the families whose CASE CODE is the footprint (chip
         // passives + IC packages, i.e. everything except magnetics/chip beads whose

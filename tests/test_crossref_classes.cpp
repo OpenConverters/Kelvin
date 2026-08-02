@@ -436,6 +436,72 @@ TEST_CASE("a connector current shortfall demotes, it does not reject",
     CHECK((*wrong)["status"] == "no_substitute");  // different part
 }
 
+// ── connector pitch: the land pattern, not a footnote (ABT #485) ─────────────
+
+TEST_CASE("a connector pitch mismatch is a footprint failure, never a drop_in",
+          "[crossref][classes][rank][abt485]") {
+    // The reported case: Samtec TW-13-09-F-S-235-SM, 13 positions on a 2.00 mm
+    // pitch. All three candidates matched family/positions/polarity and were
+    // returned "recommended"/"drop_in" with footprint null, because the pitch
+    // never reached the ranker. Pin 13 sits 12 x pitch from pin 1, so 2.54 mm
+    // puts it 6.48 mm off its pad and 5.00 mm puts it 36 mm off.
+    json original = {{"mpn", "TW-13-09-F-S-235-SM"}, {"family", "boardToBoard"},
+                     {"positions", 13}, {"polarity", "male"}, {"pitch_mm", 2.0},
+                     {"rated_current_A", 3.9}};
+    json cands = json::array({
+        {{"mpn", "SAME_PITCH"}, {"family", "boardToBoard"}, {"positions", 13},
+         {"polarity", "male"}, {"pitch_mm", 2.0}, {"rated_current_A", 5.0}},
+        {{"mpn", "P254"}, {"family", "boardToBoard"}, {"positions", 13},
+         {"polarity", "male"}, {"pitch_mm", 2.54}, {"rated_current_A", 5.0}},
+        {{"mpn", "P500"}, {"family", "boardToBoard"}, {"positions", 13},
+         {"polarity", "male"}, {"pitch_mm", 5.0}, {"rated_current_A", 5.0}},
+        {{"mpn", "NO_PITCH"}, {"family", "boardToBoard"}, {"positions", 13},
+         {"polarity", "male"}, {"rated_current_A", 5.0}}});
+    auto r = cross_reference("connector", original, cands, Options{});
+    auto by_mpn = [&](const char* m) {
+        auto it = std::find_if(r["candidates"].begin(), r["candidates"].end(),
+                               [&](const json& c) { return c["mpn"] == m; });
+        REQUIRE(it != r["candidates"].end());
+        return *it;
+    };
+    auto verdict_of = [](const json& c, const char* name) {
+        for (const auto& p : c["params"])
+            if (p["name"] == name) return p["verdict"].get<std::string>();
+        return std::string("<absent>");
+    };
+
+    const json same = by_mpn("SAME_PITCH");
+    CHECK(verdict_of(same, "pitch_mm") == PASS);
+    CHECK(same["grade"] == "drop_in");
+
+    for (const char* m : {"P254", "P500"}) {
+        const json c = by_mpn(m);
+        INFO(m);
+        CHECK(verdict_of(c, "pitch_mm") == FAIL);
+        // the land pattern is REPORTED, not left null next to a known mismatch
+        CHECK(c["footprint"] == "different_land_pattern");
+        CHECK(verdict_of(c, "footprint") == FAIL);
+        CHECK(c["grade"] != "drop_in");
+        CHECK(c["status"] == "partial");
+        CHECK(c["penalty"].get<double>() > same["penalty"].get<double>());
+    }
+    // the wrong-pitch parts must not outrank the one that keeps the land pattern
+    CHECK(r["candidates"][0]["mpn"] == "SAME_PITCH");
+
+    // A candidate whose record states no pitch is UNVERIFIED — an unknown, not a
+    // mismatch. Kelvin does not invent the datum, and does not fail it either.
+    const json unknown = by_mpn("NO_PITCH");
+    CHECK(verdict_of(unknown, "pitch_mm") == UNVERIFIED);
+    CHECK_FALSE(unknown.contains("footprint"));
+
+    // and the note names the geometry, not just "pitch differs"
+    const json p254 = by_mpn("P254");
+    REQUIRE(p254.contains("notes"));
+    std::string notes = p254["notes"].dump();
+    CHECK(notes.find("2 -> 2.54 mm") != std::string::npos);
+    CHECK(notes.find("6.48 mm off its pad") != std::string::npos);
+}
+
 // ── resistor device class: array/network vs discrete (ABT #481) ──────────────
 // A Panasonic EXB-V8V is four isolated 51 ohm elements on eight terminals in a
 // 3.2 x 1.6 mm body — the same OUTLINE as a discrete 1206. Judging fit on the

@@ -112,19 +112,25 @@ export const XREF = [
   {
     key: 'connector', label: 'Connectors', category: 'connector',
     // Identity is family + position count; a 6-way terminal block is not a
-    // 4-way one. NOTE: the catalogue carries no pitch, plating, termination or
-    // mating-cycle data, so those cannot be checked — the tool says nothing
-    // about mating compatibility rather than implying it.
+    // 4-way one. Pitch is the land pattern — a connector record carries no body
+    // outline, so it is the only footprint datum there is, and it must reach the
+    // ranker: it was dropped here and a 2.54 mm part was graded a drop_in for a
+    // 2.00 mm original (ABT #485). Plating, termination and mating-cycle data are
+    // genuinely absent from the catalogue and still cannot be checked.
     primary: null,
     sameFacet: { f: 'family', label: 'family' },
     hardKeys: ['family', 'positions', 'rated_current_A'],
     exactNum: [{ row: 'positions', tol: 1e-9 }],
-    caveat: 'Mating compatibility is NOT checked — the catalogue carries no pitch, plating or termination data. Verify the part mates with your existing counterpart before substituting.',
+    caveat: 'Contact pitch is compared where both records state one; plating, termination and mating-cycle data are not in the catalogue, so full mating compatibility is NOT checked. Verify the part mates with your existing counterpart before substituting.',
+    // pitch_mm, not metres: the ranker's ParamSpec is keyed on it and an engineer
+    // reads a connector pitch in millimetres. The shard stores SI metres.
     spec: (r) => ({ ...base(r), family: r.family ?? '', positions: nz(r.positions),
       polarity: r.polarity ?? '', interface_standard: r.interface_standard ?? '',
+      pitch_mm: r.pitch != null && r.pitch > 0 ? r.pitch * 1e3 : null,
       rated_current_A: nz(r.rated_current), rated_voltage_V: nz(r.rated_voltage) }),
     params: [
       { key: 'positions', label: 'pos', row: 'positions', unit: '' },
+      { key: 'pitch_mm', label: 'pitch', row: 'pitch', unit: 'm' },
       { key: 'rated_current_A', label: 'I/contact', row: 'rated_current', unit: 'A' },
       { key: 'rated_voltage_V', label: 'V rated', row: 'rated_voltage', unit: 'V' },
     ],

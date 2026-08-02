@@ -888,7 +888,10 @@ std::optional<ConnectorRow> extract_connector(const json& env) {
         set_if_pos(r.rated_voltage, get_num(*elec, "ratedVoltage"));
     }
     const json* mech = obj_get(*di, "mechanical");
-    if (mech && mech->is_object()) set_if_pos(r.positions, get_num(*mech, "positions"));
+    if (mech && mech->is_object()) {
+        set_if_pos(r.positions, get_num(*mech, "positions"));
+        set_if_pos(r.pitch, get_num(*mech, "pitch"));
+    }
     const json* fd = obj_get(*di, "familyDetails");
     if (fd && fd->is_object()) {
         r.family = get_str(*fd, "family").value_or("");
