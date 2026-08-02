@@ -122,7 +122,19 @@ struct MosfetRow : RowBase {
 };
 
 struct DiodeRow : RowBase {
-    double vrrm_rated = 0, if_avg_rated = 0, vf_typ = 0, qrr = 0, trr = 0;
+    double vrrm_rated = 0, if_avg_rated = 0, vf_typ = 0;
+    // NOT 0. Most of the catalogue publishes no reverse recovery at all — 15,165 of the
+    // 17,888 diode records state neither, and only 719 state a charge — and writing 0 for
+    // "not stated" is an in-band sentinel: it is the ideal diode, and the same bits the
+    // 260 records that genuinely state Qrr = 0 produce. The browse row read "qrr": 0,
+    // "trr": 0 beside null for every other absent field on the same row (ABT #489), and
+    // 0-for-missing makes a recovery gate compare 0 against 0 and pass silently. Absence
+    // travels as NaN, which browse renders as null, numeric filters exclude and the
+    // lowest_qrr tiebreaker sorts LAST instead of rewarding as the best part in the
+    // catalogue (the treatment vf_typ above already gets). A STATED 0 is kept as 0: on a
+    // Schottky/SiC there is no minority charge to recover, which is a measurement, not a
+    // gap.
+    double qrr = kNaN(), trr = kNaN();
     // V — the two ends of electrical.breakdownVoltage, and the +/- grade they define
     // (a FRACTION, as ResistorRow::tolerance is). For a zener the WINDOW is the part:
     // an A-grade BZX84-A3V6-Q guarantees 3.56-3.64 V (1.11 %) where the B grade of the

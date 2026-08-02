@@ -170,7 +170,12 @@ export const XREF = [
     // which is what the ranker's ParamSpec compares — the shard stores it as a fraction,
     // the way the resistor tolerance is stored. NOT through nz(): a 0 % band would be a
     // stated value, not an absence, and 'positive' would silently discard it.
-    spec: (r) => ({ ...base(r), vrrm: nz(r.vrrm_rated), if_avg: nz(r.if_avg_rated), vf: nz(r.vf_typ), qrr: nz(r.qrr), trr: nz(r.trr), technology: r.technology ?? '',
+    // Recovery is the same case, now that the shard tells the two apart (ABT #489): the
+    // 260 records stating Qrr = 0 are sicSchottky/schottky, where zero is the measurement
+    // — no minority charge to recover — and nz() would report the one class of diode
+    // whose recovery IS its selling point as having no recovery data at all.
+    spec: (r) => ({ ...base(r), vrrm: nz(r.vrrm_rated), if_avg: nz(r.if_avg_rated), vf: nz(r.vf_typ),
+      qrr: r.qrr ?? null, trr: r.trr ?? null, technology: r.technology ?? '',
       vz_min_V: nz(r.vz_min), vz_max_V: nz(r.vz_max),
       vz_tolerance_pct: r.vz_tolerance != null ? r.vz_tolerance * 100 : null }),
     params: [

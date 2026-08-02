@@ -314,10 +314,20 @@ std::optional<DiodeRow> extract_diode(const json& env) {
     if (!pos(vrrm)) return std::nullopt;
     if (rectifier_like && (!pos(if_avg) || !pos(vf))) return std::nullopt;
 
+    // Leave both ABSENT (NaN) when the record does not state them. The `: 0.0` this
+    // replaces wrote a zero for a MISSING key, so a record carrying no recovery data at
+    // all — 15,165 of the 17,888 of them — reported an ideal diode, zero recovery charge
+    // and zero recovery time, in the row the user is shown, while every other absent
+    // field on that same row read null (ABT #489).
+    //
+    // NOT `pos`, which is what the capacitor ESR and the MOSFET Coss use: a stated 0 is
+    // real here. 260 records state Qrr = 0 and 257 of them are sicSchottky (the other 3
+    // schottky) — a majority-carrier device stores no minority charge, and the physics
+    // validator flags a NON-zero Qrr on one as suspicious. So keep what the record says,
+    // including a zero, and let only silence be silence. A negative is unreadable, not a
+    // value, and stays absent.
     auto qrr_o = get_num(*elec, "reverseRecoveryCharge");
-    double qrr = (qrr_o && *qrr_o >= 0) ? *qrr_o : 0.0;
     auto trr_o = get_num(*elec, "reverseRecoveryTime");
-    double trr = (trr_o && *trr_o >= 0) ? *trr_o : 0.0;
 
     DiodeRow r;
     r.mpn = *mpn;
@@ -329,8 +339,8 @@ std::optional<DiodeRow> extract_diode(const json& env) {
     // thermal fields in this struct already use.
     r.if_avg_rated = pos(if_avg) ? *if_avg : kNaN();
     r.vf_typ = pos(vf) ? *vf : kNaN();
-    r.qrr = qrr;
-    r.trr = trr;
+    if (qrr_o && *qrr_o >= 0) r.qrr = *qrr_o;
+    if (trr_o && *trr_o >= 0) r.trr = *trr_o;
     // The GUARANTEED breakdown window, alongside the nominal resolve_field just took.
     // The nominal is what the part is marked; the window is what it does — an A-grade
     // zener and the B grade of the same nominal share vrrm_rated and are different parts

@@ -64,6 +64,38 @@ TEST_CASE("browse: absent output capacitance reports null, never 0 F", "[browse]
     REQUIRE(saw_present);  // ...and records stating one, which must still read through
 }
 
+// A record with no reverseRecoveryCharge/reverseRecoveryTime was extracted as qrr = 0,
+// trr = 0 — the ideal diode, and the only fields in the row reporting an absent value as
+// a number while every other absent field reported null (ABT #489). A record that STATES
+// zero is the opposite case and must survive: on a Schottky/SiC there is no minority
+// charge to recover, and the physics validator flags a NON-zero Qrr on one as suspicious.
+TEST_CASE("browse: absent reverse recovery reports null, a stated 0 stays 0", "[browse]") {
+    auto shard = build_diode_shard(fixtures_dir() + "/diodes.ndjson");
+    json r = browse::browse_rows(shard, json{{"limit", 1000}});
+    bool saw_absent = false, saw_stated_zero = false, saw_positive = false;
+    for (const auto& row : r.at("rows")) {
+        const json& qrr = row.at("qrr");
+        REQUIRE(row.contains("trr"));
+        if (qrr.is_null()) {
+            saw_absent = true;
+            continue;
+        }
+        const double v = qrr.get<double>();
+        REQUIRE(v >= 0.0);
+        if (v == 0.0) {
+            saw_stated_zero = true;
+            // Only a majority-carrier device says zero; nothing else may reach 0 C.
+            const std::string tech = row.at("technology").get<std::string>();
+            REQUIRE((tech == "schottky" || tech == "sicSchottky"));
+        } else {
+            saw_positive = true;
+        }
+    }
+    REQUIRE(saw_absent);       // records stating no recovery data...
+    REQUIRE(saw_stated_zero);  // ...records stating zero, which is a measurement...
+    REQUIRE(saw_positive);     // ...and records stating a real charge
+}
+
 TEST_CASE("browse: sort by numeric field, NaN last, desc", "[browse]") {
     auto shard = build_magnetic_shard(fixtures_dir() + "/magnetics.ndjson");
     json r = browse::browse_rows(
