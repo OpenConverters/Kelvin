@@ -107,6 +107,14 @@ def drain_one(tid, to, title, do_commit):
     if do_commit:
         cmd.append("--commit")
     rc = subprocess.run(cmd, text=True).returncode
+    if rc == 4:
+        # Minion committed and then found that a CLEAN checkout of HEAD fails its own
+        # gates — the working tree was hiding a missing half (lessons: verify-from-clean-
+        # head). Draining further would pile commits onto a broken main, and every
+        # subsequent Minion would inherit a red baseline and be unable to tell its own
+        # breakage from the inherited one.
+        log(f"   Minion left main RED after #{tid} — halting the drain")
+        return "head_broken"
     if rc != 0:
         log(f"   Minion could not close #{tid} (rc={rc}) — left open")
         return "minion_failed"
@@ -207,8 +215,14 @@ def main():
     for tid, pri, to, title in rows:
         outcome = drain_one(tid, to, title, a.commit)
         tally[outcome] = tally.get(outcome, 0) + 1
+        if outcome == "head_broken":
+            # Everything after this would build on a red baseline and could not tell its
+            # own breakage from the inherited one.
+            log("HALTED: main does not pass its own gates from a clean checkout. "
+                "Repair it before draining further.")
+            break
     log("drain complete: " + " | ".join(f"{k} {v}" for k, v in sorted(tally.items())))
-    return 0
+    return 2 if tally.get("head_broken") else 0
 
 
 if __name__ == "__main__":

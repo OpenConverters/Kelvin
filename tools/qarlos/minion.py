@@ -35,6 +35,9 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+import guards      # noqa: E402  — the lessons that are checked, not told
+import lessons     # noqa: E402  — the lessons that are told
 CLAUDE = os.environ.get("QARLOS_CLAUDE") or str(Path.home() / ".local/bin/claude")
 ABT = os.environ.get("QARLOS_ABT") or str(Path.home() / ".local/bin/abt")
 
@@ -43,6 +46,15 @@ REPOS = {
     "kelvin": {
         "path": Path.home() / "OpenConverters" / "Kelvin",
         "gates": [
+            ["cmake", "--build", "build", "-j8"],
+            ["./build/test_kelvin"],
+        ],
+        # Run against a detached worktree at HEAD after committing, so a suite that only
+        # passes because of somebody's uncommitted work cannot certify the commit. Only
+        # when the change touched CODE — data cannot break a build, and a full configure
+        # in a fresh worktree is expensive.
+        "clean_head_gates": [
+            ["cmake", "-B", "build", "-G", "Ninja"],
             ["cmake", "--build", "build", "-j8"],
             ["./build/test_kelvin"],
         ],
@@ -61,8 +73,15 @@ REPOS = {
             # renders the 3-line pointer rather than the records.
             ["python3", "scripts/changed_records_gate.py"],
         ],
+        "clean_head_gates": [
+            ["python3", "-m", "pytest", "tests/test_schemas.py", "-q"],
+        ],
     },
 }
+
+# A change confined to these cannot break a build or a test binary, so clean-HEAD
+# verification is skipped for it — it would cost a full configure to prove nothing.
+DATA_ONLY = re.compile(r"^(data/|staging/)")
 
 SYSTEM = """You are Minion, an autonomous fixer working one issue from a shared tracker.
 Qarlos, a standing auditor, found and verified this defect against the raw catalogue
@@ -100,6 +119,8 @@ ABSOLUTE RULES — breaking one of these is worse than not fixing the issue:
 - Any new or changed catalogue data must pass BOTH JSON Schema validation and the Blade
   Runner physics validator (TAS/validator, tas_validator).
 - C++ tests are Catch2 and are run by invoking the test binary DIRECTLY. Never ctest.
+- Commit with an explicit pathspec. Several agents share this working tree and its index;
+  `git add` followed by a later `git commit` will sweep in whatever else is staged.
 
 WHEN YOU ARE DONE, reply with STRICT JSON as your final message, no prose around it:
 {"fixed": true|false,
@@ -108,8 +129,12 @@ WHEN YOU ARE DONE, reply with STRICT JSON as your final message, no prose around
  "root_cause": "<the actual cause>",
  "population_before": <int or null>, "population_after": <int or null>,
  "wider_impact": "<other records/sites with the same defect, or 'none found'>",
+ "calibration": "<REQUIRED if you added or tightened a detection rule: how many EXISTING
+   records it fires on, over what denominator, per rule. '' if you changed no rules.>",
  "gates_run": "<the commands you ran and their result>",
- "blocked_by": "<what stopped you, if fixed is false>"}"""
+ "blocked_by": "<what stopped you, if fixed is false>"}
+
+""" + lessons.render("minion")
 
 
 def ticket(tid):
@@ -229,6 +254,21 @@ def main():
                         f"Notes: {report.get('summary','')}"])
         return 1
 
+    # Guards — the lessons that are checked rather than told (see lessons.py/guards.py).
+    # These run BEFORE the slow repo gates: a rule change with no calibration, or a
+    # producer defect with the producer untouched, should not cost seven minutes of
+    # catalogue validation to reject.
+    guard_results = guards.run_all(repo, report, touched, route)
+    for gok, gmsg in guard_results:
+        print(f"  guard {'ok  ' if gok else 'FAIL'} {gmsg[:200]}")
+    failed_guards = [m for g, m in guard_results if not g]
+    if failed_guards:
+        subprocess.run([ABT, "comment", str(a.id), "--body",
+                        "Minion proposed a fix that did not clear the standing guards, so "
+                        "it was NOT committed. These are rules earlier runs paid for; see "
+                        "Kelvin/tools/qarlos/lessons.py.\n\n- " + "\n- ".join(failed_guards)])
+        return 1
+
     ok, gate_out = run_gates(repo, cfg["gates"])
     print(f"  gates: {'PASS' if ok else 'FAIL'}")
     if not ok:
@@ -243,8 +283,33 @@ def main():
                f"Root cause: {report.get('root_cause','')}\n"
                f"Wider impact: {report.get('wider_impact','')}\n\n"
                f"Found by Qarlos, fixed by Minion. ABT #{a.id}.\n")
-        subprocess.run(["git", "-C", str(repo), "add"] + touched)
-        subprocess.run(["git", "-C", str(repo), "commit", "-q", "-m", msg])
+        # Pathspec-limited: `git add` + a later `git commit` commits the INDEX, which
+        # several agents share. That is how a staged revert of a 461 MB data file once
+        # rode into a commit meant to touch only C++ sources (lessons: the-index-is-shared).
+        cok, cmsg = guards.commit_only(repo, touched, msg)
+        print(f"  commit: {cmsg}")
+        if not cok:
+            subprocess.run([ABT, "comment", str(a.id), "--body",
+                            f"Minion's fix passed the gates but could not be committed "
+                            f"safely: {cmsg}"])
+            return 1
+
+        # Now that it is IN HEAD, prove HEAD itself stands up — but only for code changes.
+        # A working tree that passes proves nothing about HEAD; on 2026-08-02 a tree passed
+        # 211/211 while a clean checkout of the same HEAD failed 2 cases.
+        code_touched = [f for f in touched if not DATA_ONLY.match(f)]
+        chg = cfg.get("clean_head_gates")
+        if code_touched and chg:
+            hok, hmsg = guards.verify_clean_head(repo, chg)
+            print(f"  clean-HEAD: {'PASS' if hok else 'FAIL'}")
+            if not hok:
+                print(hmsg[-1500:])
+                subprocess.run([ABT, "comment", str(a.id), "--body",
+                                "CRITICAL: Minion's fix is committed and HEAD does NOT pass "
+                                "its own gates from a clean checkout. The working tree hid "
+                                "it. Stop draining and repair main before landing anything "
+                                f"else.\n\n{hmsg[-2500:]}"])
+                return 4      # distinct code: drain.py must halt, not continue
         print("  committed on main")
 
     subprocess.run([ABT, "comment", str(a.id), "--body",
