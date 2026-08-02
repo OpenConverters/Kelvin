@@ -266,6 +266,25 @@ LESSONS: List[Lesson] = [
         tags=["harness", "git"],
     ),
 
+    Lesson(
+        id="cannot-run-is-not-could-not-fix",
+        audience="minion",
+        rule="An agent that could not be REACHED has said nothing about the ticket. Never "
+             "record an infrastructure failure as a verdict on the work.",
+        incident="2026-08-02 15:28. The nightly drain exhausted the account's weekly API "
+                 "limit and then marched through 11 more tickets, getting an empty response "
+                 "each time and writing 'Minion could not fix this. Blocked by: (unstated)' "
+                 "on every one. Eleven live defects now carry what reads as a considered "
+                 "assessment and is really a fact about billing. The run reported "
+                 "'minion_failed 11 | resolved 3' — the 11 and the 3 are not the same kind "
+                 "of number and were tallied as though they were.",
+        apply="Detect quota/transport failure explicitly and exit with a distinct code; the "
+              "orchestrator must HALT rather than spend the queue. Leave the ticket "
+              "untouched — silence is more honest than a false verdict.",
+        enforced_by="minion.INFRA_FAILURE / drain 'cannot_run'",
+        tags=["harness", "reporting"],
+    ),
+
     # ---- reporting ---------------------------------------------------------
     Lesson(
         id="do-not-starve-the-newest-findings",

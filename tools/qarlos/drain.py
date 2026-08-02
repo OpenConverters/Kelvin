@@ -115,6 +115,12 @@ def drain_one(tid, to, title, do_commit):
         # breakage from the inherited one.
         log(f"   Minion left main RED after #{tid} — halting the drain")
         return "head_broken"
+    if rc == 5:
+        # Quota or transport, not a verdict on the ticket. Continuing would burn the rest
+        # of the queue writing false "could not fix" notes — which is exactly what the
+        # 2026-08-02 nightly did to 11 tickets after the weekly limit hit at 15:28.
+        log(f"   Minion CANNOT RUN (infrastructure/quota) — halting, #{tid} untouched")
+        return "cannot_run"
     if rc != 0:
         log(f"   Minion could not close #{tid} (rc={rc}) — left open")
         return "minion_failed"
@@ -215,6 +221,10 @@ def main():
     for tid, pri, to, title in rows:
         outcome = drain_one(tid, to, title, a.commit)
         tally[outcome] = tally.get(outcome, 0) + 1
+        if outcome == "cannot_run":
+            log("HALTED: the model is unavailable. Nothing is wrong with the queue; "
+                "re-run when capacity returns.")
+            break
         if outcome == "head_broken":
             # Everything after this would build on a red baseline and could not tell its
             # own breakage from the inherited one.
@@ -222,6 +232,8 @@ def main():
                 "Repair it before draining further.")
             break
     log("drain complete: " + " | ".join(f"{k} {v}" for k, v in sorted(tally.items())))
+    if tally.get("cannot_run"):
+        return 3
     return 2 if tally.get("head_broken") else 0
 
 

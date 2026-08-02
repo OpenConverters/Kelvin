@@ -83,6 +83,14 @@ REPOS = {
 # verification is skipped for it — it would cost a full configure to prove nothing.
 DATA_ONLY = re.compile(r"^(data/|staging/)")
 
+# The model could not be reached or was out of quota. This is NOT a statement about the
+# ticket, and must never be written to the tracker as one.
+INFRA_FAILURE = re.compile(
+    r"hit your (weekly|usage|5-hour) limit|usage limit reached|rate.?limit|"
+    r"quota (exceeded|exhausted)|overloaded_error|api_error|"
+    r"Connection (error|refused)|credit balance is too low",
+    re.I)
+
 SYSTEM = """You are Minion, an autonomous fixer working one issue from a shared tracker.
 Qarlos, a standing auditor, found and verified this defect against the raw catalogue
 record. Your job is to fix the CAUSE.
@@ -230,6 +238,17 @@ def main():
         except json.JSONDecodeError:
             pass
     if not report:
+        # A fixer that CANNOT RUN is not a fixer that could not fix. On 2026-08-02 the
+        # nightly drain exhausted the API quota and then marched through 11 more tickets,
+        # writing "Minion could not fix this. Blocked by: (unstated)" on every one — a
+        # judgement about the tickets that was really a fact about the account. Those
+        # comments are indistinguishable from a real assessment and could get a live
+        # defect deprioritised.
+        blob = (txt + (p.stderr or ""))[-4000:]
+        if INFRA_FAILURE.search(blob):
+            why = INFRA_FAILURE.search(blob).group(0)
+            print(f"minion: CANNOT RUN ({why}) — ticket untouched, no verdict recorded")
+            return 5      # distinct from 2: infrastructure, not a failed fix
         print(f"minion: no JSON report.\n{txt[-1200:]}")
         return 2
 
