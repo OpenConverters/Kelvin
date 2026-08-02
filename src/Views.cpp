@@ -228,9 +228,13 @@ std::optional<MosfetRow> extract_mosfet(const json& env) {
     double qg_total = qg.value_or(0.0);  // legacy rows: Qg constraint becomes vacuous
     if (qg_total < 0.0) return std::nullopt;
 
+    // Leave ABSENT (NaN) when the record does not state one. `value_or(0.0)` wrote 0 F
+    // output capacitance — physically impossible, and the same bits a stated 0 would
+    // produce — into every row whose record has no `outputCapacitance` key, so the row
+    // reported coss: 0 where every other absent field reports null (ABT #484). `pos`
+    // treats a stated 0 as not-stated too, which is what it is: no MOSFET has zero Coss.
     auto coss_o = get_num(*elec, "outputCapacitance");
-    double coss = coss_o.value_or(0.0);
-    if (coss < 0.0) return std::nullopt;
+    if (coss_o && *coss_o < 0.0) return std::nullopt;
 
     auto vgs = resolve_field(*elec, "gateThresholdVoltage", PEAS::DimensionalValues::MAXIMUM);
     double vgs_max = vgs.value_or(0.0);
@@ -243,7 +247,7 @@ std::optional<MosfetRow> extract_mosfet(const json& env) {
     r.id_continuous = *id;
     r.rds_on = *rds;
     r.qg_total = qg_total;
-    r.coss = coss;
+    if (pos(coss_o)) r.coss = *coss_o;
     r.vgs_threshold_max = vgs_max;
     if (auto v = get_num(*elec, "onResistanceVgs"); pos(v)) r.rds_on_vgs = *v;
     if (auto v = get_num(*elec, "gateSourceVoltageMax"); pos(v)) r.vgs_max = *v;

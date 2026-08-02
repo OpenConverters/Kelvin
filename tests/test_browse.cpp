@@ -44,6 +44,26 @@ TEST_CASE("browse: numeric range filter excludes absent values", "[browse]") {
     for (const auto& row : hv.at("rows")) REQUIRE(row.at("vds_rated").get<double>() >= 100.0);
 }
 
+// A record with no `outputCapacitance` was extracted as coss = 0 — zero output
+// capacitance, physically impossible, and the one field in the row that reported an
+// absent value as a number while every other absent field reported null (ABT #484).
+TEST_CASE("browse: absent output capacitance reports null, never 0 F", "[browse]") {
+    auto shard = build_mosfet_shard(fixtures_dir() + "/mosfets.ndjson");
+    json r = browse::browse_rows(shard, json{{"limit", 1000}});
+    bool saw_absent = false, saw_present = false;
+    for (const auto& row : r.at("rows")) {
+        const json& coss = row.at("coss");
+        if (coss.is_null()) {
+            saw_absent = true;
+            continue;
+        }
+        REQUIRE(coss.get<double>() > 0.0);
+        saw_present = true;
+    }
+    REQUIRE(saw_absent);   // the fixture holds records stating no output capacitance...
+    REQUIRE(saw_present);  // ...and records stating one, which must still read through
+}
+
 TEST_CASE("browse: sort by numeric field, NaN last, desc", "[browse]") {
     auto shard = build_magnetic_shard(fixtures_dir() + "/magnetics.ndjson");
     json r = browse::browse_rows(

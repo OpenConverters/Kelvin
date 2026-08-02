@@ -97,8 +97,14 @@ struct RowBase {
 };
 
 struct MosfetRow : RowBase {
-    double vds_rated = 0, id_continuous = 0, rds_on = 0, qg_total = 0, coss = 0;
+    double vds_rated = 0, id_continuous = 0, rds_on = 0, qg_total = 0;
     double vgs_threshold_max = 0;
+    // NOT 0, for the same reason as the capacitor ESR below: most of the catalogue does
+    // not publish Coss, and 0 F is both physically impossible and indistinguishable from
+    // a stated value. The browse row showed "coss": 0 next to null for every other absent
+    // field, i.e. a MOSFET with zero output capacitance (ABT #484). Absence travels as
+    // NaN, which browse renders as null and numeric filters exclude.
+    double coss = kNaN();
     // Rds(on) is only meaningful at the Vgs it was measured at: a logic-level
     // part specified at 4.5 V and a standard part at 10 V are not comparable as
     // bare scalars. Distributor tables that omit this (Mouser) make the two
