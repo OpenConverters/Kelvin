@@ -475,6 +475,13 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // "footprint": null next to a known pitch mismatch reads as "we could not check
     // the fit" when it has just been checked and failed (ABT #485).
     bool connector_pitch_conflict = false;
+    // The other two halves of "does it mate": the finish on the separable surface and the
+    // way the wire attaches. Both are stated by the records and both were declared absent
+    // from the catalogue by the family caveat, so neither was ever compared (ABT #487).
+    // Captured the same way, for the same reason — a bare "contact_plating: fail" does not
+    // tell the engineer that gold is about to be mated to tin.
+    bool connector_plating_conflict = false;
+    bool connector_termination_conflict = false;
     // ── PARAM_SPECS verdicts (the shared Heaviside table) ────────────────────
     for (const ParamSpec& spec : params_for(cat)) {
         bool has_data = detail::present(original, spec.key) || detail::present(cand, spec.key);
@@ -485,8 +492,11 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         const ParamOutcome outcome = compare_param(spec, original, cand);
         const std::string verdict = outcome.verdict;
         params.push_back({{"name", spec.key}, {"verdict", verdict}});
-        if (cat == "connector" && spec.key == "pitch_mm" && verdict == FAIL)
-            connector_pitch_conflict = true;
+        if (cat == "connector" && verdict == FAIL) {
+            if (spec.key == "pitch_mm") connector_pitch_conflict = true;
+            if (spec.key == "contact_plating") connector_plating_conflict = true;
+            if (spec.key == "termination") connector_termination_conflict = true;
+        }
 
         const bool numeric = (spec.dir == Dir::Lower || spec.dir == Dir::Higher);
         auto o = numeric ? detail::jnum(original, spec.key) : std::nullopt;
@@ -529,6 +539,19 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         }
         if (numeric) note_direction(spec.dir, o, s);
     }
+
+    // Say WHAT changed about the mating interface, not just that something did. The
+    // counterpart is already on the board and is not being replaced, so the substitute
+    // meets it on the substitute's finish, and the pairing is what decides.
+    if (connector_plating_conflict)
+        notes.push_back("contact plating differs: " + str(original, "contact_plating") + " -> " +
+                        str(cand, "contact_plating") +
+                        " — the substitute meets your existing counterpart on a different mating "
+                        "surface; dissimilar finishes fret and corrode at a separable joint");
+    if (connector_termination_conflict)
+        notes.push_back("wire termination differs: " + str(original, "termination") + " -> " +
+                        str(cand, "termination") +
+                        " — a different wire-attach method, not a drop-in for a built harness");
 
     // ── critical ratings (Vds / Vrrm / rated voltage / Id / If) ──────────────
     for (const auto& r : critical_ratings(cat)) {

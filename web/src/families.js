@@ -271,6 +271,7 @@ FAMILIES.push(
       { f: 'family', label: 'Family' },
       { f: 'polarity', label: 'Polarity' },
       { f: 'interface_standard', label: 'Interface' },
+      { f: 'contact_plating', label: 'Plating' },
       { f: 'series', label: 'Series' },
     ],
     recommend: {

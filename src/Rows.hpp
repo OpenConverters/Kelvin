@@ -273,10 +273,22 @@ struct ConnectorRow : RowBase {
     // absence — a cold limit is normally below 0 degC.
     double temp_min_c = kNaN();
     double temp_max_c = kNaN();
+    // mechanical.matingCycles — how many times the interface may be separated and remade.
+    // 56,573 of the 391,073 catalogue rows state one (ABT #487).
+    double mating_cycles = kNaN();
     std::string family;             // familyDetails.family (boardToBoard / terminalBlock / …)
     std::string interface_standard; // familyDetails.interfaceStandard (when standardised)
     std::string polarity;           // part.matingPolarity (male / female / hermaphroditic)
     std::string series;             // part.series
+    // material.contactPlating.matingAreaMaterialRef (au-gold / sn-tin / ag-silver / ni-nickel)
+    // — the finish on the separable surface itself, stated by 97,144 rows. Only the MATERIAL
+    // is carried: gold over 0.25 um and gold over 0.76 um are the same interface, differing
+    // in wear life, which is what mating_cycles above states.
+    std::string contact_plating;
+    // familyDetails.termination (crimp / idc / poke-in / solderCup) — how the wire attaches,
+    // stated by 9,908 rows. All three were reported absent from the catalogue by the family
+    // caveat while the records carried them (ABT #487).
+    std::string termination;
     bool is_production = false;
 };
 

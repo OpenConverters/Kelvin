@@ -237,11 +237,14 @@ inline const FieldTable<ConnectorRow>& fields<ConnectorRow>() {
          {"positions", &ConnectorRow::positions},
          {"pitch", &ConnectorRow::pitch},
          {"temp_min_c", &ConnectorRow::temp_min_c},
-         {"temp_max_c", &ConnectorRow::temp_max_c}},
+         {"temp_max_c", &ConnectorRow::temp_max_c},
+         {"mating_cycles", &ConnectorRow::mating_cycles}},
         {{"family", &ConnectorRow::family},
          {"interface_standard", &ConnectorRow::interface_standard},
          {"polarity", &ConnectorRow::polarity},
-         {"series", &ConnectorRow::series}},
+         {"series", &ConnectorRow::series},
+         {"contact_plating", &ConnectorRow::contact_plating},
+         {"termination", &ConnectorRow::termination}},
         {{"is_production", &ConnectorRow::is_production}},
         {}};
     return t;

@@ -581,6 +581,85 @@ TEST_CASE("a connector rated 20 degC cooler than the original is not an upgrade"
     CHECK(verdict_of(unknown, "temp_min_C") == UNVERIFIED);
 }
 
+// ── connector mating interface: plating, termination, cycles (ABT #487) ──────
+
+TEST_CASE("a connector that changes the mating interface is judged, not caveated away",
+          "[crossref][classes][rank][abt487]") {
+    // The reported case: the family caveat read "the catalogue carries no pitch, plating
+    // or termination data", so none of it was compared and every candidate came back
+    // drop_in. The records state all of it. A gold-plated original meets its counterpart
+    // on gold; a tin-plated substitute meets that same counterpart on tin, which is the
+    // one pairing connector practice rules out.
+    json original = {{"mpn", "TW-13-09-F-S-235-SM"}, {"family", "boardToBoard"},
+                     {"positions", 13},              {"polarity", "male"},
+                     {"pitch_mm", 2.0},              {"rated_current_A", 3.9},
+                     {"contact_plating", "au-gold"}, {"termination", "crimp"},
+                     {"mating_cycles", 500.0}};
+    json cands = json::array({
+        {{"mpn", "SAME_IFACE"}, {"family", "boardToBoard"}, {"positions", 13},
+         {"polarity", "male"}, {"pitch_mm", 2.0}, {"rated_current_A", 5.0},
+         {"contact_plating", "au-gold"}, {"termination", "crimp"}, {"mating_cycles", 500.0}},
+        {{"mpn", "TIN"}, {"family", "boardToBoard"}, {"positions", 13},
+         {"polarity", "male"}, {"pitch_mm", 2.0}, {"rated_current_A", 5.0},
+         {"contact_plating", "sn-tin"}, {"termination", "crimp"}, {"mating_cycles", 500.0}},
+        {{"mpn", "IDC"}, {"family", "boardToBoard"}, {"positions", 13},
+         {"polarity", "male"}, {"pitch_mm", 2.0}, {"rated_current_A", 5.0},
+         {"contact_plating", "au-gold"}, {"termination", "idc"}, {"mating_cycles", 500.0}},
+        {{"mpn", "WORN"}, {"family", "boardToBoard"}, {"positions", 13},
+         {"polarity", "male"}, {"pitch_mm", 2.0}, {"rated_current_A", 5.0},
+         {"contact_plating", "au-gold"}, {"termination", "crimp"}, {"mating_cycles", 30.0}},
+        {{"mpn", "NO_IFACE"}, {"family", "boardToBoard"}, {"positions", 13},
+         {"polarity", "male"}, {"pitch_mm", 2.0}, {"rated_current_A", 5.0}}});
+    auto r = cross_reference("connector", original, cands, Options{});
+    auto by_mpn = [&](const char* m) {
+        auto it = std::find_if(r["candidates"].begin(), r["candidates"].end(),
+                               [&](const json& c) { return c["mpn"] == m; });
+        REQUIRE(it != r["candidates"].end());
+        return *it;
+    };
+    auto verdict_of = [](const json& c, const char* name) {
+        for (const auto& p : c["params"])
+            if (p["name"] == name) return p["verdict"].get<std::string>();
+        return std::string("<absent>");
+    };
+
+    // The like-for-like part keeps the interface and stays a drop-in.
+    const json same = by_mpn("SAME_IFACE");
+    CHECK(verdict_of(same, "contact_plating") == PASS);
+    CHECK(verdict_of(same, "termination") == PASS);
+    CHECK(verdict_of(same, "mating_cycles") == PASS);
+    CHECK(same["grade"] == "drop_in");
+
+    // Gold -> tin: judged and named, not left to a caveat that says it cannot be checked.
+    const json tin = by_mpn("TIN");
+    CHECK(verdict_of(tin, "contact_plating") == FAIL);
+    CHECK(tin["grade"] != "drop_in");
+    CHECK(tin["penalty"].get<double>() > same["penalty"].get<double>());
+    REQUIRE(tin.contains("notes"));
+    CHECK(tin["notes"].dump().find("au-gold -> sn-tin") != std::string::npos);
+
+    // Crimp -> IDC is a different wire-attach method, not a finish.
+    const json idc = by_mpn("IDC");
+    CHECK(verdict_of(idc, "termination") == FAIL);
+    CHECK(idc["grade"] != "drop_in");
+    CHECK(idc["notes"].dump().find("crimp -> idc") != std::string::npos);
+
+    // 500 mating cycles down to 30 is a durability regression, and it is now visible.
+    const json worn = by_mpn("WORN");
+    CHECK(verdict_of(worn, "mating_cycles") == FAIL);
+    CHECK(worn["grade"] != "drop_in");
+
+    // A record that states none of it is UNVERIFIED — an unknown, not a mismatch. The
+    // spec block must send null rather than "", or every such part would FAIL here.
+    const json unknown = by_mpn("NO_IFACE");
+    CHECK(verdict_of(unknown, "contact_plating") == UNVERIFIED);
+    CHECK(verdict_of(unknown, "termination") == UNVERIFIED);
+    CHECK(verdict_of(unknown, "mating_cycles") == UNVERIFIED);
+
+    // and none of the changed-interface parts may outrank the one that keeps it
+    CHECK(r["candidates"][0]["mpn"] == "SAME_IFACE");
+}
+
 // ── resistor device class: array/network vs discrete (ABT #481) ──────────────
 // A Panasonic EXB-V8V is four isolated 51 ohm elements on eight terminals in a
 // 3.2 x 1.6 mm body — the same OUTLINE as a discrete 1206. Judging fit on the

@@ -115,8 +115,11 @@ export const XREF = [
     // 4-way one. Pitch is the land pattern — a connector record carries no body
     // outline, so it is the only footprint datum there is, and it must reach the
     // ranker: it was dropped here and a 2.54 mm part was graded a drop_in for a
-    // 2.00 mm original (ABT #485). Plating, termination and mating-cycle data are
-    // genuinely absent from the catalogue and still cannot be checked.
+    // 2.00 mm original (ABT #485). Contact plating, termination and mating cycles are
+    // the rest of "does it mate", and the caveat used to declare all three absent from
+    // the catalogue while 97,144 / 9,908 / 56,573 records stated them — the sentence
+    // described what this file extracted, not what the records hold, so it told the
+    // engineer a checkable gate was uncheckable (ABT #487).
     // The operating-temperature range is the other hard limit a connector record
     // states, and it was dropped the same way: a +105 degC substitute for a +125 degC
     // original came back "upgrade" on rated current alone, with no temperature row in
@@ -125,22 +128,31 @@ export const XREF = [
     sameFacet: { f: 'family', label: 'family' },
     hardKeys: ['family', 'positions', 'rated_current_A'],
     exactNum: [{ row: 'positions', tol: 1e-9 }],
-    caveat: 'Contact pitch is compared where both records state one; plating, termination and mating-cycle data are not in the catalogue, so full mating compatibility is NOT checked. Verify the part mates with your existing counterpart before substituting.',
+    // What remains genuinely unchecked is the COUNTERPART, not the catalogue: 193,951
+    // records name the series they mate with, but those lists are written per vendor and
+    // no second source ever appears in one, so they cannot settle a cross-vendor swap.
+    caveat: 'Contact pitch, plating, termination and mating-cycle rating are compared where both records state one; the counterpart itself is NOT checked — no candidate is verified against the mating half already on your board. Confirm the pair mates before substituting.',
     // pitch_mm, not metres: the ranker's ParamSpec is keyed on it and an engineer
     // reads a connector pitch in millimetres. The shard stores SI metres. The
     // temperatures pass through raw, NOT through nz(): a cold limit is negative and
-    // 0 degC is a real rating, so "positive" would discard both.
+    // 0 degC is a real rating, so "positive" would discard both. The two mating strings
+    // fall back to null, NOT '': the ranker's ExactMatch counts '' as a stated value, so
+    // an original with no plating on record would FAIL every candidate that states one —
+    // an unknown reported as a mismatch.
     spec: (r) => ({ ...base(r), family: r.family ?? '', positions: nz(r.positions),
       polarity: r.polarity ?? '', interface_standard: r.interface_standard ?? '',
       pitch_mm: r.pitch != null && r.pitch > 0 ? r.pitch * 1e3 : null,
       rated_current_A: nz(r.rated_current), rated_voltage_V: nz(r.rated_voltage),
-      temp_min_C: r.temp_min_c, temp_max_C: r.temp_max_c }),
+      temp_min_C: r.temp_min_c, temp_max_C: r.temp_max_c,
+      contact_plating: r.contact_plating || null, termination: r.termination || null,
+      mating_cycles: nz(r.mating_cycles) }),
     params: [
       { key: 'positions', label: 'pos', row: 'positions', unit: '' },
       { key: 'pitch_mm', label: 'pitch', row: 'pitch', unit: 'm' },
       { key: 'rated_current_A', label: 'I/contact', row: 'rated_current', unit: 'A' },
       { key: 'rated_voltage_V', label: 'V rated', row: 'rated_voltage', unit: 'V' },
       { key: 'temp_max_C', label: 'T max', row: 'temp_max_c', unit: '°C' },
+      { key: 'contact_plating', label: 'plating', row: 'contact_plating', str: true },
     ],
   },
   {

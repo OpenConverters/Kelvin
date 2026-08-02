@@ -41,7 +41,11 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // v8 added the connector operating-temperature range — the environmental limit 365,680 of
 // the 391,073 records state. Without it the cross-reference had no temperature verdict at
 // all and called a +105 degC part an "upgrade" over a +125 degC original (ABT #520).
-constexpr uint32_t kFormatVersion = 8;
+// v9 added the three mating fields the connector family caveat asserted the catalogue did
+// not hold: contact plating (97,144 records), termination (9,908) and mating cycles
+// (56,573). The caveat was written to describe what the extractor read, not what the
+// records say, so it told the engineer a checkable gate was uncheckable (ABT #487).
+constexpr uint32_t kFormatVersion = 9;
 
 // Identity of the code that produces rows, so a cached shard can be recognised as
 // having been built by a DIFFERENT extractor than the one running now (ABT #426).
@@ -340,10 +344,13 @@ void row_io(Ar& ar, ConnectorRow& r) {
     ar.dbl(r.pitch);
     ar.dbl(r.temp_min_c);
     ar.dbl(r.temp_max_c);
+    ar.dbl(r.mating_cycles);
     ar.str(r.family);
     ar.str(r.interface_standard);
     ar.str(r.polarity);
     ar.str(r.series);
+    ar.str(r.contact_plating);
+    ar.str(r.termination);
     ar.boolean(r.is_production);
 }
 

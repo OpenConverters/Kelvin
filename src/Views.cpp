@@ -895,6 +895,7 @@ std::optional<ConnectorRow> extract_connector(const json& env) {
     if (mech && mech->is_object()) {
         set_if_pos(r.positions, get_num(*mech, "positions"));
         set_if_pos(r.pitch, get_num(*mech, "pitch"));
+        set_if_pos(r.mating_cycles, get_num(*mech, "matingCycles"));
     }
     // Operating temperature range: a substitute must cover the original's, at both
     // ends. Read straight out of the object — NOT through set_if_pos, because a cold
@@ -911,6 +912,14 @@ std::optional<ConnectorRow> extract_connector(const json& env) {
     if (fd && fd->is_object()) {
         r.family = get_str(*fd, "family").value_or("");
         r.interface_standard = get_str(*fd, "interfaceStandard").value_or("");
+        r.termination = get_str(*fd, "termination").value_or("");
+    }
+    // The separable interface itself: only the mating-area material, which is what decides
+    // whether two halves may be mated at all (gold onto tin frets and corrodes). The
+    // underplating and the plating thicknesses are wear data, not compatibility data.
+    if (const json* mat = obj_get(*di, "material")) {
+        if (const json* plating = obj_get(*mat, "contactPlating"))
+            r.contact_plating = get_str(*plating, "matingAreaMaterialRef").value_or("");
     }
     r.polarity = get_str(*part, "matingPolarity").value_or("");
     r.series = get_str(*part, "series").value_or("");

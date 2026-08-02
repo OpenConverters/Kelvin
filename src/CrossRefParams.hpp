@@ -396,6 +396,12 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
         {"rated_voltage_V", D::Higher, 0.9, std::nullopt, false, false, nullptr},
         {"temp_min_C", D::Lower, 0.0, 15.0, false, false, nullptr},
         {"temp_max_C", D::Higher, 0.0, 15.0, false, false, nullptr},
+        // Identity, not equal-or-better: the finish on the separable surface is a
+        // compatibility property of the PAIR, so a change is a change in both directions
+        // — a tin substitute cannot be mated to the gold counterpart the original was
+        // chosen for, and a gold one cannot be mated to a tin counterpart either.
+        {"contact_plating", D::ExactMatch, 0.0, std::nullopt, false, false, nullptr},
+        {"termination", D::ExactMatch, 0.0, std::nullopt, false, false, nullptr},
         {"mating_cycles", D::Higher, 0.5, std::nullopt, false, false, nullptr},
         {"contact_resistance", D::Lower, 2.0, std::nullopt, false, false, nullptr},
     };

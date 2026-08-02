@@ -128,6 +128,9 @@ function verdictOf(c, paramKey) {
 }
 function cellValue(r, p) {
   const v = r?.[p.row]
+  // Categorical columns (contact plating, …) are printed as they are stated: si()
+  // would render every one of them "NaN".
+  if (p.str) return v || '—'
   return si(v != null && p.scale ? v * p.scale : v, p.unit)
 }
 function penaltyText(c) {

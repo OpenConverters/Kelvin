@@ -268,3 +268,55 @@ TEST_CASE("index: connector operating temperature reaches the shard row and roun
     REQUIRE(rows[2].at("temp_max_c").is_null());
     fs::remove(path);
 }
+
+// ABT #487: the connector family caveat told the engineer the catalogue carries no plating,
+// termination or mating-cycle data, so full mating compatibility could not be checked. The
+// records carry all three — 97,144 / 9,908 / 56,573 of the 391,073 — and extract_connector
+// opened neither the material block nor familyDetails.termination nor mechanical.matingCycles,
+// which is what the caveat was really describing.
+TEST_CASE("index: connector mating fields reach the shard row and round-trip",
+          "[index][connector][abt487]") {
+    auto connector_line = [](const std::string& mpn, const std::string& plating,
+                             const std::string& termination, const std::string& cycles) {
+        return "{\"connector\":{\"manufacturerInfo\":{\"name\":\"ACME\",\"reference\":\"" + mpn +
+               "\",\"status\":\"production\",\"datasheetInfo\":{\"part\":{\"partNumber\":\"" + mpn +
+               "\",\"matingPolarity\":\"male\"},\"mechanical\":{\"positions\":13" +
+               (cycles.empty() ? "" : ",\"matingCycles\":" + cycles) + "}," +
+               (plating.empty() ? "" : "\"material\":{\"contactPlating\":{\"matingAreaMaterialRef\":\"" +
+                                           plating + "\",\"matingAreaThickness\":7.62e-07}},") +
+               "\"familyDetails\":{\"family\":\"boardToBoard\"" +
+               (termination.empty() ? "" : ",\"termination\":\"" + termination + "\"") + "}}}}}";
+    };
+    std::string path = tmp_path("connector_mating.ndjson");
+    write_file(path, connector_line("GOLD", "au-gold", "crimp", "500") + "\n" +
+                         connector_line("TIN", "sn-tin", "idc", "30") + "\n" +
+                         connector_line("BARE", "", "", "") + "\n");
+    auto shard = build_connector_shard(path);
+    REQUIRE(shard.meta.row_count == 3);
+    // the MATERIAL, not the thickness: gold over 0.25 um and over 0.76 um are one interface
+    REQUIRE(shard.rows[0].contact_plating == "au-gold");
+    REQUIRE(shard.rows[0].termination == "crimp");
+    REQUIRE(shard.rows[0].mating_cycles == 500);
+    REQUIRE(shard.rows[1].contact_plating == "sn-tin");
+    REQUIRE(shard.rows[1].termination == "idc");
+    REQUIRE(shard.rows[1].mating_cycles == 30);
+    REQUIRE(shard.rows[2].contact_plating.empty());  // absent stays UNKNOWN, never a value
+    REQUIRE(shard.rows[2].termination.empty());
+    REQUIRE(std::isnan(shard.rows[2].mating_cycles));
+
+    auto back = deserialize_connector_shard(serialize_shard(shard));
+    REQUIRE(back.rows[0].contact_plating == "au-gold");
+    REQUIRE(back.rows[0].termination == "crimp");
+    REQUIRE(back.rows[0].mating_cycles == 500);
+    REQUIRE(back.rows[2].contact_plating.empty());
+    REQUIRE(std::isnan(back.rows[2].mating_cycles));
+
+    // and it is visible to the caller that builds the cross-reference spec block
+    nlohmann::json rows =
+        browse::browse_rows(shard, nlohmann::json{{"limit", 10}}).at("rows");
+    REQUIRE(rows[0].at("contact_plating").get<std::string>() == "au-gold");
+    REQUIRE(rows[0].at("termination").get<std::string>() == "crimp");
+    REQUIRE(rows[0].at("mating_cycles").get<double>() == 500);
+    REQUIRE(rows[2].at("mating_cycles").is_null());
+    fs::remove(path);
+}
