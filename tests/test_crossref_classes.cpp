@@ -139,6 +139,55 @@ TEST_CASE("a standard-level FET for a logic-level original is flagged",
     CHECK(std::string(r["candidates"][0]["notes"][0]).find("gate threshold") != std::string::npos);
 }
 
+TEST_CASE("a higher threshold whose Rds(on) is guaranteed at the original's own Vgs warns, "
+          "it does not fail", "[crossref][classes][rank]") {
+    // ABT #502. onsemi's FCB290N80 (Vth max 4.5 V, 0.29 ohm AT Vgs = 10 V) offered for
+    // Infineon's IPW80R280P7 (Vth 2.5 V, 0.28 ohm at Vgs = 10 V): the candidate's
+    // resistance is a datasheet-guaranteed value at the very drive the original's circuit
+    // provides, with 5.5 V of overdrive above its threshold. "May not fully enhance at the
+    // existing drive voltage" is contradicted by the candidate's own record; what is left
+    // is turn-on timing. Vishay's SiHG15N80AEF states no Vgs for its Rds(on) at all, so
+    // there the fail stands — nothing ties its resistance to the existing drive.
+    json original = {{"mpn", "IPW80R280P7"}, {"vds", 800.0}, {"id", 16.0}, {"rds_on", 0.28},
+                     {"vgs_threshold_max", 2.5}, {"rds_on_vgs", 10.0}};
+    json cands = json::array({
+        {{"mpn", "FCB290N80"}, {"vds", 800.0}, {"id", 17.0}, {"rds_on", 0.29},
+         {"vgs_threshold_max", 4.5}, {"rds_on_vgs", 10.0}},
+        {{"mpn", "SiHG15N80AEF"}, {"vds", 800.0}, {"id", 15.0}, {"rds_on", 0.3},
+         {"vgs_threshold_max", 4.0}},
+        // threshold climbed into the drive itself: it may not turn on at all
+        {{"mpn", "NO_ENHANCE"}, {"vds", 800.0}, {"id", 15.0}, {"rds_on", 0.3},
+         {"vgs_threshold_max", 10.0}, {"rds_on_vgs", 10.0}}});
+    auto r = cross_reference("mosfet", original, cands, Options{});
+    auto candidate = [&](const char* mpn) {
+        for (const auto& c : r["candidates"])
+            if (c["mpn"] == mpn) return c;
+        return json();
+    };
+    auto verdict = [](const json& c, const char* name) {
+        for (const auto& p : c["params"])
+            if (p["name"] == name) return std::string(p["verdict"]);
+        return std::string("<absent>");
+    };
+    auto note = [](const json& c) {
+        for (const auto& n : c["notes"])
+            if (std::string(n).find("gate threshold") != std::string::npos)
+                return std::string(n);
+        return std::string("<absent>");
+    };
+    const json fcb = candidate("FCB290N80"), sihg = candidate("SiHG15N80AEF"),
+               no_enh = candidate("NO_ENHANCE");
+    CHECK(verdict(fcb, "gate_drive") == "warn");
+    CHECK(note(fcb).find("may not fully enhance") == std::string::npos);
+    CHECK(note(fcb).find("does fully enhance") != std::string::npos);
+    // ...and the two verdicts on the gate threshold no longer contradict each other.
+    CHECK(verdict(fcb, "vgs_threshold_max") == "warn");
+    CHECK(verdict(sihg, "gate_drive") == "fail");
+    CHECK(note(sihg).find("does not state the Vgs") != std::string::npos);
+    CHECK(verdict(no_enh, "gate_drive") == "fail");
+    CHECK(note(no_enh).find("may not enhance at all") != std::string::npos);
+}
+
 TEST_CASE("Rds(on) quoted at a higher Vgs is flagged as not comparable",
           "[crossref][classes][rank]") {
     json original = {{"mpn", "A"}, {"vds", 30.0}, {"id", 10.0}, {"rds_on", 0.01},

@@ -902,17 +902,60 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // one still switches on the bench at 10 V and never fully enhances from a
     // 3.3 V controller. Rds(on) is only meaningful at its stated Vgs, so a part
     // whose Rds(on) is specified at a higher Vgs than the original's is not
-    // delivering that resistance in the original's circuit.
+    // delivering that resistance in the original's circuit. The converse is just
+    // as much of a fact: where the candidate's Rds(on) IS specified at a Vgs the
+    // original's drive reaches, that part enhances there by its vendor's own
+    // guarantee, and the verdict has to say so.
     if (cat == "mosfet") {
         auto o_th = num(original, "vgs_threshold_max"), s_th = num(cand, "vgs_threshold_max");
-        if (o_th && s_th && *s_th > *o_th * 1.25) {
-            params.push_back({{"name", "gate_drive"}, {"verdict", FAIL}});
-            demote();
-            penalty += opt.gate_weight * kVerdictFailPenalty;
-            notes.push_back("higher gate threshold than the original — may not fully enhance at "
-                            "the existing drive voltage");
-        }
         auto o_rv = num(original, "rds_on_vgs"), s_rv = num(cand, "rds_on_vgs");
+        if (o_th && s_th && *s_th > *o_th * 1.25) {
+            // "the existing drive voltage" is the Vgs the ORIGINAL's Rds(on) is specified
+            // at — the only statement of the drive level either record makes. Where the
+            // candidate's own Rds(on) is a guaranteed value at a Vgs that drive reaches,
+            // and its threshold sits below it, full enhancement there is guaranteed by the
+            // candidate's datasheet: what is left is TIMING, not enhancement. Failing that
+            // part contradicted its own record — onsemi's FCB290N80 states 0.29 ohm at
+            // Vgs = 10 V with Vth(max) = 4.5 V and was graded a hard fail against an
+            // original whose Rds(on) is likewise specified at 10 V — and contradicted this
+            // same block's vgs_threshold_max verdict, which had already said warn on the
+            // very same quantity (ABT #502). A fail is what the evidence supports only when
+            // the candidate's record does not tie its Rds(on) to a drive the original's
+            // reaches, or when its threshold climbs into that drive.
+            const bool enhances_at_drive =
+                o_rv && s_rv && *s_rv <= *o_rv + 1e-9 && *s_th < *o_rv;
+            params.push_back(
+                {{"name", "gate_drive"}, {"verdict", enhances_at_drive ? WARN : FAIL}});
+            demote();
+            penalty += opt.gate_weight *
+                       (enhances_at_drive ? kVerdictWarnPenalty : kVerdictFailPenalty);
+            std::string note = "higher gate threshold than the original (" + volts(*s_th) +
+                               " V vs " + volts(*o_th) + " V) — ";
+            if (enhances_at_drive) {
+                note += "its Rds(on) is a guaranteed value at Vgs = " + volts(*s_rv) +
+                        " V, which the original's own " + volts(*o_rv) +
+                        " V drive reaches, so it does fully enhance there; expect slower "
+                        "turn-on and a Miller plateau sitting higher — check the gate-drive "
+                        "timing and the switching loss it buys";
+            } else if (o_rv && *s_th >= *o_rv) {
+                note += "its threshold reaches the " + volts(*o_rv) +
+                        " V drive the original's Rds(on) is specified at — it may not "
+                        "enhance at all";
+            } else if (!s_rv) {
+                note += "its record does not state the Vgs its Rds(on) is specified at, so "
+                        "full enhancement at the existing drive is not established";
+            } else if (o_rv) {
+                note += "its Rds(on) is specified at Vgs = " + volts(*s_rv) + " V, above the " +
+                        volts(*o_rv) +
+                        " V the original's is — it may not fully enhance at the existing "
+                        "drive voltage";
+            } else {
+                note += "the original's record does not state the Vgs its Rds(on) is "
+                        "specified at, so the drive level in the existing circuit is "
+                        "unknown — it may not fully enhance at it";
+            }
+            notes.push_back(note);
+        }
         if (o_rv && s_rv && *s_rv > *o_rv + 1e-9) {
             params.push_back({{"name", "rds_on_basis"}, {"verdict", WARN}});
             demote();
