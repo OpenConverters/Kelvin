@@ -154,6 +154,13 @@ def main():
     # what this workload wants. Pinned rather than inherited so a settings change cannot
     # quietly alter what an autonomous fixer is running on.
     ap.add_argument("--model", default=os.environ.get("MINION_MODEL", "opus[1m]"))
+    # Effort is pinned for the same reason the model is: inherited, it comes from
+    # ~/.claude/settings.json (xhigh), so an editor preference would silently change
+    # what an autonomous fixer runs at. `high` rather than `xhigh` — on Opus 5 the
+    # lower levels are strong enough that xhigh buys little on mechanical repair work,
+    # and effort is the cost lever that does not touch the model tier (2026-08-02).
+    ap.add_argument("--effort", default=os.environ.get("MINION_EFFORT", "high"),
+                    choices=["low", "medium", "high", "xhigh", "max"])
     ap.add_argument("--timeout", type=int, default=3600)
     a = ap.parse_args()
 
@@ -178,7 +185,8 @@ def main():
 
     print(f"minion: ticket #{a.id} -> {route} ({repo})")
     cmd = [CLAUDE, "-p", prompt, "--append-system-prompt", SYSTEM,
-           "--model", a.model, "--permission-mode", "bypassPermissions",
+           "--model", a.model, "--effort", a.effort,
+           "--permission-mode", "bypassPermissions",
            "--add-dir", str(repo), "--add-dir", str(Path.home() / "PSMA")]
     try:
         p = subprocess.run(cmd, cwd=str(repo), capture_output=True, text=True,

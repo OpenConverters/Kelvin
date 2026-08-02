@@ -49,10 +49,21 @@ CLAUDE = os.environ.get("QARLOS_CLAUDE") or str(Path.home() / ".local/bin/claude
 ABT = os.environ.get("QARLOS_ABT") or str(Path.home() / ".local/bin/abt")
 NODE = os.environ.get("QARLOS_NODE") or shutil.which("node") or "/usr/bin/node"
 
-# Opus with the 1M window: a case payload carries several full catalogue records plus the
-# ranker's verdicts, and the judge is the part of this whose quality decides whether a
-# human's time gets spent. Runs through the Claude Code subscription, not an API key.
-DEFAULT_MODEL = os.environ.get("QARLOS_MODEL", "opus[1m]")
+# The 1M window: a case payload carries several full catalogue records plus the ranker's
+# verdicts. Runs through the Claude Code subscription, not an API key. (1M is standard
+# pricing on these models — the [1m] suffix is context, not a cost premium.)
+#
+# Sonnet rather than Opus as of 2026-08-02, on evidence rather than preference: selftest.py
+# is the gate, and Sonnet refuted every bogus claim on three cases — connector/seed
+# 20260801, capacitor/seed 20260801, and capacitor/seed 7. The last one matters most: it is
+# the only one whose sample can build the capacitance-oversize claim (bulk original, larger
+# candidate inside the 0.80-4.00x window), so it is the only run that exercises the design
+# rule from ABT #9 rather than plain data-consistency. Sonnet confirmed the arithmetic
+# (68 uF vs 100 uF) and refuted on the rule, which is the calibrated behaviour.
+# Minion stays on Opus: it writes C++ and mutates the catalogue autonomously, where a
+# plausible-but-wrong fix is far more expensive than a plausible-but-wrong judgement.
+# Re-run selftest.py on any case that can build the oversize claim before changing this.
+DEFAULT_MODEL = os.environ.get("QARLOS_MODEL", "sonnet[1m]")
 
 SYSTEM = """You are a power-electronics application engineer auditing a component \
 cross-reference tool. You are the last check before an engineer swaps a part into a \
