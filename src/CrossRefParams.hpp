@@ -348,6 +348,14 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
         {"vf", D::Lower, 1.2, std::nullopt, false, false, nullptr},
         {"qrr", D::Lower, 2.0, std::nullopt, false, false, nullptr},
         {"trr", D::Lower, 2.0, std::nullopt, false, false, nullptr},
+        // The breakdown-voltage grade: how wide a window the part guarantees around
+        // its marked voltage. Same treatment as the resistor and capacitor tolerances
+        // — tighter or equal passes, up to 2x warns, looser than that is a regression
+        // — because for a zener the window is what the circuit is designed around, and
+        // the nominal compare (Vrrm) cannot see it. Not exclude_missing_sub: a
+        // candidate whose record omits the band is UNKNOWN, and the honest report of
+        // an unknown is UNVERIFIED, not a penalty for the vendor's silence (ABT #488).
+        {"vz_tolerance_pct", D::Lower, 2.0, std::nullopt, false, false, nullptr},
     };
     static const std::vector<ParamSpec> kResistor = {
         {"power_rating", D::Higher, 0.9, std::nullopt, false, false, nullptr},
@@ -485,6 +493,7 @@ inline std::string param_label(const std::string& key) {
         {"channels", "channel count"},
         {"rated_current_A", "rated current"},
         {"rated_voltage_V", "rated voltage"},
+        {"vz_tolerance_pct", "breakdown-voltage tolerance"},
     };
     for (const auto& [k, label] : kLabels)
         if (k == key) return label;

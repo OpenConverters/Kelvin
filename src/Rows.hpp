@@ -123,6 +123,16 @@ struct MosfetRow : RowBase {
 
 struct DiodeRow : RowBase {
     double vrrm_rated = 0, if_avg_rated = 0, vf_typ = 0, qrr = 0, trr = 0;
+    // V — the two ends of electrical.breakdownVoltage, and the +/- grade they define
+    // (a FRACTION, as ResistorRow::tolerance is). For a zener the WINDOW is the part:
+    // an A-grade BZX84-A3V6-Q guarantees 3.56-3.64 V (1.11 %) where the B grade of the
+    // same 3.6 V nominal guarantees 3.42-3.78 V (5 %), and one does not stand in for the
+    // other in a reference or a clamp. 3,728 of the 8,274 catalogue zeners state a band
+    // (plus 137 TVS), and vrrm_rated above keeps only the resolved NOMINAL, so the band
+    // reached nothing: a nominal-only candidate was reported "vrrm: pass" against a
+    // 1.11 % original with no mention of the grade anywhere (ABT #488). Absent stays NaN
+    // — a missing bound is unknown, never a zero-width window.
+    double vz_min = kNaN(), vz_max = kNaN(), vz_tolerance = kNaN();
     double rth_ja = kNaN(), rth_jc = kNaN(), tj_max = kNaN();
     std::string technology;   // part.subType (schottky / fastRecovery / ...)
     bool is_production = false;

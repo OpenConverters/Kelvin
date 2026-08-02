@@ -1143,3 +1143,78 @@ TEST_CASE("the four-lead package survives extraction into the browse row",
         CHECK(c["grade"] != "minor_review");
     }
 }
+
+// ── zener breakdown grade: the window, not the marking (ABT #488) ────────────
+// The reported case: Nexperia BZX84-A3V6-Q, the '-A' grade of a 3.6 V zener, whose
+// record guarantees 3.56-3.64 V (1.11 %). Every candidate offered against it — all
+// nominal-only records — came back {"name":"vrrm","verdict":"pass"} with no caveat
+// and one note, about the package. Vrrm compares the MARKED voltage, which the
+// standard '-B' grade (3.42-3.78 V, 5 %) shares, so silence there read as agreement
+// on the one spec a reference or a clamp is designed around. The tool's own
+// if_avg=unverified on identically-absent candidate data is the honest treatment it
+// withheld here.
+
+TEST_CASE("a zener's guaranteed window is compared, not just its marked voltage",
+          "[crossref][classes][rank][abt488]") {
+    json original = {{"mpn", "BZX84-A3V6-Q"}, {"technology", "zener"}, {"case_code", "SOT23"},
+                     {"vrrm", 3.6},           {"if_avg", 0.2},        {"vz_min_V", 3.56},
+                     {"vz_max_V", 3.64},      {"vz_tolerance_pct", 100.0 * 0.08 / 7.2}};
+    json cands = json::array({
+        {{"mpn", "A_GRADE"}, {"technology", "zener"}, {"case_code", "SOT23"}, {"vrrm", 3.6},
+         {"if_avg", 0.2}, {"vz_min_V", 3.56}, {"vz_max_V", 3.64},
+         {"vz_tolerance_pct", 100.0 * 0.08 / 7.2}},
+        {{"mpn", "B_GRADE"}, {"technology", "zener"}, {"case_code", "SOT23"}, {"vrrm", 3.6},
+         {"if_avg", 0.2}, {"vz_min_V", 3.42}, {"vz_max_V", 3.78}, {"vz_tolerance_pct", 5.0}},
+        {{"mpn", "NO_BAND"}, {"technology", "zener"}, {"case_code", "SOT23"}, {"vrrm", 3.6},
+         {"if_avg", 0.2}}});
+    auto r = cross_reference("diode", original, cands, Options{});
+    auto by_mpn = [&](const char* m) {
+        auto it = std::find_if(r["candidates"].begin(), r["candidates"].end(),
+                               [&](const json& c) { return c["mpn"] == m; });
+        REQUIRE(it != r["candidates"].end());
+        return *it;
+    };
+    auto verdict_of = [](const json& c, const char* name) {
+        for (const auto& p : c["params"])
+            if (p["name"] == name) return p["verdict"].get<std::string>();
+        return std::string("<absent>");
+    };
+
+    // Same grade: judged, passed, and said nothing about — a match needs no note.
+    const json same = by_mpn("A_GRADE");
+    CHECK(verdict_of(same, "vz_tolerance_pct") == PASS);
+    CHECK(same["grade"] == "drop_in");
+    CHECK_FALSE(same.contains("notes"));
+
+    // The '-B' grade: same marking, 4.5x the window. A regression, sized in volts.
+    const json loose = by_mpn("B_GRADE");
+    CHECK(verdict_of(loose, "vz_tolerance_pct") == FAIL);
+    CHECK(verdict_of(loose, "vrrm") == PASS);  // the marking still agrees, and still says so
+    CHECK(loose["status"] == "partial");
+    CHECK(loose["grade"] == "major_review");
+    CHECK(loose["penalty"].get<double>() > same["penalty"].get<double>());
+    REQUIRE(loose.contains("notes"));
+    CHECK(loose["notes"].dump().find("3.42-3.78 V (a 5 % grade)") != std::string::npos);
+    CHECK(loose["notes"].dump().find("3.56-3.64 V (a 1.11 % grade)") != std::string::npos);
+
+    // A record that states no window: UNVERIFIED, exactly as the same absence is
+    // reported for if_avg — never a pass on the nominal — and the note says which
+    // window is going unchecked, in volts, rather than leaving it to be inferred.
+    const json unknown = by_mpn("NO_BAND");
+    CHECK(verdict_of(unknown, "vz_tolerance_pct") == UNVERIFIED);
+    REQUIRE(unknown.contains("notes"));
+    CHECK(unknown["notes"].dump().find("the original guarantees 3.56-3.64 V (a 1.11 % grade)") !=
+          std::string::npos);
+    CHECK(unknown["notes"].dump().find("no breakdown-voltage band") != std::string::npos);
+    // and the unknown is not a regression: nothing was compared, so nothing failed
+    CHECK(unknown["status"] == "recommended");
+
+    // The other way round — the original's own window is not on record — reports the
+    // same unverified verdict WITHOUT the note: there is no guarantee being dropped.
+    json bare_original = {{"mpn", "NOM_ONLY"}, {"technology", "zener"}, {"case_code", "SOT23"},
+                          {"vrrm", 3.6},       {"if_avg", 0.2}};
+    auto r2 = cross_reference("diode", bare_original, json::array({cands[0]}), Options{});
+    const json tighter = r2["candidates"][0];
+    CHECK(verdict_of(tighter, "vz_tolerance_pct") == UNVERIFIED);
+    CHECK_FALSE(tighter.contains("notes"));
+}

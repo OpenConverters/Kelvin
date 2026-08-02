@@ -157,16 +157,28 @@ export const XREF = [
   },
   {
     key: 'diode', label: 'Diodes', category: 'diode',
+    // vrrm compares the MARKED breakdown voltage. For a zener that is half the spec:
+    // the A grade and the B grade of a BZX84-A3V6 are both marked 3.6 V and guarantee
+    // 3.56-3.64 V and 3.42-3.78 V respectively. The band was dropped here, so every
+    // candidate scored "vrrm: pass" on the nominal and nothing in the result said the
+    // grade was wider — or, for a record that states none, unknown (ABT #488).
     primary: null,
     sameFacet: { f: 'technology', label: 'type' },
     hardKeys: ['vrrm'],
     hardMin: [{ row: 'vrrm_rated', factor: 0.9 }],
-    spec: (r) => ({ ...base(r), vrrm: nz(r.vrrm_rated), if_avg: nz(r.if_avg_rated), vf: nz(r.vf_typ), qrr: nz(r.qrr), trr: nz(r.trr), technology: r.technology ?? '' }),
+    // The bounds travel in volts (the note quotes them) and the grade as a percentage,
+    // which is what the ranker's ParamSpec compares — the shard stores it as a fraction,
+    // the way the resistor tolerance is stored. NOT through nz(): a 0 % band would be a
+    // stated value, not an absence, and 'positive' would silently discard it.
+    spec: (r) => ({ ...base(r), vrrm: nz(r.vrrm_rated), if_avg: nz(r.if_avg_rated), vf: nz(r.vf_typ), qrr: nz(r.qrr), trr: nz(r.trr), technology: r.technology ?? '',
+      vz_min_V: nz(r.vz_min), vz_max_V: nz(r.vz_max),
+      vz_tolerance_pct: r.vz_tolerance != null ? r.vz_tolerance * 100 : null }),
     params: [
       { key: 'vrrm', label: 'Vrrm', row: 'vrrm_rated', unit: 'V' },
       { key: 'if_avg', label: 'If avg', row: 'if_avg_rated', unit: 'A' },
       { key: 'vf', label: 'Vf', row: 'vf_typ', unit: 'V' },
       { key: 'qrr', label: 'Qrr', row: 'qrr', unit: 'C' },
+      { key: 'vz_tolerance_pct', label: 'Vbr tol', row: 'vz_tolerance', unit: '%', scale: 100 },
     ],
   },
 ]

@@ -3,6 +3,7 @@
 #include <fstream>
 #include <string>
 
+#include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 
@@ -318,5 +319,57 @@ TEST_CASE("index: connector mating fields reach the shard row and round-trip",
     REQUIRE(rows[0].at("termination").get<std::string>() == "crimp");
     REQUIRE(rows[0].at("mating_cycles").get<double>() == 500);
     REQUIRE(rows[2].at("mating_cycles").is_null());
+    fs::remove(path);
+}
+
+// ABT #488: electrical.breakdownVoltage is a dimensionWithTolerance and extract_diode kept
+// only the resolved nominal, so the WINDOW 3,728 of the 8,274 catalogue zeners (and 137 TVS)
+// guarantee was dropped between the record and the shard row. The A grade and the B grade of
+// the same marked voltage became the same row, and the cross-reference had nothing to compare.
+TEST_CASE("index: diode breakdown-voltage band reaches the shard row and round-trips",
+          "[index][diode][abt488]") {
+    auto zener_line = [](const std::string& mpn, const std::string& breakdown) {
+        return "{\"semiconductor\":{\"diode\":{\"manufacturerInfo\":{\"name\":\"ACME\","
+               "\"reference\":\"" +
+               mpn + "\",\"status\":\"production\",\"datasheetInfo\":{\"part\":{\"partNumber\":\"" +
+               mpn + "\",\"subType\":\"zener\",\"case\":\"SOT23\"},\"electrical\":{" +
+               "\"breakdownVoltage\":" + breakdown + "}}}}}}";
+    };
+    std::string path = tmp_path("diode_vz.ndjson");
+    write_file(path, zener_line("A_GRADE", "{\"nominal\":3.6,\"minimum\":3.56,\"maximum\":3.64}") +
+                         "\n" +
+                         zener_line("B_GRADE", "{\"nominal\":3.6,\"minimum\":3.42,\"maximum\":3.78}") +
+                         "\n" + zener_line("NOM_ONLY", "{\"nominal\":3.6}") + "\n" +
+                         zener_line("MIN_ONLY", "{\"nominal\":3.6,\"minimum\":3.56}") + "\n");
+    auto shard = build_diode_shard(path);
+    REQUIRE(shard.meta.row_count == 4);
+    // the nominal still resolves as before — the band is carried BESIDE it, not instead
+    REQUIRE(shard.rows[0].vrrm_rated == 3.6);
+    REQUIRE(shard.rows[0].vz_min == 3.56);
+    REQUIRE(shard.rows[0].vz_max == 3.64);
+    REQUIRE(shard.rows[0].vz_tolerance == Catch::Approx(0.0111111).epsilon(1e-4));  // +/-1.11 %
+    REQUIRE(shard.rows[1].vz_tolerance == Catch::Approx(0.05).epsilon(1e-6));       // +/-5 %
+    // A record that states only the nominal states no window: unknown, never 0 %.
+    REQUIRE(std::isnan(shard.rows[2].vz_min));
+    REQUIRE(std::isnan(shard.rows[2].vz_max));
+    REQUIRE(std::isnan(shard.rows[2].vz_tolerance));
+    // and half a band is not a band, though the bound it does state is kept
+    REQUIRE(shard.rows[3].vz_min == 3.56);
+    REQUIRE(std::isnan(shard.rows[3].vz_max));
+    REQUIRE(std::isnan(shard.rows[3].vz_tolerance));
+
+    auto back = deserialize_diode_shard(serialize_shard(shard));
+    REQUIRE(back.rows[0].vz_min == 3.56);
+    REQUIRE(back.rows[0].vz_max == 3.64);
+    REQUIRE(back.rows[0].vz_tolerance == shard.rows[0].vz_tolerance);
+    REQUIRE(std::isnan(back.rows[2].vz_tolerance));
+
+    // and it is visible to the caller that builds the cross-reference spec block
+    nlohmann::json rows =
+        browse::browse_rows(shard, nlohmann::json{{"limit", 10}}).at("rows");
+    REQUIRE(rows[0].at("vz_min").get<double>() == 3.56);
+    REQUIRE(rows[0].at("vz_max").get<double>() == 3.64);
+    REQUIRE(rows[0].at("vz_tolerance").get<double>() == Catch::Approx(0.0111111).epsilon(1e-4));
+    REQUIRE(rows[2].at("vz_tolerance").is_null());
     fs::remove(path);
 }

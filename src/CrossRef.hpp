@@ -105,6 +105,31 @@ inline std::string degc(double c) {
     return (c > 0 ? "+" : "") + s;
 }
 
+// A voltage as a datasheet states it ("3.56", "15.75"): three decimals at most, no
+// trailing zeros. Bare, so a note can write the unit once for a band.
+inline std::string volts(double v) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.3f", v);
+    std::string s(buf);
+    if (s.find('.') != std::string::npos) {
+        s.erase(s.find_last_not_of('0') + 1);
+        if (!s.empty() && s.back() == '.') s.pop_back();
+    }
+    return s;
+}
+
+// The breakdown window a diode record GUARANTEES, written as a zener datasheet
+// writes it: "3.56-3.64 V (a 1.11 % grade)". Both halves earn their place — the
+// volts are what the circuit is checked against, the percentage is the grade the
+// part is ordered by.
+inline std::string vz_band(const json& p) {
+    auto lo = num(p, "vz_min_V"), hi = num(p, "vz_max_V"), tol = num(p, "vz_tolerance_pct");
+    if (!lo || !hi) return tol ? "a " + plain_pct(*tol) + " grade" : "";
+    std::string s = volts(*lo) + "-" + volts(*hi) + " V";
+    if (tol) s += " (a " + plain_pct(*tol) + " grade)";
+    return s;
+}
+
 // The land a footprint note is talking about, longest axis first — the same way
 // round the fit test compares them, so two parts read comparably. A record that
 // states only one land axis says which axis it is and that the other is absent,
@@ -482,6 +507,12 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // tell the engineer that gold is about to be mated to tin.
     bool connector_plating_conflict = false;
     bool connector_termination_conflict = false;
+    // A zener's breakdown WINDOW, captured from the PARAM_SPECS verdict below for the
+    // same reason: a bare "vz_tolerance_pct: unverified" beside "vrrm: pass" leaves the
+    // engineer with no idea that the original guarantees 3.56-3.64 V and the substitute's
+    // record guarantees nothing at all (ABT #488).
+    bool diode_vz_band_regression = false;
+    bool diode_vz_band_unverified = false;
     // ── PARAM_SPECS verdicts (the shared Heaviside table) ────────────────────
     for (const ParamSpec& spec : params_for(cat)) {
         bool has_data = detail::present(original, spec.key) || detail::present(cand, spec.key);
@@ -496,6 +527,13 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             if (spec.key == "pitch_mm") connector_pitch_conflict = true;
             if (spec.key == "contact_plating") connector_plating_conflict = true;
             if (spec.key == "termination") connector_termination_conflict = true;
+        }
+        if (cat == "diode" && spec.key == "vz_tolerance_pct") {
+            if (verdict == WARN || verdict == FAIL) diode_vz_band_regression = true;
+            // Only when the ORIGINAL states a window: that is the case where a real
+            // guarantee is on the table and the substitute's record answers nothing.
+            if (verdict == UNVERIFIED && detail::present(original, spec.key))
+                diode_vz_band_unverified = true;
         }
 
         const bool numeric = (spec.dir == Dir::Lower || spec.dir == Dir::Higher);
@@ -552,6 +590,20 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         notes.push_back("wire termination differs: " + str(original, "termination") + " -> " +
                         str(cand, "termination") +
                         " — a different wire-attach method, not a drop-in for a built harness");
+
+    // Say WHAT the two parts guarantee, in volts. The Vrrm verdict above compares the
+    // MARKED voltage, which two grades of the same zener share; the window is what the
+    // reference or the clamp was designed around, so a change in it — or an unknown —
+    // has to be stated rather than left implied by a "pass" on the marking.
+    if (diode_vz_band_unverified)
+        notes.push_back("the original guarantees " + vz_band(original) +
+                        "; the substitute's record states no breakdown-voltage band, so the "
+                        "grades could not be compared — confirm the substitute's from its "
+                        "datasheet before using it as a reference or a clamp");
+    else if (diode_vz_band_regression)
+        notes.push_back("looser breakdown grade: the substitute guarantees " + vz_band(cand) +
+                        " against the original's " + vz_band(original) +
+                        " — confirm the reference or clamp level tolerates the wider window");
 
     // ── critical ratings (Vds / Vrrm / rated voltage / Id / If) ──────────────
     for (const auto& r : critical_ratings(cat)) {

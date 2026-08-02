@@ -45,7 +45,11 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // not hold: contact plating (97,144 records), termination (9,908) and mating cycles
 // (56,573). The caveat was written to describe what the extractor read, not what the
 // records say, so it told the engineer a checkable gate was uncheckable (ABT #487).
-constexpr uint32_t kFormatVersion = 9;
+// v10 added the diode breakdown-voltage band (both bounds + the grade they define). The
+// extractor collapsed breakdownVoltage to its nominal, so the window 3,728 zeners and
+// 137 TVS guarantee was dropped and a nominal-only candidate scored "vrrm: pass" against
+// a 1.11 % original with nothing said about the grade (ABT #488).
+constexpr uint32_t kFormatVersion = 10;
 
 // Identity of the code that produces rows, so a cached shard can be recognised as
 // having been built by a DIFFERENT extractor than the one running now (ABT #426).
@@ -211,6 +215,9 @@ void row_io(Ar& ar, DiodeRow& r) {
     ar.dbl(r.vf_typ);
     ar.dbl(r.qrr);
     ar.dbl(r.trr);
+    ar.dbl(r.vz_min);
+    ar.dbl(r.vz_max);
+    ar.dbl(r.vz_tolerance);
     ar.dbl(r.rth_ja);
     ar.dbl(r.rth_jc);
     ar.dbl(r.tj_max);

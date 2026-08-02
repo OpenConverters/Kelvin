@@ -331,6 +331,20 @@ std::optional<DiodeRow> extract_diode(const json& env) {
     r.vf_typ = pos(vf) ? *vf : kNaN();
     r.qrr = qrr;
     r.trr = trr;
+    // The GUARANTEED breakdown window, alongside the nominal resolve_field just took.
+    // The nominal is what the part is marked; the window is what it does — an A-grade
+    // zener and the B grade of the same nominal share vrrm_rated and are different parts
+    // (ABT #488). Both bounds are required for a tolerance: half a band is not one.
+    if (const json* bv = obj_get(*elec, "breakdownVoltage"); bv && bv->is_object()) {
+        auto lo = get_num(*bv, "minimum"), hi = get_num(*bv, "maximum");
+        if (pos(lo)) r.vz_min = *lo;
+        if (pos(hi)) r.vz_max = *hi;
+        // Half-width over midpoint, not over the nominal: 28 records state a band with no
+        // nominal to divide by, 253 state a band the nominal does not sit in the middle
+        // of, and the width of the window is what the two bounds themselves say. A record
+        // whose bounds are inverted states no window we can read.
+        if (pos(lo) && pos(hi) && *hi >= *lo) r.vz_tolerance = (*hi - *lo) / (*hi + *lo);
+    }
     r.technology = get_str(*part, "subType").value_or("");
     auto status = get_str(*mi, "status");
     r.is_production = status.has_value() && *status == "production";
