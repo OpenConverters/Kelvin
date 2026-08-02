@@ -935,8 +935,24 @@ std::optional<ConnectorRow> extract_connector(const json& env) {
     const json* fd = obj_get(*di, "familyDetails");
     if (fd && fd->is_object()) {
         r.family = get_str(*fd, "family").value_or("");
-        r.interface_standard = get_str(*fd, "interfaceStandard").value_or("");
-        r.termination = get_str(*fd, "termination").value_or("");
+        // familyDetails is a discriminated union on family, and two of the axes below are
+        // spelled per variant. Reading only one spelling of each is what made the family
+        // caveat's promise — "compared where both records state one" — false about records
+        // that DO state one, which is the whole of ABT #505:
+        //   * the wire attach is 'termination' on wireToBoard/wireToWire/power and
+        //     'clampType' on terminalBlock (CONAS utils.json says so itself: "same axis as
+        //     familyWireToBoard.termination"), and the dropped half was the LARGER one —
+        //     11,627 clampType rows against 9,908 termination ones — on the very family
+        //     where the wire attach decides the swap;
+        //   * the standardised interface is 'interfaceStandard' on dataInterface and
+        //     'interface' on rf, so all 8,235 RF rows named their interface (SMA / BNC /
+        //     U.FL / FAKRA …) and reached the ranker with the slot empty, which reported
+        //     an SMA-against-BNC comparison "unverified" instead of a definite non-mate.
+        // No record states both spellings of an axis: they belong to different variants.
+        r.interface_standard = get_str(*fd, "interfaceStandard")
+                                   .value_or(get_str(*fd, "interface").value_or(""));
+        r.termination = get_str(*fd, "termination")
+                            .value_or(get_str(*fd, "clampType").value_or(""));
     }
     // The separable interface itself: only the mating-area material, which is what decides
     // whether two halves may be mated at all (gold onto tin frets and corrodes). The

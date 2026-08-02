@@ -322,6 +322,54 @@ TEST_CASE("index: connector mating fields reach the shard row and round-trip",
     fs::remove(path);
 }
 
+// ABT #505: familyDetails is a discriminated union on family, and two axes are spelled per
+// variant — the wire attach is 'termination' on wireToBoard/wireToWire/power and 'clampType'
+// on terminalBlock, the standardised interface is 'interfaceStandard' on dataInterface and
+// 'interface' on rf. extract_connector read only one spelling of each, so 11,627 records
+// stating a clamp type (more than the 9,908 stating a termination) and 8,235 stating an RF
+// interface reached the ranker with those slots empty, while the family caveat told the
+// engineer both ARE compared where the records state them. A 7.5 mm spring-cage WAGO block
+// scored against screw-clamp parts with no wire-attach verdict at all.
+TEST_CASE("index: connector familyDetails variants spell one axis two ways",
+          "[index][connector][abt505]") {
+    auto block_line = [](const std::string& mpn, const std::string& family,
+                         const std::string& detail) {
+        return "{\"connector\":{\"manufacturerInfo\":{\"name\":\"ACME\",\"reference\":\"" + mpn +
+               "\",\"status\":\"production\",\"datasheetInfo\":{\"part\":{\"partNumber\":\"" + mpn +
+               "\"},\"mechanical\":{\"positions\":9,\"pitch\":0.0075},\"familyDetails\":{\"family\":\"" +
+               family + "\"" + detail + "}}}}}";
+    };
+    std::string path = tmp_path("connector_clamp.ndjson");
+    write_file(path, block_line("CAGE", "terminalBlock", ",\"clampType\":\"springCage\"") + "\n" +
+                         block_line("SCREW", "terminalBlock", ",\"clampType\":\"screw\"") + "\n" +
+                         block_line("CRIMP", "wireToBoard", ",\"termination\":\"crimp\"") + "\n" +
+                         block_line("MUTE", "terminalBlock", "") + "\n" +
+                         block_line("SMA", "rf", ",\"interface\":\"SMA\"") + "\n" +
+                         block_line("USBC", "dataInterface", ",\"interfaceStandard\":\"USB-C\"") + "\n");
+    auto shard = build_connector_shard(path);
+    REQUIRE(shard.meta.row_count == 6);
+    REQUIRE(shard.rows[0].termination == "springCage");
+    REQUIRE(shard.rows[1].termination == "screw");
+    REQUIRE(shard.rows[2].termination == "crimp");  // the other spelling still reads
+    REQUIRE(shard.rows[3].termination.empty());     // absent stays UNKNOWN, never a value
+    REQUIRE(shard.rows[4].interface_standard == "SMA");
+    REQUIRE(shard.rows[5].interface_standard == "USB-C");
+    REQUIRE(shard.rows[0].interface_standard.empty());
+
+    auto back = deserialize_connector_shard(serialize_shard(shard));
+    REQUIRE(back.rows[0].termination == "springCage");
+    REQUIRE(back.rows[3].termination.empty());
+    REQUIRE(back.rows[4].interface_standard == "SMA");
+
+    // and it is visible to the caller that builds the cross-reference spec block
+    nlohmann::json rows =
+        browse::browse_rows(shard, nlohmann::json{{"limit", 10}}).at("rows");
+    REQUIRE(rows[0].at("termination").get<std::string>() == "springCage");
+    REQUIRE(rows[1].at("termination").get<std::string>() == "screw");
+    REQUIRE(rows[4].at("interface_standard").get<std::string>() == "SMA");
+    fs::remove(path);
+}
+
 // ABT #488: electrical.breakdownVoltage is a dimensionWithTolerance and extract_diode kept
 // only the resolved nominal, so the WINDOW 3,728 of the 8,274 catalogue zeners (and 137 TVS)
 // guarantee was dropped between the record and the shard row. The A grade and the B grade of

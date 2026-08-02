@@ -135,12 +135,14 @@ export const XREF = [
     // pitch_mm, not metres: the ranker's ParamSpec is keyed on it and an engineer
     // reads a connector pitch in millimetres. The shard stores SI metres. The
     // temperatures pass through raw, NOT through nz(): a cold limit is negative and
-    // 0 degC is a real rating, so "positive" would discard both. The two mating strings
-    // fall back to null, NOT '': the ranker's ExactMatch counts '' as a stated value, so
-    // an original with no plating on record would FAIL every candidate that states one —
-    // an unknown reported as a mismatch.
+    // 0 degC is a real rating, so "positive" would discard both. EVERY optional identity
+    // string falls back to null, NOT '': the ranker's ExactMatch counts '' as a stated
+    // value and only treats it as unknown when BOTH sides are blank, so an original whose
+    // record states no plating, polarity or interface FAILed every candidate that states
+    // one — an unknown reported as a mismatch. polarity and interface_standard were still
+    // passing '' when the RF interface started reaching them (ABT #505).
     spec: (r) => ({ ...base(r), family: r.family ?? '', positions: nz(r.positions),
-      polarity: r.polarity ?? '', interface_standard: r.interface_standard ?? '',
+      polarity: r.polarity || null, interface_standard: r.interface_standard || null,
       pitch_mm: r.pitch != null && r.pitch > 0 ? r.pitch * 1e3 : null,
       rated_current_A: nz(r.rated_current), rated_voltage_V: nz(r.rated_voltage),
       temp_min_C: r.temp_min_c, temp_max_C: r.temp_max_c,

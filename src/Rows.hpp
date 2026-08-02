@@ -299,7 +299,10 @@ struct ConnectorRow : RowBase {
     // 56,573 of the 391,073 catalogue rows state one (ABT #487).
     double mating_cycles = kNaN();
     std::string family;             // familyDetails.family (boardToBoard / terminalBlock / …)
-    std::string interface_standard; // familyDetails.interfaceStandard (when standardised)
+    // familyDetails.interfaceStandard (when standardised) — and familyDetails.interface, the
+    // rf variant's spelling of the same axis (SMA / BNC / U.FL / FAKRA …), 8,235 rows that
+    // reached the ranker with this empty and their interface reported unchecked (ABT #505).
+    std::string interface_standard;
     std::string polarity;           // part.matingPolarity (male / female / hermaphroditic)
     std::string series;             // part.series
     // material.contactPlating.matingAreaMaterialRef (au-gold / sn-tin / ag-silver / ni-nickel)
@@ -307,9 +310,12 @@ struct ConnectorRow : RowBase {
     // is carried: gold over 0.25 um and gold over 0.76 um are the same interface, differing
     // in wear life, which is what mating_cycles above states.
     std::string contact_plating;
-    // familyDetails.termination (crimp / idc / poke-in / solderCup) — how the wire attaches,
-    // stated by 9,908 rows. All three were reported absent from the catalogue by the family
-    // caveat while the records carried them (ABT #487).
+    // familyDetails.termination (crimp / idc / poke-in / solderCup / screw / busbar / fastTab
+    // / ringLug) — how the wire attaches, stated by 9,908 rows. All three were reported absent
+    // from the catalogue by the family caveat while the records carried them (ABT #487).
+    // A terminalBlock states the same axis as familyDetails.clampType (screw / springCage /
+    // pushIn / insulationDisplacement / barrier), 11,627 rows, and lands here too: the two are
+    // one property under two schema spellings, never both present on one record (ABT #505).
     std::string termination;
     bool is_production = false;
 };
