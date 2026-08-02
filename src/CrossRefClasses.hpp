@@ -257,6 +257,110 @@ inline std::string resistor_network_conflict(bool original_is_network, bool subs
            "original's two pads cannot connect";
 }
 
+// ── Resistor sulfuration resistance: a construction class, not a parameter ──
+// A standard thick-film chip resistor's inner electrode is silver. In a
+// sulfur-bearing atmosphere — automotive, HVAC, rubber-sealed enclosures — that
+// silver corrodes to Ag2S, the termination loses contact with the resistive
+// element, and the part fails OPEN. No catalogue column predicts it, which is
+// exactly why vendors sell a sulfur-resistant series ALONGSIDE the electrically
+// identical standard one: Panasonic's ERJ-S beside ERJ, YAGEO's AF beside RC.
+//
+// So the two records agree on every number — 63.4 ohm, 1 %, 1 W, 2512,
+// 100 ppm/degC — and both read technology "thickFilm". No parametric verdict can
+// ever separate them, and offered against Panasonic ERJS1TF63R4U the ordinary
+// Bourns CR2512-FX-63R4ELF came back drop_in / recommended, all four verdicts
+// "pass" and notes null (ABT #518).
+//
+// The only evidence a RAS resistor record carries is manufacturerInfo.family /
+// part.series — the schema has no termination-metallisation field — so that
+// string is what is read, in two forms, both counted over the whole resistor
+// catalogue (149,255 records):
+//   * self-describing: "Anti-Sulfurated Thick Film Chip Resistors" and its
+//     Anti-Surge / Precision / Array / Wide-Terminal variants (32,656 records);
+//   * a vendor series designator whose OWN linked datasheet titles the line
+//     anti-sulfurated (4,428 records), listed below.
+// Two different questions are asked of that string, and the asymmetry is the
+// point:
+//   by design — was the ORIGINAL specified for sulfur resistance? Only a series
+//               that EXISTS for it counts, or every part that merely lists the
+//               property among its features would drag the catalogue through
+//               this gate;
+//   declares  — does the SUBSTITUTE state sulfur resistance at all? Here a
+//               feature bullet is enough: a part that claims the property claims
+//               it, whatever its series was named for.
+// A record matching neither is NOT asserted to be sulfur-vulnerable. It states
+// nothing, and that is what the note says.
+
+// A vendor series designator, matched the way a global part number is built: the
+// code, then the size digits ("AF2512…"). The family string must agree or be
+// absent — never name a DIFFERENT line — which is what stops a two-letter code
+// from firing on another vendor's part. Verified across all 149,255 resistor
+// records: every code below is carried by exactly one manufacturer.
+inline bool named_series(const std::string& family, const std::string& mpn, const char* code) {
+    const size_t n = std::char_traits<char>::length(code);
+    if (mpn.size() <= n || mpn.compare(0, n, code) != 0 ||
+        !std::isdigit(static_cast<unsigned char>(mpn[n])))
+        return false;
+    if (family.empty()) return true;  // 68 rows carry the part number and nothing else
+    if (family.size() < n || family.compare(0, n, code) != 0) return false;
+    // "AF" and "AF_Array" are the same line; "PS" and "PSP" are not.
+    return family.size() == n || !std::isalpha(static_cast<unsigned char>(family[n]));
+}
+
+// True when the series EXISTS for sulfur resistance — the question asked of the
+// ORIGINAL, because that is what makes the attribute a specified requirement
+// rather than a bonus the datasheet happens to mention.
+inline bool sulfur_resistant_by_design(const std::string& family, const std::string& mpn) {
+    const std::string f = lower_copy(family);
+    // Panasonic says it in English, in both family and part.series.
+    if (contains(f, "sulfur") || contains(f, "sulphur")) return true;
+    const std::string m = lower_copy(mpn);
+    // YAGEO AA / AF (and AF_Array) / AH / AS / RP — each titled "ANTI-SULFURATED
+    // …" on the datasheet the catalogue record itself links (PYU-AA_51,
+    // PYU-AF_51, PYU-AH_51, PYU-AS, PYU-RP_51).
+    for (const char* code : {"aa", "af", "ah", "as", "rp"})
+        if (named_series(f, m, code)) return true;
+    // Würth WRIS-RSKS, "Thick Film - AntiSulfur General Purpose", sulfur
+    // resistance tested to ASTM-B-809. Its part numbers are bare order codes, so
+    // the family string is the only handle there is.
+    return f == "wris-rsks";
+}
+
+// True when the record states sulfur resistance at all — the question asked of
+// the SUBSTITUTE. Every series above, plus the lines whose datasheets carry the
+// property without being named for it.
+inline bool declares_sulfur_resistance(const std::string& family, const std::string& mpn) {
+    if (sulfur_resistant_by_design(family, mpn)) return true;
+    const std::string f = lower_copy(family), m = lower_copy(mpn);
+    // YAGEO thin films AT / NT / VT and current sensors PA / PE / PS / PK
+    // ("Superior resistance against sulfur", "Resistance against sulfur-
+    // containing atmosphere"), and the MELF bodies — Vishay SMM0102, YAGEO
+    // Vitrohm ZCM — whose "intrinsic sulfur resistance" is having no silver
+    // inner electrode to lose in the first place.
+    for (const char* code : {"at", "nt", "vt", "pa", "pe", "ps", "pk", "smm", "zcm"})
+        if (named_series(f, m, code)) return true;
+    return false;
+}
+
+// Why an anti-sulfurated original and a substitute that states nothing are not
+// the same part, phrased from what the substitute's record actually says. Asked
+// one way only: a sulfur-resistant substitute for an ordinary original is a
+// strictly added property and costs the engineer nothing, so it is not a caveat.
+inline std::string sulfur_resistance_conflict(const std::string& substitute_family) {
+    const std::string names = substitute_family.empty()
+                                  ? "this substitute's record names no series at all"
+                                  : "this substitute's record names series \"" +
+                                        substitute_family + "\"";
+    return "the original is an anti-sulfurated series — a sulfur-resistant inner electrode, "
+           "the property it exists for and one no catalogue number shows — and " +
+           names +
+           " and states no sulfur resistance: a standard thick-film chip's silver inner "
+           "electrode corrodes to Ag2S in a sulfur-bearing atmosphere (automotive, HVAC, "
+           "rubber-sealed enclosures) and the resistor fails OPEN. Electrically identical is "
+           "not equivalent here — confirm the substitute's construction against its datasheet "
+           "before using it where the original's anti-sulfuration was the reason for it";
+}
+
 // ── Diode device configuration: two-terminal discrete vs bridge module ───────
 // The ranker models a catalogue "diode" as a two-terminal device: one Vrrm, one
 // Vf, one If(AV), two pads. A single-phase BRIDGE RECTIFIER is a different

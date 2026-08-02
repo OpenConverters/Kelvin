@@ -650,6 +650,148 @@ TEST_CASE("the device class survives extraction into the browse row",
     CHECK(r["candidates"][0]["footprint"] == "different_land_pattern");
 }
 
+// ── resistor sulfuration resistance (ABT #518) ───────────────────────────────
+// Panasonic's ERJ-S exists as a separate series from the electrically identical
+// ERJ because its inner electrode survives a sulfur-bearing atmosphere. Every
+// number on the two records matches and both read "thickFilm", so the family /
+// series string is the only thing that can tell them apart — and it produced no
+// verdict, no note and no caveat.
+
+TEST_CASE("a resistor's sulfuration class is read from what its record declares",
+          "[crossref][classes][abt518]") {
+    // Self-describing family strings — the form all 32,656 Panasonic records use.
+    CHECK(sulfur_resistant_by_design("Anti-Sulfurated Thick Film Chip Resistors", "ERJS1TF63R4U"));
+    CHECK(sulfur_resistant_by_design("Anti-Sulfurated Thick Film Chip Resistors/ Anti-Surge Type",
+                                     "ERJU02F1001X"));
+    CHECK(sulfur_resistant_by_design("Anti-Sulfurated Chip Resistor Array", "EXBN8V510JX"));
+    CHECK(sulfur_resistant_by_design("Anti Sulfurated High Power Wide Terminal Chip Resistors",
+                                     "ERJC1CF1R00U"));
+    // Vendor series whose OWN linked datasheet titles the line anti-sulfurated:
+    // YAGEO AA / AF / AH / AS / RP, Würth WRIS-RSKS (ASTM-B-809).
+    CHECK(sulfur_resistant_by_design("AF", "AF2512FR-0763R4L"));
+    CHECK(sulfur_resistant_by_design("AF_Array", "AF164-JR-0751RL"));
+    CHECK(sulfur_resistant_by_design("AA0402DR-0", "AA0402DR-0710KL"));
+    CHECK(sulfur_resistant_by_design("AH", "AH0603FR-071KL"));
+    CHECK(sulfur_resistant_by_design("AS", "AS1206FR-0715RL"));
+    CHECK(sulfur_resistant_by_design("RP", "RP0603DRD0710KL"));
+    CHECK(sulfur_resistant_by_design("WRIS-RSKS", "560112110002"));
+    // The general-purpose lines must NOT trip it — 112k records ride on this.
+    CHECK_FALSE(sulfur_resistant_by_design("CR", "CR2512-FX-63R4ELF"));
+    CHECK_FALSE(sulfur_resistant_by_design("RC", "RC2512FK-0763R4L"));
+    CHECK_FALSE(sulfur_resistant_by_design("AC", "AC2512FK-0763R4L"));
+    CHECK_FALSE(sulfur_resistant_by_design("AWW", "YagAWW62R251218635"));
+    CHECK_FALSE(sulfur_resistant_by_design("Thick Film Chip Resistors", "ERJ1GJJ392C"));
+    CHECK_FALSE(sulfur_resistant_by_design("", ""));
+    // The series code needs the family AND the part number to agree, so neither a
+    // stray family code nor an unrelated part number can fire it alone, and the
+    // digit that follows the code is what separates "AS1206…" from "ASSY-…".
+    CHECK_FALSE(sulfur_resistant_by_design("AF", "RC2512FK-0763R4L"));
+    CHECK_FALSE(sulfur_resistant_by_design("CR", "AF2512FR-0763R4L"));
+    CHECK_FALSE(sulfur_resistant_by_design("AS", "ASSY-1206-100R"));
+
+    // A line named for something else whose datasheet still states the property
+    // SATISFIES a sulfur-resistant original without being one of the series that
+    // triggers the question: YAGEO's thin films and current sensors, and the MELF
+    // bodies with no silver inner electrode to lose.
+    CHECK(declares_sulfur_resistance("AT", "AT0603DRD0710KL"));
+    CHECK(declares_sulfur_resistance("PE Wide Terminal", "PE2512FKE070R01L"));
+    CHECK(declares_sulfur_resistance("SMM0102", "SMM01020C4709FB300"));
+    CHECK(declares_sulfur_resistance("ZCM", "ZCM204FKE07-10RAA"));
+    CHECK_FALSE(sulfur_resistant_by_design("AT", "AT0603DRD0710KL"));
+    // "PS" and "PSP" are different lines; the code must end at a non-letter.
+    CHECK_FALSE(declares_sulfur_resistance("PSP", "PSP1206-100R"));
+    CHECK_FALSE(declares_sulfur_resistance("CR", "CR2512-FX-63R4ELF"));
+}
+
+TEST_CASE("a standard thick-film chip is not a drop-in for an anti-sulfurated original",
+          "[crossref][classes][abt518]") {
+    // The ticket's case, as the ranker sees it: 63.4 ohm, 1 %, 1 W, 2512 on both
+    // sides, both thick film. Nothing numeric can separate them, which is exactly
+    // why the construction class has to be the thing that decides it.
+    json original = {{"mpn", "ERJS1TF63R4U"},
+                     {"family", "Anti-Sulfurated Thick Film Chip Resistors"},
+                     {"value_si", 63.4},
+                     {"power_rating", 1.0},
+                     {"tolerance_pct", 1.0},
+                     {"case_code", "2512"},
+                     {"length_m", 0.0064},
+                     {"width_m", 0.0032}};
+    json cands = json::array({
+        {{"mpn", "CR2512-FX-63R4ELF"}, {"family", "CR"}, {"value_si", 63.4},
+         {"power_rating", 1.0}, {"tolerance_pct", 1.0}, {"case_code", "2512"},
+         {"length_m", 0.0064}, {"width_m", 0.0032}},
+        // A record that names no series at all: the class is not knowable from it,
+        // and the note has to say that rather than name a line it does not have.
+        {{"mpn", "RC2512FK-0763R4L"}, {"family", ""}, {"value_si", 63.4},
+         {"power_rating", 1.0}, {"tolerance_pct", 1.0}, {"case_code", "2512"},
+         {"length_m", 0.0064}, {"width_m", 0.0032}},
+        // An anti-sulfurated line: the class agrees, so this one ranks normally.
+        {{"mpn", "AF2512FR-0763R4L"}, {"family", "AF"}, {"value_si", 63.4},
+         {"power_rating", 1.0}, {"tolerance_pct", 1.0}, {"case_code", "2512"},
+         {"length_m", 0.0064}, {"width_m", 0.0032}}});
+    auto r = cross_reference("resistor", original, cands, Options{});
+    auto find = [&](const char* mpn) {
+        for (const auto& c : r["candidates"])
+            if (c["mpn"] == mpn) return c;
+        FAIL("candidate " << mpn << " missing from the result");
+        return json{};
+    };
+    auto verdict = [](const json& c, const char* name) {
+        for (const auto& p : c["params"])
+            if (p["name"] == name) return p["verdict"].get<std::string>();
+        return std::string("<absent>");
+    };
+
+    const json plain = find("CR2512-FX-63R4ELF");
+    CHECK(plain["status"] == "partial");
+    CHECK(plain["grade"] == "major_review");  // was drop_in / recommended
+    CHECK(verdict(plain, "sulfur_resistance") == "fail");
+    // The part still FITS — this is a reliability class, not a land pattern.
+    CHECK(plain["footprint"] == "fits");
+    CHECK(verdict(plain, "footprint") == "pass");
+    // And it says WHY, rather than leaving notes null as it did.
+    REQUIRE(plain.contains("notes"));
+    const std::string note = plain["notes"][0];
+    CHECK(note.find("anti-sulfurated") != std::string::npos);
+    CHECK(note.find("\"CR\"") != std::string::npos);
+    CHECK(note.find("fails OPEN") != std::string::npos);
+
+    // Silence about the series reads as silence, not as a different series.
+    const json silent = find("RC2512FK-0763R4L");
+    CHECK(silent["grade"] == "major_review");
+    CHECK(verdict(silent, "sulfur_resistance") == "fail");
+    REQUIRE(silent.contains("notes"));
+    CHECK(std::string(silent["notes"][0]).find("names no series at all") != std::string::npos);
+
+    const json anti_sulfur = find("AF2512FR-0763R4L");
+    CHECK(anti_sulfur["status"] == "recommended");
+    CHECK(anti_sulfur["grade"] == "drop_in");
+    CHECK(verdict(anti_sulfur, "sulfur_resistance") == "pass");
+    CHECK_FALSE(anti_sulfur.contains("notes"));
+    // Like-for-like must OUTRANK the caveated parts, not merely differ from them.
+    CHECK(anti_sulfur["penalty"].get<double>() < plain["penalty"].get<double>());
+}
+
+TEST_CASE("an anti-sulfurated substitute for an ordinary original is not a caveat",
+          "[crossref][classes][abt518]") {
+    // Asked one way only. Sulfur resistance is a property ADDED to the original's
+    // spec, and an engineer replacing an ordinary chip with an ERJ-S loses
+    // nothing — flagging it would be noise on 112k records.
+    json original = {{"mpn", "CR2512-FX-63R4ELF"}, {"family", "CR"},   {"value_si", 63.4},
+                     {"power_rating", 1.0},        {"tolerance_pct", 1.0}, {"case_code", "2512"},
+                     {"length_m", 0.0064},         {"width_m", 0.0032}};
+    json cands = json::array({
+        {{"mpn", "ERJS1TF63R4U"}, {"family", "Anti-Sulfurated Thick Film Chip Resistors"},
+         {"value_si", 63.4}, {"power_rating", 1.0}, {"tolerance_pct", 1.0},
+         {"case_code", "2512"}, {"length_m", 0.0064}, {"width_m", 0.0032}}});
+    auto r = cross_reference("resistor", original, cands, Options{});
+    const json& c = r["candidates"][0];
+    CHECK(c["status"] == "recommended");
+    CHECK(c["grade"] == "drop_in");
+    CHECK_FALSE(c.contains("notes"));
+    for (const auto& p : c["params"]) CHECK(p["name"] != "sulfur_resistance");
+}
+
 // ── diode device configuration: bridge module vs discrete (ABT #521) ─────────
 // GBU8KS is a 4-die single-phase bridge on four terminals (AC, AC, +, -). Offered
 // against Vishay's S8J — a two-terminal SMC rectifier — it was graded

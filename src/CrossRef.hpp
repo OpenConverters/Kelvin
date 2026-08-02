@@ -407,6 +407,22 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             resistor_class_conflict = true;
         }
     }
+    // Anti-sulfuration is a CONSTRUCTION class, not a parameter. An ERJ-S and the
+    // ordinary ERJ beside it share every catalogue column and both read
+    // "thickFilm", so silence about it read as agreement and a plain chip came
+    // back drop_in / recommended for an anti-sulfurated original (ABT #518). The
+    // part still FITS — this is a reliability class, not a land pattern — so it
+    // stays out of the footprint conflict above and caps the grade on its own.
+    if (cat == "resistor" &&
+        sulfur_resistant_by_design(str(original, "family"), str(original, "mpn"))) {
+        const bool declared = declares_sulfur_resistance(str(cand, "family"), str(cand, "mpn"));
+        params.push_back({{"name", "sulfur_resistance"}, {"verdict", declared ? PASS : FAIL}});
+        if (!declared) {
+            demote();
+            penalty += opt.gate_weight * kVerdictFailPenalty;
+            notes.push_back(sulfur_resistance_conflict(str(cand, "family")));
+        }
+    }
     // A single-phase bridge rectifier is not a discrete diode: four dies on four
     // terminals (AC, AC, +, -), a Vf quoted per element against a path that runs
     // through two of them, and an If(AV) that is the bridge's OUTPUT current. It
