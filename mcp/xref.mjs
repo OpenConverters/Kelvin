@@ -173,7 +173,17 @@ async function crossref(req) {
     origSpec: r.origSpec, origVerified: r.origVerified, missing: r.missing,
     targets: manufacturers, targetsFromFacet,
     poolTotal: r.poolTotal, poolScored: r.poolScored, poolLimit,
-    ranked: r.ranked.map((c) => ({ ...c, row: r.rowByKey.get(c._key) ?? null })),
+    // Each candidate carries BOTH its shard row (the raw catalogue datum) and `specs`: the
+    // exact projection the ranker compared against the original, built by the family's own
+    // spec() — the same function that produced origSpec. That vocabulary matters. The row
+    // says `vds_rated` / `id_continuous` / `qg_total`; the ranker says `vds` / `id` / `qg`,
+    // and so does origSpec. A consumer tabulating candidates against the original needs the
+    // two sides in one vocabulary, and it must not have to re-derive the mapping.
+    ranked: r.ranked.map((c) => {
+      const row = r.rowByKey.get(c._key) ?? null
+      const { _key, ...specs } = row ? fam.spec(row) : {}
+      return { ...c, row, specs }
+    }),
   }
 }
 

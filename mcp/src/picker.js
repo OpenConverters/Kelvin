@@ -58,44 +58,11 @@ const fmt = (v) => {
   return String(v);
 };
 
-/**
- * Fields that are candidate *metadata*, not specs to put in the table.
- *
- * A tool that hands us pre-shaped `specs` decides its own columns; a tool that
- * hands us a flat catalogue row does not, so the spec columns are whatever is
- * left after these are removed.
- */
-const META_KEYS = new Set([
-  "mpn", "manufacturer", "specs", "params", "params_full", "notes", "status",
-  "grade", "penalty", "direction", "footprint", "margins", "sortKey", "evidence",
-  "envelope", "line", "lineno", "srcOffset", "srcLength", "original_unverified",
-]);
-
-/** The spec object for a row, derived from the flat row when none was supplied. */
-function specsOf(row) {
-  if (row.specs && typeof row.specs === "object") return row.specs;
-  const out = {};
-  for (const [k, v] of Object.entries(row)) {
-    if (META_KEYS.has(k)) continue;
-    // A leading underscore marks a field the pipeline carries for its own use, not a
-    // datasheet parameter — the cross-reference ranker's collision-proof row key `_key`
-    // ("STMicroelectronics␟STP60NF06") is one, and the browse path will add others.
-    // META_KEYS can only name the ones that exist today; this rule holds for the rest.
-    if (k.startsWith("_")) continue;
-    if (v === null || v === undefined || typeof v === "object") continue;
-    out[k] = v;
-  }
-  return out;
-}
-
-/** Union of spec keys across rows, so the table has stable columns. */
-function specColumns(rows) {
-  const seen = [];
-  for (const r of rows) {
-    for (const k of Object.keys(specsOf(r))) if (!seen.includes(k)) seen.push(k);
-  }
-  return seen.slice(0, 9);          // a catalogue row can carry dozens
-}
+// How candidates become columns lives in columns.js so it can be tested without a host
+// bridge — this module connects to the host at import, so logic left in here can only be
+// checked by rendering the real GUI, which is how the ranked views got away with deriving
+// one column each.
+import { columnsFor, specsOf, valueFor } from "./columns.js";
 
 function verdictPills(params) {
   if (!Array.isArray(params) || !params.length) return null;
@@ -136,7 +103,7 @@ function render() {
   }
 
   const isCross = state.mode === "crossref";
-  const cols = specColumns(state.candidates);
+  const cols = columnsFor(state.candidates);
 
   // header
   const sub = isCross
@@ -158,7 +125,7 @@ function render() {
   const head = el("tr", {},
     el("th", {}, "Part"),
     isCross ? el("th", {}, "Verdict") : null,
-    cols.map((c) => el("th", {}, c)),
+    cols.map((c) => el("th", { class: c.kind }, c.label)),
     el("th", {}, ""));
 
   const body = [];
@@ -177,7 +144,13 @@ function render() {
               ? el("div", { class: "pen" }, `penalty ${fmt(row.penalty)}`)
               : null)
         : null,
-      cols.map((c) => el("td", {}, fmt(specsOf(row)[c]))),
+      // A margin is a ratio and reads as one; a spec is a magnitude. Absent stays an em dash
+      // in both cases — never 0, which would be a measurement.
+      cols.map((c) => {
+        const v = valueFor(row, c);
+        return el("td", { class: c.kind },
+          c.kind === "margin" && typeof v === "number" ? `×${fmt(v)}` : fmt(v));
+      }),
       el("td", { class: "act" },
         el("button", {
           class: chosen ? "btn chosen" : "btn",

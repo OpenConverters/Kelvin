@@ -586,6 +586,7 @@ def recommend_parts(family: str, requirements: dict, options: dict | None = None
             f"({detail.get('totalRowsConsidered', '?')} parts considered). Rejections by gate: "
             + (", ".join(f"{k}={v}" for k, v in sorted(buckets.items(), key=lambda kv: -kv[1]))
                or "(none recorded)")) from error
+    result["mode"] = "recommend"        # the envelope every ranked list here travels in
     cands = result.get("candidates") or []
     lines = []
     for c in cands[:15]:
