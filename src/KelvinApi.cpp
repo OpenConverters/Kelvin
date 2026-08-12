@@ -482,6 +482,42 @@ json Engine::browse(const std::string& category, const json& query) {
     throw InvalidOptions("unknown family");
 }
 
+json Engine::fetch_record(const std::string& category, uint64_t offset, uint32_t length) {
+    Family f = family_from_string(category);
+    if (data_dir_.empty())
+        throw DataError("", 0,
+                        "fetch_record needs a data dir: this engine was built for the "
+                        "preloaded-shard path, where the caller fetches the record itself "
+                        "(HTTP Range over srcOffset/srcLength)");
+    FileRecordFetcher fetcher(ndjson_path(f));
+    return fetcher.fetch(offset, length);
+}
+
+std::vector<std::string> family_names() {
+    std::vector<std::string> names;
+    for (int i = static_cast<int>(Family::Mosfet); i <= static_cast<int>(Family::Connector); ++i)
+        names.emplace_back(family_name(static_cast<Family>(i)));
+    return names;
+}
+
+json family_fields(const std::string& category) {
+    switch (family_from_string(category)) {
+        case Family::Mosfet: return browse::field_names<MosfetRow>();
+        case Family::Diode: return browse::field_names<DiodeRow>();
+        case Family::Capacitor: return browse::field_names<CapacitorRow>();
+        case Family::Resistor: return browse::field_names<ResistorRow>();
+        case Family::Controller: return browse::field_names<ControllerRow>();
+        case Family::Igbt: return browse::field_names<IgbtRow>();
+        case Family::Bjt: return browse::field_names<BjtRow>();
+        case Family::Varistor: return browse::field_names<VaristorRow>();
+        case Family::Magnetic: return browse::field_names<MagneticRow>();
+        case Family::Analog: return browse::field_names<AnalogRow>();
+        case Family::Timing: return browse::field_names<TimingRow>();
+        case Family::Connector: return browse::field_names<ConnectorRow>();
+    }
+    throw InvalidOptions("unknown family");
+}
+
 std::string select_string(const std::string& data_dir, const std::string& cache_dir,
                           const std::string& category, const std::string& req_json,
                           const std::string& options_json) {

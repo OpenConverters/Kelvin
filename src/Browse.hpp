@@ -253,6 +253,29 @@ inline const FieldTable<ConnectorRow>& fields<ConnectorRow>() {
     return t;
 }
 
+// ---- field introspection ----------------------------------------------------------------------
+// The query language above names fields, and a caller that cannot see this header has no way to
+// learn them except by guessing and reading the InvalidOptions message. Emit the table itself:
+//   { "numeric": [...], "string": [...], "boolean": [...], "list": [...] }
+// numeric fields take {min,max} filters, sort and histogram; string/list fields take an array of
+// values and are facetable; boolean fields take true/false. `mpn` (substring) and `manufacturer`
+// (value array) are implicit on every family and are NOT repeated here — they come from the row
+// header, not the per-family table. Generated FROM fields<Row>(), so it cannot drift from what
+// parse_query actually accepts.
+template <class Row>
+json field_names() {
+    const FieldTable<Row>& t = fields<Row>();
+    json nums = json::array(), strs = json::array(), bools = json::array(), lists = json::array();
+    for (const auto& [name, mem] : t.nums) nums.push_back(name);
+    for (const auto& [name, mem] : t.strs) strs.push_back(name);
+    for (const auto& [name, mem] : t.bools) bools.push_back(name);
+    for (const auto& [name, mem] : t.lists) lists.push_back(name);
+    return json{{"numeric", std::move(nums)},
+                {"string", std::move(strs)},
+                {"boolean", std::move(bools)},
+                {"list", std::move(lists)}};
+}
+
 // ---- parsed query -----------------------------------------------------------------------------
 namespace detail {
 

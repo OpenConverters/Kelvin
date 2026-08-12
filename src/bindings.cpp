@@ -51,6 +51,17 @@ PYBIND11_MODULE(PyKelvin, m) {
             [](kelvin::api::Engine& e, const std::string& category, const json& req,
                const json& options) { return e.select(category, req, options); },
             py::arg("category"), py::arg("design_requirements"), py::arg("options") = json::object())
+        .def(
+            "browse",
+            [](kelvin::api::Engine& e, const std::string& category, const json& query) {
+                return e.browse(category, query);
+            },
+            py::arg("category"), py::arg("query") = json::object())
+        .def(
+            "fetch_record",
+            [](kelvin::api::Engine& e, const std::string& category, uint64_t offset,
+               uint32_t length) { return e.fetch_record(category, offset, length); },
+            py::arg("category"), py::arg("offset"), py::arg("length"))
         .def("build_index", &kelvin::api::Engine::build_index, py::arg("family"))
         .def(
             "load_shard_bytes",
@@ -75,6 +86,11 @@ PYBIND11_MODULE(PyKelvin, m) {
             return kelvin::api::bind_part(tas, ref, envelope);
         },
         py::arg("tas"), py::arg("ref"), py::arg("envelope"));
+
+    // Catalogue introspection: the families, and the browse query vocabulary of one family
+    // (generated from Browse.hpp's field table, so it cannot drift from what browse accepts).
+    m.def("family_names", &kelvin::api::family_names);
+    m.def("family_fields", &kelvin::api::family_fields, py::arg("category"));
 
     // Cross-reference ranker: deterministic scored substitutes for an original.
     // Heaviside runs its LLM chooser over the returned candidates[]; Kirchhoff

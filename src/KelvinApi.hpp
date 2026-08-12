@@ -3,8 +3,10 @@
 // rebuilding when stale — an index is a cache, so a rebuild is legitimate, not a silent
 // fallback; it is logged). Exceptions (NoCandidates / InvalidOptions / DataError) propagate.
 #pragma once
+#include <cstdint>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
@@ -31,6 +33,11 @@ class Engine {
     // empty data dir (the browser path) the family's shard must have been fed via
     // load_shard_bytes first; browsing an unloaded family throws InvalidOptions.
     json browse(const std::string& category, const json& query);
+
+    // The full TAS record behind a browse/select row, by its byte span in the family's source
+    // NDJSON (row.srcOffset / row.srcLength) — the native equivalent of the browser's HTTP Range
+    // fetch. Needs a data dir; throws DataError without one (there is no file to read).
+    json fetch_record(const std::string& category, uint64_t offset, uint32_t length);
 
     // Build (or incrementally refresh) and persist the shard for one family. Returns its meta.
     ShardMeta build_index(const std::string& family);
@@ -100,6 +107,14 @@ ShardMeta build_and_write_index(const std::string& data_dir, const std::string& 
                                 const std::string& family);
 
 Family family_from_string(const std::string& s);
+
+// Every family Kelvin indexes, in a stable order — the catalogue's table of contents.
+std::vector<std::string> family_names();
+
+// The browse query language for one family: which field names take numeric ranges, which take
+// value lists (facetable), which take booleans. Generated from Browse.hpp's field table, so a
+// caller learns the real vocabulary instead of guessing at it. No shard needed.
+json family_fields(const std::string& category);
 
 }  // namespace api
 }  // namespace kelvin

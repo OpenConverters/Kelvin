@@ -338,3 +338,56 @@ TEST_CASE("select connector: gates + margin ranking + rejection buckets", "[sele
     REQUIRE(err.at("error") == "NoCandidates");
     REQUIRE(err.at("rejections").contains("current_low"));
 }
+
+// ---- the catalogue introspection surface (family_names / family_fields / fetch_record) --------
+// The MCP server and any other out-of-process caller learns the browse vocabulary from here
+// rather than guessing at field names, so these must stay generated from the field table.
+
+TEST_CASE("family_fields: the browse vocabulary of every family", "[browse]") {
+    std::vector<std::string> names = api::family_names();
+    REQUIRE(names.size() == 12);
+    REQUIRE(names.front() == "mosfet");
+    REQUIRE(names.back() == "connector");
+
+    for (const std::string& family : names) {
+        json f = api::family_fields(family);
+        INFO("family " << family);
+        REQUIRE(f.at("numeric").is_array());
+        REQUIRE(f.at("string").is_array());
+        REQUIRE(f.at("boolean").is_array());
+        REQUIRE(f.at("list").is_array());
+        // Every family filters on something numeric.
+        REQUIRE(f.at("numeric").size() > 0);
+    }
+    REQUIRE_THROWS_AS(api::family_fields("flux_capacitor"), InvalidOptions);
+
+    // Named fields are the ones browse actually accepts — asserted against the parser, not
+    // against a copy of the list.
+    api::Engine eng(fixtures_dir(), "", /*quiet=*/true);
+    json fields = api::family_fields("mosfet");
+    for (const auto& name : fields.at("numeric"))
+        REQUIRE_NOTHROW(eng.browse(
+            "mosfet", json{{"filters", {{name.get<std::string>(), {{"min", 0.0}}}}}, {"limit", 1}}));
+    for (const auto& name : fields.at("string"))
+        REQUIRE_NOTHROW(eng.browse("mosfet", json{{"filters", {{name.get<std::string>(),
+                                                                json::array({"x"})}}},
+                                                  {"limit", 1}}));
+}
+
+TEST_CASE("fetch_record: the full TAS record behind a browse row", "[browse]") {
+    api::Engine eng(fixtures_dir(), "", /*quiet=*/true);
+    json page = eng.browse("mosfet", json{{"limit", 3}});
+    REQUIRE(page.at("rows").size() == 3);
+    for (const auto& row : page.at("rows")) {
+        json rec = eng.fetch_record("mosfet", row.at("srcOffset").get<uint64_t>(),
+                                    row.at("srcLength").get<uint32_t>());
+        // The span locates THAT part: the record's own MPN must be the row's.
+        std::string mpn = rec.at("semiconductor").at("mosfet").at("manufacturerInfo")
+                              .at("reference").get<std::string>();
+        REQUIRE(mpn == row.at("mpn").get<std::string>());
+    }
+    // The preloaded-shard engine has no file to read from, and says so rather than
+    // returning an empty record.
+    api::Engine web("", "", /*quiet=*/true);
+    REQUIRE_THROWS_AS(web.fetch_record("mosfet", 0, 10), DataError);
+}

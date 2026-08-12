@@ -69,6 +69,18 @@ cd web && npm install
 npm run dev                        # or: npm run build && npm run test:e2e (headless)
 ```
 
+## MCP server (`mcp/`)
+
+The catalogue as chat-reachable tools — search, part lookup, deterministic recommendation, spec
+distributions and cross-reference — plus a ranked-candidate picker as an MCP Apps UI resource.
+The questions an FAE asks without a converter design in hand. See `mcp/README.md` (ABT #666).
+
+```bash
+cd mcp && npm install && npm run build && cd ..              # the picker widget
+KELVIN_TAS_DATA_DIR=/path/to/TAS/data python3 mcp/server.py  # 127.0.0.1:8402/mcp
+KELVIN_TAS_DATA_DIR=/path/to/TAS/data python3 mcp/smoke.py   # every tool, real catalogue
+```
+
 ## Validation
 
 - **`[parity]`** replays a golden generated from the Python selector over committed fixtures:

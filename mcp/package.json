@@ -1,0 +1,19 @@
+{
+  "name": "kelvin-mcp-app",
+  "version": "0.1.0",
+  "description": "Kelvin MCP App — ranked candidate picker (search + cross-reference)",
+  "scripts": {
+    "build": "rm -rf dist && vite build",
+    "dev": "vite"
+  },
+  "license": "ISC",
+  "type": "module",
+  "private": "true",
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "^1.7.5"
+  },
+  "devDependencies": {
+    "vite": "^8.1.5",
+    "vite-plugin-singlefile": "^2.3.3"
+  }
+}
