@@ -147,6 +147,32 @@ def main() -> int:
               all(c["manufacturer"] != x["original"]["manufacturer"] for c in x["candidates"]))
         check("the digest carries the ranker's reasoning, not just names and scores",
               any(line.strip().startswith(("concerns:", "note:")) for line in text(r).splitlines()))
+        # The widget tabulates candidates directly under the original's specs, so the two
+        # must be in ONE vocabulary. Overlap is not enough: the shard row and the ranker's
+        # spec share `rds_on` and `coss` by coincidence, which is exactly what made a wholly
+        # mismatched table look healthy at a glance.
+        cand_specs = set((x["candidates"][0].get("specs") or {}))
+        orig_specs = set(x.get("originalSpecs") or {})
+        check("candidate specs are the ranker's own projection, not the shard row",
+              bool(cand_specs) and len(cand_specs - orig_specs) == 0,
+              f"{len(cand_specs & orig_specs)}/{len(cand_specs)} keys align"
+              + (f"; stray: {sorted(cand_specs - orig_specs)[:4]}" if cand_specs - orig_specs else ""))
+        check("the shard vocabulary never reaches the comparison",
+              not ({"vds_rated", "id_continuous", "qg_total"} & cand_specs))
+
+        print("the cross-reference worker restarts when its source changes")
+        S._xref({"op": "families"})                       # ensure a worker is up
+        first = S._xref_proc.pid
+        stamp = S._XREF_SOURCES[0]
+        original = stamp.read_bytes()
+        try:
+            stamp.write_bytes(original + b"\n// staleness probe\n")
+            S._xref({"op": "families"})
+            check("a source edit restarts the worker instead of serving the old code",
+                  S._xref_proc.pid != first, f"pid {first} -> {S._xref_proc.pid}")
+        finally:
+            stamp.write_bytes(original)
+        S._xref({"op": "families"})                       # back to the real source
 
         print("cross_reference on a family with no substitute model")
         try:

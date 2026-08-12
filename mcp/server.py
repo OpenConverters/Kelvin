@@ -26,6 +26,7 @@ Run:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -321,7 +322,27 @@ def _row_digest(row: dict, numeric_fields: list[str], count: int = 4) -> str:
 _xref_proc: subprocess.Popen | None = None
 _xref_lock = threading.Lock()
 _xref_id = 0
+_xref_fingerprint: str | None = None
 XREF_TIMEOUT_S = 300.0
+# The worker's source: its own file plus the cross-reference pipeline it imports.
+_XREF_SOURCES = (Path(__file__).parent / "xref.mjs",
+                 _REPO / "web" / "src" / "crossref.js")
+
+
+def _xref_source_fingerprint() -> str:
+    """A hash of the code the worker SHOULD be running.
+
+    A long-lived worker restarted only when it dies keeps serving the code it was started
+    with, so an edit to the pipeline takes effect at some unrelated future restart and every
+    answer until then is quietly stale — and the failure is invisible, because a stale worker
+    answers perfectly well, just from the old rules. (Caught exactly this way: a worker 7.5
+    hours older than the fix it was supposed to be running still returned the old payload,
+    while a fresh one in a test returned the new one, and the two checks disagreed.)
+    """
+    digest = hashlib.sha256()
+    for path in _XREF_SOURCES:
+        digest.update(path.read_bytes())
+    return digest.hexdigest()[:16]
 
 
 def _xref_start() -> subprocess.Popen:
@@ -337,18 +358,43 @@ def _xref_start() -> subprocess.Popen:
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=None,
         text=True, bufsize=1)
     hello = proc.stdout.readline()
-    if not hello or not json.loads(hello).get("ready"):
+    handshake = json.loads(hello) if hello else {}
+    if not handshake.get("ready"):
         proc.kill()
         raise RuntimeError("the cross-reference worker did not start (see its stderr above)")
+    # The worker hashes its own source; we hash what is on disk. A disagreement means the
+    # files changed while it was starting, and the worker we just got is not the one we
+    # think we started.
+    expected = _xref_source_fingerprint()
+    if handshake.get("fingerprint") != expected:
+        proc.kill()
+        raise RuntimeError(
+            f"the cross-reference worker reports source {handshake.get('fingerprint')!r} but "
+            f"the files on disk hash to {expected!r} -- they changed mid-start; try again")
     return proc
 
 
 def _xref(request: dict) -> dict:
-    """One request/response round-trip with the worker, restarting it if it died."""
-    global _xref_proc, _xref_id
+    """One request/response round-trip with the worker, restarting it if it died.
+
+    The worker is also restarted when its SOURCE changes. Without that, a fix to xref.mjs or
+    to the crossref pipeline it imports only lands whenever the worker next happens to die,
+    and until then the tool keeps answering from the old code — correctly-shaped answers from
+    superseded rules, which is the hardest kind of wrong to notice.
+    """
+    global _xref_proc, _xref_id, _xref_fingerprint
     with _xref_lock:
+        current = _xref_source_fingerprint()
+        if _xref_proc is not None and _xref_proc.poll() is None and _xref_fingerprint != current:
+            _xref_proc.terminate()
+            try:
+                _xref_proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:                   # pragma: no cover
+                _xref_proc.kill()
+            _xref_proc = None
         if _xref_proc is None or _xref_proc.poll() is not None:
             _xref_proc = _xref_start()
+            _xref_fingerprint = current
         _xref_id += 1
         request = {**request, "id": _xref_id}
         try:

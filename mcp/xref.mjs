@@ -19,6 +19,7 @@
 //
 //   node xref.mjs [--shards <dir>]
 
+import { createHash } from 'node:crypto'
 import { readFileSync, existsSync, openSync, readSync, closeSync } from 'node:fs'
 import { createInterface } from 'node:readline'
 import { dirname, join, resolve } from 'node:path'
@@ -190,9 +191,22 @@ async function crossref(req) {
 // ── the loop ────────────────────────────────────────────────────────────────
 const reply = (o) => process.stdout.write(JSON.stringify(o) + '\n')
 
+// The fingerprint of the code this worker is actually RUNNING — its own source and the
+// cross-reference pipeline it imports. A worker is long-lived and is restarted only when it
+// dies, so an edit to either file would otherwise keep taking effect "next week": the server
+// holds a process from before the change and every answer stays quietly stale. The server
+// compares this against the files on disk and restarts the worker when they differ.
+export function sourceFingerprint() {
+  const files = [join(HERE, 'xref.mjs'), join(KELVIN, 'web', 'src', 'crossref.js')]
+  const h = createHash('sha256')
+  for (const f of files) h.update(readFileSync(f))
+  return h.digest('hex').slice(0, 16)
+}
+
 const rl = createInterface({ input: process.stdin })
-process.stderr.write(`kelvin xref worker ready (shards ${SHARDS})\n`)
-reply({ ready: true })
+const fingerprint = sourceFingerprint()
+process.stderr.write(`kelvin xref worker ready (shards ${SHARDS}, source ${fingerprint})\n`)
+reply({ ready: true, fingerprint })
 
 for await (const line of rl) {
   if (!line.trim()) continue
