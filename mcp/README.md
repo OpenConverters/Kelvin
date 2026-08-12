@@ -143,6 +143,11 @@ same shape (a ranked list of candidates) and pose the same question (pick one), 
 normalise to one `candidates[]` envelope rather than three. The other four tools carry no
 `ui/resourceUri` at all — advertising a UI a tool does not fill is how you get a broken panel.
 
+The resource reads `dist/` from disk on every request, and hosts fetch the widget over MCP per
+mount rather than caching a copy, so **editing a widget is `npm run build` and nothing else** —
+no server restart, and every consumer has the new bundle on its next mount. (Verified against
+Moebius: the bytes it hands the browser matched `dist/picker.html` with no action on its side.)
+
 `assert_widgets_resolve()` runs at startup and refuses to serve if a registered `ui://` has no
 bundle behind it. That failure is not hypothetical: OpenMagnetics ships a curves widget URI with
 no bundle and no build tooling in the repo, so eight sweep tools advertise a chart the host can
