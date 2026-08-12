@@ -77,6 +77,11 @@ function specsOf(row) {
   const out = {};
   for (const [k, v] of Object.entries(row)) {
     if (META_KEYS.has(k)) continue;
+    // A leading underscore marks a field the pipeline carries for its own use, not a
+    // datasheet parameter — the cross-reference ranker's collision-proof row key `_key`
+    // ("STMicroelectronics␟STP60NF06") is one, and the browse path will add others.
+    // META_KEYS can only name the ones that exist today; this rule holds for the rest.
+    if (k.startsWith("_")) continue;
     if (v === null || v === undefined || typeof v === "object") continue;
     out[k] = v;
   }
