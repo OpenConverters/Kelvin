@@ -435,6 +435,57 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             return reject("different capacitor construction family");
         }
     }
+    // ── line-safety approval class (IEC 60384-14 X1/X2/X3, Y1/Y2/Y3/Y4) ──────
+    // A capacitor across the mains is chosen for its APPROVAL, and the approval is
+    // not a number the ranker can trade against another number: X1 -> X2 halves the
+    // impulse the part must survive in the place where a shorted capacitor starts a
+    // fire. So a declared downgrade is a rejection, not a penalty.
+    //
+    // The gate is self-selecting on the ORIGINAL: it engages only when the original's
+    // own series names a class, which is the only case where a safety approval is a
+    // stated requirement. An ordinary 100 nF X7R chip never reaches it.
+    //
+    // The third outcome is the honest one and the common one. The catalogue has no
+    // safety-class field (ABT #677) and the class is readable only from a series
+    // name, so a substitute whose series says nothing cannot be checked. That is
+    // UNVERIFIED — nothing was compared — and it carries the disqualifying
+    // consequence rather than a verdict: demoted out of 'recommended', the FAIL's
+    // penalty, the grade capped at major_review, and a note saying which approval
+    // went unchecked. Silence used to read as agreement: the six KEMET R46 offered
+    // for a WIMA MKP-X1 R were 'recommended' / 'drop_in' / 'upgrade' with voltage
+    // "pass" and notes null (ABT #557).
+    if (cat == "capacitor") {
+        const std::string o_series = str(original, "family");
+        const SafetyClass o_class = safety_class(o_series);
+        if (o_class.any()) {
+            const std::string s_series = str(cand, "family");
+            const SafetyClass s_class = safety_class(s_series);
+            struct AxisPair {
+                char axis;
+                std::optional<int> o, s;
+            };
+            const AxisPair axes[] = {{'X', o_class.x, s_class.x}, {'Y', o_class.y, s_class.y}};
+            bool downgraded = false, unverified = false;
+            for (const AxisPair& a : axes) {
+                if (!a.o) continue;  // the original claims nothing on this axis
+                if (!a.s) {
+                    unverified = true;
+                    notes.push_back(safety_class_unverified(a.axis, *a.o, s_series));
+                } else if (*a.s < *a.o) {
+                    downgraded = true;
+                    notes.push_back(safety_class_downgrade(a.axis, *a.o, *a.s));
+                }
+            }
+            params.push_back({{"name", "safety_class"},
+                              {"verdict", downgraded ? FAIL : (unverified ? UNVERIFIED : PASS)}});
+            if (downgraded) return reject("line-safety approval class downgrade");
+            if (unverified) {
+                demote();
+                penalty += opt.gate_weight * kVerdictFailPenalty;
+                missing_required_data = true;
+            }
+        }
+    }
     // A chip resistor ARRAY is not a discrete resistor: same body outline, a
     // different land pattern, and a rating that is per element rather than per
     // package. Surfaced rather than rejected — N discretes DO replace one array

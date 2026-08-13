@@ -196,6 +196,46 @@ TEST_CASE("index: incremental build refuses to reuse foreign extractor rows",
 // consumer of it — behaved as though the catalogue had no pitch at all. A connector record
 // carries no body outline, so pitch IS its land pattern: dropping it left the cross-reference
 // with nothing to compare and it graded 2.54 mm parts drop_in against a 2.00 mm original.
+// ABT #557: the IEC 60384-14 line-safety approval of a mains capacitor (X1/X2/X3,
+// Y1/Y2/Y3/Y4) exists NOWHERE in the catalogue as a field — the schema has no
+// safety-class column at all (ABT #677). The vendors write it into the series name,
+// and the extractor dropped that string, so the cross-reference had only voltages to
+// compare and graded six KEMET R46 (X2) parts drop-in upgrades for a WIMA MKP-X1 R.
+TEST_CASE("index: the capacitor series/family string reaches the shard row and round-trips",
+          "[index][capacitor][abt557]") {
+    auto cap_line = [](const std::string& mpn, const std::string& family,
+                       const std::string& series) {
+        return "{\"capacitor\":{\"manufacturerInfo\":{\"name\":\"ACME\",\"reference\":\"" + mpn +
+               "\",\"status\":\"production\"" +
+               (family.empty() ? "" : ",\"family\":\"" + family + "\"") +
+               ",\"datasheetInfo\":{\"part\":{\"partNumber\":\"" + mpn +
+               "\",\"technology\":\"film-polypropylene\"" +
+               (series.empty() ? "" : ",\"series\":\"" + series + "\"") +
+               "},\"electrical\":{\"capacitance\":{\"nominal\":3.3e-07},\"ratedVoltage\":440}}}}}";
+    };
+    std::string path = tmp_path("capacitor_family.ndjson");
+    write_file(path, cap_line("KEMETX1", "R47 X1 440 VAC", "") + "\n" +   // family only
+                         cap_line("WIMAX1", "", "MKP-X1 R") + "\n" +      // series fallback
+                         cap_line("NOSERIES", "", "") + "\n");            // states neither
+    auto shard = build_capacitor_shard(path);
+    REQUIRE(shard.meta.row_count == 3);
+    REQUIRE(shard.rows[0].family == "R47 X1 440 VAC");
+    REQUIRE(shard.rows[1].family == "MKP-X1 R");
+    REQUIRE(shard.rows[2].family.empty());  // absent stays absent, never invented
+
+    auto back = deserialize_capacitor_shard(serialize_shard(shard));
+    REQUIRE(back.rows[0].family == shard.rows[0].family);
+    REQUIRE(back.rows[1].family == shard.rows[1].family);
+    REQUIRE(back.rows[2].family.empty());
+
+    // and it is visible to the caller that builds the cross-reference spec block —
+    // which is the whole point: the ranker reads the class out of this string.
+    nlohmann::json rows = browse::browse_rows(shard, nlohmann::json{{"limit", 10}}).at("rows");
+    REQUIRE(rows[0].at("family").get<std::string>() == "R47 X1 440 VAC");
+    REQUIRE(rows[1].at("family").get<std::string>() == "MKP-X1 R");
+    fs::remove(path);
+}
+
 TEST_CASE("index: connector pitch reaches the shard row and survives a round-trip",
           "[index][connector][abt485]") {
     auto connector_line = [](const std::string& mpn, int positions, const std::string& pitch) {

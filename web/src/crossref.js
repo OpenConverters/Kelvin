@@ -47,7 +47,15 @@ export const XREF = [
     sameFacet: { f: 'technology', label: 'technology' },
     hardKeys: ['voltage'],
     hardMin: [{ row: 'v_rated', factor: 0.9 }],
-    spec: (r) => ({ ...base(r), value_si: nz(r.capacitance), voltage: nz(r.v_rated), esr: nz(r.esr), ripple_current: nz(r.ripple_current_rms), technology: r.technology ?? '', dielectric_code: r.dielectric_code ?? '', esr_frequency: nz(r.esr_frequency), temp_min_C: r.temp_min_c, temp_max_C: r.temp_max_c }),
+    // `family` is the series name, and for a capacitor across the mains it is the
+    // only place the IEC 60384-14 line-safety approval appears — the catalogue has
+    // no safety-class field (ABT #677), so the vendors' own series names ("MKP-X1 R",
+    // "MKP-X2", "MKP-Y2", "R47 X1 440 VAC") are the whole evidence base. Without it
+    // the ranker compared a 560 V catalogue figure against 440 V and graded six X2
+    // parts drop-in upgrades for an X1 original (ABT #557). The ranker reads it ONLY
+    // when the ORIGINAL's series names a class, so nothing changes for the rest of
+    // the catalogue.
+    spec: (r) => ({ ...base(r), value_si: nz(r.capacitance), voltage: nz(r.v_rated), esr: nz(r.esr), ripple_current: nz(r.ripple_current_rms), technology: r.technology ?? '', dielectric_code: r.dielectric_code ?? '', family: r.family ?? '', esr_frequency: nz(r.esr_frequency), temp_min_C: r.temp_min_c, temp_max_C: r.temp_max_c }),
     params: [
       { key: 'value', label: 'C', row: 'capacitance', unit: 'F' },
       { key: 'voltage', label: 'V rated', row: 'v_rated', unit: 'V' },

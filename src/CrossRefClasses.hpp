@@ -196,6 +196,117 @@ inline std::string dielectric_regression(const std::string& original, const std:
     return out;
 }
 
+// ── Capacitor line-safety subclass (IEC 60384-14: X1/X2/X3, Y1/Y2/Y3/Y4) ────
+// A capacitor across the mains is not judged by its numbers. It is judged by the
+// SAFETY APPROVAL it carries, because the thing the approval buys is what happens
+// when the part fails: an X capacitor sits line-to-line, where a shorted part is a
+// fire, and a Y capacitor sits line-to-earth, where a shorted part puts mains on
+// the chassis. IEC 60384-14 grades that by the impulse the part must survive —
+// X1 2.5 < Up <= 4 kV, X2 Up <= 2.5 kV, X3 no impulse test; Y1 8 kV, Y2 5 kV,
+// Y3 none, Y4 2.5 kV — and by the insulation duty each class is approved for.
+//
+// So X1 -> X2 is a downgrade in the one property the part exists for, and no
+// margin anywhere else compensates: a WIMA MKP-X1 R (440 VAC, X1) came back with
+// six KEMET R46 X2 candidates graded recommended / drop_in / UPGRADE, voltage
+// "pass", notes null (ABT #557). The ranker compared a 560 V figure against 440 V
+// and never saw the class at all.
+//
+// There is no safety-class field in the catalogue schema (filed as ABT #677), so
+// what is read is the only evidence a TAS capacitor record carries: the series /
+// family string, where the approval is written into the series NAME — "MKP-X1 R",
+// "MKP-X2", "MKP-Y2", "R47 X1 440 VAC", "R53 X2 310 VAC". 4,227 of the 253,830
+// capacitor records name a class this way, in 7 distinct strings, all of them
+// unambiguous.
+//
+// What is NOT done here is a guess. A series string that names no class yields
+// UNKNOWN — not "probably X2", not "not a safety part". KEMET's R46 is in fact an
+// X2 line ("R46 275 VAC" plus an X2 datasheet URL), but the string the shard
+// carries does not say so, and a ranker that inferred it would be asserting a
+// safety approval it cannot show. Unknown is reported as unknown, and the caller
+// treats it as unverified — never as a pass.
+struct SafetyClass {
+    // Rank within an axis, higher = the more onerous approval. Absent = the
+    // record names no class on that axis, which is UNKNOWN, not "none".
+    std::optional<int> x;  // X3=1, X2=2, X1=3   (line-to-line, across the mains)
+    std::optional<int> y;  // Y4=1, Y3=2, Y2=3, Y1=4 (line-to-earth)
+    bool any() const { return x.has_value() || y.has_value(); }
+};
+
+// The class name as the datasheet writes it, from a rank on one axis.
+inline std::string safety_class_name(char axis, int rank) {
+    const int digit = (axis == 'X') ? (4 - rank) : (5 - rank);
+    return std::string(1, axis) + std::to_string(digit);
+}
+
+// Decode X1/X2/X3/Y1..Y4 out of a series / family string.
+//
+// Matched as a whole TOKEN, never as a substring: the string is split on every
+// character that is not a letter or a digit, and a piece counts only when it is
+// exactly the two characters. That boundary is what keeps the decode honest —
+// substring matching would read Murata's "X2Y" integrated EMI filter as an X2
+// approval, and would fire on any series code that happens to contain the pair.
+inline SafetyClass safety_class(const std::string& series) {
+    SafetyClass out;
+    std::string tok;
+    const auto take = [&] {
+        if (tok.size() != 2) return;
+        const char a = static_cast<char>(std::toupper(static_cast<unsigned char>(tok[0])));
+        const char d = tok[1];
+        if (d < '1' || d > '4') return;
+        if (a == 'X' && d <= '3') {
+            const int rank = 4 - (d - '0');
+            if (!out.x || rank > *out.x) out.x = rank;
+        } else if (a == 'Y') {
+            const int rank = 5 - (d - '0');
+            if (!out.y || rank > *out.y) out.y = rank;
+        }
+    };
+    for (char c : series) {
+        if (std::isalnum(static_cast<unsigned char>(c))) tok += c;
+        else { take(); tok.clear(); }
+    }
+    take();
+    return out;
+}
+
+// Why an X1 is not replaced by an X2. Stated as the approval change it is, with
+// both class names, because "voltage: pass" is what the engineer would otherwise
+// read off the row.
+inline std::string safety_class_downgrade(char axis, int orig_rank, int sub_rank) {
+    const std::string o = safety_class_name(axis, orig_rank), s = safety_class_name(axis, sub_rank);
+    const std::string where = (axis == 'X')
+                                  ? "line-to-line across the mains, where a shorted capacitor is "
+                                    "a fire"
+                                  : "line-to-earth, where a shorted capacitor puts mains on the "
+                                    "chassis";
+    return "line-safety approval downgrade " + o + " -> " + s +
+           ": the original is an IEC 60384-14 class-" + o + " capacitor and the substitute's "
+           "record names class " + s + ", a lower impulse-withstand grade for a part sitting " +
+           where + ". This is a safety approval, not a margin — no rated-voltage headroom "
+           "substitutes for it, and the swap is not certifiable where the original's class was "
+           "the requirement";
+}
+
+// Why an X1 original and a substitute whose record names no class are not
+// comparable. The claim made is exactly the true one — the check could not be
+// run — and never that the substitute is or is not a safety part.
+inline std::string safety_class_unverified(char axis, int orig_rank,
+                                           const std::string& substitute_series) {
+    const std::string o = safety_class_name(axis, orig_rank);
+    const std::string names = substitute_series.empty()
+                                  ? "this substitute's record names no series at all"
+                                  : "this substitute's record names series \"" +
+                                        substitute_series + "\"";
+    return "line-safety class UNVERIFIED: the original is an IEC 60384-14 class-" + o +
+           " mains capacitor and " + names +
+           " and states no safety class, so the approval could not be compared. Kelvin's "
+           "catalogue carries no safety-class field (ABT #677) — the class is only ever read "
+           "from the series name — so this is an absence of evidence, not evidence the "
+           "substitute is unapproved. The rated-voltage row above compares catalogue voltages "
+           "and is NOT the AC mains rating this class is granted against. Confirm the "
+           "substitute's X/Y approval on its datasheet before this swap";
+}
+
 // ── Resistor device class: discrete chip vs multi-element array/network ──────
 // A catalogue "resistor" is normally a two-terminal discrete. A chip resistor
 // ARRAY (network) is a different device: N isolated elements in one body, 2N

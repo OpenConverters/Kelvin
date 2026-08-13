@@ -49,7 +49,14 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // extractor collapsed breakdownVoltage to its nominal, so the window 3,728 zeners and
 // 137 TVS guarantee was dropped and a nominal-only candidate scored "vrrm: pass" against
 // a 1.11 % original with nothing said about the grade (ABT #488).
-constexpr uint32_t kFormatVersion = 10;
+// v11 added the capacitor family/series string — the ONLY evidence a TAS capacitor
+// record carries of an IEC 60384-14 line-safety approval (X1/X2/X3, Y1/Y2/Y3/Y4);
+// the schema has no safety-class field at all (ABT #677) and the vendors write the
+// class into the series name. Without it the cross-reference had only voltages to
+// compare and graded six KEMET R46 (X2, 275 VAC) parts 'recommended' / 'drop_in' /
+// 'upgrade' against a WIMA MKP-X1 R mains capacitor, voltage "pass", notes null —
+// a safety-approval downgrade presented as a clean upgrade (ABT #557).
+constexpr uint32_t kFormatVersion = 11;
 
 // Identity of the code that produces rows, so a cached shard can be recognised as
 // having been built by a DIFFERENT extractor than the one running now (ABT #426).
@@ -235,6 +242,7 @@ void row_io(Ar& ar, CapacitorRow& r) {
     ar.dbl(r.rth);
     ar.str(r.technology);
     ar.str(r.dielectric_code);
+    ar.str(r.family);
     ar.dbl(r.esr_frequency);
     ar.dbl(r.temp_min_c);
     ar.dbl(r.temp_max_c);

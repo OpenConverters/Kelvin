@@ -62,6 +62,110 @@ TEST_CASE("same family passes the family gate", "[crossref][classes][rank]") {
     CHECK(r["candidates"][0]["status"] != "no_substitute");
 }
 
+// ── capacitor line-safety approval class (IEC 60384-14) ──────────────────────
+
+TEST_CASE("a line-safety class is decoded from the series name, as a whole token",
+          "[crossref][classes]") {
+    // The seven strings the catalogue actually carries (4,227 of 253,830 records).
+    CHECK(safety_class("MKP-X1 R").x == 3);
+    CHECK(safety_class("MKP-X2").x == 2);
+    CHECK(safety_class("MKP-X2 R").x == 2);
+    CHECK(safety_class("R47 X1 440 VAC").x == 3);
+    CHECK(safety_class("R53 X2 310 VAC").x == 2);
+    CHECK(safety_class("MKP-Y2").y == 3);
+    // A dual approval is read on both axes, not collapsed onto one.
+    const SafetyClass dual = safety_class("MKP-X1/Y2");
+    CHECK(dual.x == 3);
+    CHECK(dual.y == 3);
+    // Nothing named is UNKNOWN — never "not a safety part", never a guess. KEMET's
+    // R46 IS an X2 line, and its series string is exactly this: silent (ABT #557).
+    CHECK_FALSE(safety_class("R46 275 VAC").any());
+    CHECK_FALSE(safety_class("MKP-X").any());
+    CHECK_FALSE(safety_class("").any());
+    // Whole token, never a substring: Murata's X2Y is an integrated three-terminal
+    // EMI filter, not an X2 mains approval, and a series code that merely contains
+    // the pair claims nothing.
+    CHECK_FALSE(safety_class("X2Y").any());
+    CHECK_FALSE(safety_class("GRM31MX2Y").any());
+    // X4 is not a class in the standard; Y4 is.
+    CHECK_FALSE(safety_class("FOO X4").any());
+    CHECK(safety_class("FOO Y4").y == 1);
+}
+
+TEST_CASE("an X2 part is never a drop-in for an X1 mains capacitor",
+          "[crossref][classes][rank]") {
+    // The ABT #557 case in miniature: the substitute's catalogue voltage is HIGHER
+    // (560 V vs 440 V) and every parametric column agrees, but the approval it is
+    // certified under is a grade lower. That is a rejection, not a warning — no
+    // rated-voltage headroom substitutes for an impulse-withstand approval.
+    json original = {{"mpn", "MKX1"}, {"value_si", 3.3e-7}, {"voltage", 440.0},
+                     {"technology", "film-polypropylene"}, {"family", "MKP-X1 R"}};
+    json cands = json::array({
+        {{"mpn", "X2PART"}, {"value_si", 3.3e-7}, {"voltage", 560.0},
+         {"technology", "film-polypropylene"}, {"family", "R47 X2 440 VAC"}}});
+    auto r = cross_reference("capacitor", original, cands, Options{});
+    const auto& c = r["candidates"][0];
+    CHECK(c["status"] == "no_substitute");
+    CHECK(c["grade"] == "no_substitute");
+    CHECK(std::string(c["notes"][0]).find("X1 -> X2") != std::string::npos);
+}
+
+TEST_CASE("a substitute whose series names no class is reported unverified, not passed",
+          "[crossref][classes][rank]") {
+    // The honest half. Kelvin cannot establish the substitute's class from anything
+    // it holds (no safety-class field in the catalogue at all, ABT #677), so it says
+    // so: demoted out of 'recommended', grade capped, and a note naming the approval
+    // that went unchecked. What it must never do is what it used to — read silence
+    // as agreement and grade the row 'drop_in' / 'upgrade' with notes null.
+    json original = {{"mpn", "MKX1"}, {"value_si", 3.3e-7}, {"voltage", 440.0},
+                     {"technology", "film-polypropylene"}, {"family", "MKP-X1 R"}};
+    json cands = json::array({
+        {{"mpn", "R46"}, {"value_si", 4.7e-7}, {"voltage", 560.0},
+         {"technology", "film-polypropylene"}, {"family", "R46 275 VAC"}}});
+    auto r = cross_reference("capacitor", original, cands, Options{});
+    const auto& c = r["candidates"][0];
+    CHECK(c["status"] == "partial");
+    CHECK(c["grade"] == "major_review");
+    bool verdict_seen = false;
+    for (const auto& p : c["params"])
+        if (p["name"] == "safety_class") {
+            CHECK(p["verdict"] == "unverified");
+            verdict_seen = true;
+        }
+    CHECK(verdict_seen);
+    CHECK(std::string(c["notes"][0]).find("UNVERIFIED") != std::string::npos);
+}
+
+TEST_CASE("an equal or higher safety class passes without a caveat",
+          "[crossref][classes][rank]") {
+    json original = {{"mpn", "MKX1"}, {"value_si", 3.3e-7}, {"voltage", 440.0},
+                     {"technology", "film-polypropylene"}, {"family", "MKP-X1 R"}};
+    json cands = json::array({
+        {{"mpn", "R47X1"}, {"value_si", 3.3e-7}, {"voltage", 1000.0},
+         {"technology", "film-polypropylene"}, {"family", "R47 X1 440 VAC"}}});
+    auto r = cross_reference("capacitor", original, cands, Options{});
+    const auto& c = r["candidates"][0];
+    CHECK(c["status"] == "recommended");
+    for (const auto& p : c["params"])
+        if (p["name"] == "safety_class") CHECK(p["verdict"] == "pass");
+}
+
+TEST_CASE("the safety gate engages only when the ORIGINAL names a class",
+          "[crossref][classes][rank]") {
+    // An ordinary capacitor is not dragged through a mains-approval check, and a
+    // substitute that happens to carry an approval the original never asked for is
+    // not a caveat — it is a strictly added property.
+    json original = {{"mpn", "PLAIN"}, {"value_si", 1e-7}, {"voltage", 50.0},
+                     {"technology", "ceramic-class-2"}, {"family", "GRM188"}};
+    json cands = json::array({
+        {{"mpn", "SAFE"}, {"value_si", 1e-7}, {"voltage", 50.0},
+         {"technology", "ceramic-class-2"}, {"family", "GA3 X1"}}});
+    auto r = cross_reference("capacitor", original, cands, Options{});
+    const auto& c = r["candidates"][0];
+    CHECK(c["status"] == "recommended");
+    for (const auto& p : c["params"]) CHECK(p["name"] != "safety_class");
+}
+
 // ── dielectric envelope (EIA RS-198) ─────────────────────────────────────────
 
 TEST_CASE("dielectric codes decode to their published envelope", "[crossref][classes]") {

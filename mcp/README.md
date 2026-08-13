@@ -179,6 +179,10 @@ a histogram widget for `spec_distribution`, and a shard-side MPN index — `part
 `cross_reference` resolve an MPN by scanning the shard, which is keyed for selection, not lookup.
 
 Known catalogue gap, not a server gap: there is **no safety-class or AC-voltage field** anywhere
-in the capacitor records, so "X2 rated 310 VAC" cannot be expressed as a filter — the X1/X2
-distinction only exists as prose in `part.series` / `manufacturerInfo.family`. That is the same
-gap behind ABT #557 (an X1 original cross-referenced to X2 parts and graded a clean upgrade).
+in the capacitor records (filed as ABT #677), so "X2 rated 310 VAC" cannot be expressed as a
+filter — the X1/X2 distinction only exists as prose in `part.series` / `manufacturerInfo.family`.
+That prose now travels on the shard row as `family` and the cross-reference reads a class out of
+it (ABT #557): an X1 original against a declared X2 candidate is REJECTED, and against a
+candidate whose series names no class the row is demoted with `safety_class: unverified` and a
+note. What the gap still costs is the other direction — an original whose own series names no
+class cannot be recognised as a safety part at all, and a filter on "X2" is still impossible.

@@ -164,6 +164,15 @@ struct CapacitorRow : RowBase {
     double rth = kNaN();
     std::string technology;      // part.technology (ceramic-class-2, film-…)
     std::string dielectric_code; // part.dielectricCode (X7R / C0G / X5R …)
+    // manufacturerInfo.family, else part.series. Carried for ONE reason: it is the
+    // only place an IEC 60384-14 line-safety approval appears anywhere in a TAS
+    // capacitor record — the schema has no safety-class field (ABT #677) — and the
+    // vendors write it into the series NAME ("MKP-X1 R", "MKP-X2", "MKP-Y2",
+    // "R47 X1 440 VAC"). 4,227 of the 253,830 capacitor records name a class this
+    // way. Dropping the string left the cross-reference with nothing but voltages to
+    // compare, and it graded six X2 parts 'drop_in' upgrades for an X1 mains
+    // capacitor (ABT #557).
+    std::string family;
     // ESR without its measurement frequency is not comparable — a 120 Hz figure
     // and a 100 kHz figure differ severalfold on the same part.
     double esr_frequency = kNaN();

@@ -419,6 +419,13 @@ std::optional<CapacitorRow> extract_capacitor(const json& env) {
     // Dielectric code (X7R / C0G / X5R …) drives the class-equivalence gate in
     // the cross-reference ranker: swapping C0G for X5R is a real regression.
     r.dielectric_code = get_str(*part, "dielectricCode").value_or("");
+    // The series name, kept verbatim — it is where the line-safety approval lives
+    // (X1/X2/X3, Y1/Y2/Y3/Y4) for a mains capacitor, and nothing else in the record
+    // states one. WIMA writes it in both slots ("MKP-X1 R"), KEMET into `family`
+    // ("R47 X1 440 VAC"), so family first with series as the fallback — the same
+    // chain the resistor device class uses.
+    r.family = get_str(*mi, "family").value_or("");
+    if (r.family.empty()) r.family = get_str(*part, "series").value_or("");
     if (auto v = get_num(*elec, "esrFrequency"); pos(v)) r.esr_frequency = *v;
     // Operating temperature range: a substitute must cover the original's, at
     // both ends. Present on essentially every capacitor record.

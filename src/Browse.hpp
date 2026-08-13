@@ -108,7 +108,8 @@ inline const FieldTable<CapacitorRow>& fields<CapacitorRow>() {
          {"temp_min_c", &CapacitorRow::temp_min_c},
          {"temp_max_c", &CapacitorRow::temp_max_c}},
         {{"technology", &CapacitorRow::technology},
-         {"dielectric_code", &CapacitorRow::dielectric_code}},
+         {"dielectric_code", &CapacitorRow::dielectric_code},
+         {"family", &CapacitorRow::family}},
         {{"is_production", &CapacitorRow::is_production}},
         {}};
     return t;

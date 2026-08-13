@@ -63,8 +63,9 @@ function callJson(fn, ...args) {
 
 // The RAW catalogue record behind a shard row, by byte span — the same Range fetch the site's
 // part drawer does. Returned for the ORIGINAL only: it is where the evidence the shard does not
-// carry lives (a capacitor's X1/X2 safety series, a connector's mating series), and an FAE
-// reading a substitution needs to see it.
+// carry lives (a connector's mating series, a capacitor's datasheet URL), and an FAE reading a
+// substitution needs to see it. The capacitor's X1/X2 safety series is no longer among those —
+// it travels on the shard row as `family` and the ranker gates on it (ABT #557).
 function rawRecord(family, row) {
   if (typeof row?.srcOffset !== 'number' || typeof row?.srcLength !== 'number') return null
   const p = join(SHARDS, `${family}.ndjson`)
