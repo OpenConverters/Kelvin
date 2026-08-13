@@ -294,6 +294,35 @@ json select_capacitor(const Shard<CapacitorRow>& shard, const CapacitorConstrain
     return result;
 }
 
+// A controller's CATEGORY says what its loop regulates; `intendedTopologies` says only which
+// switching stage it can drive. Reading the second as an answer to the first put an offline
+// PFC/LED driver on the first line of a 48 -> 12 V buck BOM: NCL30000's datasheet does list
+// buckConverter, so it matched on topology, ranked as a "real controller", and won — while
+// nothing about a 48 V DC rail asks for power-factor correction. It is a category error, not a
+// ranking preference, and it is the part an FAE notices first. (ABT #694.)
+//
+// A caller that names the category explicitly still gets exactly what it asked for; this
+// governs only the inference made on the caller's behalf.
+namespace {
+bool regulates_output_rail(const std::string& category, const std::string& topo) {
+    // Neither of these closes a loop around a converter output at all: a supervisor WATCHES a
+    // rail and asserts reset, and a shunt regulator is a two-terminal reference (a TL431).
+    // Both carry a reference voltage, which is what `has_vref` rewards, so they rank as
+    // credible controllers on the strength of the very field that marks them as not one.
+    if (category == "supervisor" || category == "shuntRegulator") return false;
+    // Drives the secondary-side rectifier FET of a converter someone else is controlling —
+    // an adjunct to a topology, never the loop that sets the output.
+    if (category == "syncRectifierController") return false;
+    // A PFC controller's loop shapes INPUT current to follow the line voltage; its "output"
+    // is a bulk rail held loosely, if at all. That belongs to a design whose stage IS the
+    // front end, so it is admitted for the PFC topologies and refused for the rest —
+    // including the buck stage its own datasheet correctly says it can drive.
+    if (category == "pfcController")
+        return topo == "power_factor_correction" || topo == "vienna";
+    return true;
+}
+}  // namespace
+
 json select_controller(const Shard<ControllerRow>& shard, const ControllerConstraints& c,
                        size_t max_candidates, RecordFetcher* fetcher, const MfrPolicy& mfr) {
     c.validate();
@@ -304,6 +333,12 @@ json select_controller(const Shard<ControllerRow>& shard, const ControllerConstr
     rej["unreadable_row"] = shard.meta.unreadable_row_count;
     std::vector<const ControllerRow*> passing;
     for (const auto& ctrl : shard.rows) {
+        // Before the topology list is consulted at all — a category that does not regulate
+        // this design's output rail is not made suitable by listing its switching stage.
+        const bool category_requested = c.category.has_value() && ctrl.category == *c.category;
+        if (!category_requested && !regulates_output_rail(ctrl.category, topo)) {
+            rej["category_does_not_regulate_this_rail"]++; continue;
+        }
         bool has_topo = !ctrl.topologies.empty();
         bool topo_listed =
             std::find(ctrl.topologies.begin(), ctrl.topologies.end(), topo) != ctrl.topologies.end();

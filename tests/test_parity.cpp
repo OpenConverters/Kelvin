@@ -235,6 +235,15 @@ TEST_CASE("parity: resistor", "[parity][resistor]") {
     }
 }
 
+// Twelve controller cases were re-pinned on 2026-08-14 for ABT #694: the golden had captured a
+// selector that read `intendedTopologies` as an answer to "what does this part regulate?", so a
+// buck design chose NCL30000 (an offline PFC/LED driver) and a boost design chose UCC3817 (a PFC
+// preregulator). Both now choose an output-rail controller — LM5148-Q1 and TEA1716 — and the
+// other ten cases moved only in their counts, as rows shifted between rejection buckets with the
+// totals conserved. The pinned values were not regenerated wholesale: `gen_kelvin_golden.py`
+// runs Heaviside's `select_controller`, which now delegates to Kelvin, so regenerating this
+// family records Kelvin's own output as the thing Kelvin must reproduce (ABT #697). Each of the
+// twelve was read and checked against the fixture's categories before being written.
 TEST_CASE("parity: controller", "[parity][controller]") {
     auto golden = load_json(golden_dir() + "/kelvin_golden_controller.json");
     auto shard = build_controller_shard(fixtures_dir() + "/controllers.ndjson");

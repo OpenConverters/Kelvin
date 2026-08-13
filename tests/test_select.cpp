@@ -120,3 +120,90 @@ TEST_CASE("select: rejection histogram omits zero-count keys and totals correctl
     REQUIRE_FALSE(r.at("rejections").contains("discontinued"));  // zero -> omitted
     REQUIRE(r.at("totalRowsConsidered") == 2);
 }
+
+// ── controller category gate (ABT #694) ──────────────────────────────────────
+namespace {
+// A controller line: category + the topologies its datasheet says it can drive.
+std::string controller(const std::string& mpn, const std::string& category,
+                       const std::vector<std::string>& topos, double vref = 1.2) {
+    std::string t;
+    for (size_t i = 0; i < topos.size(); ++i) t += (i ? ",\"" : "\"") + topos[i] + "\"";
+    return "{\"controller\":{\"manufacturerInfo\":{\"name\":\"ACME\",\"reference\":\"" + mpn +
+           "\",\"status\":\"production\",\"datasheetInfo\":{\"function\":{\"category\":\"" +
+           category + "\",\"intendedTopologies\":[" + t +
+           "]},\"part\":{\"deviceType\":\"controller\",\"partNumber\":\"" + mpn +
+           "\"},\"electrical\":{\"referenceVoltage\":{\"nominal\":" + num(vref) + "}}}}}}";
+}
+
+Shard<ControllerRow> ctrl_shard_from(const std::vector<std::string>& lines) {
+    std::string path = std::string(KELVIN_TEST_DIR) + "/_select_ctrl_tmp.ndjson";
+    {
+        std::ofstream f(path, std::ios::binary | std::ios::trunc);
+        for (auto& l : lines) f << l << "\n";
+    }
+    auto s = build_controller_shard(path);
+    std::remove(path.c_str());
+    return s;
+}
+
+ControllerConstraints ctrl_for(const std::string& topo) {
+    ControllerConstraints c;
+    c.topology = topo;
+    c.vin_nom = 48.0;
+    c.fsw_khz = 400.0;
+    return c;
+}
+}  // namespace
+
+TEST_CASE("select: a PFC controller is not a buck controller because it can drive a buck stage",
+          "[select][controller]") {
+    // The shape of the real defect: NCL30000 is an offline PFC/LED driver whose datasheet
+    // legitimately lists buckConverter, so it matched a 48 -> 12 V buck on topology, ranked as
+    // a "real controller" (not a gate driver) with a reference voltage, and took the first line
+    // of the BOM. Its loop shapes input current against the line; nothing about a 48 V DC rail
+    // asks for that. (ABT #694.)
+    auto shard = ctrl_shard_from({
+        controller("PFC_LED_DRIVER", "pfcController",
+                   {"powerFactorCorrection", "buckConverter"}),
+        controller("PLAIN_BUCK", "pwmController", {"buckConverter"}),
+    });
+    auto r = select_controller(shard, ctrl_for("buck"));
+    REQUIRE(r.at("candidates")[0].at("mpn") == "PLAIN_BUCK");
+    REQUIRE(r.at("rejections").at("category_does_not_regulate_this_rail") == 1);
+
+    // ...but for a PFC front end it is exactly the right part, and still wins there.
+    auto pfc = select_controller(shard, ctrl_for("power_factor_correction"));
+    REQUIRE(pfc.at("candidates")[0].at("mpn") == "PFC_LED_DRIVER");
+    REQUIRE_FALSE(pfc.at("rejections").contains("category_does_not_regulate_this_rail"));
+}
+
+TEST_CASE("select: parts that regulate no rail at all never rank as controllers",
+          "[select][controller]") {
+    // A supervisor WATCHES a rail and a shunt regulator is a two-terminal reference. Both carry
+    // a reference voltage — the very field `has_vref` rewards — and neither lists a topology, so
+    // the topology filter (which only rejects rows that DO list topologies) let them through and
+    // the rank tuple then scored them as credible controllers.
+    auto shard = ctrl_shard_from({
+        controller("SUPERVISOR", "supervisor", {}),
+        controller("TL431ish", "shuntRegulator", {}),
+        controller("SR_CONTROLLER", "syncRectifierController", {}),
+        controller("REAL_ONE", "pwmController", {"buckConverter"}),
+    });
+    auto r = select_controller(shard, ctrl_for("buck"));
+    REQUIRE(r.at("candidates")[0].at("mpn") == "REAL_ONE");
+    REQUIRE(r.at("candidates").size() == 1);
+    REQUIRE(r.at("rejections").at("category_does_not_regulate_this_rail") == 3);
+}
+
+TEST_CASE("select: naming the category explicitly overrides the inference", "[select][controller]") {
+    // The gate governs what is offered on the caller's behalf, not what it asked for by name:
+    // someone who wants a sync-rectifier controller is not second-guessed.
+    auto shard = ctrl_shard_from({
+        controller("SR_CONTROLLER", "syncRectifierController", {}),
+        controller("REAL_ONE", "pwmController", {"buckConverter"}),
+    });
+    auto c = ctrl_for("buck");
+    c.category = "syncRectifierController";
+    auto r = select_controller(shard, c);
+    REQUIRE(r.at("candidates")[0].at("mpn") == "SR_CONTROLLER");
+}

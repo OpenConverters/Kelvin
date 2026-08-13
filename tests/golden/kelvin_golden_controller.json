@@ -9,7 +9,7 @@
     "vin_nom": 100.0
    },
    "expect": {
-    "alternatives": 879,
+    "alternatives": 832,
     "chosen": "UCC28730"
    }
   },
@@ -50,8 +50,9 @@
    "expect": {
     "error": "SelectionError",
     "rejections": {
-     "category_mismatch": 879,
-     "topology": 1254
+     "category_does_not_regulate_this_rail": 116,
+     "category_mismatch": 832,
+     "topology": 1185
     },
     "total": 2133
    }
@@ -78,8 +79,8 @@
     "vin_nom": 100.0
    },
    "expect": {
-    "alternatives": 910,
-    "chosen": "UCC3817"
+    "alternatives": 860,
+    "chosen": "TEA1716"
    }
   },
   {
@@ -143,8 +144,8 @@
     "vin_nom": 100.0
    },
    "expect": {
-    "alternatives": 1705,
-    "chosen": "NCL30000"
+    "alternatives": 1662,
+    "chosen": "LM5148-Q1"
    }
   },
   {
@@ -184,8 +185,9 @@
    "expect": {
     "error": "SelectionError",
     "rejections": {
-     "category_mismatch": 1705,
-     "topology": 428
+     "category_does_not_regulate_this_rail": 116,
+     "category_mismatch": 1662,
+     "topology": 355
     },
     "total": 2133
    }
@@ -212,7 +214,7 @@
     "vin_nom": 100.0
    },
    "expect": {
-    "alternatives": 716,
+    "alternatives": 669,
     "chosen": "TEA1716"
    }
   },
@@ -266,8 +268,9 @@
    "expect": {
     "error": "SelectionError",
     "rejections": {
-     "category_mismatch": 716,
-     "topology": 1417
+     "category_does_not_regulate_this_rail": 49,
+     "category_mismatch": 669,
+     "topology": 1415
     },
     "total": 2133
    }
@@ -281,7 +284,7 @@
     "vin_nom": 100.0
    },
    "expect": {
-    "alternatives": 694,
+    "alternatives": 653,
     "chosen": "MP2483"
    }
   },
@@ -322,8 +325,9 @@
    "expect": {
     "error": "SelectionError",
     "rejections": {
-     "category_mismatch": 694,
-     "topology": 1439
+     "category_does_not_regulate_this_rail": 49,
+     "category_mismatch": 653,
+     "topology": 1431
     },
     "total": 2133
    }
@@ -350,7 +354,7 @@
     "vin_nom": 100.0
    },
    "expect": {
-    "alternatives": 642,
+    "alternatives": 601,
     "chosen": "UCC28951"
    }
   },
@@ -391,8 +395,9 @@
    "expect": {
     "error": "SelectionError",
     "rejections": {
-     "category_mismatch": 642,
-     "topology": 1491
+     "category_does_not_regulate_this_rail": 116,
+     "category_mismatch": 601,
+     "topology": 1416
     },
     "total": 2133
    }
@@ -408,8 +413,9 @@
    "expect": {
     "error": "SelectionError",
     "rejections": {
-     "category_mismatch": 642,
-     "topology": 1491
+     "category_does_not_regulate_this_rail": 49,
+     "category_mismatch": 601,
+     "topology": 1483
     },
     "total": 2133
    }
