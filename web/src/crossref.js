@@ -243,13 +243,26 @@ export const keyOf = (r) => `${r.manufacturer}${SEP}${r.mpn}`
 
 // The FAE honesty rule (CrossRef.hpp): with the original's hard-gate specs
 // unknown, no candidate may rank as a clean 'recommended'.
-export function originalMissing(f, spec) {
+//
+// The rule is expressed ONCE, over spec keys, and projected to display labels for
+// prose. A consumer that must decide whether to present an unverified cross-reference
+// at all has to match on something stable: 'saturation_current' survives someone
+// improving the table, 'Isat' does not.
+export function originalMissingKeys(f, spec) {
   const miss = []
-  if (f.primary && spec.value_si == null) miss.push(f.primary.label)
+  if (f.primary && spec.value_si == null) miss.push('value_si')
   for (const k of f.hardKeys) {
-    if (spec[k] == null) miss.push(f.params.find((p) => p.key === k)?.label ?? k)
+    if (spec[k] == null) miss.push(k)
   }
   return miss
+}
+
+// The same absences, named the way the comparison table names them.
+export function originalMissing(f, spec) {
+  return originalMissingKeys(f, spec).map((k) =>
+    (k === 'value_si'
+      ? (f.primary?.label ?? k)
+      : (f.params.find((p) => p.key === k)?.label ?? k)))
 }
 
 // candidate pool cap: browse can hand back thousands; scoring is cheap but the

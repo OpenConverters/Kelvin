@@ -238,16 +238,21 @@ def _facets(page: dict) -> dict:
     """
     out: dict = {}
     for name, facet in (page.get("facets") or {}).items():
-        entry: dict = {"values": [{"value": v, "count": n} for v, n in facet.get("values") or []]}
+        # An empty string is the engine saying the record does not state the field — often
+        # the largest bucket in the result (187,217 of 217,864 capacitors state no dielectric
+        # code). It travels as null so it cannot render as a blank chip a user might click.
+        entry: dict = {"values": [{"value": v or None, "count": n}
+                                  for v, n in facet.get("values") or []]}
         if facet.get("omitted"):
             entry["omitted"] = facet["omitted"]
         out[name] = entry
     for name, span in (page.get("ranges") or {}).items():
-        # `present` (how many rows state the field at all) has no home in the contract's
-        # numeric facet, so it stays in the digest for now — flagged to Moebius rather than
-        # dropped quietly.
+        # `present` is how many rows state the field at all: min=1e-13 max=3000 over 217,864
+        # parts is a different statement from the same range over 12, and the reader cannot
+        # tell which they have without it.
         if span.get("present"):
-            out[name] = {"min": span.get("min"), "max": span.get("max")}
+            out[name] = {"min": span.get("min"), "max": span.get("max"),
+                         "present": span["present"]}
     return out
 
 
@@ -905,7 +910,7 @@ def cross_reference(family: str, mpn: str, manufacturer: str | None = None,
         # The honesty cap, machine-readable: a consumer that refuses to present an unverified
         # cross-reference can now tell by inspection instead of parsing the caveat.
         "originalVerified": result.get("origVerified"),
-        "missingSpecs": result.get("missing") or None,
+        "missingSpecs": result.get("missingKeys") or None,
         "caveat": " ".join(caveats) or None,
     }))
 

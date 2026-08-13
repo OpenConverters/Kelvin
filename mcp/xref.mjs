@@ -90,7 +90,7 @@ const engine = {
   },
 }
 
-const { XREF, famFor, runCrossRef, POOL_LIMIT } = await import(
+const { XREF, famFor, originalMissingKeys, runCrossRef, POOL_LIMIT } = await import(
   pathToFileURL(join(KELVIN, 'web', 'src', 'crossref.js')).href)
 
 // ── operations ──────────────────────────────────────────────────────────────
@@ -171,7 +171,10 @@ async function crossref(req) {
   return {
     family, category: fam.category, caveat: fam.caveat ?? null,
     original, originalRaw: rawRecord(family, original),
-    origSpec: r.origSpec, origVerified: r.origVerified, missing: r.missing,
+    origSpec: r.origSpec, origVerified: r.origVerified,
+    // `missing` is the display wording; `missingKeys` is what a consumer matches on —
+    // a spec key survives someone improving the comparison table, a label does not.
+    missing: r.missing, missingKeys: originalMissingKeys(fam, r.origSpec),
     targets: manufacturers, targetsFromFacet,
     poolTotal: r.poolTotal, poolScored: r.poolScored, poolLimit,
     // Each candidate carries BOTH its shard row (the raw catalogue datum) and `specs`: the
