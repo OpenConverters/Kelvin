@@ -23,6 +23,7 @@ const state = {
   tiebreaker: null,
   considered: null,
   poolSize: null,
+  facets: null,
   caveat: null,
   selected: null,
   expanded: new Set(),
@@ -89,6 +90,54 @@ function detailPanel(row) {
   return el("td", { class: "detail", colspan: "99" }, kids);
 }
 
+
+/**
+ * What else is in the result set, above the table.
+ *
+ * A browse IS its facets: 27,483 capacitors matched, 17,748 of them film-polypropylene, and a
+ * 12-row page cannot say so. The counts arrive as typed data (ABT #685) and were being read by
+ * the model and by nobody else (ABT #690).
+ *
+ * Two things the payload means that a naive rendering gets wrong:
+ *   * value === null is "the record does not state this field" — frequently the LARGEST
+ *     bucket. It is drawn as an explicit "not stated" chip, never as a blank one, because a
+ *     blank chip reads as an empty option a user could pick.
+ *   * a numeric facet's `present` is how many rows state it at all. A range over 217,864 parts
+ *     and the same range over 12 are different statements, and the range alone cannot tell
+ *     them apart.
+ */
+function facetRow() {
+  const facets = state.facets;
+  if (!facets || typeof facets !== "object") return null;
+  const blocks = [];
+  for (const [field, facet] of Object.entries(facets)) {
+    if (Array.isArray(facet?.values)) {
+      const chips = facet.values.slice(0, 6).map((v) =>
+        el("span", { class: `fchip${v.value === null ? " unstated" : ""}` },
+          `${v.value === null ? "not stated" : v.value} ${fmt(v.count)}`));
+      if (facet.values.length > 6) {
+        chips.push(el("span", { class: "fchip more" },
+          `+${facet.values.length - 6} shown here`));
+      }
+      // A truncated facet must not read as a complete one.
+      if (facet.omitted) {
+        chips.push(el("span", { class: "fchip more" }, `+${facet.omitted} rarer not listed`));
+      }
+      blocks.push(el("div", { class: "facet" },
+        el("span", { class: "fname" }, field), chips));
+    } else if (facet && (facet.min !== undefined || facet.max !== undefined)) {
+      blocks.push(el("div", { class: "facet" },
+        el("span", { class: "fname" }, field),
+        el("span", { class: "fchip" }, `${fmt(facet.min)} … ${fmt(facet.max)}`),
+        facet.present !== undefined
+          ? el("span", { class: "fchip muted" }, `${fmt(facet.present)} state it`)
+          : null));
+    }
+  }
+  if (!blocks.length) return null;
+  return el("div", { class: "facets" }, blocks);
+}
+
 function render() {
   const root = document.getElementById("app");
   root.textContent = "";
@@ -113,6 +162,11 @@ function render() {
     el("div", { class: "head" },
       el("h1", {}, isCross ? "Cross-reference" : "Candidates"),
       el("div", { class: "sub" }, sub)));
+
+  // Browse is the tool whose whole answer is the distribution; the other two are a
+  // comparison, and their payloads carry no facets.
+  const facets = facetRow();
+  if (facets) root.append(facets);
 
   if (isCross && state.originalSpecs) {
     root.append(el("div", { class: "orig" },
@@ -228,6 +282,7 @@ function ingest(sc) {
   state.tiebreaker = sc.tiebreaker ?? null;
   state.considered = sc.totalRowsConsidered ?? sc.total ?? null;
   state.poolSize = sc.poolSize ?? sc.poolTotal ?? null;
+  state.facets = sc.facets ?? null;
   state.caveat = sc.caveat ?? null;
   state.selected = null;
   state.expanded = new Set();
