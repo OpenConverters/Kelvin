@@ -7,8 +7,10 @@
 //
 //   node test-columns.mjs            # uses the recorded payloads below
 //
-// Payload fixtures are the shapes the server emits today (verified against a live run):
-// search_parts -> flat shard rows, recommend_parts -> margins + sortKey and NO specs,
+// Payload fixtures are the shapes the server emits today (verified against a live run), which
+// since ABT #685 are the Moebius pipeline-result contract: one candidate type, parameters under
+// `specs`, pipeline-internal fields underscored. search_parts -> catalogue specs;
+// recommend_parts -> margins + sortKey and NO specs (a selector returns what it RANKED on);
 // cross_reference -> ranker verdict + `specs` in the ranker's vocabulary + the raw `row`.
 
 import { columnsFor, specsOf, valueFor } from "./src/columns.js";
@@ -21,15 +23,18 @@ const check = (label, cond, detail = "") => {
 
 // ── fixtures ────────────────────────────────────────────────────────────────
 const SEARCH_ROW = {
-  mpn: "890324023006", manufacturer: "Würth Elektronik", lineno: 12, srcOffset: 1, srcLength: 2,
-  capacitance: 1e-7, v_rated: 630, esr: null, esr_frequency: null, ripple_current_rms: 1.5,
-  temp_min_c: -55, temp_max_c: 105, technology: "film-polypropylene", dielectric_code: "",
-  is_production: true, lengthM: 0.018, widthM: 0.009, heightM: 0.0185, caseCode: "", mount: "THT",
+  mpn: "890324023006", manufacturer: "Würth Elektronik",
+  _lineno: 12, _srcOffset: 1, _srcLength: 2,
+  specs: {
+    capacitance: 1e-7, v_rated: 630, ripple_current_rms: 1.5,
+    temp_min_c: -55, temp_max_c: 105, technology: "film-polypropylene", dielectric_code: "",
+    is_production: true, lengthM: 0.018, widthM: 0.009, heightM: 0.0185, mount: "THT",
+  },
 };
 
 const RECOMMEND_CANDIDATE = {
-  mpn: "CSD18536KCS", manufacturer: "Texas Instruments", line: 287,
-  srcOffset: 373462, srcLength: 1263,
+  mpn: "CSD18536KCS", manufacturer: "Texas Instruments", _line: 287,
+  _srcOffset: 373462, _srcLength: 1263,
   evidence: { datasheetUsable: true, qgPresent: true, thermalPresent: true },
   margins: { id_margin: 40.0, qg_headroom: null, rds_on_headroom: 153.84, vds_margin: 1.0 },
   sortKey: { metric: "lowest_rds_on", value: 0.00065 },
@@ -53,7 +58,7 @@ const CROSSREF_CANDIDATE = {
 };
 
 // ── the bug this file exists for ────────────────────────────────────────────
-console.log("search_parts (flat catalogue rows)");
+console.log("search_parts (catalogue specs under `specs`)");
 {
   const cols = columnsFor([SEARCH_ROW, { ...SEARCH_ROW, mpn: "X" }]);
   const keys = cols.map((c) => c.key);
@@ -61,6 +66,8 @@ console.log("search_parts (flat catalogue rows)");
   check("identity and locators are not columns",
     !keys.some((k) => ["mpn", "manufacturer", "srcOffset", "srcLength", "lineno"].includes(k)));
   check("reads a real value", valueFor(SEARCH_ROW, cols.find((c) => c.key === "capacitance")) === 1e-7);
+  check("underscored locators never become columns",
+    !keys.some((k) => k.startsWith("_")), keys.join(", "));
 }
 
 console.log("cross_reference (ranker verdict + projected specs)");

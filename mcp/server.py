@@ -176,6 +176,65 @@ mcp = FastMCP("Kelvin", host="127.0.0.1", port=PORT, transport_security=_securit
 
 # --- helpers ----------------------------------------------------------------
 
+# --- the pipeline result contract (Moebius contracts/pipeline_result.json, ABT #685) --------
+# Every tool result is a fixed DTO discriminated by `mode`, with one name per concept and no
+# aliases. The rule that makes it worth the trouble: a consumer that sniffs for fields grows
+# its own idea of what a payload means, and two pipelines then disagree. The schema is closed,
+# so anything without a home in it must either earn a field or be dropped deliberately — never
+# smuggled through under a second name.
+#
+# Only the STRUCTURED channel is constrained. The digest text stays free to say whatever the
+# reader needs, which is where the nuance that has no DTO field (facet values, pool caps) goes.
+
+# Candidate properties the contract names. Anything else on a candidate is pipeline-internal
+# and travels with a leading underscore, which the contract reserves for exactly that.
+_CANDIDATE_FIELDS = frozenset({
+    "mpn", "manufacturer", "specs", "status", "grade", "penalty", "direction", "footprint",
+    "params", "notes", "margins", "row", "sortKey", "evidence", "record",
+})
+# Row keys that identify or locate a part rather than describing it — never spec columns.
+_ROW_INTERNALS = ("lineno", "line", "srcOffset", "srcLength")
+
+
+def _no_nulls(obj: dict) -> dict:
+    """Omit a field rather than sending null: absent means 'not applicable here', while null
+    invites a consumer to render an empty value as if it were an answer."""
+    return {k: v for k, v in obj.items() if v is not None}
+
+
+def _candidate(row: dict, specs: dict | None = None) -> dict:
+    """One catalogue row or ranked verdict as the contract's single candidate type.
+
+    Parameters live under `specs` — never flat at candidate level, where they cannot be told
+    apart from the engine's own judgement fields. Everything the contract does not name keeps
+    its meaning under an underscore instead of being dropped.
+    """
+    out: dict = {"mpn": row.get("mpn")}
+    if row.get("manufacturer") is not None:
+        out["manufacturer"] = row["manufacturer"]
+    if specs:
+        out["specs"] = _no_nulls(specs)
+    for key, value in row.items():
+        if key in ("mpn", "manufacturer") or value is None:
+            continue
+        if key.startswith("_"):
+            out[key] = value
+        elif key in _CANDIDATE_FIELDS:
+            out[key] = value
+        else:
+            out[f"_{key}"] = value
+    return out
+
+
+def _row_candidate(row: dict) -> dict:
+    """A browse row: every field that is not identity or locator IS a spec."""
+    specs = {k: v for k, v in row.items()
+             if k not in ("mpn", "manufacturer") and k not in _ROW_INTERNALS}
+    internals = {f"_{k}": row[k] for k in _ROW_INTERNALS if row.get(k) is not None}
+    return _candidate({"mpn": row.get("mpn"), "manufacturer": row.get("manufacturer"),
+                       **internals}, specs)
+
+
 def _result(summary: str, payload: dict) -> CallToolResult:
     """Two channels: a compact digest for the model, the payload for a widget.
 
@@ -443,7 +502,7 @@ def list_families() -> CallToolResult:
         f"{len(families)} component families:\n" + "\n".join(lines)
         + "\n\ndescribe_family gives one family's part count and the exact fields it can be "
           "searched on.\n" + UNITS_NOTE,
-        {"families": families, "units": UNITS_NOTE})
+        {"mode": "catalogue", "families": families, "units": UNITS_NOTE})
 
 
 @mcp.tool(
@@ -475,9 +534,15 @@ def describe_family(family: str) -> CallToolResult:
         + (f"  recommend_parts reads: {', '.join(requires)}\n" if requires
            else "  no selector — this family is browse-only.\n")
         + UNITS_NOTE,
-        {"family": key, "holds": note, "rows": page.get("rowCount"), "fields": fields,
-         "requirementKeys": requires, "selector": key not in BROWSE_ONLY,
-         "units": UNITS_NOTE})
+        # `string` and `list` fields are one thing to a caller — both are filtered with an
+        # array of values and both are facetable — so the contract's `categorical` covers
+        # them. The scalar/list distinction is an implementation detail of the shard.
+        {"mode": "fields", "family": key,
+         "fields": {"numeric": fields["numeric"],
+                    "categorical": fields["string"] + fields["list"],
+                    "boolean": fields["boolean"]},
+         "requires": requires, "selector": key not in BROWSE_ONLY,
+         "catalogueTotal": page.get("rowCount"), "units": UNITS_NOTE})
 
 
 @mcp.tool(
@@ -524,15 +589,27 @@ def search_parts(family: str, filters: dict | None = None, sort: dict | None = N
                    f"parts). A part whose record does not state a field you filtered on is "
                    f"excluded by that filter — widen it, or drop it and read the facet counts.")
     if with_facets:
-        summary += "\n\nfacets: " + ", ".join(
-            f"{name} ({len(f.get('values') or [])} values)"
-            for name, f in (page.get("facets") or {}).items())
-    # The matched page IS a candidate list to choose from, so it travels under the
-    # same envelope key as the selector's and the cross-reference's — one shape,
-    # one picker widget, no per-tool special-casing (ABT #663).
-    page["candidates"] = page.pop("rows", [])
-    page["mode"] = "search"
-    return _result(summary, page)
+        # The result contract has no field for facet counts, so they are reported in full
+        # HERE rather than quietly dropped: the values and their counts are the whole point
+        # of asking for them, and a reader who cannot see them cannot narrow the search.
+        for name, facet in sorted((page.get("facets") or {}).items()):
+            values = facet.get("values") or []
+            if not values:
+                continue
+            summary += (f"\n{name}: "
+                        + ", ".join(f"{v} ({n:,})" for v, n in values[:8])
+                        + (f", +{len(values) - 8} more" if len(values) > 8 else "")
+                        + (f" [{facet['omitted']} rarer values omitted]"
+                           if facet.get("omitted") else ""))
+    return _result(summary, _no_nulls({
+        "mode": "search",
+        "family": key,
+        "candidates": [_row_candidate(r) for r in rows],
+        "total": page.get("total"),                 # matched this query
+        "catalogueTotal": page.get("rowCount"),     # the family's size — a different fact
+        "shown": len(rows),
+        "filters": filters or None,
+    }))
 
 
 @mcp.tool(
@@ -566,17 +643,25 @@ def part_details(family: str, mpn: str, manufacturer: str | None = None,
             + (f" from a manufacturer matching {manufacturer!r}" if manufacturer else "")
             + f" ({page['total']} row(s) matched the MPN before any manufacturer filter)")
     if len(rows) > 1:
+        # An ambiguous MPN is a short search, not a broken lookup — so it comes back as one,
+        # with the same candidate type, instead of a bespoke {ambiguous: true} shape the
+        # caller would have to learn.
         listing = "\n".join(f"  {r['mpn']} — {r['manufacturer']}" for r in rows[:15])
         return _result(
             f"{len(rows)} {key}s match {mpn!r} — name the exact MPN (or the manufacturer):\n"
             + listing,
-            {"ambiguous": True, "matches": rows[:15], "total": page["total"]})
+            {"mode": "search", "family": key,
+             "candidates": [_row_candidate(r) for r in rows[:15]],
+             "total": page["total"], "shown": min(len(rows), 15)})
 
     row = rows[0]
     numeric = kelvin.family_fields(key)["numeric"]
-    payload = {"family": key, "row": row}
-    if full_record:
-        payload["record"] = _eng_handle().fetch_record(key, row["srcOffset"], row["srcLength"])
+    record = (_eng_handle().fetch_record(key, row["srcOffset"], row["srcLength"])
+              if full_record else None)
+    part = _row_candidate(row)
+    if record is not None:
+        part["record"] = record
+    payload = {"mode": "details", "family": key, "part": part}
     specs = "\n".join(f"  {n}: {_eng(row.get(n))}" for n in numeric if row.get(n) is not None)
     cats = ", ".join(f"{n}={row[n]}" for n in kelvin.family_fields(key)["string"] if row.get(n))
     return _result(
@@ -632,7 +717,6 @@ def recommend_parts(family: str, requirements: dict, options: dict | None = None
             f"({detail.get('totalRowsConsidered', '?')} parts considered). Rejections by gate: "
             + (", ".join(f"{k}={v}" for k, v in sorted(buckets.items(), key=lambda kv: -kv[1]))
                or "(none recorded)")) from error
-    result["mode"] = "recommend"        # the envelope every ranked list here travels in
     cands = result.get("candidates") or []
     lines = []
     for c in cands[:15]:
@@ -644,10 +728,27 @@ def recommend_parts(family: str, requirements: dict, options: dict | None = None
         worst = min(margins, key=lambda kv: kv[1]) if margins else None
         lines.append(f"  {c.get('mpn')} — {c.get('manufacturer')}"
                      + (f" | tightest margin {worst[0]} {worst[1]:.2f}x" if worst else ""))
+    rejected = result.get("rejections") or {}
     return _result(
         f"{len(cands)} {key} candidate(s), best first "
-        f"(tiebreaker {result.get('tiebreaker', 'n/a')}):\n" + "\n".join(lines),
-        result)
+        f"(tiebreaker {result.get('tiebreaker', 'n/a')}). "
+        f"{result.get('alternativesConsidered', 0):,} of "
+        f"{result.get('totalRowsConsidered', 0):,} parts satisfied the requirements"
+        + (", rejections by gate: "
+           + ", ".join(f"{k}={v}" for k, v in sorted(rejected.items(), key=lambda kv: -kv[1])[:6])
+           if rejected else "")
+        + ":\n" + "\n".join(lines),
+        _no_nulls({
+            "mode": "recommend",
+            "family": key,
+            "candidates": [_candidate(c) for c in cands],
+            # `total` is what matched the requirements; the whole family is a separate fact
+            # under a name that says which is which.
+            "total": result.get("alternativesConsidered"),
+            "catalogueTotal": result.get("totalRowsConsidered"),
+            "shown": len(cands),
+            "tiebreaker": result.get("tiebreaker"),
+        }))
 
 
 @mcp.tool(
@@ -687,7 +788,15 @@ def spec_distribution(family: str, field: str, filters: dict | None = None,
         f"{field} across {page['total']:,} matching {key}(s): {hist.get('present', 0):,} state it, "
         f"{hist.get('absent', 0):,} do not "
         f"({'log' if hist.get('log') else 'linear'} buckets)\n" + "\n".join(lines),
-        page)
+        _no_nulls({
+            "mode": "distribution",
+            "family": key,
+            "field": field,
+            "histogram": {k: v for k, v in hist.items() if k not in ("present", "absent")},
+            "present": hist.get("present"),
+            "absent": hist.get("absent"),
+            "filters": filters or None,
+        }))
 
 
 @mcp.tool(
@@ -719,11 +828,7 @@ def cross_reference(family: str, mpn: str, manufacturer: str | None = None,
                     "manufacturers": target_manufacturers or [],
                     "sameType": bool(same_type), "maxResults": max(1, min(max_results, 40))})
     original = result["original"]
-    # One envelope for every ranked list this server returns (see search_parts), and the
-    # ranker's own comparison spec under the name the picker reads.
-    ranked = result["candidates"] = result.pop("ranked")
-    result["mode"] = "crossref"
-    result["originalSpecs"] = result.get("origSpec")
+    ranked = result.pop("ranked")
     lines = []
     for c in ranked:
         # The worker carries each candidate's shard row alongside the verdict; the maker
@@ -735,14 +840,36 @@ def cross_reference(family: str, mpn: str, manufacturer: str | None = None,
               f"candidates scored")
     if result["poolScored"] < result["poolTotal"]:
         header += f" (pool capped at {result['poolLimit']:,})"
+
+    # The honesty cap is the single most important thing this tool says, so it must survive
+    # into the DTO and not only into the prose. The contract has one field for a standing
+    # warning — `caveat` — so the cap goes there, ahead of the family's own caveat, rather
+    # than being dropped for want of a dedicated flag.
+    caveats = []
     if not result["origVerified"]:
-        header += (f"\nThe original's own record does not state {', '.join(result['missing'])}, "
-                   f"so no candidate can be graded 'recommended' (the honesty cap).")
+        caveats.append(
+            f"The original's own record does not state {', '.join(result['missing'])}, so no "
+            f"candidate can be graded 'recommended' (the honesty cap).")
+    if result.get("caveat"):
+        caveats.append(result["caveat"])
+    if result["poolScored"] < result["poolTotal"]:
+        caveats.append(f"{result['poolScored']:,} of {result['poolTotal']:,} pre-gated "
+                       f"candidates were scored (pool capped at {result['poolLimit']:,}).")
+    if caveats:
+        header += "\n" + "\n".join(caveats)
     if result.get("targetsFromFacet"):
         header += f"\nTargets: every other vendor in the family ({len(result['targets'])})."
-    if result.get("caveat"):
-        header += f"\nCaveat: {result['caveat']}"
-    return _result(header + ":\n" + "\n".join(lines), result)
+
+    return _result(header + ":\n" + "\n".join(lines), _no_nulls({
+        "mode": "crossref",
+        "family": key,
+        "candidates": [_candidate(c) for c in ranked],
+        "original": _row_candidate(original),
+        "originalSpecs": _no_nulls(result.get("origSpec") or {}) or None,
+        "total": result.get("poolTotal"),
+        "shown": len(ranked),
+        "caveat": " ".join(caveats) or None,
+    }))
 
 
 # --- the MCP Apps UI resource -----------------------------------------------

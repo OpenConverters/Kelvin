@@ -35,10 +35,14 @@ export const SPEC_LIMIT = 9;
  * `vds_rated` under a header row that says `vds`.
  */
 export function specsOf(row) {
-  // A projected specs object still goes through the metadata filter: the ranker's spec
-  // carries `mpn` on purpose (the AEC-Q and rated-voltage gates decode it), and it must not
-  // become a column that repeats the part number already in the identity cell.
+  // Kelvin now always projects `specs` (the pipeline result contract, ABT #685), so that is
+  // the first and normally the only branch. A projected specs object still goes through the
+  // metadata filter: the ranker's spec carries `mpn` on purpose (the AEC-Q and rated-voltage
+  // gates decode it), and it must not become a column repeating the identity cell.
   if (row?.specs && typeof row.specs === "object") return scalars(row.specs);
+  // The remaining branches serve payloads this widget does not own — a server that sends a
+  // flat catalogue row, or one that nests it. Kept because the widget is meant to be generic
+  // (ABT #663), not because Kelvin needs them.
   const flat = scalars(row);
   if (Object.keys(flat).length) return flat;
   if (row?.row && typeof row.row === "object") return scalars(row.row);

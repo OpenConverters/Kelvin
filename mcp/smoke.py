@@ -13,12 +13,42 @@ in a chat session where "no candidates" and "nobody looked" read the same.
 from __future__ import annotations
 
 import asyncio
+import json
+import os
 import sys
+from pathlib import Path
 
 import server as S
 
 SKIP_XREF = "--skip-xref" in sys.argv
 FAILURES: list[str] = []
+
+
+# Moebius validates every payload at its boundary against this schema and rejects anything
+# that does not conform (ABT #685), so the schema is checked HERE against the same file rather
+# than against a local copy of what we think it says. Absent, it is skipped loudly.
+CONTRACT = Path(os.environ.get(
+    "MOEBIUS_CONTRACT",
+    "/home/alf/wuerth/moebius-orchestrator/contracts/pipeline_result.json"))
+_validator = None
+
+
+def conforms(label: str, payload: dict) -> None:
+    """Assert a tool result against the pipeline contract."""
+    global _validator
+    if _validator is None:
+        if not CONTRACT.exists():
+            check(f"contract check for {label}", False, f"schema not found at {CONTRACT}")
+            return
+        import jsonschema
+
+        _validator = jsonschema.Draft202012Validator(json.loads(CONTRACT.read_text()))
+    errors = sorted(_validator.iter_errors(payload), key=lambda e: list(e.path))
+    detail = ""
+    if errors:
+        first = errors[0]
+        detail = f"{'/'.join(str(p) for p in first.path) or '(root)'}: {first.message[:120]}"
+    check(f"{label} conforms to the pipeline contract", not errors, detail)
 
 
 def check(label: str, condition: bool, detail: str = "") -> None:
@@ -34,6 +64,7 @@ def text(result) -> str:
 def main() -> int:
     print("list_families")
     r = S.list_families()
+    conforms("list_families", r.structuredContent)
     names = [f["family"] for f in r.structuredContent["families"]]
     check("all twelve families listed", len(names) == 12, ", ".join(names))
     check("browse-only families flagged",
@@ -42,11 +73,12 @@ def main() -> int:
 
     print("describe_family(capacitor)")
     r = S.describe_family("capacitors")            # plural must normalise
+    conforms("describe_family", r.structuredContent)
     fields = r.structuredContent["fields"]
     check("capacitance is filterable", "capacitance" in fields["numeric"])
-    check("technology is facetable", "technology" in fields["string"])
-    check("part count reported", r.structuredContent["rows"] > 1000,
-          f"{r.structuredContent['rows']:,} parts")
+    check("technology is facetable", "technology" in fields["categorical"])
+    check("part count reported", r.structuredContent["catalogueTotal"] > 1000,
+          f"{r.structuredContent['catalogueTotal']:,} parts")
 
     print("describe_family(nonsense)")
     try:
@@ -60,14 +92,27 @@ def main() -> int:
                        filters={"capacitance": {"min": 100e-9, "max": 470e-9},
                                 "v_rated": {"min": 300}},
                        sort={"field": "capacitance", "dir": "asc"}, limit=5, with_facets=True)
+    conforms("search_parts", r.structuredContent)
     page = r.structuredContent
     rows = page["candidates"]                      # the shared ranked-list envelope
     check("matches found", page["total"] > 0, f"{page['total']:,} parts")
     check("page respects the limit", len(rows) == 5)
     check("every row is inside the window",
-          all(100e-9 <= row["capacitance"] <= 470e-9 and row["v_rated"] >= 300 for row in rows))
-    check("sorted ascending", rows == sorted(rows, key=lambda row: row["capacitance"]))
-    check("facets counted", bool((page.get("facets") or {}).get("technology", {}).get("values")))
+          all(100e-9 <= c["specs"]["capacitance"] <= 470e-9 and c["specs"]["v_rated"] >= 300
+              for c in rows))
+    check("sorted ascending",
+          rows == sorted(rows, key=lambda c: c["specs"]["capacitance"]))
+    check("parameters live under specs, never flat on the candidate",
+          all("capacitance" not in c and "specs" in c for c in rows))
+    check("locators travel underscored, as pipeline-internal",
+          all("_srcOffset" in c and "srcOffset" not in c for c in rows))
+    check("the family size and the match count are separate, named facts",
+          page["catalogueTotal"] > page["total"] > 0,
+          f"{page['total']:,} matched of {page['catalogueTotal']:,}")
+    # The contract has no facet field, so the counts must reach the reader in the digest
+    # rather than being dropped for want of somewhere to put them.
+    check("facet values and counts are reported in the digest",
+          "film-polypropylene" in text(r) and "technology:" in text(r))
     check("digest names real parts", rows[0]["mpn"] in text(r))
 
     print("search_parts with a field that does not exist")
@@ -82,10 +127,11 @@ def main() -> int:
     mpn = rows[0]["mpn"]
     r = S.part_details("capacitor", mpn, full_record=True)
     payload = r.structuredContent
-    check("the row came back", payload["row"]["mpn"] == mpn)
-    check("the full TAS record came back", "capacitor" in (payload.get("record") or {}))
+    conforms("part_details", payload)
+    check("the part came back", payload["part"]["mpn"] == mpn)
+    check("the full TAS record came back", "capacitor" in (payload["part"].get("record") or {}))
     check("record is THAT part",
-          payload["record"]["capacitor"]["manufacturerInfo"]["reference"] == mpn)
+          payload["part"]["record"]["capacitor"]["manufacturerInfo"]["reference"] == mpn)
 
     print("part_details for a part that is not there")
     try:
@@ -98,6 +144,7 @@ def main() -> int:
     r = S.recommend_parts("mosfet", {"ratedDrainSourceVoltage": 60,
                                      "ratedContinuousDrainCurrent": 5,
                                      "maximumOnResistance": 0.1}, max_candidates=5)
+    conforms("recommend_parts", r.structuredContent)
     cands = r.structuredContent["candidates"]
     check("candidates returned", len(cands) > 0, f"best: {cands[0]['mpn']}")
     # Margins are ratios of the part's rating to the requirement, so clearing a gate means >= 1.
@@ -126,10 +173,12 @@ def main() -> int:
 
     print("spec_distribution(mosfet rds_on over 100 V silicon)")
     r = S.spec_distribution("mosfet", "rds_on", filters={"vds_rated": {"min": 100}}, buckets=12)
-    hist = r.structuredContent["histogram"]
-    check("buckets counted", sum(hist["counts"]) == hist["present"] > 0,
-          f"{hist['present']:,} parts state Rds(on)")
-    check("absences are reported, not dropped", "absent" in hist)
+    conforms("spec_distribution", r.structuredContent)
+    dist = r.structuredContent
+    hist = dist["histogram"]
+    check("buckets counted", sum(hist["counts"]) == dist["present"] > 0,
+          f"{dist['present']:,} parts state Rds(on)")
+    check("absences are reported, not dropped", "absent" in dist)
 
     if SKIP_XREF:
         print("cross_reference: SKIPPED (--skip-xref)")
@@ -137,9 +186,9 @@ def main() -> int:
         print("cross_reference(capacitor)")
         r = S.cross_reference("capacitor", mpn, max_results=5)
         x = r.structuredContent
+        conforms("cross_reference", x)
         check("the original resolved", x["original"]["mpn"] == mpn)
-        check("a candidate pool was scored", x["poolScored"] > 0,
-              f"{x['poolScored']:,} of {x['poolTotal']:,}")
+        check("a candidate pool was scored", x["total"] > 0, f"{x['total']:,} pre-gated")
         check("substitutes ranked best-first",
               [c["penalty"] for c in x["candidates"]]
               == sorted(c["penalty"] for c in x["candidates"]))
@@ -151,12 +200,19 @@ def main() -> int:
         # must be in ONE vocabulary. Overlap is not enough: the shard row and the ranker's
         # spec share `rds_on` and `coss` by coincidence, which is exactly what made a wholly
         # mismatched table look healthy at a glance.
+        # Compared against the worker's RAW projection, not the payload's originalSpecs: the
+        # payload omits keys the original does not state (a null is not sent), so a candidate
+        # that states ripple_current where the original does not is correct, not a vocabulary
+        # break. The invariant is that both sides come from the same projection function.
+        raw = S._xref({"op": "crossref", "family": "capacitor", "mpn": mpn, "maxResults": 1})
+        vocabulary = set(raw["origSpec"]) - {"_key"}
         cand_specs = set((x["candidates"][0].get("specs") or {}))
-        orig_specs = set(x.get("originalSpecs") or {})
         check("candidate specs are the ranker's own projection, not the shard row",
-              bool(cand_specs) and len(cand_specs - orig_specs) == 0,
-              f"{len(cand_specs & orig_specs)}/{len(cand_specs)} keys align"
-              + (f"; stray: {sorted(cand_specs - orig_specs)[:4]}" if cand_specs - orig_specs else ""))
+              bool(cand_specs) and cand_specs <= vocabulary,
+              f"{len(cand_specs)} keys, all in the ranker's vocabulary"
+              if cand_specs <= vocabulary else f"stray: {sorted(cand_specs - vocabulary)[:4]}")
+        check("the original's stated specs are a subset of that same vocabulary",
+              set(x.get("originalSpecs") or {}) <= vocabulary)
         check("the shard vocabulary never reaches the comparison",
               not ({"vds_rated", "id_continuous", "qg_total"} & cand_specs))
 
