@@ -125,7 +125,7 @@ def main() -> int:
 
     print("part_details")
     mpn = rows[0]["mpn"]
-    r = S.part_details("capacitor", mpn, full_record=True)
+    r = S.part_details("capacitor", mpn, include_record=True)
     payload = r.structuredContent
     conforms("part_details", payload)
     check("the part came back", payload["part"]["mpn"] == mpn)
@@ -143,7 +143,7 @@ def main() -> int:
     print("recommend_parts(mosfet 60 V / 5 A / 100 mΩ)")
     r = S.recommend_parts("mosfet", {"ratedDrainSourceVoltage": 60,
                                      "ratedContinuousDrainCurrent": 5,
-                                     "maximumOnResistance": 0.1}, max_candidates=5)
+                                     "maximumOnResistance": 0.1}, max_results=5)
     conforms("recommend_parts", r.structuredContent)
     cands = r.structuredContent["candidates"]
     check("candidates returned", len(cands) > 0, f"best: {cands[0]['mpn']}")

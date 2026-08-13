@@ -226,6 +226,31 @@ def _candidate(row: dict, specs: dict | None = None) -> dict:
     return out
 
 
+def _facets(page: dict) -> dict:
+    """Facet counts in the contract's shape: value/count objects for categorical fields,
+    min/max for numeric ones.
+
+    The engine emits categorical facets as [value, count] pairs and numeric ones separately
+    under `ranges`; both are one question to a caller ("what else is in this result set"), so
+    they arrive as one map. An empty-string value is NOT padding — it is the engine saying the
+    record does not state that field, and it is frequently the largest bucket, so it is passed
+    through rather than filtered out.
+    """
+    out: dict = {}
+    for name, facet in (page.get("facets") or {}).items():
+        entry: dict = {"values": [{"value": v, "count": n} for v, n in facet.get("values") or []]}
+        if facet.get("omitted"):
+            entry["omitted"] = facet["omitted"]
+        out[name] = entry
+    for name, span in (page.get("ranges") or {}).items():
+        # `present` (how many rows state the field at all) has no home in the contract's
+        # numeric facet, so it stays in the digest for now — flagged to Moebius rather than
+        # dropped quietly.
+        if span.get("present"):
+            out[name] = {"min": span.get("min"), "max": span.get("max")}
+    return out
+
+
 def _row_candidate(row: dict) -> dict:
     """A browse row: every field that is not identity or locator IS a spec."""
     specs = {k: v for k, v in row.items()
@@ -609,6 +634,7 @@ def search_parts(family: str, filters: dict | None = None, sort: dict | None = N
         "catalogueTotal": page.get("rowCount"),     # the family's size — a different fact
         "shown": len(rows),
         "filters": filters or None,
+        "facets": _facets(page) or None,
     }))
 
 
@@ -621,13 +647,13 @@ def search_parts(family: str, filters: dict | None = None, sort: dict | None = N
     structured_output=False,
 )
 def part_details(family: str, mpn: str, manufacturer: str | None = None,
-                 full_record: bool = True) -> CallToolResult:
+                 include_record: bool = True) -> CallToolResult:
     """One part, by MPN.
 
     Args:
         mpn: the manufacturer part number (substring match; an exact hit wins).
         manufacturer: needed only when two vendors ship the same MPN string.
-        full_record: include the raw TAS record, not just the extracted specs.
+        include_record: include the raw TAS record, not just the extracted specs.
     """
     key = _family(family)
     page = _browse(key, {"filters": {"mpn": mpn}, "limit": 50})
@@ -657,7 +683,7 @@ def part_details(family: str, mpn: str, manufacturer: str | None = None,
     row = rows[0]
     numeric = kelvin.family_fields(key)["numeric"]
     record = (_eng_handle().fetch_record(key, row["srcOffset"], row["srcLength"])
-              if full_record else None)
+              if include_record else None)
     part = _row_candidate(row)
     if record is not None:
         part["record"] = record
@@ -668,7 +694,7 @@ def part_details(family: str, mpn: str, manufacturer: str | None = None,
         f"{row['mpn']} ({row['manufacturer']}) — {key}\n{specs}"
         + (f"\n  {cats}" if cats else "")
         + (f"\n  case {row.get('caseCode')}" if row.get("caseCode") else "")
-        + ("\n(the full TAS record is in the structured output)" if full_record else ""),
+        + ("\n(the full TAS record is in the structured output)" if include_record else ""),
         payload)
 
 
@@ -683,7 +709,7 @@ def part_details(family: str, mpn: str, manufacturer: str | None = None,
     structured_output=False,
 )
 def recommend_parts(family: str, requirements: dict, options: dict | None = None,
-                    max_candidates: int = 12, include_envelope: bool = False) -> CallToolResult:
+                    max_results: int = 12, include_envelope: bool = False) -> CallToolResult:
     """Ranked candidates for one component requirement.
 
     Args:
@@ -703,7 +729,7 @@ def recommend_parts(family: str, requirements: dict, options: dict | None = None
             f"'{key}' has no selector — it is a browse-only family (no requirements emitter "
             f"exists for it yet). Use search_parts.")
     opts = dict(options or {})
-    opts["maxCandidates"] = max(1, min(int(max_candidates), 50))
+    opts["maxCandidates"] = max(1, min(int(max_results), 50))
     opts["includeEnvelope"] = bool(include_envelope)
     try:
         result = _eng_handle().select(key, requirements, opts)
@@ -748,6 +774,9 @@ def recommend_parts(family: str, requirements: dict, options: dict | None = None
             "catalogueTotal": result.get("totalRowsConsidered"),
             "shown": len(cands),
             "tiebreaker": result.get("tiebreaker"),
+            # Why a part is NOT here, per gate. `total` already says how many survived, so
+            # the two are complementary rather than two names for one count.
+            "rejections": rejected or None,
         }))
 
 
@@ -868,6 +897,15 @@ def cross_reference(family: str, mpn: str, manufacturer: str | None = None,
         "originalSpecs": _no_nulls(result.get("origSpec") or {}) or None,
         "total": result.get("poolTotal"),
         "shown": len(ranked),
+        # `preGated` is deliberately NOT sent: it is the same number as `total`, and one fact
+        # under two names is what this contract exists to prevent.
+        "pool": {"scored": result["poolScored"],
+                 **({"cap": result["poolLimit"]}
+                    if result["poolScored"] < result["poolTotal"] else {})},
+        # The honesty cap, machine-readable: a consumer that refuses to present an unverified
+        # cross-reference can now tell by inspection instead of parsing the caveat.
+        "originalVerified": result.get("origVerified"),
+        "missingSpecs": result.get("missing") or None,
         "caveat": " ".join(caveats) or None,
     }))
 
