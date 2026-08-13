@@ -415,7 +415,13 @@ _xref_fingerprint: str | None = None
 XREF_TIMEOUT_S = 300.0
 # The worker's source: its own file plus the cross-reference pipeline it imports.
 _XREF_SOURCES = (Path(__file__).parent / "xref.mjs",
-                 _REPO / "web" / "src" / "crossref.js")
+                 _REPO / "web" / "src" / "crossref.js",
+                 # The WASM engine is the third thing the worker holds, and the one that goes
+                 # stale most destructively: a shard-format bump makes a worker built against
+                 # the old engine reject every shard ("unsupported shard format version"), and
+                 # it will keep rejecting until something restarts it. Caught exactly that way
+                 # when the safety-class work bumped v10 -> v11 (ABT #557).
+                 _REPO / "web" / "public" / "kelvin.js")
 
 
 def _xref_source_fingerprint() -> str:

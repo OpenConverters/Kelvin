@@ -201,7 +201,11 @@ const reply = (o) => process.stdout.write(JSON.stringify(o) + '\n')
 // holds a process from before the change and every answer stays quietly stale. The server
 // compares this against the files on disk and restarts the worker when they differ.
 export function sourceFingerprint() {
-  const files = [join(HERE, 'xref.mjs'), join(KELVIN, 'web', 'src', 'crossref.js')]
+  // Must list exactly what server.py lists, in the same order — the two hashes are compared
+  // against each other, so a file added on one side only reads as a mid-start race.
+  const files = [join(HERE, 'xref.mjs'),
+                 join(KELVIN, 'web', 'src', 'crossref.js'),
+                 join(KELVIN, 'web', 'public', 'kelvin.js')]
   const h = createHash('sha256')
   for (const f of files) h.update(readFileSync(f))
   return h.digest('hex').slice(0, 16)
