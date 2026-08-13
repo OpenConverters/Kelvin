@@ -377,6 +377,59 @@ TEST_CASE("direction reports upgrade, downgrade and mixed honestly",
           "equivalent");
 }
 
+TEST_CASE("direction is not a verdict when the deciding axis was never compared",
+          "[crossref][classes][rank]") {
+    // The original's record states no saturation current — a hard gate for magnetics — and
+    // the substitute's does. Nothing gated (the gate needs an original-side number), so the
+    // ranker judged on inductance and DCR alone and called it an upgrade. It is not entitled
+    // to: the axis the match turns on was never on the table. (Answered directly to the
+    // reader as "unknown" rather than left as a flattering default.)
+    json blind = {{"mpn", "O"}, {"value_si", 1e-5}, {"dcr", 0.050}, {"device_type", "inductor"}};
+    json better = json::array({{{"mpn", "B"},
+                                {"value_si", 1e-5},
+                                {"dcr", 0.020},
+                                {"saturation_current", 8.0},
+                                {"device_type", "inductor"}}});
+    auto r = cross_reference("magnetic", blind, better, Options{});
+    const auto& c = r["candidates"][0];
+    CHECK(c["direction"] == "unknown");
+    // and it says WHICH axis, so the reader knows what to look up
+    REQUIRE(c.contains("notes"));
+    bool named = false;
+    for (const auto& n : c["notes"])
+        if (n.get<std::string>().find("saturation") != std::string::npos) named = true;
+    CHECK(named);
+
+    // Same shape on a critical rating (capacitor voltage), which is a separate code path.
+    json no_v = {{"mpn", "O"}, {"value_si", 1e-7}, {"package", "0603"},
+                 {"technology", "ceramic-class-2"}};
+    json with_v = json::array({{{"mpn", "B"},
+                                {"value_si", 1e-7},
+                                {"voltage", 100.0},
+                                {"package", "0603"},
+                                {"technology", "ceramic-class-2"}}});
+    CHECK(cross_reference("capacitor", no_v, with_v, Options{})["candidates"][0]["direction"] ==
+          "unknown");
+
+    // Two things it must NOT do. A regression we DID measure survives — blindness on one
+    // axis cannot erase evidence from another...
+    json worse_dcr = json::array({{{"mpn", "W"},
+                                   {"value_si", 1e-5},
+                                   {"dcr", 0.200},
+                                   {"saturation_current", 8.0},
+                                   {"device_type", "inductor"}}});
+    CHECK(cross_reference("magnetic", blind, worse_dcr, Options{})["candidates"][0]["direction"] ==
+          "downgrade");
+    // ...and when NEITHER side states the axis it is missing identically for every candidate,
+    // so it cannot skew one against another and the reading stands.
+    json also_blind = json::array({{{"mpn", "N"},
+                                    {"value_si", 1e-5},
+                                    {"dcr", 0.020},
+                                    {"device_type", "inductor"}}});
+    CHECK(cross_reference("magnetic", blind, also_blind, Options{})["candidates"][0]["direction"] ==
+          "upgrade");
+}
+
 // ── case-code unit ambiguity ─────────────────────────────────────────────────
 // Imperial 0603 (1.6 x 0.8 mm) and metric 0603 (0.6 x 0.3 mm) are a 4x area
 // difference. These pin the disambiguation rules against the forms the

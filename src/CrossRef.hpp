@@ -361,6 +361,15 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // Direction bookkeeping: on each directional parameter we could compare,
     // did the substitute come out strictly ahead of the original, or behind?
     int better = 0, worse = 0;
+    // A direction computed on the axes that happened to be present is not a verdict when
+    // the axis the match TURNS ON was not among them. The case is specific: the SUBSTITUTE
+    // states a hard-gate parameter and the ORIGINAL's record does not. The mirror image —
+    // original states it, substitute silent — already rejects above, and when NEITHER states
+    // it the axis is missing identically for every candidate, so it cannot skew one against
+    // another. Only here did the ranker hold a real number it had no basis to judge, and
+    // "upgrade" would be a claim about a comparison that never happened.
+    bool direction_blind = false;
+    std::vector<std::string> blind_axes;
     auto note_direction = [&](Dir dir, std::optional<double> o, std::optional<double> s) {
         if (!o || !s || *o <= 0 || *s <= 0) return;
         const double ratio = *s / *o;
@@ -635,6 +644,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                                  : over_dimensioning_penalty(s, o, 1.0));
         }
         if (numeric) note_direction(spec.dir, o, s);
+        if (numeric && is_hard_param(cat, spec.key) && !o && s) {
+            direction_blind = true;
+            blind_axes.push_back(param_label(spec.key));
+        }
     }
 
     // Say WHAT changed about the mating interface, not just that something did. The
@@ -681,6 +694,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             penalty += opt.overdim_weight * over_dimensioning_penalty(o, s, 1.0);
         }
         note_direction(r.mode == Mode::HigherBetter ? Dir::Higher : Dir::Lower, o, s);
+        if (r.hard && !o && s) {
+            direction_blind = true;
+            blind_axes.push_back(param_label(r.key));
+        }
     }
 
     // ── physical fit ─────────────────────────────────────────────────────────
@@ -1191,6 +1208,17 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         }
     }
 
+    // Say which axis went unweighed, or "unknown" reads as a shrug rather than a specific
+    // gap the reader can close from a datasheet.
+    if (direction_blind) {
+        std::string axes;
+        for (size_t i = 0; i < blind_axes.size(); ++i)
+            axes += (i ? ", " : "") + blind_axes[i];
+        notes.push_back("the original's record states no " + axes +
+                        ", so the substitute's could not be weighed against it — better or "
+                        "worse on that axis is unknown, whatever the other parameters say");
+    }
+
     // Honesty: an unverified original can never be a clean 'recommended'.
     if (!opt.original_verified) {
         if (status == "recommended") status = "partial";
@@ -1243,10 +1271,18 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // measured ratios rather than asserted. "equivalent" when neither side
     // clearly leads — including when there was nothing comparable to judge on,
     // which is honest rather than flattering.
-    out["direction"] = (worse > 0 && better == 0)   ? "downgrade"
-                       : (better > 0 && worse == 0) ? "upgrade"
-                       : (better > 0 && worse > 0)  ? "mixed"
-                                                    : "equivalent";
+    const std::string dir = (worse > 0 && better == 0)   ? "downgrade"
+                            : (better > 0 && worse == 0) ? "upgrade"
+                            : (better > 0 && worse > 0)  ? "mixed"
+                                                         : "equivalent";
+    // With a hard axis unweighed (see direction_blind), the two REASSURING readings are the
+    // ones that could be wrong: "upgrade" and "equivalent" both assert that nothing is behind,
+    // on evidence that never covered the parameter the match turns on. A measured regression
+    // stands — blindness elsewhere cannot make a regression we did see disappear — and so does
+    // "mixed", which already carries one.
+    out["direction"] = (direction_blind && (dir == "upgrade" || dir == "equivalent"))
+                           ? "unknown"
+                           : dir;
     return out;
 }
 

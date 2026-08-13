@@ -152,11 +152,17 @@ const GRADE_TITLE = {
   no_substitute: 'a hard gate failed — this is not a substitute',
 }
 // Direction answers "better or worse?", computed from the measured ratios.
-const DIRECTION_LABEL = { upgrade: '▲ upgrade', downgrade: '▼ downgrade', mixed: '◆ mixed' }
+const DIRECTION_LABEL = {
+  upgrade: '▲ upgrade', downgrade: '▼ downgrade', mixed: '◆ mixed', unknown: '? unknown',
+}
 const DIRECTION_TITLE = {
   upgrade: 'ahead of the original on every directional parameter compared',
   downgrade: 'behind the original on the parameters compared',
   mixed: 'better on some parameters, worse on others',
+  // Not "nothing to compare" — a specific axis, named in the notes, that this substitute
+  // states and the original's record does not.
+  unknown: 'the original states no value for a parameter the match turns on, so direction '
+         + 'could not be judged on it — see the notes',
 }
 const FOOTPRINT_LABEL = {
   fits: 'fits', smaller: 'smaller', different_case: 'diff. case', one_size_larger: '+1 size',
@@ -467,6 +473,7 @@ function openPart(r) {
 .dir-upgrade { color: var(--ok); }
 .dir-downgrade { color: var(--fault); }
 .dir-mixed { color: var(--ink-dim); }
+.dir-unknown { color: var(--warm); }
 .chip.st-partial { color: var(--warm); border-color: rgba(255, 179, 71, 0.4); }
 .chip.st-no_substitute { color: var(--fault); border-color: rgba(255, 110, 110, 0.4); }
 .v-pass { color: var(--ok); }
