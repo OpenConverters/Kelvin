@@ -633,9 +633,13 @@ def search_parts(family: str, filters: dict | None = None, sort: dict | None = N
             if not values:
                 continue
             summary += (f"\n{name}: "
-                        + ", ".join(f"{v} ({n:,})" for v, n in values[:8])
+                        # A null value is "the record does not state this field", and it is
+                        # frequently the LARGEST bucket — printing it as `None` reads as a
+                        # value one could filter on.
+                        + ", ".join(f"{'not stated' if v is None else v} ({n:,})"
+                                    for v, n in values[:8])
                         + (f", +{len(values) - 8} more" if len(values) > 8 else "")
-                        + (f" [{facet['omitted']} rarer values omitted]"
+                        + (f" [{facet['omitted']:,} rarer values omitted]"
                            if facet.get("omitted") else ""))
     return _result(summary, _no_nulls({
         "mode": "search",

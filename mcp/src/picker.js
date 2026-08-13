@@ -59,6 +59,17 @@ const fmt = (v) => {
   return String(v);
 };
 
+// A count is a cardinality, not a measurement, and fmt() is a measurement formatter: it rounds
+// to three significant figures, so 17,748 parts render as "1.77e+4" — an estimate of a number
+// that is exactly known, and wrong by 48. Worse beside each other, where "2.43e+4" and
+// "2.44e+3" differ in one character and the eye has to compute the tenfold gap. It also undid
+// the `present` work: that count exists so a range over 217,864 rows cannot read like the same
+// range over 12, and "2.18e+5" is the estimate-shaped number it was meant to replace. So counts
+// get their own formatter — grouped integers, always exact — and ranges keep fmt(), because
+// 1.00e-13 … 3.00e+3 is right for a capacitance and unreadable as an integer. (ABT #696.)
+const count = (n) =>
+  typeof n === "number" && Number.isFinite(n) ? Math.round(n).toLocaleString("en-US") : fmt(n);
+
 // How candidates become columns lives in columns.js so it can be tested without a host
 // bridge — this module connects to the host at import, so logic left in here can only be
 // checked by rendering the real GUI, which is how the ranked views got away with deriving
@@ -114,14 +125,19 @@ function facetRow() {
     if (Array.isArray(facet?.values)) {
       const chips = facet.values.slice(0, 6).map((v) =>
         el("span", { class: `fchip${v.value === null ? " unstated" : ""}` },
-          `${v.value === null ? "not stated" : v.value} ${fmt(v.count)}`));
+          `${v.value === null ? "not stated" : v.value} ${count(v.count)}`));
+      // Two different truncations, and they must not read as one. The first is this widget
+      // clipping values the payload DID carry; the second is the engine never sending the
+      // rarer tail at all. "+4 shown here" said the opposite of what it meant — those 4 are
+      // exactly the ones not on screen.
       if (facet.values.length > 6) {
         chips.push(el("span", { class: "fchip more" },
-          `+${facet.values.length - 6} shown here`));
+          `+${count(facet.values.length - 6)} more not shown`));
       }
       // A truncated facet must not read as a complete one.
       if (facet.omitted) {
-        chips.push(el("span", { class: "fchip more" }, `+${facet.omitted} rarer not listed`));
+        chips.push(el("span", { class: "fchip more" },
+          `+${count(facet.omitted)} rarer not listed`));
       }
       blocks.push(el("div", { class: "facet" },
         el("span", { class: "fname" }, field), chips));
@@ -130,7 +146,7 @@ function facetRow() {
         el("span", { class: "fname" }, field),
         el("span", { class: "fchip" }, `${fmt(facet.min)} … ${fmt(facet.max)}`),
         facet.present !== undefined
-          ? el("span", { class: "fchip muted" }, `${fmt(facet.present)} state it`)
+          ? el("span", { class: "fchip muted" }, `${count(facet.present)} state it`)
           : null));
     }
   }
@@ -156,8 +172,8 @@ function render() {
 
   // header
   const sub = isCross
-    ? `substitutes for ${state.original?.mpn ?? "the original"} · ${state.poolSize ?? "?"} parts considered`
-    : `${state.category} · ranked by ${state.tiebreaker ?? "the engine"} · ${state.considered ?? "?"} rows considered`;
+    ? `substitutes for ${state.original?.mpn ?? "the original"} · ${state.poolSize === null || state.poolSize === undefined ? "?" : count(state.poolSize)} parts considered`
+    : `${state.category} · ranked by ${state.tiebreaker ?? "the engine"} · ${state.considered === null || state.considered === undefined ? "?" : count(state.considered)} rows considered`;
   root.append(
     el("div", { class: "head" },
       el("h1", {}, isCross ? "Cross-reference" : "Candidates"),
