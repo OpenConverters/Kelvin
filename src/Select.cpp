@@ -339,7 +339,18 @@ json select_controller(const Shard<ControllerRow>& shard, const ControllerConstr
         if (!category_requested && !regulates_output_rail(ctrl.category, topo)) {
             rej["category_does_not_regulate_this_rail"]++; continue;
         }
-        bool has_topo = !ctrl.topologies.empty();
+        // For a PFC FRONT END the category is the qualification and the listed topology is
+        // just the switching stage that implements it — a boost-PFC controller (UCC3817,
+        // L6562, NCP1654, FAN9611 …) records "boostConverter" because that is the stage it
+        // drives, and boost IS how PFC is nearly always done. Filtering those on the literal
+        // topology string left 9 of the 67 pfcControllers reachable by no design at all: the
+        // topology filter kept them out of power_factor_correction and the category gate
+        // above kept them out of buck/boost. Whichever way the catalogue spells the stage,
+        // a part whose whole purpose is shaping line current belongs to a PFC design.
+        const bool pfc_for_pfc =
+            ctrl.category == "pfcController" &&
+            (topo == "power_factor_correction" || topo == "vienna");
+        bool has_topo = !ctrl.topologies.empty() && !pfc_for_pfc;
         bool topo_listed =
             std::find(ctrl.topologies.begin(), ctrl.topologies.end(), topo) != ctrl.topologies.end();
         bool has_any = std::find(ctrl.topologies.begin(), ctrl.topologies.end(), "any") !=

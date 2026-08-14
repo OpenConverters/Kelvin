@@ -284,8 +284,8 @@
     "vin_nom": 100.0
    },
    "expect": {
-    "alternatives": 653,
-    "chosen": "MP2483"
+    "alternatives": 662,
+    "chosen": "UCC3817"
    }
   },
   {
@@ -326,8 +326,8 @@
     "error": "SelectionError",
     "rejections": {
      "category_does_not_regulate_this_rail": 49,
-     "category_mismatch": 653,
-     "topology": 1431
+     "category_mismatch": 662,
+     "topology": 1422
     },
     "total": 2133
    }
@@ -341,8 +341,8 @@
     "vin_nom": 100.0
    },
    "expect": {
-    "alternatives": 58,
-    "chosen": "MP2483"
+    "alternatives": 67,
+    "chosen": "UCC3817"
    }
   },
   {

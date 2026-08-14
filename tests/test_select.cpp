@@ -177,6 +177,31 @@ TEST_CASE("select: a PFC controller is not a buck controller because it can driv
     REQUIRE_FALSE(pfc.at("rejections").contains("category_does_not_regulate_this_rail"));
 }
 
+TEST_CASE("select: a PFC design reaches PFC parts whatever stage their datasheet names",
+          "[select][controller]") {
+    // A boost-PFC controller records "boostConverter" because that is the stage it drives,
+    // and boost is how PFC is nearly always done. Filtering those on the literal topology
+    // string left 9 of the catalogue's 67 pfcControllers reachable by NO design: the
+    // topology filter kept them out of power_factor_correction, and the category gate kept
+    // them out of buck/boost. For a PFC front end the CATEGORY is the qualification.
+    auto shard = ctrl_shard_from({
+        controller("BOOST_PFC", "pfcController", {"boostConverter"}),
+        controller("EXPLICIT_PFC", "pfcController", {"powerFactorCorrection"}),
+        controller("PLAIN_BOOST", "pwmController", {"boostConverter"}),
+    });
+    auto pfc = select_controller(shard, ctrl_for("power_factor_correction"));
+    std::set<std::string> got;
+    for (const auto& cand : pfc.at("candidates")) got.insert(cand.at("mpn").get<std::string>());
+    REQUIRE(got.count("BOOST_PFC") == 1);      // the part that was unreachable
+    REQUIRE(got.count("EXPLICIT_PFC") == 1);
+    REQUIRE(got.count("PLAIN_BOOST") == 0);    // still not a PFC controller
+
+    // ...and the widening is confined to PFC designs: a plain boost rail must not get one.
+    auto boost = select_controller(shard, ctrl_for("boost"));
+    REQUIRE(boost.at("candidates")[0].at("mpn") == "PLAIN_BOOST");
+    REQUIRE(boost.at("candidates").size() == 1);
+}
+
 TEST_CASE("select: parts that regulate no rail at all never rank as controllers",
           "[select][controller]") {
     // A supervisor WATCHES a rail and a shunt regulator is a two-terminal reference. Both carry
