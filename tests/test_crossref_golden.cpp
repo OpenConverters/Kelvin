@@ -126,8 +126,8 @@ TEST_CASE("evaluate_params: Isat %-drop normalization avoids false fail", "[cros
                       {{"percent_drop", 30.0}, {"current", 4.7}}})}};
 
     auto verdict = [](const json& o, const json& s) {
-        for (const auto& [name, v] : evaluate_params("magnetic", o, s))
-            if (name == "saturation_current") return std::string(v);
+        for (const auto& r : evaluate_params("magnetic", o, s))
+            if (r.key == "saturation_current") return r.verdict;
         return std::string("<absent>");
     };
 
@@ -153,13 +153,42 @@ TEST_CASE("evaluate_params: Isat %-drop normalization avoids false fail", "[cros
     REQUIRE(verdict(orig_20, sub_tiny) == "fail");
 }
 
+// UNVERIFIED is the honest verdict when the substitute's record carries nothing to
+// compare — but on an exclude_missing_sub spec it is ALSO a disqualification, and a
+// caller reading verdicts alone cannot tell that apart from an ordinary gap. The ranker
+// reads the flag off ParamOutcome directly; evaluate_params has to hand it out.
+TEST_CASE("evaluate_params reports the disqualification, not just the verdict",
+          "[crossref][params]") {
+    auto esr_of = [](const json& o, const json& s) {
+        for (const auto& r : evaluate_params("capacitor", o, s))
+            if (r.key == "esr") return r;
+        return kelvin::crossref::ParamReport{"<absent>", "<absent>", false};
+    };
+
+    // Original states ESR, substitute's record has none: UNVERIFIED *and* disqualifying.
+    const auto missing = esr_of(json{{"esr", 0.1}}, json{{"ripple_current", 1.0}});
+    REQUIRE(missing.verdict == "unverified");
+    REQUIRE(missing.missing_required_sub);
+
+    // The mirror image is a plain gap, not a disqualification: nothing on the original
+    // side to fall short of, so no candidate is being let through unchecked.
+    const auto no_original = esr_of(json{{"ripple_current", 1.0}}, json{{"esr", 0.1}});
+    REQUIRE(no_original.verdict == "unverified");
+    REQUIRE_FALSE(no_original.missing_required_sub);
+
+    // A real comparison never sets it, whichever way it lands.
+    REQUIRE_FALSE(esr_of(json{{"esr", 0.1}}, json{{"esr", 0.1}}).missing_required_sub);
+    REQUIRE_FALSE(esr_of(json{{"esr", 0.1}}, json{{"esr", 0.30}}).missing_required_sub);
+    REQUIRE(esr_of(json{{"esr", 0.1}}, json{{"esr", 0.30}}).verdict == "fail");
+}
+
 TEST_CASE("golden: evaluate_params matches Python", "[crossref][golden]") {
     const json g = load_golden();
     for (const auto& c : g.at("evaluate_params")) {
         auto results = evaluate_params(c.at("category").get<std::string>(), c.at("original"),
                                        c.at("substitute"));
         json got = json::object();
-        for (const auto& [name, verdict] : results) got[name] = verdict;
+        for (const auto& r : results) got[r.key] = r.verdict;
         INFO("category=" << c.at("category") << " got=" << got << " expect=" << c.at("expect"));
         REQUIRE(got == c.at("expect"));
     }

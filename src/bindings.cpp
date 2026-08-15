@@ -132,9 +132,11 @@ PYBIND11_MODULE(PyKelvin, m) {
         "evaluate_params",
         [](const std::string& category, const json& original, const json& substitute) -> json {
             json out = json::array();
-            for (const auto& [name, verdict] :
+            for (const auto& r :
                  kelvin::crossref::evaluate_params(category, original, substitute))
-                out.push_back({{"name", name}, {"verdict", verdict}});
+                out.push_back({{"name", r.key},
+                               {"verdict", r.verdict},
+                               {"missing_required_sub", r.missing_required_sub}});
             return out;
         },
         py::arg("category"), py::arg("original"), py::arg("substitute"));

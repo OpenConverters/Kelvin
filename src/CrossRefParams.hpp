@@ -463,17 +463,31 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
     return kEmpty;
 }
 
-// One {name, verdict} per parameter that has data on at least one side.
-inline std::vector<std::pair<std::string, std::string>> evaluate_params(
-    const std::string& category, const nlohmann::json& orig, const nlohmann::json& sub) {
-    std::vector<std::pair<std::string, std::string>> out;
+// One report per parameter that has data on at least one side.
+//
+// `missing_required_sub` rides along rather than being folded into the verdict for the
+// reason ParamOutcome gives: the verdict vocabulary must not claim a comparison that had
+// no substitute-side operand. But a caller that reports verdicts and NOTHING else has no
+// way to see the disqualification either, and UNVERIFIED on its own reads as benign — so
+// the flag has to reach whoever is deciding, not just whoever is printing.
+struct ParamReport {
+    std::string key;
+    std::string verdict;
+    bool missing_required_sub = false;
+};
+
+inline std::vector<ParamReport> evaluate_params(const std::string& category,
+                                                const nlohmann::json& orig,
+                                                const nlohmann::json& sub) {
+    std::vector<ParamReport> out;
     for (const ParamSpec& spec : params_for(category)) {
         bool has_data = detail::present(orig, spec.key) || detail::present(sub, spec.key);
         if (spec.key == "saturation_current")  // a multi-point table counts as data too
             has_data = has_data || detail::present(orig, "saturation_points") ||
                        detail::present(sub, "saturation_points");
         if (!has_data) continue;
-        out.emplace_back(spec.key, compare_param(spec, orig, sub).verdict);
+        const ParamOutcome outcome = compare_param(spec, orig, sub);
+        out.push_back({spec.key, outcome.verdict, outcome.missing_required_sub});
     }
     return out;
 }
