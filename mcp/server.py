@@ -275,12 +275,15 @@ def _row_candidate(row: dict) -> dict:
 # link this server hands out has been telling Würth that Altium sent the
 # visitor — including the ones an engineer clicks in a chat.
 #
-# The tag belongs to the SURFACE, not to the data, which is why it is retagged
-# here on the way out rather than rewritten in the catalogue: one shared file
-# feeds the Kelvin website, this server and whatever else reads it, and they are
-# not the same visitor. `mcp` is the honest default for "an MCP client asked";
-# a deployment that knows better says so — Moebius sets `moeb`.
-LINK_TAG = os.environ.get("KELVIN_LINK_TAG", "mcp").strip().lstrip("?")
+# The tag is applied on the way out rather than rewritten in the catalogue,
+# because one shared NDJSON feeds the Kelvin website, this server and whatever
+# else reads it — retagging the file would put one surface's label on all of
+# them, and it would come back with the next import anyway.
+#
+# `oc` — OpenConverters — is the default: that is who the referral is, whichever
+# of our surfaces the engineer clicked from. KELVIN_LINK_TAG overrides it for a
+# deployment that wants to be counted separately.
+LINK_TAG = os.environ.get("KELVIN_LINK_TAG", "oc").strip().lstrip("?")
 _WE_LINK = re.compile(r"(https://(?:www\.)?we-online\.com/redexpert/[^\s\"']*)")
 
 
