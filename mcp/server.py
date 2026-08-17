@@ -29,6 +29,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -265,6 +266,44 @@ def _row_candidate(row: dict) -> dict:
                        **internals}, specs)
 
 
+# The source tag on a Würth link, and what it is FOR.
+#
+# The catalogue's datasheet and distributor URLs arrive as
+# `we-online.com/redexpert/spec/744232090?ad`. That query string is not
+# decoration: Würth's own reverse proxy reads it (`njs/bet.js` sends it on as
+# `{s: "<tag>"}` to their analytics), and `ad` means Altium Designer. So every
+# link this server hands out has been telling Würth that Altium sent the
+# visitor — including the ones an engineer clicks in a chat.
+#
+# The tag belongs to the SURFACE, not to the data, which is why it is retagged
+# here on the way out rather than rewritten in the catalogue: one shared file
+# feeds the Kelvin website, this server and whatever else reads it, and they are
+# not the same visitor. `mcp` is the honest default for "an MCP client asked";
+# a deployment that knows better says so — Moebius sets `moeb`.
+LINK_TAG = os.environ.get("KELVIN_LINK_TAG", "mcp").strip().lstrip("?")
+_WE_LINK = re.compile(r"(https://(?:www\.)?we-online\.com/redexpert/[^\s\"']*)")
+
+
+def _retag(url: str) -> str:
+    """One Würth link, carrying this surface's source tag instead of the data's."""
+    base = url.split("?", 1)[0].split("#", 1)[0]
+    return f"{base}?{LINK_TAG}" if LINK_TAG else base
+
+
+def _retagged(value):
+    """Every Würth link in a payload, retagged. Walks rather than reaching for known
+    fields: the URLs sit inside the engine's own records (`manufacturerInfo.datasheetUrl`,
+    `distributorsInfo[].link`, and any envelope carrying them), and a field list here would
+    silently miss the next place the catalogue puts one."""
+    if isinstance(value, str):
+        return _WE_LINK.sub(lambda m: _retag(m.group(1)), value)
+    if isinstance(value, dict):
+        return {k: _retagged(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_retagged(v) for v in value]
+    return value
+
+
 def _result(summary: str, payload: dict) -> CallToolResult:
     """Two channels: a compact digest for the model, the payload for a widget.
 
@@ -272,9 +311,13 @@ def _result(summary: str, payload: dict) -> CallToolResult:
     serialises the WHOLE payload into `content` — a 200-row catalogue page into
     the context window on one search. Every tool here builds its result
     explicitly, which FastMCP passes through verbatim.
+
+    Both channels are retagged, because the model quotes the URL into its answer
+    and the widget renders it as a link: tagging only one of them would leave the
+    wrong attribution on whichever the engineer actually clicked.
     """
-    return CallToolResult(content=[TextContent(type="text", text=summary)],
-                          structuredContent=payload)
+    return CallToolResult(content=[TextContent(type="text", text=_retagged(summary))],
+                          structuredContent=_retagged(payload))
 
 
 def _eng(value, unit: str = "") -> str:
