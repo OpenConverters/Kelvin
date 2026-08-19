@@ -94,6 +94,11 @@ if (NOT EMSCRIPTEN AND KELVIN_TOP)
     # ABT #806: a part number in, a SPICE model card out, or a refusal.
     add_executable(kelvin-spice-model tools/kelvin_spice_model_main.cpp)
     target_link_libraries(kelvin-spice-model PRIVATE kelvin)
+
+    # ABT #822: refdes + part number in, component values out — for CAD
+    # exports that carry part numbers and no values (Altium ODB++ does).
+    add_executable(kelvin-values tools/kelvin_values_main.cpp)
+    target_link_libraries(kelvin-values PRIVATE kelvin)
 endif()
 
 # ---- Catch2 tests ----------------------------------------------------------
