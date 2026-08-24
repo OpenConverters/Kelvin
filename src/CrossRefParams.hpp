@@ -51,6 +51,13 @@ inline const ClassRank& yes_no_rank() {  // CLASS_MATCH (rail-to-rail)
     static const ClassRank R = {{"yes", 1}, {"no", 0}};
     return R;
 }
+// CLASS_MATCH over a JSON boolean: detail::jstr dumps true/false, so the rank
+// map is keyed on those words. Used for AEC-Q200 qualification, where an
+// equal-or-better substitute is one that is at least as qualified.
+inline const ClassRank& automotive_rank() {
+    static const ClassRank R = {{"true", 1}, {"false", 0}};
+    return R;
+}
 
 inline std::string norm_class(const std::string& v) {
     std::string out;
@@ -392,6 +399,13 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
         {"srf", D::Higher, 0.8, std::nullopt, false, false, nullptr},
         {"dcr", D::Lower, 1.3, std::nullopt, false, false, nullptr},
         {"rated_current", D::Higher, 0.9, std::nullopt, false, false, nullptr},
+        // Qualification grade. Two beads can agree on every parameter above and
+        // still not be interchangeable: an AEC-Q200 part and a general-grade one
+        // differ in qualification, not in physics, and the grade is often the
+        // whole reason a specific part is on the BOM. A downgrade FAILs; an
+        // unknown grade on the substitute is UNVERIFIED, which the caller treats
+        // as demoting rather than passing (ABT #884).
+        {"automotive", D::ClassMatch, 0.0, std::nullopt, false, false, &automotive_rank()},
     };
     static const std::vector<ParamSpec> kConnector = {
         {"family", D::ExactMatch, 0.0, std::nullopt, false, true, &connector_family_rank()},
