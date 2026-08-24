@@ -7,7 +7,7 @@
    "substitute": 3.3e-07,
    "expect": {
     "verdict": "fail",
-    "penalty": 191.1541234647
+    "penalty": 191.0398066371
    }
   },
   {
@@ -25,7 +25,7 @@
    "substitute": 1.2e-06,
    "expect": {
     "verdict": "warn",
-    "penalty": 0.2355660713
+    "penalty": 0.1212492436
    }
   },
   {
@@ -34,7 +34,7 @@
    "substitute": 1.8e-06,
    "expect": {
     "verdict": "warn",
-    "penalty": 0.174022754
+    "penalty": 0.0851192288
    }
   },
   {
@@ -43,7 +43,7 @@
    "substitute": 2e-06,
    "expect": {
     "verdict": "fail",
-    "penalty": 1.2392623038
+    "penalty": 1.1503587787
    }
   },
   {
@@ -52,7 +52,7 @@
    "substitute": 1e-05,
    "expect": {
     "verdict": "fail",
-    "penalty": 17.045304431
+    "penalty": 16.9564009059
    }
   },
   {

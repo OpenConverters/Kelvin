@@ -54,9 +54,15 @@ inline double over_dimensioning_penalty(std::optional<double> required,
 
 // HIGHER_BETTER / LOWER_BETTER: surplus side passes (capped over-dim penalty),
 // deficit side is a steep exponential, WARN then FAIL past the gate.
+// `pass_factor` is the shortfall a directional value may have and still PASS.
+// Without it ANY deficit warned: a 600 ohm bead offered for a 618 ohm one — the
+// same 600 ohm-class part, 3% apart only because one record stores a measured
+// curve point and the other a datasheet nominal — was reported as "deviates on
+// value" and dragged the row to `partial`. 1.0 keeps the old behaviour.
 inline ScoreResult score_directional(std::optional<double> original,
                                      std::optional<double> substitute, Mode mode,
-                                     double warn_factor, double gate_factor) {
+                                     double warn_factor, double gate_factor,
+                                     double pass_factor = 1.0) {
     if (!original && !substitute) return {0.0, UNVERIFIED, std::nullopt};
     if (!substitute) return {0.0, UNVERIFIED, std::nullopt};
     if (!original) return {0.0, UNVERIFIED, std::nullopt};
@@ -73,6 +79,13 @@ inline ScoreResult score_directional(std::optional<double> original,
     }
     double deficit = -surplus;
     double penalty = kKDef * (std::exp(deficit * kSDef) - 1.0);
+    double pass_edge = (pass_factor > 0.0 && pass_factor < 1.0) ? std::fabs(std::log(pass_factor))
+                                                               : 0.0;
+    if (deficit <= pass_edge) {
+        // Inside the part's own tolerance band: a real match, still carrying a
+        // small penalty so the ranker prefers the closer candidate.
+        return {penalty, PASS, ratio};
+    }
     double warn_edge = (warn_factor != 0.0) ? std::fabs(std::log(warn_factor)) : 0.0;
     double gate_edge = (gate_factor != 0.0) ? std::fabs(std::log(gate_factor)) : warn_edge;
     std::string verdict = (deficit <= gate_edge) ? WARN : FAIL;
@@ -112,6 +125,8 @@ struct PrimaryValueSpec {
     // The ORIGINAL's stated tolerance narrows the PASS window (narrow_to_tolerance).
     // Set only where the tolerance IS the value's guarantee.
     bool tolerance_bounds_pass = false;
+    // Directional modes only: the shortfall that still PASSes (1.0 = none).
+    double pass_factor = 1.0;
 };
 
 // A drop-in on VALUE must satisfy two independent things, and the tight window
@@ -149,11 +164,17 @@ inline bool primary_value_spec(const std::string& category, PrimaryValueSpec& ou
         return true;
     }
     if (category == "magnetic") {
-        out = {Mode::Range, 0.90, 1.10, 0.80, 1.25, 0.9, 0.8};
+        // +/-15% tight: inductor tolerance is typically +/-20%, so a 3% shift
+        // is well inside the band the board was designed around.
+        out = {Mode::Range, 0.85, 1.15, 0.80, 1.25, 0.9, 0.8};
         return true;
     }
     if (category == "chipBead") {
-        out = {Mode::HigherBetter, 1.0, 1.0, 1.0, 1.0, 0.8, 0.7};
+        // pass_factor 0.85: impedance within 15% of the original IS the same
+        // bead. Bead impedance is a +/-25% part parameter and the two sides
+        // are not even measured the same way (curve sample vs datasheet
+        // nominal), so warning below 15% reports our bookkeeping, not the part.
+        out = {Mode::HigherBetter, 1.0, 1.0, 1.0, 1.0, 0.8, 0.7, false, 0.85};
         return true;
     }
     return false;
@@ -175,7 +196,8 @@ inline ScoreResult score_primary_value(
         return score_range(original, substitute, spec.tight_lo, spec.tight_hi, spec.accept_lo,
                            spec.accept_hi);
     }
-    return score_directional(original, substitute, spec.mode, spec.warn_factor, spec.gate_factor);
+    return score_directional(original, substitute, spec.mode, spec.warn_factor,
+                             spec.gate_factor, spec.pass_factor);
 }
 
 }  // namespace kelvin::crossref
