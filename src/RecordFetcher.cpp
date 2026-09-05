@@ -5,12 +5,50 @@
 
 namespace kelvin {
 
-FileRecordFetcher::FileRecordFetcher(std::string path)
+FileRecordFetcher::FileRecordFetcher(std::string path, uint64_t expected_source_size)
     : path_(std::move(path)), stream_(path_, std::ios::binary) {
     if (!stream_) throw std::runtime_error("kelvin: record source not found: " + path_);
+    struct stat st {};
+    if (::stat(path_.c_str(), &st) == 0) {
+        dev_ = static_cast<uint64_t>(st.st_dev);
+        ino_ = static_cast<uint64_t>(st.st_ino);
+        size_at_open_ = static_cast<uint64_t>(st.st_size);
+        mtime_at_open_ = static_cast<int64_t>(st.st_mtime);
+    }
+    // The shard records how big its source was. A different size is not a suspicion, it is
+    // proof the index cannot address this file — and it is far better caught here, once,
+    // than as a mangled record later.
+    if (expected_source_size != 0 && size_at_open_ != 0 &&
+        size_at_open_ != expected_source_size)
+        throw std::runtime_error(
+            "kelvin: " + path_ + " is " + std::to_string(size_at_open_) +
+            " bytes but its index was built against " + std::to_string(expected_source_size) +
+            ". The catalogue changed after the shard was built; rebuild the shard.");
+}
+
+void FileRecordFetcher::refuse_if_source_moved() {
+    if (ino_ == 0) return;                      // could not stat at open; nothing to compare
+    struct stat st {};
+    if (::stat(path_.c_str(), &st) != 0) return;  // vanished mid-run: the read below will say so
+    if (static_cast<uint64_t>(st.st_ino) != ino_ ||
+        static_cast<uint64_t>(st.st_dev) != dev_) {
+        // REPLACED, not rewritten: the file was renamed over and our descriptor still holds
+        // the old inode. What we read is exactly what the shard indexed, so this is SAFE and
+        // deliberately not an error — refusing here would fail a correct read.
+        return;
+    }
+    if (static_cast<uint64_t>(st.st_size) != size_at_open_ ||
+        static_cast<int64_t>(st.st_mtime) != mtime_at_open_)
+        throw std::runtime_error(
+            "kelvin: " + path_ + " was rewritten IN PLACE while it was being read (was " +
+            std::to_string(size_at_open_) + " bytes, now " + std::to_string(st.st_size) +
+            "). Every byte offset from the index is now meaningless against it. This is the "
+            "quiet one: a span whose bytes happen to parse would otherwise have returned a "
+            "DIFFERENT part as the right one.");
 }
 
 json FileRecordFetcher::fetch(uint64_t offset, uint32_t length) {
+    refuse_if_source_moved();
     // Seek + read only the winner's span (top-N per select => a handful of small reads); no
     // whole-file load, so this is cheap even against capacitors.ndjson (292 MB).
     stream_.clear();

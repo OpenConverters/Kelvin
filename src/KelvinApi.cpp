@@ -328,7 +328,7 @@ json Engine::select(const std::string& category, const json& req, const json& op
         if (auto s = opt_str(options, "tiebreaker")) tb = connector_tiebreaker_from_string(*s);
         const Shard<ConnectorRow>& sh = connector_shard();
         std::optional<FileRecordFetcher> fetch;
-        if (include_env) fetch.emplace(ndjson_path(Family::Connector));
+        if (include_env) fetch.emplace(ndjson_path(Family::Connector), sh.meta.source_size);
         return select_connector(sh, c, tb, max_cand, include_env ? &*fetch : nullptr, mfr);
     }
     if (f == Family::Mosfet) {
@@ -356,7 +356,7 @@ json Engine::select(const std::string& category, const json& req, const json& op
                                        : MosfetTiebreaker::LowestRdsOn;
         const Shard<MosfetRow>& sh = mosfet_shard();
         std::optional<FileRecordFetcher> fetch;
-        if (include_env) fetch.emplace(ndjson_path(Family::Mosfet));
+        if (include_env) fetch.emplace(ndjson_path(Family::Mosfet), sh.meta.source_size);
         return select_mosfet(sh, c, tb, max_cand, include_env ? &*fetch : nullptr, mfr);
     }
     if (f == Family::Diode) {
@@ -367,7 +367,7 @@ json Engine::select(const std::string& category, const json& req, const json& op
         if (auto s = opt_str(options, "tiebreaker")) tb = diode_tiebreaker_from_string(*s);
         const Shard<DiodeRow>& sh = diode_shard();
         std::optional<FileRecordFetcher> fetch;
-        if (include_env) fetch.emplace(ndjson_path(Family::Diode));
+        if (include_env) fetch.emplace(ndjson_path(Family::Diode), sh.meta.source_size);
         return select_diode(sh, c, tb, max_cand, include_env ? &*fetch : nullptr, mfr);
     }
     if (f == Family::Capacitor) {
@@ -385,7 +385,7 @@ json Engine::select(const std::string& category, const json& req, const json& op
         if (auto s = opt_str(options, "tiebreaker")) tb = capacitor_tiebreaker_from_string(*s);
         const Shard<CapacitorRow>& sh = capacitor_shard();
         std::optional<FileRecordFetcher> fetch;
-        if (include_env) fetch.emplace(ndjson_path(Family::Capacitor));
+        if (include_env) fetch.emplace(ndjson_path(Family::Capacitor), sh.meta.source_size);
         return select_capacitor(sh, c, tb, max_cand, include_env ? &*fetch : nullptr, mfr);
     }
     if (f == Family::Resistor) {
@@ -397,7 +397,7 @@ json Engine::select(const std::string& category, const json& req, const json& op
         if (auto v = opt_num(options, "maxTolerance")) c.max_tolerance = *v;
         const Shard<ResistorRow>& sh = resistor_shard();
         std::optional<FileRecordFetcher> fetch;
-        if (include_env) fetch.emplace(ndjson_path(Family::Resistor));
+        if (include_env) fetch.emplace(ndjson_path(Family::Resistor), sh.meta.source_size);
         return select_resistor(sh, c, max_cand, include_env ? &*fetch : nullptr, mfr);
     }
     if (f == Family::Igbt) {
@@ -407,7 +407,7 @@ json Engine::select(const std::string& category, const json& req, const json& op
         if (auto s = opt_str(options, "tiebreaker")) tb = igbt_tiebreaker_from_string(*s);
         const Shard<IgbtRow>& sh = igbt_shard();
         std::optional<FileRecordFetcher> fetch;
-        if (include_env) fetch.emplace(ndjson_path(Family::Igbt));
+        if (include_env) fetch.emplace(ndjson_path(Family::Igbt), sh.meta.source_size);
         return select_igbt(sh, c, tb, max_cand, include_env ? &*fetch : nullptr, mfr);
     }
     if (f == Family::Bjt) {
@@ -417,7 +417,7 @@ json Engine::select(const std::string& category, const json& req, const json& op
         if (auto s = opt_str(options, "tiebreaker")) tb = bjt_tiebreaker_from_string(*s);
         const Shard<BjtRow>& sh = bjt_shard();
         std::optional<FileRecordFetcher> fetch;
-        if (include_env) fetch.emplace(ndjson_path(Family::Bjt));
+        if (include_env) fetch.emplace(ndjson_path(Family::Bjt), sh.meta.source_size);
         return select_bjt(sh, c, tb, max_cand, include_env ? &*fetch : nullptr, mfr);
     }
     if (f == Family::Varistor) {
@@ -427,7 +427,7 @@ json Engine::select(const std::string& category, const json& req, const json& op
         if (auto s = opt_str(options, "tiebreaker")) tb = varistor_tiebreaker_from_string(*s);
         const Shard<VaristorRow>& sh = varistor_shard();
         std::optional<FileRecordFetcher> fetch;
-        if (include_env) fetch.emplace(ndjson_path(Family::Varistor));
+        if (include_env) fetch.emplace(ndjson_path(Family::Varistor), sh.meta.source_size);
         return select_varistor(sh, c, tb, max_cand, include_env ? &*fetch : nullptr, mfr);
     }
     if (f == Family::Magnetic) {
@@ -444,7 +444,7 @@ json Engine::select(const std::string& category, const json& req, const json& op
         if (auto r = opt_num(options, "rmsCurrent")) c.rms_current = r;
         const Shard<MagneticRow>& sh = magnetic_shard();
         std::optional<FileRecordFetcher> fetch;
-        if (include_env) fetch.emplace(ndjson_path(Family::Magnetic));
+        if (include_env) fetch.emplace(ndjson_path(Family::Magnetic), sh.meta.source_size);
         return select_magnetic(sh, c, max_cand, include_env ? &*fetch : nullptr, mfr);
     }
     // controller
@@ -461,7 +461,7 @@ json Engine::select(const std::string& category, const json& req, const json& op
         c.integrated_fet = options.at("integratedFet").get<bool>();
     const Shard<ControllerRow>& sh = controller_shard();
     std::optional<FileRecordFetcher> fetch;
-    if (include_env) fetch.emplace(ndjson_path(Family::Controller));
+    if (include_env) fetch.emplace(ndjson_path(Family::Controller), sh.meta.source_size);
     return select_controller(sh, c, max_cand, include_env ? &*fetch : nullptr, mfr);
 }
 

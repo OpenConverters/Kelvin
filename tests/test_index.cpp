@@ -1,7 +1,9 @@
 // [index] Round-trip, counts, DataError, and incremental (tail) build equivalence.
 #include <filesystem>
 #include <fstream>
+#include <chrono>
 #include <string>
+#include <thread>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -518,5 +520,43 @@ TEST_CASE("index: a record span that is not a record boundary says so", "[index]
     REQUIRE_THROWS_WITH(fetch.fetch(20, static_cast<uint32_t>(a.size() - 20)),
                         Catch::Matchers::ContainsSubstring("does not match its source") &&
                         Catch::Matchers::ContainsSubstring("byte 20"));
+    fs::remove(path);
+}
+
+TEST_CASE("index: a source that changed size since the shard was built is refused at open",
+          "[index]") {
+    // The shard records how big its source was. A different size is proof — not suspicion —
+    // that the offsets cannot address this file, and it is far better caught once at open
+    // than as a mangled record later (ABT #1108).
+    const std::string path = tmp_path("moved.ndjson");
+    write_file(path, mosfet_line("M1", 100, 10, 0.01, 20e-9) + "\n");
+    Shard<MosfetRow> s = build_mosfet_shard(path);
+    const uint64_t built_against = s.meta.source_size;
+
+    CHECK_NOTHROW(FileRecordFetcher(path, built_against));      // unchanged: fine
+
+    write_file(path, mosfet_line("M1", 100, 10, 0.01, 20e-9) + "\n" +
+                     mosfet_line("M2", 200, 20, 0.02, 40e-9) + "\n");
+    REQUIRE_THROWS_WITH(FileRecordFetcher(path, built_against),
+                        Catch::Matchers::ContainsSubstring("its index was built against"));
+    fs::remove(path);
+}
+
+TEST_CASE("index: a source rewritten IN PLACE mid-read is refused", "[index]") {
+    // The dangerous case: not a parse error but a SILENT one. A span whose bytes happen to
+    // parse returns a different part as the right one. Seen for real — another session
+    // rewrote a 632 MB catalogue while a 36-minute suite was reading it (ABT #1108).
+    const std::string path = tmp_path("inplace.ndjson");
+    const std::string a = mosfet_line("M1", 100, 10, 0.01, 20e-9);
+    write_file(path, a + "\n" + mosfet_line("M2", 200, 20, 0.02, 40e-9) + "\n");
+
+    FileRecordFetcher fetch(path);
+    CHECK(fetch.fetch(0, static_cast<uint32_t>(a.size())).is_object());
+
+    // rewrite the SAME inode with different content
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));   // mtime has 1 s resolution
+    write_file(path, mosfet_line("Z9", 600, 60, 0.06, 90e-9) + "\n" + a + "\n");
+    REQUIRE_THROWS_WITH(fetch.fetch(0, static_cast<uint32_t>(a.size())),
+                        Catch::Matchers::ContainsSubstring("rewritten IN PLACE"));
     fs::remove(path);
 }
