@@ -2,7 +2,11 @@
 
 #include <cstring>
 #include <cstdio>
+#ifdef _WIN32
+#include <process.h>          // _getpid: MSVC has no <unistd.h>
+#else
 #include <unistd.h>
+#endif
 #include <fstream>
 #include <functional>
 #include <unordered_map>
@@ -680,7 +684,11 @@ void write_bytes(const std::string& path, const std::string& bytes) {
     //
     // The temp name carries the pid so two writers cannot collide on it either, and
     // it sits in the SAME directory so the rename cannot cross a filesystem.
+#ifdef _WIN32
+    const std::string tmp = path + ".tmp." + std::to_string(::_getpid());
+#else
     const std::string tmp = path + ".tmp." + std::to_string(::getpid());
+#endif
     {
         std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
         if (!f) throw std::runtime_error("kelvin: cannot open shard for writing: " + tmp);
