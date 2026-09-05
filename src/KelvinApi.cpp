@@ -3,6 +3,7 @@
 
 #include <sys/stat.h>
 
+#include <cstdio>
 #include <functional>
 #include <initializer_list>
 #include <iostream>
@@ -80,7 +81,22 @@ std::string Engine::ndjson_path(Family f) const {
     return data_dir_ + "/" + family_file(f);
 }
 std::string Engine::shard_path(Family f) const {
-    return cache_dir_ + "/" + std::string(family_name(f)) + ".kidx";
+    // The DATA DIR is part of the cache key, not just the family. Without it two
+    // Engines over different catalogues share one cache file: whichever ran last
+    // overwrote <family>.kidx, and the other then loaded a shard whose byte offsets
+    // address a DIFFERENT file. That surfaced as a JSON parse error from the middle
+    // of a record ("last read: 'c'"), naming neither file nor offset, in whichever
+    // test happened to run second — a genuinely order-dependent corruption of the
+    // record fetch. The staleness check cannot save this: it rebuilds for the caller
+    // that notices, and the rebuild is what invalidates the other one's shard.
+    //
+    // Deployed shards are NOT affected: tools/kelvin_index_main.cpp writes those, and
+    // still writes <family>.kidx, which is what the manifest and the SPA fetch.
+    uint64_t h = 1469598103934665603ULL;                       // FNV-1a 64
+    for (unsigned char c : data_dir_) { h ^= c; h *= 1099511628211ULL; }
+    char tag[17];
+    std::snprintf(tag, sizeof tag, "%016llx", static_cast<unsigned long long>(h));
+    return cache_dir_ + "/" + std::string(family_name(f)) + "-" + tag + ".kidx";
 }
 
 // Generic load-or-build for one family. Persists to cache_dir_ when set; rebuilds (incremental

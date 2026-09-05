@@ -1,6 +1,8 @@
 #include "Index.hpp"
 
 #include <cstring>
+#include <cstdio>
+#include <unistd.h>
 #include <fstream>
 #include <functional>
 #include <unordered_map>
@@ -666,9 +668,30 @@ std::string serialize_shard(const Shard<ConnectorRow>& s) { return serialize_imp
 
 namespace {
 void write_bytes(const std::string& path, const std::string& bytes) {
-    std::ofstream f(path, std::ios::binary | std::ios::trunc);
-    if (!f) throw std::runtime_error("kelvin: cannot open shard for writing: " + path);
-    f.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    // Write beside the target, then RENAME. Truncating the real file in place made
+    // every reader of a shared cache directory a hazard to every writer: a second
+    // process (another test run, another session on the same box) that opened the
+    // shard mid-write got a truncated one, whose byte offsets then addressed the
+    // NDJSON at nonsense positions. The failure surfaced far away, as a JSON parse
+    // error from the middle of a record, in whichever test happened to be running —
+    // reproducible only in the sense that something always broke, never the same
+    // thing twice. rename() is atomic on POSIX: a reader sees the whole old file or
+    // the whole new one.
+    //
+    // The temp name carries the pid so two writers cannot collide on it either, and
+    // it sits in the SAME directory so the rename cannot cross a filesystem.
+    const std::string tmp = path + ".tmp." + std::to_string(::getpid());
+    {
+        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
+        if (!f) throw std::runtime_error("kelvin: cannot open shard for writing: " + tmp);
+        f.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        if (!f) { std::remove(tmp.c_str()); throw std::runtime_error(
+            "kelvin: short write building shard: " + tmp); }
+    }
+    if (std::rename(tmp.c_str(), path.c_str()) != 0) {
+        std::remove(tmp.c_str());
+        throw std::runtime_error("kelvin: cannot install shard at " + path);
+    }
 }
 }  // namespace
 

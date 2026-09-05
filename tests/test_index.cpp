@@ -5,10 +5,12 @@
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
 #include <nlohmann/json.hpp>
 
 #include "Browse.hpp"
 #include "Index.hpp"
+#include "RecordFetcher.hpp"
 
 using namespace kelvin;
 namespace fs = std::filesystem;
@@ -459,5 +461,62 @@ TEST_CASE("index: diode breakdown-voltage band reaches the shard row and round-t
     REQUIRE(rows[0].at("vz_max").get<double>() == 3.64);
     REQUIRE(rows[0].at("vz_tolerance").get<double>() == Catch::Approx(0.0111111).epsilon(1e-4));
     REQUIRE(rows[2].at("vz_tolerance").is_null());
+    fs::remove(path);
+}
+
+// ---------------------------------------------------------------------------
+// The shard cache is a SHARED directory (KELVIN_INDEX_DIR, default ~/.kelvin/index),
+// and everything below is about two users of it not corrupting each other. Both bugs
+// surfaced the same way and from a long distance: a JSON parse error raised while
+// fetching a selected part's full record, naming neither file nor offset, in whichever
+// test happened to be running when another process was building.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("index: a shard is installed atomically, never truncated in place", "[index]") {
+    // Truncating the real file left a window in which any reader — another test run,
+    // another session on the same box — saw a partial shard whose byte offsets then
+    // addressed the NDJSON at nonsense positions.
+    const std::string path = tmp_path("atomic.ndjson");
+    const std::string shard = tmp_path("atomic.kidx");
+    fs::remove(shard);
+    write_file(path, mosfet_line("M1", 100, 10, 0.01, 20e-9) + "\n" +
+                     mosfet_line("M2", 200, 20, 0.02, 40e-9) + "\n");
+    Shard<MosfetRow> s = build_mosfet_shard(path);
+    write_shard(shard, s);
+    const auto first = fs::file_size(shard);
+    REQUIRE(first > 0);
+
+    // Rewrite it repeatedly; the installed file is complete and loadable after each,
+    // and no .tmp is left lying around.
+    for (int i = 0; i < 3; ++i) {
+        write_shard(shard, s);
+        REQUIRE(fs::file_size(shard) == first);
+        Shard<MosfetRow> back = read_mosfet_shard(shard);
+        CHECK(back.rows.size() == s.rows.size());
+    }
+    int strays = 0;
+    for (const auto& e : fs::directory_iterator(fs::path(shard).parent_path()))
+        if (e.path().filename().string().rfind("kelvin_test_atomic.kidx.tmp", 0) == 0) ++strays;
+    CHECK(strays == 0);
+    fs::remove(shard);
+    fs::remove(path);
+}
+
+TEST_CASE("index: a record span that is not a record boundary says so", "[index]") {
+    // A stale index used to reach json::parse with the middle of some other record and
+    // throw "parse error at line 1, column 1 ... last read: 'c'", which names nothing.
+    // Worse, bytes that happened to parse would have returned the WRONG part as the
+    // right one.
+    const std::string path = tmp_path("boundary.ndjson");
+    const std::string a = mosfet_line("M1", 100, 10, 0.01, 20e-9);
+    write_file(path, a + "\n" + mosfet_line("M2", 200, 20, 0.02, 40e-9) + "\n");
+
+    FileRecordFetcher fetch(path);
+    CHECK(fetch.fetch(0, static_cast<uint32_t>(a.size())).is_object());   // the real span works
+
+    // …and a span starting 20 bytes into it is refused, by name.
+    REQUIRE_THROWS_WITH(fetch.fetch(20, static_cast<uint32_t>(a.size() - 20)),
+                        Catch::Matchers::ContainsSubstring("does not match its source") &&
+                        Catch::Matchers::ContainsSubstring("byte 20"));
     fs::remove(path);
 }
