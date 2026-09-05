@@ -729,4 +729,6 @@ bool shard_is_stale(const ShardMeta& meta, const std::string& ndjson_path) {
     return fnv1a64(buf.data(), buf.size()) != meta.content_hash;
 }
 
+uint32_t shard_format_version() { return kFormatVersion; }
+
 }  // namespace kelvin

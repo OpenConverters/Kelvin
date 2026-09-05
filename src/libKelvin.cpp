@@ -12,6 +12,7 @@
 #include <nlohmann/json.hpp>
 
 #include "CrossRef.hpp"
+#include "Index.hpp"
 #include "KelvinApi.hpp"
 #include "Select.hpp"
 
@@ -95,6 +96,10 @@ EMSCRIPTEN_BINDINGS(kelvin) {
     function("cross_reference_string", &cross_reference_string);
     // Browser sourcing (no FS): load prebuilt shard bytes, then select/browse the loaded families.
     function("load_shard", &load_shard);
+    // The shard layout this build reads. The loader puts it in every shard URL,
+    // so a format bump changes the URL and a browser cannot serve back the
+    // previous file from an "immutable, 1 year" cache entry.
+    function("shard_format_version", &kelvin::shard_format_version);
     function("select", &select);
     function("browse", &browse);
 }

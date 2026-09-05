@@ -77,8 +77,25 @@ function emitShard(family, phase) {
   shardEvents.dispatchEvent(new CustomEvent('shard', { detail: { family, phase } }))
 }
 
+// The shard layout this engine build reads, asked of the engine itself so it
+// cannot drift from the C++ constant.
+let _fmtPromise = null
+function shardFormatVersion() {
+  if (!_fmtPromise) _fmtPromise = call('shard_format_version')
+  return _fmtPromise
+}
+
 async function fetchShardBytes(family, buildId) {
-  const url = `${KELVIN_BASE}/${family}.kidx?b=${buildId}`
+  // buildId hashes the serialized ROWS, and nothing else. A format bump that
+  // leaves a family's rows byte-identical therefore leaves its buildId — and so
+  // its URL — unchanged, while .kidx is served "public, immutable" for a year:
+  // the browser answers from its own cache forever and the new engine rejects
+  // what it gets with "unsupported shard format version 10". Seen in production
+  // after v10 -> v11, on every family the bump did not touch. The version the
+  // engine expects is part of what makes a response acceptable, so it belongs
+  // in the URL alongside the build.
+  const fmt = await shardFormatVersion()
+  const url = `${KELVIN_BASE}/${family}.kidx?b=${buildId}&v=${fmt}`
   if (typeof caches === 'undefined') {
     const res = await fetch(url)
     if (!res.ok) throw new Error(`Kelvin shard '${family}' not hosted (HTTP ${res.status})`)
@@ -88,7 +105,8 @@ async function fetchShardBytes(family, buildId) {
   const hit = await cache.match(url)
   if (hit) return new Uint8Array(await hit.arrayBuffer())
   for (const req of await cache.keys()) {            // drop older builds of this family
-    if (req.url.includes(`/${family}.kidx?`) && !req.url.endsWith(`b=${buildId}`)) await cache.delete(req)
+    if (req.url.includes(`/${family}.kidx?`) && req.url !== new Request(url).url)
+      await cache.delete(req)
   }
   const res = await fetch(url)
   if (!res.ok) throw new Error(`Kelvin shard '${family}' not hosted (HTTP ${res.status})`)

@@ -29,6 +29,14 @@ struct DataError : std::runtime_error {
           lineno(ln) {}
 };
 
+// The shard layout this build reads. Exposed because it is part of the CACHE
+// KEY a browser must vary on: a shard's URL is <family>.kidx?b=<buildId>, and
+// buildId hashes the serialized ROWS only — bump the format without changing a
+// row's bytes and the URL is unchanged, so a browser holding the previous file
+// under "immutable, 1 year" never refetches and the new engine refuses it with
+// "unsupported shard format version 10". The version has to travel in the URL.
+uint32_t shard_format_version();
+
 struct ShardMeta {
     Family family{};
     uint64_t source_size = 0;         // bytes of the source NDJSON at build time
