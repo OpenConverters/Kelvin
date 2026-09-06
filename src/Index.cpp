@@ -62,7 +62,13 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // compare and graded six KEMET R46 (X2, 275 VAC) parts 'recommended' / 'drop_in' /
 // 'upgrade' against a WIMA MKP-X1 R mains capacitor, voltage "pass", notes null —
 // a safety-approval downgrade presented as a clean upgrade (ABT #557).
-constexpr uint32_t kFormatVersion = 11;
+// v12 added the capacitor's equivalent series INDUCTANCE (CAS modelParams.ls).
+// It is the one quantity a layout cannot supply and a package name cannot stand
+// in for — inside a single 0402 the real spread is 120 to 1392 pH, so Faraday's
+// "0402 -> 0.4 nH" table was not an approximation of it. 3,544 Wuerth parts
+// carry a per-part figure as of TAS 3589b2e; before that 745 records shared one
+// value and no ceramic had one at all (ABT #1122).
+constexpr uint32_t kFormatVersion = 12;
 
 // Identity of the code that produces rows, so a cached shard can be recognised as
 // having been built by a DIFFERENT extractor than the one running now (ABT #426).
@@ -250,6 +256,7 @@ void row_io(Ar& ar, CapacitorRow& r) {
     ar.str(r.dielectric_code);
     ar.str(r.family);
     ar.dbl(r.esr_frequency);
+    ar.dbl(r.esl);          // v12
     ar.dbl(r.temp_min_c);
     ar.dbl(r.temp_max_c);
     ar.boolean(r.is_production);

@@ -176,6 +176,12 @@ struct CapacitorRow : RowBase {
     // ESR without its measurement frequency is not comparable — a 120 Hz figure
     // and a 100 kHz figure differ severalfold on the same part.
     double esr_frequency = kNaN();
+    // Equivalent series INDUCTANCE, from the record's equivalent circuit
+    // (CAS modelParams.ls). The one number a layout cannot supply and a
+    // package name cannot stand in for: within a single 0402 the real spread
+    // is 120 to 1392 pH, so "0402 -> 0.4 nH" is not an approximation of it.
+    // Faraday resonates every decoupling capacitor on this (ABT #1122).
+    double esl = kNaN();
     double temp_min_c = kNaN();
     double temp_max_c = kNaN();
     bool is_production = false;

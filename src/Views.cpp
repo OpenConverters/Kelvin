@@ -397,6 +397,11 @@ std::optional<CapacitorRow> extract_capacitor(const json& env) {
     // not-stated too, which is what it is: no capacitor has zero ESR.
     auto ripple_o = get_num(*elec, "rippleCurrent");
     auto esr_o = get_num(*elec, "esr");
+    // ESL lives in the equivalent circuit, not the electrical block: CAS
+    // models a capacitor as rs/cs/ls/riso and `ls` IS the series inductance.
+    std::optional<double> esl_o;
+    if (auto mp = di->find("modelParams"); mp != di->end() && mp->is_object())
+        esl_o = get_num(*mp, "ls");
 
     CapacitorRow r;
     r.mpn = *mpn;
@@ -406,6 +411,7 @@ std::optional<CapacitorRow> extract_capacitor(const json& env) {
     r.v_rated = *v_rated;
     if (pos(ripple_o)) r.ripple_current_rms = *ripple_o;
     if (pos(esr_o)) r.esr = *esr_o;
+    if (pos(esl_o)) r.esl = *esl_o;
     // Technology is `part.technology` — a real comparable class
     // ("ceramic-class-2", "aluminum-electrolytic-wet", "film-polypropylene"),
     // present on every record. The family/subType/series chain below is only a

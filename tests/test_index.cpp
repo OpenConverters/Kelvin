@@ -2,11 +2,13 @@
 #include <filesystem>
 #include <fstream>
 #include <chrono>
+#include <cmath>
 #include <string>
 #include <thread>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include <nlohmann/json.hpp>
 
@@ -559,4 +561,52 @@ TEST_CASE("index: a source rewritten IN PLACE mid-read is refused", "[index]") {
     REQUIRE_THROWS_WITH(fetch.fetch(0, static_cast<uint32_t>(a.size())),
                         Catch::Matchers::ContainsSubstring("rewritten IN PLACE"));
     fs::remove(path);
+}
+
+TEST_CASE("index: a capacitor's ESL survives the shard round trip (ABT #1122)",
+          "[index]") {
+    // The one quantity a layout cannot supply and a package name cannot stand in
+    // for: inside a single 0402 the real spread is 120 to 1392 pH, against
+    // Faraday's flat 0.4 nH for every one of them. It lives in the equivalent
+    // circuit (CAS modelParams.ls), not the electrical block.
+    const std::string path = tmp_path("esl.ndjson");
+    const std::string with_ls =
+        R"({"capacitor":{"manufacturerInfo":{"name":"Wurth Elektronik","reference":"885012206077",)"
+        R"("status":"production","datasheetUrl":"https://we-online.com/x.pdf","datasheetInfo":{)"
+        R"("part":{"partNumber":"885012206077","technology":"ceramic-class-2","case":"0402"},)"
+        R"("electrical":{"capacitance":1e-7,"ratedVoltage":50.0},)"
+        R"("modelParams":{"rs":0.0444,"cs":1e-7,"ls":7.99e-10,"riso":5e8}}}}})";
+    const std::string without_ls =
+        R"({"capacitor":{"manufacturerInfo":{"name":"ACME","reference":"NOMODEL1",)"
+        R"("status":"production","datasheetUrl":"https://acme.com/x.pdf","datasheetInfo":{)"
+        R"("part":{"partNumber":"NOMODEL1","technology":"ceramic-class-2","case":"0402"},)"
+        R"("electrical":{"capacitance":1e-7,"ratedVoltage":50.0}}}}})";
+    write_file(path, with_ls + "\n" + without_ls + "\n");
+
+    Shard<CapacitorRow> s = build_capacitor_shard(path);
+    REQUIRE(s.rows.size() == 2);
+    const CapacitorRow* we = nullptr;
+    const CapacitorRow* plain = nullptr;
+    for (const auto& r : s.rows) {
+        if (r.mpn == "885012206077") we = &r;
+        if (r.mpn == "NOMODEL1") plain = &r;
+    }
+    REQUIRE(we);
+    REQUIRE(plain);
+    CHECK_THAT(we->esl, Catch::Matchers::WithinRel(7.99e-10, 1e-9));
+    // absent stays ABSENT, never 0 — a 0 H ESL is a perfect capacitor, and the
+    // package estimate downstream must still be able to tell it had no data
+    CHECK_FALSE(std::isfinite(plain->esl));
+
+    // …and it survives serialisation, which is what the format bump is for
+    const std::string shard = tmp_path("esl.kidx");
+    write_shard(shard, s);
+    Shard<CapacitorRow> back = read_capacitor_shard(shard);
+    REQUIRE(back.rows.size() == 2);
+    for (const auto& r : back.rows) {
+        if (r.mpn == "885012206077") CHECK_THAT(r.esl, Catch::Matchers::WithinRel(7.99e-10, 1e-9));
+        if (r.mpn == "NOMODEL1") CHECK_FALSE(std::isfinite(r.esl));
+    }
+    fs::remove(path);
+    fs::remove(shard);
 }
