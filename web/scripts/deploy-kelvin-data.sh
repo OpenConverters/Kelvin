@@ -74,6 +74,42 @@ if bad:
 print(f"local set consistent for: {', '.join(families)}")
 PY
 
+# 2b. THE MANIFEST ALWAYS SHIPS WHOLE, so a per-family deploy publishes claims about
+#     families it is not sending. On 2026-09-07 a `deploy-kelvin-data.sh resistor` put a
+#     manifest on prod describing local magnetic and capacitor NDJSONs that had never been
+#     uploaded; every record drawer on those two families then died on the client's version
+#     guard (fetchRecord compares Content-Range total against manifest.sourceSize), and the
+#     deploy still said "verified" because it only ever checked the family it was told to
+#     send. So: whatever prod already serves for a family we are NOT sending must equal what
+#     the manifest we are about to publish says about it.
+python3 - "$SRC" "${FAMILIES[@]}" <<'HONEST'
+import json, os, subprocess, sys
+src, deploying = sys.argv[1], set(sys.argv[2:])
+manifest = json.load(open(os.path.join(src, "manifest.json")))["families"]
+others = [f for f in manifest if f not in deploying]
+if not others:
+    print("manifest covers only the families being deployed")
+    sys.exit(0)
+bad = []
+for family in sorted(others):
+    want = manifest[family]["sourceSize"]
+    url = f"https://kelvin.openconverters.com/kelvin/{family}.ndjson"
+    out = subprocess.run(["curl", "-s", "-o", "/dev/null", "-D", "-", "--max-time", "30",
+                          "-r", "0-0", url], capture_output=True, text=True).stdout
+    line = next((l for l in out.splitlines() if l.lower().startswith("content-range")), None)
+    if line is None:
+        continue        # no hosted NDJSON: nothing claims to be readable, nothing to break
+    hosted = int(line.strip().split("/")[-1])
+    if hosted != want:
+        bad.append(f"{family}: prod serves {hosted} B but the manifest about to be published "
+                   f"says {want} B \u2014 deploy {family} too, or its record drawer will fail "
+                   "the client's version guard")
+if bad:
+    sys.exit("REFUSING to publish a manifest that misdescribes families it is not sending:\n  "
+             + "\n  ".join(bad))
+print(f"manifest honest about {len(others)} family(ies) it is not sending")
+HONEST
+
 # 2b. SHARD FORMAT LOCKSTEP. /cache/kelvin is read by TWO independently deployed engines —
 #     kelvin.openconverters.com's kelvin.js and kirchhoff.openconverters.com's, which embeds
 #     its own copy of the same C++ via deps/Kelvin. The shard header carries a format version
