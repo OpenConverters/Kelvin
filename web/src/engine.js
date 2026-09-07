@@ -96,8 +96,15 @@ async function fetchShardBytes(family, buildId, { skipCache = false } = {}) {
   // in the URL alongside the build.
   const fmt = await shardFormatVersion()
   const url = `${KELVIN_BASE}/${family}.kidx?b=${buildId}&v=${fmt}`
+  // `.kidx` is served public, immutable for a year, so the browser's OWN http
+  // cache will answer this URL for a year too — including with bytes that were
+  // stored under it while the wrong file was being served. Clearing Cache
+  // Storage does not touch that copy: only `cache: 'reload'` goes past it. A
+  // guard that can detect a poisoned shard but not replace it just leaves the
+  // catalogue broken with a good explanation.
+  const init = skipCache ? { cache: 'reload' } : undefined
   if (typeof caches === 'undefined') {
-    const res = await fetch(url)
+    const res = await fetch(url, init)
     if (!res.ok) throw new Error(`Kelvin shard '${family}' not hosted (HTTP ${res.status})`)
     return new Uint8Array(await res.arrayBuffer())
   }
@@ -109,7 +116,7 @@ async function fetchShardBytes(family, buildId, { skipCache = false } = {}) {
     if (req.url.includes(`/${family}.kidx?`) && req.url !== new Request(url).url)
       await cache.delete(req)
   }
-  const res = await fetch(url)
+  const res = await fetch(url, init)
   if (!res.ok) throw new Error(`Kelvin shard '${family}' not hosted (HTTP ${res.status})`)
   // The cache is an OPTIMISATION. Its failure must cost speed, never correctness:
   // the bytes are already in `res`, so a shard that cannot be cached still loads.
@@ -138,18 +145,29 @@ export function ensureShard(family) {
       // it then points into a different NDJSON. That surfaces far away, as
       // JSON.parse failing on a fragment of some other part's record, with
       // nothing to connect it back to a stale shard.
-      let bytes = await fetchShardBytes(family, entry.buildId)
-      let meta = await callJson('load_shard', family, bytes)
-      if (String(meta.buildId) !== String(entry.buildId)) {
-        // The cache is the only place bytes can go stale under a live key, so
-        // give the network the last word before giving up.
-        bytes = await fetchShardBytes(family, entry.buildId, { skipCache: true })
-        meta = await callJson('load_shard', family, bytes)
+      // Anything wrong with the bytes we were handed is treated the same way,
+      // because a cached copy is the one thing that can be wrong while the
+      // server is right: a build that is not the one asked for, or bytes the
+      // engine refuses outright (a stale entry can be another family's shard,
+      // and load_shard throws before any comparison of ours). Either way, the
+      // repair is the same — go and get it again, past every cache.
+      const load = async (opts) => {
+        const bytes = await fetchShardBytes(family, entry.buildId, opts)
+        const meta = await callJson('load_shard', family, bytes)
         if (String(meta.buildId) !== String(entry.buildId)) {
           throw new Error(`${family}: shard is build ${meta.buildId} but the manifest `
             + `asks for ${entry.buildId} — its record offsets belong to a different `
             + `catalogue. Redeploy the shard, NDJSON and manifest together.`)
         }
+        return meta
+      }
+      let meta
+      try {
+        meta = await load()
+      } catch (first) {
+        // One retry, and only past the caches: if the server itself is serving
+        // the wrong shard this fails again and says so, which is the truth.
+        meta = await load({ skipCache: true }).catch(() => { throw first })
       }
       emitShard(family, 'loaded')
       return meta
