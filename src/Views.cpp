@@ -467,8 +467,18 @@ std::optional<ResistorRow> extract_resistor(const json& env) {
     if (!mpn) mpn = get_str(*part, "partNumber");
     if (!mpn) return std::nullopt;
 
+    // Zero is a RESISTANCE, not a missing one. A 0 ohm link is one of the most
+    // common parts on a real board — Yageo's RC series alone ships them in
+    // every case size — and rejecting it here deleted 107 of them from the
+    // catalogue while their records sat in the source data, so a board using
+    // one was told its part did not exist (ABT #1123).
+    //
+    // Absent is still rejected, by the !r_nom above: the field is either there
+    // or the record is refused. So a stored row's resistance == 0 always means
+    // a real zero and never "we did not know" — which matters, because the row
+    // struct's own default is also 0 and callers cannot tell the two apart.
     auto r_nom = resolve_field(*elec, "resistance");
-    if (!r_nom || *r_nom <= 0) return std::nullopt;
+    if (!r_nom || *r_nom < 0) return std::nullopt;
 
     auto tol_o = get_num(*elec, "tolerance");
     double tol = (tol_o && *tol_o > 0) ? *tol_o : 0.05;

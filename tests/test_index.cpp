@@ -15,6 +15,7 @@
 #include "Browse.hpp"
 #include "Index.hpp"
 #include "RecordFetcher.hpp"
+#include "Views.hpp"
 
 using namespace kelvin;
 namespace fs = std::filesystem;
@@ -609,4 +610,41 @@ TEST_CASE("index: a capacitor's ESL survives the shard round trip (ABT #1122)",
     }
     fs::remove(path);
     fs::remove(shard);
+}
+
+// ---------------------------------------------------------------------------
+// A 0 ohm link is a resistor with a resistance of zero, not a resistor whose
+// resistance is unknown. Kelvin used to reject both together and deleted 107
+// real parts from the catalogue — Yageo's RC series ships them in every case
+// size — so a board using one was told its part did not exist (ABT #1123).
+// ---------------------------------------------------------------------------
+TEST_CASE("resistor view: zero ohms is a value, absent is not", "[index][views]") {
+    auto env = [](const nlohmann::json& electrical) {
+        return nlohmann::json{{"resistor", {{"manufacturerInfo",
+            {{"name", "YAGEO"}, {"reference", "RC0402FR-070RL"},
+             {"status", "production"},
+             {"datasheetInfo", {{"part", {{"partNumber", "RC0402FR-070RL"}}},
+                                {"electrical", electrical}}}}}}}};
+    };
+
+    // the link itself: kept, and its zero survives into the row
+    auto zero = kelvin::extract_resistor(
+        env({{"resistance", {{"nominal", 0.0}}}, {"tolerance", 0.01}}));
+    REQUIRE(zero.has_value());
+    CHECK(zero->resistance == 0.0);
+    CHECK(zero->mpn == "RC0402FR-070RL");
+
+    // no resistance at all: still refused, because a row's own default is 0
+    // and nothing downstream could tell that apart from the link above
+    CHECK_FALSE(kelvin::extract_resistor(env({{"tolerance", 0.01}})).has_value());
+
+    // and a negative one is not a resistor
+    CHECK_FALSE(kelvin::extract_resistor(
+        env({{"resistance", {{"nominal", -5.0}}}})).has_value());
+
+    // an ordinary part is unaffected
+    auto hundred = kelvin::extract_resistor(
+        env({{"resistance", {{"nominal", 100.0}}}, {"tolerance", 0.01}}));
+    REQUIRE(hundred.has_value());
+    CHECK(hundred->resistance == 100.0);
 }
