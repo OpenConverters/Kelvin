@@ -80,6 +80,20 @@ Engine::Engine(std::string data_dir, std::string cache_dir, bool quiet)
 std::string Engine::ndjson_path(Family f) const {
     return data_dir_ + "/" + family_file(f);
 }
+// The DEPLOY artifact's name, which is fixed: the manifest names <family>.kidx
+// and the SPA fetches exactly that. Distinct from the cache path below, and the
+// distinction is the whole point — an Engine's cache may be shared between
+// catalogues and must be keyed to tell them apart, while a built index is one
+// catalogue's published file and must be named what its manifest says.
+//
+// These were the same function until v12, and the cache fix silently renamed
+// every deployed shard to <family>-<hash>.kidx while the manifest went on
+// saying <family>.kidx. Nothing failed at build time; the SPA would simply have
+// 404'd on every shard.
+std::string Engine::published_shard_path(Family f) const {
+    return cache_dir_ + "/" + std::string(family_name(f)) + ".kidx";
+}
+
 std::string Engine::shard_path(Family f) const {
     // The DATA DIR is part of the cache key, not just the family. Without it two
     // Engines over different catalogues share one cache file: whichever ran last
@@ -298,6 +312,19 @@ ShardMeta Engine::build_index(const std::string& family) {
         case Family::Connector: connector_.reset(); return connector_shard().meta;
     }
     throw InvalidOptions("unknown family");
+}
+
+void Engine::publish_index(const std::string& family) {
+    Family f = family_from_string(family);
+    const std::string from = shard_path(f), to = published_shard_path(f);
+    if (from == to) return;
+    std::ifstream in(from, std::ios::binary);
+    if (!in) throw DataError(from, 0, "kelvin: built shard is missing; cannot publish it");
+    std::ofstream out(to, std::ios::binary | std::ios::trunc);
+    if (!out) throw DataError(to, 0, "kelvin: cannot write the published shard");
+    out << in.rdbuf();
+    if (!out) throw DataError(to, 0, "kelvin: short write publishing the shard");
+    std::remove(from.c_str());   // the cache copy is not wanted in a deploy tree
 }
 
 json Engine::select(const std::string& category, const json& req, const json& options) {
@@ -747,7 +774,11 @@ json bind_part(const json& tas, const std::string& ref, const json& envelope) {
 ShardMeta build_and_write_index(const std::string& data_dir, const std::string& out_dir,
                                 const std::string& family) {
     Engine eng(data_dir, out_dir, /*quiet=*/false);
-    return eng.build_index(family);
+    ShardMeta m = eng.build_index(family);
+    // Publish under the name the manifest and the SPA use. build_index() went
+    // through the Engine's CACHE path, which is data-dir-keyed since v12.
+    eng.publish_index(family);
+    return m;
 }
 
 }  // namespace api

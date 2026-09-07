@@ -41,6 +41,9 @@ class Engine {
 
     // Build (or incrementally refresh) and persist the shard for one family. Returns its meta.
     ShardMeta build_index(const std::string& family);
+    // Copy the just-built shard to the name the manifest publishes
+    // (<family>.kidx), which is not the cache name. See the .cpp.
+    void publish_index(const std::string& family);
 
     // Load a prebuilt shard from raw bytes (the browser path: no filesystem). After loading, the
     // family is queryable via select() with an empty data dir (candidates carry no envelope —
@@ -67,6 +70,7 @@ class Engine {
 
     std::string ndjson_path(Family f) const;
     std::string shard_path(Family f) const;
+    std::string published_shard_path(Family f) const;
     const Shard<MosfetRow>& mosfet_shard();
     const Shard<DiodeRow>& diode_shard();
     const Shard<CapacitorRow>& capacitor_shard();
