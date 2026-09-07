@@ -756,7 +756,15 @@ std::optional<MagneticRow> extract_magnetic(const json& env) {
         // frequency — neither is a field in any vendor's datasheet table.
         if (const json* pts = obj_get(elec, "impedancePoints");
             pts && pts->is_array() && !pts->empty()) {
+            // `closest` tracks a DISTANCE, and its best possible value is
+            // zero — so zero cannot also mean "nothing seen yet". It did, and
+            // the collision cost exactly the parts this field exists for: a
+            // bead sampled AT 100 MHz set closest = 0, which still read as
+            // unset, so the next point overwrote it and the 5 MHz proximity
+            // test then failed. Every bead measured at the conventional test
+            // point — which is most of them — lost its headline figure.
             double best_z = 0.0, best_f = 0.0, at_100m = 0.0, closest = 0.0;
+            bool have_closest = false;
             for (const auto& pt : *pts) {
                 if (!pt.is_object()) continue;
                 auto f = get_num(pt, "frequency");
@@ -767,12 +775,15 @@ std::optional<MagneticRow> extract_magnetic(const json& env) {
                 if (*mag > best_z) { best_z = *mag; best_f = *f; }
                 // nearest sample to the conventional 100 MHz test point
                 const double d = std::fabs(*f - 1e8);
-                if (closest == 0.0 || d < closest) { closest = d; at_100m = *mag; }
+                if (!have_closest || d < closest) {
+                    closest = d; at_100m = *mag; have_closest = true;
+                }
             }
             if (best_z > 0) { r.impedance_peak = best_z; r.impedance_peak_freq = best_f; }
             // Only claim a 100 MHz value when a sample is actually near it —
             // extrapolating from a distant point would invent a datum.
-            if (at_100m > 0 && closest <= 5e6) r.impedance_100mhz = at_100m;
+            if (have_closest && at_100m > 0 && closest <= 5e6)
+                r.impedance_100mhz = at_100m;
         }
         // Transformer turns ratio (primary:secondary): electrical[0].turnsRatios[0] (a dimWithTol). Lets
         // select_magnetic rank a catalog transformer by how close its ratio is to the design's required

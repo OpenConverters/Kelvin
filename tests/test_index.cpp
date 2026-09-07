@@ -648,3 +648,51 @@ TEST_CASE("resistor view: zero ohms is a value, absent is not", "[index][views]"
     REQUIRE(hundred.has_value());
     CHECK(hundred->resistance == 100.0);
 }
+
+// ---------------------------------------------------------------------------
+// A distance's best possible value is zero, so zero cannot also mean "nothing
+// seen yet". It did, and the collision cost exactly the parts the field exists
+// for: a bead sampled AT 100 MHz — the conventional test point, so most of
+// them — set closest = 0, which still read as unset, so the next sample
+// overwrote it and the proximity test then rejected the lot.
+// ---------------------------------------------------------------------------
+TEST_CASE("magnetic view: a bead measured at 100 MHz keeps its 100 MHz figure",
+          "[index][views]") {
+    auto bead = [](std::vector<std::pair<double, double>> pts) {
+        nlohmann::json arr = nlohmann::json::array();
+        for (auto [f, z] : pts)
+            arr.push_back({{"frequency", f}, {"impedance", {{"magnitude", z}}}});
+        return nlohmann::json{{"magnetic", {{"manufacturerInfo",
+            {{"name", "Wurth Elektronik"}, {"reference", "742792625"},
+             {"status", "production"},
+             {"datasheetInfo",
+              {{"part", {{"partNumber", "742792625"}}},
+               {"electrical", nlohmann::json::array({
+                   {{"subtype", "chipBead"}, {"impedancePoints", arr}}})}}}}}}}};
+    };
+
+    // the real shape of a Wurth WE-CBF record: 120 ohm at 100 MHz, 180 at 400
+    auto exact = kelvin::extract_magnetic(bead({{1e8, 120.0}, {4e8, 180.0}}));
+    REQUIRE(exact.has_value());
+    CHECK(exact->impedance_100mhz == 120.0);   // the headline, not the peak
+    CHECK(exact->impedance_peak == 180.0);
+    CHECK(exact->impedance_peak_freq == 4e8);
+    CHECK(exact->device_type == "chipBead");
+
+    // order must not matter either — the far sample first was the case that
+    // happened to work before, and it still has to
+    auto rev = kelvin::extract_magnetic(bead({{4e8, 180.0}, {1e8, 120.0}}));
+    REQUIRE(rev.has_value());
+    CHECK(rev->impedance_100mhz == 120.0);
+
+    // near enough counts: 98 MHz is within the 5 MHz window
+    auto near = kelvin::extract_magnetic(bead({{9.8e7, 110.0}, {4e8, 180.0}}));
+    REQUIRE(near.has_value());
+    CHECK(near->impedance_100mhz == 110.0);
+
+    // and a curve that never goes near 100 MHz must NOT invent one
+    auto far = kelvin::extract_magnetic(bead({{1e6, 5.0}, {1e9, 300.0}}));
+    REQUIRE(far.has_value());
+    CHECK_FALSE(kelvin::present(far->impedance_100mhz));
+    CHECK(far->impedance_peak == 300.0);
+}
