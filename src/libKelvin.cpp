@@ -58,9 +58,14 @@ std::string load_shard(std::string family, val bytes) {
     return guarded([&] {
         std::vector<unsigned char> v = vecFromJSArray<unsigned char>(bytes);
         kelvin::ShardMeta m = web_engine().load_shard_bytes(family, std::string(v.begin(), v.end()));
+        // buildId is a uint64 and these run past 2^53, so a JSON number would
+        // be ROUNDED the moment JS parsed it and could never be compared with
+        // the manifest's — which is why the manifest writes it as a string too.
+        // The caller needs that comparison: it is the only way to tell that the
+        // bytes it was handed are the shard the manifest asked for.
         return json{{"family", kelvin::family_name(m.family)},
                     {"rowCount", m.row_count},
-                    {"buildId", m.build_id}}
+                    {"buildId", std::to_string(m.build_id)}}
             .dump();
     });
 }

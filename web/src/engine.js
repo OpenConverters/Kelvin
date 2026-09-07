@@ -85,7 +85,7 @@ function shardFormatVersion() {
   return _fmtPromise
 }
 
-async function fetchShardBytes(family, buildId) {
+async function fetchShardBytes(family, buildId, { skipCache = false } = {}) {
   // buildId hashes the serialized ROWS, and nothing else. A format bump that
   // leaves a family's rows byte-identical therefore leaves its buildId — and so
   // its URL — unchanged, while .kidx is served "public, immutable" for a year:
@@ -102,7 +102,8 @@ async function fetchShardBytes(family, buildId) {
     return new Uint8Array(await res.arrayBuffer())
   }
   const cache = await caches.open('kelvin-shards')
-  const hit = await cache.match(url)
+  if (skipCache) await cache.delete(url)
+  const hit = skipCache ? null : await cache.match(url)
   if (hit) return new Uint8Array(await hit.arrayBuffer())
   for (const req of await cache.keys()) {            // drop older builds of this family
     if (req.url.includes(`/${family}.kidx?`) && req.url !== new Request(url).url)
@@ -130,8 +131,26 @@ export function ensureShard(family) {
     emitShard(family, 'loading')
     _shards.set(family, (async () => {
       const entry = await manifestEntry(family)
-      const bytes = await fetchShardBytes(family, entry.buildId)
-      const meta = await callJson('load_shard', family, bytes)
+      // The URL promises a buildId; nothing until now checked that the BYTES
+      // are that build. The shard's own header check is self-consistency — an
+      // old but intact shard passes it — so a cache entry stored under this
+      // key during a deploy window loads silently, and every record offset in
+      // it then points into a different NDJSON. That surfaces far away, as
+      // JSON.parse failing on a fragment of some other part's record, with
+      // nothing to connect it back to a stale shard.
+      let bytes = await fetchShardBytes(family, entry.buildId)
+      let meta = await callJson('load_shard', family, bytes)
+      if (String(meta.buildId) !== String(entry.buildId)) {
+        // The cache is the only place bytes can go stale under a live key, so
+        // give the network the last word before giving up.
+        bytes = await fetchShardBytes(family, entry.buildId, { skipCache: true })
+        meta = await callJson('load_shard', family, bytes)
+        if (String(meta.buildId) !== String(entry.buildId)) {
+          throw new Error(`${family}: shard is build ${meta.buildId} but the manifest `
+            + `asks for ${entry.buildId} — its record offsets belong to a different `
+            + `catalogue. Redeploy the shard, NDJSON and manifest together.`)
+        }
+      }
       emitShard(family, 'loaded')
       return meta
     })().catch((e) => {
