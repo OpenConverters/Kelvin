@@ -4,3 +4,4 @@ public/kelvin.js
 public/kelvin/
 test-results/
 playwright-report/
+src/generated/

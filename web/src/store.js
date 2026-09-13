@@ -9,7 +9,7 @@ export const KSERIES = ['#3b8fdb', '#c77b28', '#26a0b5', '#b08d22', '#7d74d6', '
 export const MAX_PINS = KSERIES.length
 
 export const store = reactive({
-  view: 'catalog', // catalog | recommend | crossref | compare | stats
+  view: 'home', // home | catalog | recommend | crossref | compare | stats
   family: 'magnetic',
   pins: [], // [{family, mpn, manufacturer, srcOffset, srcLength, color}]
   pinNote: '',
@@ -77,6 +77,11 @@ export function syncUrl() {
   watch(
     () => [store.view, store.family],
     ([view, family]) => {
+      // home is the bare site root: no family to carry, so no hash at all
+      if (view === 'home') {
+        if (location.hash) history.replaceState(null, '', location.pathname + location.search)
+        return
+      }
       const h = `#/${view}/${family}`
       if (location.hash !== h) history.replaceState(null, '', h)
     },
@@ -90,6 +95,10 @@ export function syncUrl() {
 }
 
 export function restoreFromUrl(validFamilies) {
+  if (location.hash === '' || location.hash === '#' || location.hash === '#/' || location.hash === '#/home') {
+    store.view = 'home'
+    return
+  }
   const m = location.hash.match(/^#\/(catalog|recommend|crossref|compare|stats)\/([a-z]+)$/)
   if (!m) return
   store.view = m[1]

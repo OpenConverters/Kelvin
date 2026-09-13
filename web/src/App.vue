@@ -2,7 +2,7 @@
 // KELVIN — deterministic parts librarian. The shell: instrument-faceplate header
 // with a calibration block, the temperature rail (amber→ice; it fills as the index
 // cools to operating temperature), mode tabs, views, compare tray, part drawer.
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { loadEngine, manifest, ensureShard, shardEvents } from './engine.js'
 import { FAMILIES } from './families.js'
 import { store, syncUrl, restoreFromUrl, bindHashNavigation, clearPins } from './store.js'
@@ -11,6 +11,7 @@ import RecommendView from './views/RecommendView.vue'
 import CrossRefView from './views/CrossRefView.vue'
 import CompareView from './views/CompareView.vue'
 import StatsView from './views/StatsView.vue'
+import HomeView from './views/HomeView.vue'
 import PartDrawer from './components/PartDrawer.vue'
 
 const boot = reactive({ phase: 'cold', detail: 'powering engine…', error: '' })
@@ -60,14 +61,22 @@ onMounted(async () => {
     buildTag.value = String(anyBuild).slice(0, 8)
     boot.phase = 'ready'
     boot.detail = ''
-    ensureShard(store.family) // pre-cool the active family
+    // pre-cool the active family — but not on the home page, which is built from a
+    // few-KB build-time summary and must not pull a multi-MB shard nobody asked for
+    if (store.view !== 'home') ensureShard(store.family)
   } catch (e) {
     boot.error = e.message
     boot.detail = ''
   }
 })
 
+// leaving home for a data view: start cooling that family's shard right away
+watch(() => store.view, (view, from) => {
+  if (from === 'home' && view !== 'home' && boot.phase === 'ready') ensureShard(store.family).catch(() => {})
+})
+
 const VIEWS = [
+  { key: 'home', label: 'Home' },
   { key: 'catalog', label: 'Catalog' },
   { key: 'recommend', label: 'Recommend' },
   { key: 'crossref', label: 'Cross-Ref' },
@@ -79,7 +88,7 @@ const VIEWS = [
 <template>
   <div class="wrap">
     <header class="kv-head panel">
-      <div class="brand">
+      <a class="brand" href="#/home" aria-label="Kelvin home" @click.prevent="store.view = 'home'">
         <svg class="logo" viewBox="0 0 64 64" aria-hidden="true">
           <rect x="14" y="28" width="36" height="8" rx="2" fill="none" stroke="currentColor" stroke-width="2.4" />
           <path d="M14 32H4M60 32H50" stroke="currentColor" stroke-width="2.4" fill="none" />
@@ -93,7 +102,7 @@ const VIEWS = [
           <h1>KELVIN</h1>
           <p>deterministic parts librarian</p>
         </div>
-      </div>
+      </a>
 
       <nav class="modes" aria-label="mode">
         <button
@@ -131,7 +140,8 @@ const VIEWS = [
     </p>
 
     <main v-else class="main">
-      <CatalogView v-if="store.view === 'catalog'" :counts="counts" />
+      <HomeView v-if="store.view === 'home'" />
+      <CatalogView v-else-if="store.view === 'catalog'" :counts="counts" />
       <RecommendView v-else-if="store.view === 'recommend'" />
       <CrossRefView v-else-if="store.view === 'crossref'" />
       <StatsView v-else-if="store.view === 'stats'" :counts="counts" />
@@ -181,7 +191,8 @@ const VIEWS = [
   gap: 26px;
   padding: 12px 18px;
 }
-.brand { display: flex; align-items: center; gap: 14px; }
+.brand { display: flex; align-items: center; gap: 14px; color: inherit; }
+.brand:hover { text-decoration: none; }
 .logo { width: 40px; height: 40px; color: var(--k); filter: drop-shadow(0 0 6px rgba(127, 201, 255, 0.45)); }
 .brand-text h1 {
   margin: 0;
@@ -284,6 +295,7 @@ const VIEWS = [
 
 @media (max-width: 1100px) {
   .kv-head { flex-wrap: wrap; gap: 12px; }
+  .modes { flex-wrap: wrap; margin-left: 0; }
   .cal { margin-left: 0; flex-wrap: wrap; }
   .foot { flex-direction: column; }
 }

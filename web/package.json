@@ -5,8 +5,9 @@
   "type": "module",
   "scripts": {
     "sync-wasm": "cp ../build-wasm/kelvin.js public/",
-    "dev": "npm run sync-wasm && vite",
-    "build": "npm run sync-wasm && vite build",
+    "summary": "node scripts/build-home-summary.mjs",
+    "dev": "npm run sync-wasm && npm run summary && vite",
+    "build": "npm run sync-wasm && npm run summary && vite build",
     "preview": "vite preview",
     "test:e2e": "playwright test"
   },
