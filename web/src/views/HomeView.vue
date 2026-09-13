@@ -78,37 +78,6 @@ const fmt = (n) => n.toLocaleString('en-US')
       </dl>
     </section>
 
-    <!-- ── who uses it ─────────────────────────────────────────────────────── -->
-    <section class="flow panel" aria-label="how Kelvin is used">
-      <p class="section-label">one selection authority, two consumers</p>
-      <div class="flow-row">
-        <div class="node">
-          <span class="node-k mono">input</span>
-          <strong>designRequirements</strong>
-          <span>the governed schema block (SAS · CAS · RAS · CTAS) — no new schema</span>
-        </div>
-        <span class="arrow" aria-hidden="true">›</span>
-        <div class="node core">
-          <span class="node-k mono">kelvin</span>
-          <strong>filter · rank · explain</strong>
-          <span>one C++ implementation — the native library and the browser (WASM) build return identical results</span>
-        </div>
-        <span class="arrow" aria-hidden="true">›</span>
-        <div class="node-pair">
-          <div class="node">
-            <span class="node-k mono">kirchhoff</span>
-            <strong>list selection</strong>
-            <span>shows the ranked candidates in the part drawer; the engineer picks, no AI</span>
-          </div>
-          <div class="node">
-            <span class="node-k mono">heaviside</span>
-            <strong>LLM chooser</strong>
-            <span>runs its chooser over the same list — it can pick a candidate, never invent one (switchover in progress)</span>
-          </div>
-        </div>
-      </div>
-    </section>
-
     <!-- ── principles ──────────────────────────────────────────────────────── -->
     <section class="principles" aria-label="what Kelvin guarantees">
       <article class="panel principle">
@@ -276,27 +245,6 @@ const fmt = (n) => n.toLocaleString('en-US')
 .headline dt { font-size: 9px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--ink-dim); }
 .headline dd { margin: 0; font-size: 26px; color: var(--k-hi); }
 
-/* ── flow ─────────────────────────────────────────────────────────────── */
-.flow { padding: 16px 18px; }
-.flow-row { display: flex; align-items: stretch; gap: 10px; }
-.node {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: 5px;
-  background: #0a1017;
-  font-size: 12px;
-  color: var(--ink-dim);
-  line-height: 1.45;
-}
-.node strong { color: var(--ink); font-weight: 500; font-size: 13px; }
-.node-k { font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--k); }
-.node.core { border-color: var(--k-deep); box-shadow: 0 0 14px rgba(127, 201, 255, 0.1) inset; }
-.node-pair { flex: 1.3; display: flex; flex-direction: column; gap: 8px; }
-.arrow { align-self: center; font-family: var(--disp); color: var(--k-deep); font-size: 18px; }
 
 /* ── principles ───────────────────────────────────────────────────────── */
 .principles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr)); gap: 14px; }
@@ -350,7 +298,5 @@ const fmt = (n) => n.toLocaleString('en-US')
   .hero { grid-template-columns: minmax(0, 1fr); padding: 20px 18px; }
   .headline { flex-direction: row; flex-wrap: wrap; gap: 10px 24px; }
   .headline dd { font-size: 20px; }
-  .flow-row { flex-direction: column; }
-  .arrow { transform: rotate(90deg); }
 }
 </style>
