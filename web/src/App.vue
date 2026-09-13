@@ -88,7 +88,7 @@ const VIEWS = [
 <template>
   <div class="wrap">
     <header class="kv-head panel">
-      <a class="brand" href="#/home" aria-label="Kelvin home" @click.prevent="store.view = 'home'">
+      <a class="brand" href="#/home" aria-label="Kelvin home" title="Kelvin home" @click.prevent="store.view = 'home'">
         <svg class="logo" viewBox="0 0 64 64" aria-hidden="true">
           <rect x="14" y="28" width="36" height="8" rx="2" fill="none" stroke="currentColor" stroke-width="2.4" />
           <path d="M14 32H4M60 32H50" stroke="currentColor" stroke-width="2.4" fill="none" />
