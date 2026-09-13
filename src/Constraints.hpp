@@ -189,7 +189,10 @@ struct MagneticConstraints {
     std::optional<double> peak_current;       // A — operating-point peak (saturation-current headroom)
     std::optional<double> rms_current;        // A — operating-point rms (rated-current headroom)
     std::optional<double> target_turns_ratio; // — designRequirements.turnsRatios[0] (transformers)
-    std::string kind;                          // "inductor"/"transformer" hint — annotation only, never gates
+    // Windings besides the primary the circuit wires: designRequirements.turnsRatios.size(), or 0 for a
+    // single-winding inductor spec. Unset for a spec-less seed (nothing to judge structure against).
+    std::optional<int> secondary_windings;
+    std::string kind;                          // "inductor"/"transformer" hint — annotation only
     void validate() const {}                   // never throws — imperfect matches are still returned
 };
 

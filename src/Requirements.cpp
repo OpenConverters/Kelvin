@@ -169,13 +169,16 @@ MagneticConstraints magnetic_constraints(const json& req) {
     if (req.is_object() && req.contains("turnsRatios") && req.at("turnsRatios").is_array() &&
         !req.at("turnsRatios").empty()) {
         c.kind = "transformer";
+        c.secondary_windings = static_cast<int>(req.at("turnsRatios").size());
         try {
             double tr = PEAS::resolve_dimensional_values(req.at("turnsRatios").at(0));
             if (tr > 0) c.target_turns_ratio = tr;
         } catch (const std::exception&) {
         }
-    } else
+    } else {
         c.kind = "inductor";
+        if (c.target_inductance) c.secondary_windings = 0;
+    }
     return c;
 }
 

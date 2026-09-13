@@ -236,6 +236,11 @@ struct MagneticRow : RowBase {
     double dcr = kNaN();                  // Ω  — dcResistance (worst-case / maximum), else dcResistances[0]
     double srf = kNaN();                  // Hz — selfResonantFrequency
     double turns_ratio = kNaN();          // —  electrical[0].turnsRatios[0] (transformers): primary:secondary
+    // Winding structure: bit n set when some electrical[] wiring configuration has n windings besides
+    // the primary (a single-winding inductor/chip bead sets bit 0; a transformer or coupled inductor sets
+    // bit turnsRatios.size()). 0 means no configuration states its structure (e.g. a transformer entry
+    // without turnsRatios) — unknown, never read as a mismatch.
+    uint32_t secondary_counts = 0;
     // Chip beads: a bead's entire published spec is Z at 100 MHz (+/-25%), rated
     // current, DCR and size — and the industry's own engineers say that scalar is
     // "irrelevant and misleading" on its own, because parts with identical

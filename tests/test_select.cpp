@@ -232,3 +232,88 @@ TEST_CASE("select: naming the category explicitly overrides the inference", "[se
     auto r = select_controller(shard, c);
     REQUIRE(r.at("candidates")[0].at("mpn") == "SR_CONTROLLER");
 }
+
+// ---- magnetic winding structure -------------------------------------------------------------------
+namespace {
+Shard<MagneticRow> magnetic_shard_from(const std::vector<std::string>& lines) {
+    std::string path = std::string(KELVIN_TEST_DIR) + "/_select_mag_tmp.ndjson";
+    {
+        std::ofstream f(path, std::ios::binary | std::ios::trunc);
+        for (auto& l : lines) f << l << "\n";
+    }
+    auto s = build_magnetic_shard(path);
+    std::remove(path.c_str());
+    return s;
+}
+std::string magnetic(const std::string& mpn, const std::string& electrical) {
+    return "{\"magnetic\":{\"manufacturerInfo\":{\"name\":\"ACME\",\"reference\":\"" + mpn +
+           "\",\"status\":\"production\",\"datasheetInfo\":{\"electrical\":[" + electrical + "]}}}}";
+}
+}  // namespace
+
+TEST_CASE("select: a part that cannot be wired as the circuit's windings fails windingStructure",
+          "[select][magnetic]") {
+    // 750811248, as the Midcom workbook describes it: 300 uH primary, a secondary and an auxiliary,
+    // filed with both wiring configurations. It was once filed as a single-winding 300 uH inductor —
+    // the INDUCTOR below, a perfect inductance fit that no flyback can use.
+    const std::string xfmr = magnetic("XFMR_WITH_AUX",
+        "{\"subtype\":\"transformer\",\"name\":\"all windings\",\"inductance\":{\"nominal\":3e-4},"
+        "\"turnsRatios\":[{\"nominal\":4},{\"nominal\":4}]},"
+        "{\"subtype\":\"transformer\",\"name\":\"auxiliary windings open\",\"inductance\":{\"nominal\":3e-4},"
+        "\"turnsRatios\":[{\"nominal\":4}]}");
+    const std::string ind = magnetic("INDUCTOR", "{\"subtype\":\"inductor\",\"inductance\":{\"nominal\":3e-4}}");
+    const std::string two_sec = magnetic("TWO_SECONDARIES",
+        "{\"subtype\":\"transformer\",\"inductance\":{\"nominal\":3e-4},"
+        "\"turnsRatios\":[{\"nominal\":4},{\"nominal\":4}]}");
+    const std::string unstated = magnetic("NO_RATIOS", "{\"subtype\":\"transformer\",\"inductance\":{\"nominal\":3e-4}}");
+    auto shard = magnetic_shard_from({ind, two_sec, unstated, xfmr});
+
+    auto by_mpn = [](const json& r, const std::string& mpn) {
+        for (const auto& c : r.at("candidates"))
+            if (c.at("mpn") == mpn) return c;
+        FAIL("candidate " << mpn << " missing");
+        return json();
+    };
+
+    SECTION("single-secondary flyback slot") {
+        MagneticConstraints c;
+        c.target_inductance = 3.3e-4;
+        c.target_turns_ratio = 4.2;
+        c.secondary_windings = 1;
+        auto r = select_magnetic(shard, c, 10, nullptr, MfrPolicy{});
+        REQUIRE(r.at("candidates").size() == 4);
+        CHECK(by_mpn(r, "XFMR_WITH_AUX").at("verdictByDimension").at("windingStructure") == "pass");
+        CHECK(by_mpn(r, "INDUCTOR").at("verdictByDimension").at("windingStructure") == "fail");
+        CHECK(by_mpn(r, "INDUCTOR").at("verdict") == "fail");
+        CHECK(by_mpn(r, "TWO_SECONDARIES").at("verdictByDimension").at("windingStructure") == "fail");
+        // Unstated structure is unknown, not a mismatch.
+        CHECK(by_mpn(r, "NO_RATIOS").at("verdictByDimension").at("windingStructure") == "unknown");
+        CHECK(by_mpn(r, "XFMR_WITH_AUX").at("evidence").at("secondaryWindingCounts") == json({1, 2}));
+        // Structural fails rank behind every part that can be wired — including the inductor, whose
+        // inductance is the closest of all.
+        const auto& cands = r.at("candidates");
+        CHECK(cands[0].at("mpn") != "INDUCTOR");
+        CHECK(cands[1].at("mpn") != "INDUCTOR");
+        CHECK(by_mpn(r, "INDUCTOR").at("verdictByDimension").at("windingStructure") == "fail");
+        size_t last_pass = 0, first_fail = cands.size();
+        for (size_t i = 0; i < cands.size(); ++i) {
+            const auto v = cands[i].at("verdictByDimension").at("windingStructure");
+            if (v == "fail") first_fail = std::min(first_fail, i);
+            else last_pass = i;
+        }
+        CHECK(last_pass < first_fail);
+    }
+    SECTION("inductor slot") {
+        MagneticConstraints c;
+        c.target_inductance = 3e-4;
+        c.secondary_windings = 0;
+        auto r = select_magnetic(shard, c, 10, nullptr, MfrPolicy{});
+        CHECK(r.at("candidates")[0].at("mpn") == "INDUCTOR");
+        CHECK(by_mpn(r, "XFMR_WITH_AUX").at("verdictByDimension").at("windingStructure") == "fail");
+    }
+    SECTION("spec-less seed judges nothing") {
+        auto r = select_magnetic(shard, MagneticConstraints{}, 10, nullptr, MfrPolicy{});
+        for (const auto& cand : r.at("candidates"))
+            CHECK(cand.at("verdictByDimension").at("windingStructure") == "unknown");
+    }
+}

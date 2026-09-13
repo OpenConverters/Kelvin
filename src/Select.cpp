@@ -666,6 +666,16 @@ int headroom_status(bool have, double val, double ref) {
     if (h >= 0.8) return 1;
     return 0;
 }
+// Winding structure: can any of the part's wiring configurations realize the circuit's winding count?
+// Structure is not a degree of fit — a single-winding inductor cannot be a flyback transformer, and a
+// part whose configurations all carry the wrong number of windings cannot be wired into the slot (the
+// engine rejects it at bind time). Würth's own flyback selector treats turns ratios as its one
+// strictlyRequired filter for the same reason. Still ranked, never dropped: a structural fail sorts
+// behind every part that fits.
+int winding_status(const std::optional<int>& want, uint32_t counts) {
+    if (!want || *want < 0 || *want >= 32 || counts == 0) return -1;
+    return (counts & (1u << *want)) ? 2 : 0;
+}
 const char* verdict_str(int v) {
     switch (v) {
         case 2: return "pass";
@@ -780,6 +790,9 @@ json select_magnetic(const Shard<MagneticRow>& shard, const MagneticConstraints&
     const bool have_ipk = c.peak_current && *c.peak_current > 0;
     const bool have_irms = c.rms_current && *c.rms_current > 0;
     const bool have_TR = c.target_turns_ratio && *c.target_turns_ratio > 0;
+    auto structure_fail = [&](const MagneticRow* m) {
+        return winding_status(c.secondary_windings, m->secondary_counts) == 0 ? 1 : 0;
+    };
 
     auto penalty = [&](const MagneticRow* m) -> double {
         double p = 0.0;
@@ -813,10 +826,11 @@ json select_magnetic(const Shard<MagneticRow>& shard, const MagneticConstraints&
     auto dcr_key = [](const MagneticRow* m) {
         return present(m->dcr) ? m->dcr : std::numeric_limits<double>::infinity();
     };
-    // Ascending tuple: (fit penalty, production first, lower DCR, source line) — deterministic.
+    // Ascending tuple: (structural fit, fit penalty, production first, lower DCR, source line) —
+    // deterministic.
     std::sort(all.begin(), all.end(), [&](const MagneticRow* a, const MagneticRow* b) {
-        return std::make_tuple(penalty(a), a->is_production ? 0 : 1, dcr_key(a), a->lineno) <
-               std::make_tuple(penalty(b), b->is_production ? 0 : 1, dcr_key(b), b->lineno);
+        return std::make_tuple(structure_fail(a), penalty(a), a->is_production ? 0 : 1, dcr_key(a), a->lineno) <
+               std::make_tuple(structure_fail(b), penalty(b), b->is_production ? 0 : 1, dcr_key(b), b->lineno);
     });
 
     json result;
@@ -829,6 +843,8 @@ json select_magnetic(const Shard<MagneticRow>& shard, const MagneticConstraints&
                         {"peakCurrent", have_ipk ? json(*c.peak_current) : json(nullptr)},
                         {"rmsCurrent", have_irms ? json(*c.rms_current) : json(nullptr)},
                         {"turnsRatio", have_TR ? json(*c.target_turns_ratio) : json(nullptr)},
+                        {"secondaryWindings",
+                         c.secondary_windings ? json(*c.secondary_windings) : json(nullptr)},
                         {"kind", c.kind}};
 
     json cands = json::array();
@@ -841,8 +857,9 @@ json select_magnetic(const Shard<MagneticRow>& shard, const MagneticConstraints&
         int rs = headroom_status(have_irms, m->rated_current, have_irms ? *c.rms_current : 1.0);
         // Turns-ratio closeness reuses the inductance ±30 % / factor-2 bands (same "match a value" shape).
         int trs = inductance_status(have_TR, m->turns_ratio, have_TR ? *c.target_turns_ratio : 1.0);
+        int ws = winding_status(c.secondary_windings, m->secondary_counts);
         int overall = -1;  // worst of the evaluated dimensions; -1 => nothing evaluable
-        for (int s : {is, ss, rs, trs})
+        for (int s : {is, ss, rs, trs, ws})
             if (s >= 0) overall = (overall < 0) ? s : std::min(overall, s);
 
         cd["margins"] = {
@@ -870,7 +887,11 @@ json select_magnetic(const Shard<MagneticRow>& shard, const MagneticConstraints&
         cd["verdictByDimension"] = {{"inductance", verdict_str(is)},
                                     {"saturationCurrent", verdict_str(ss)},
                                     {"ratedCurrent", verdict_str(rs)},
-                                    {"turnsRatio", verdict_str(trs)}};
+                                    {"turnsRatio", verdict_str(trs)},
+                                    {"windingStructure", verdict_str(ws)}};
+        json counts = json::array();
+        for (int n = 0; n < 32; ++n)
+            if (m->secondary_counts & (1u << n)) counts.push_back(n);
         cd["evidence"] = {{"deviceType", m->device_type},
                           {"family", m->family},
                           {"isProduction", m->is_production},
@@ -878,6 +899,7 @@ json select_magnetic(const Shard<MagneticRow>& shard, const MagneticConstraints&
                           {"saturationCurrent", num_or_null(m->saturation_current)},
                           {"ratedCurrent", num_or_null(m->rated_current)},
                           {"turnsRatio", num_or_null(m->turns_ratio)},
+                          {"secondaryWindingCounts", m->secondary_counts ? counts : json(nullptr)},
                           {"dcr", num_or_null(m->dcr)},
                           {"selfResonantFrequency", num_or_null(m->srf)}};
         cd["sortKey"] = {{"metric", "best_fit"}, {"penalty", penalty(m)}};

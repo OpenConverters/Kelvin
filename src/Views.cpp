@@ -797,6 +797,22 @@ std::optional<MagneticRow> extract_magnetic(const json& env) {
             }
         }
         r.device_type = get_str(elec, "subtype").value_or("");
+
+        // Winding structure across EVERY wiring configuration (a transformer with an auxiliary winding
+        // files both "all windings" and "auxiliary windings open"): the set of secondary-winding counts
+        // the part can realize. Only stated structure counts — a multi-winding entry without turnsRatios
+        // adds nothing.
+        for (const auto& e : *elec_arr) {
+            if (!e.is_object()) continue;
+            const std::string st = get_str(e, "subtype").value_or("");
+            if (st == "inductor" || st == "chipBead") {
+                r.secondary_counts |= 1u;
+            } else if (st == "transformer" || st == "coupledInductor") {
+                const json* ratios = obj_get(e, "turnsRatios");
+                if (ratios && ratios->is_array() && !ratios->empty() && ratios->size() < 32)
+                    r.secondary_counts |= (1u << ratios->size());
+            }
+        }
     }
 
     std::string fam = get_str(*mi, "family").value_or("");
