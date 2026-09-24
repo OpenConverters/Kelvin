@@ -177,3 +177,42 @@ TEST_CASE("a shifted resistor value cannot tie its exact-value siblings, and say
     CHECK(note.find("0.25 % part") != std::string::npos);
     CHECK(note.find("do not overlap") != std::string::npos);
 }
+
+// ── operating-point requirements: the circuit, not the original ─────────────
+TEST_CASE("a candidate below the circuit's requirement is rejected", "[crossref][rank][requirements]") {
+    // Matches the original (Isat 3.25 A) but the buck's peak current is 3.45 A.
+    json original = mag("ORIG", 4.7e-6, 3.25);
+    json cands = json::array({mag("meets_orig_only", 4.7e-6, 3.3), mag("meets_circuit", 4.7e-6, 4.0)});
+    Options opt;
+    opt.requirements["saturation_current"] = 3.45;
+    auto r = cross_reference("magnetic", original, cands, opt);
+    REQUIRE(r["candidates"][0]["mpn"] == "meets_circuit");
+    REQUIRE(r["candidates"][0]["status"] != "no_substitute");
+    REQUIRE(r["candidates"][1]["status"] == "no_substitute");
+    REQUIRE(r["candidates"][1]["reason"] == "does not meet the circuit's operating-point requirement");
+}
+
+TEST_CASE("a candidate that does not state a required parameter is capped at partial",
+          "[crossref][rank][requirements]") {
+    // Neither record states Isat (an unidentified original): the original-vs-
+    // substitute hard gate has nothing to compare, so only the circuit's
+    // requirement can catch it — and it cannot be confirmed.
+    json original = mag("ORIG", 4.7e-6, 5.0);
+    original.erase("saturation_current");
+    json c = mag("no_isat", 4.7e-6, 5.0);
+    c.erase("saturation_current");
+    Options opt;
+    opt.requirements["saturation_current"] = 3.45;
+    auto r = cross_reference("magnetic", original, json::array({c}), opt);
+    REQUIRE(r["candidates"][0]["status"] == "partial");
+}
+
+TEST_CASE("requirements parse from JSON options and must be numbers", "[crossref][rank][requirements]") {
+    json original = mag("ORIG", 4.7e-6, 5.0);
+    json cands = json::array({mag("low", 4.7e-6, 3.0)});
+    auto r = cross_reference_json("magnetic", original, cands,
+                                  {{"requirements", {{"saturation_current", 3.45}}}});
+    REQUIRE(r["candidates"][0]["status"] == "no_substitute");
+    REQUIRE_THROWS(cross_reference_json("magnetic", original, cands,
+                                        {{"requirements", {{"saturation_current", "3.45"}}}}));
+}

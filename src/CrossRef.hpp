@@ -30,6 +30,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <map>
 #include <optional>
 #include <set>
 #include <stdexcept>
@@ -204,6 +205,13 @@ struct Options {
     bool check_footprint = true;
     bool check_lifecycle = true;
     std::optional<double> operating_voltage;  // enables the MLCC DC-bias comparison
+    // What the CIRCUIT needs, not what the original happened to have: the
+    // minimum value of a higher-is-better parameter at the operating point
+    // (a magnetic's saturation_current >= the peak current, a capacitor's voltage
+    // >= V_peak x derating). Callers own the margins; the ranker only enforces
+    // them. Below a requirement is a hard reject; a record that does not state
+    // the parameter cannot be shown to meet it and is capped at partial.
+    std::map<std::string, double> requirements;
     size_t max_results = 25;
 };
 
@@ -698,6 +706,32 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             direction_blind = true;
             blind_axes.push_back(param_label(r.key));
         }
+    }
+
+    // ── operating-point requirements (the circuit, not the original) ────────
+    for (const auto& [key, need] : opt.requirements) {
+        const auto s = num(cand, key.c_str());
+        const std::string label = param_label(key);
+        char buf[160];
+        if (!s) {
+            params.push_back({{"name", "required_" + key}, {"verdict", WARN}});
+            std::snprintf(buf, sizeof buf, "%s not stated — cannot confirm it meets the circuit's %g",
+                          label.c_str(), need);
+            notes.emplace_back(buf);
+            missing_required_data = true;
+            demote();
+            penalty += opt.gate_weight * kVerdictWarnPenalty;
+            continue;
+        }
+        if (*s < need) {
+            params.push_back({{"name", "required_" + key}, {"verdict", FAIL}});
+            std::snprintf(buf, sizeof buf, "%s %g is below the circuit's requirement of %g",
+                          label.c_str(), *s, need);
+            notes.emplace_back(buf);
+            return reject("does not meet the circuit's operating-point requirement");
+        }
+        params.push_back({{"name", "required_" + key}, {"verdict", PASS}});
+        penalty += opt.overdim_weight * over_dimensioning_penalty(need, s, 1.0);
     }
 
     // ── physical fit ─────────────────────────────────────────────────────────
@@ -1319,6 +1353,18 @@ inline json cross_reference_json(const std::string& category, const json& origin
         opt.check_lifecycle = options["check_lifecycle"].get<bool>();
     if (options.contains("operating_voltage") && options["operating_voltage"].is_number())
         opt.operating_voltage = options["operating_voltage"].get<double>();
+    if (options.contains("requirements")) {
+        const auto& req = options["requirements"];
+        if (!req.is_object())
+            throw std::invalid_argument("cross_reference: 'requirements' must be an object "
+                                        "{parameter: minimum}");
+        for (const auto& [key, v] : req.items()) {
+            if (!v.is_number())
+                throw std::invalid_argument("cross_reference: requirement '" + key +
+                                            "' must be a number");
+            opt.requirements[key] = v.get<double>();
+        }
+    }
     return cross_reference(category, original, candidates, opt);
 }
 
