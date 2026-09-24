@@ -216,3 +216,16 @@ TEST_CASE("requirements parse from JSON options and must be numbers", "[crossref
     REQUIRE_THROWS(cross_reference_json("magnetic", original, cands,
                                         {{"requirements", {{"saturation_current", "3.45"}}}}));
 }
+
+TEST_CASE("an unknown category is refused, not ranked", "[crossref][rank]") {
+    REQUIRE_THROWS(cross_reference("fuse", {{"mpn", "O"}}, json::array({{{"mpn", "A"}}})));
+}
+
+TEST_CASE("a varistor is matched on its varistor voltage", "[crossref][rank]") {
+    json original = {{"mpn", "O"}, {"value_si", 30.0}};
+    json cands = json::array({{{"mpn", "same"}, {"value_si", 30.0}},
+                              {{"mpn", "tenfold"}, {"value_si", 300.0}}});
+    auto r = cross_reference("varistor", original, cands);
+    REQUIRE(r["candidates"][0]["mpn"] == "same");
+    REQUIRE(r["candidates"][1]["status"] == "no_substitute");
+}

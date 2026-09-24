@@ -169,6 +169,13 @@ inline bool primary_value_spec(const std::string& category, PrimaryValueSpec& ou
         out = {Mode::Range, 0.85, 1.15, 0.80, 1.25, 0.9, 0.8};
         return true;
     }
+    if (category == "varistor") {
+        // The varistor voltage is the part's function: +/-10% is the standard
+        // tolerance of the marking, so within 5% is the same part and 10% the
+        // edge of it; a different voltage class clamps at the wrong level.
+        out = {Mode::Range, 0.95, 1.05, 0.90, 1.10, 0.9, 0.8, true};
+        return true;
+    }
     if (category == "chipBead") {
         // pass_factor 0.85: impedance within 15% of the original IS the same
         // bead. Bead impedance is a +/-25% part parameter and the two sides

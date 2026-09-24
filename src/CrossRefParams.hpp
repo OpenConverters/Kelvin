@@ -337,6 +337,12 @@ inline ParamOutcome compare_param(const ParamSpec& spec, const nlohmann::json& o
 inline const std::vector<ParamSpec>& params_for(const std::string& category) {
     using D = Dir;
     static const std::vector<ParamSpec> kEmpty;
+    // A varistor is matched on its varistor voltage (the primary value); what it
+    // lets through at a surge must not rise, and the surge it survives must not fall.
+    static const std::vector<ParamSpec> kVaristor = {
+        {"clamping_voltage", D::Lower, 1.05, std::nullopt, false, true, nullptr},
+        {"peak_surge_current", D::Higher, 0.9, std::nullopt, false, true, nullptr},
+    };
     static const std::vector<ParamSpec> kCapacitor = {
         {"esr", D::Lower, 1.5, std::nullopt, false, true, nullptr},
         {"ripple_current", D::Higher, 0.9, std::nullopt, false, true, nullptr},
@@ -474,6 +480,7 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
     if (category == "connector") return kConnector;
     if (category == "analog") return kAnalog;
     if (category == "timeBase") return kTimeBase;
+    if (category == "varistor") return kVaristor;
     return kEmpty;
 }
 

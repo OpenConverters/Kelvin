@@ -1322,8 +1322,21 @@ inline json score_candidate(const std::string& cat, const json& original, const 
 
 // Rank a candidate list for an original. Returns {category, original_verified,
 // candidates:[...]} sorted best-first (lowest penalty); no_substitute rows sink.
+//: Categories the ranker has rules for. Any other would be compared on nothing
+//: and every candidate would come back "recommended" — a 300 V varistor for a
+//: 30 V one did — so an unknown category is refused, not ranked.
+inline bool known_category(const std::string& c) {
+    static const std::set<std::string> k{"resistor", "capacitor", "magnetic", "chipBead",
+                                         "mosfet", "diode", "igbt", "connector", "analog",
+                                         "timeBase", "varistor"};
+    return k.count(c) > 0;
+}
+
 inline json cross_reference(const std::string& category, const json& original,
                             const json& candidates, const Options& opt = {}) {
+    if (!known_category(category))
+        throw std::invalid_argument("cross_reference: no ranking rules for category '" +
+                                    category + "'");
     std::vector<json> scored;
     scored.reserve(candidates.size());
     for (const auto& c : candidates) scored.push_back(score_candidate(category, original, c, opt));
