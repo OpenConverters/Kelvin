@@ -414,6 +414,11 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         params.push_back({{"name", "value"}, {"verdict", pv.verdict}});
         if (pv.verdict == FAIL) return reject("primary value out of range");
         penalty += opt.primary_weight * pv.penalty;
+        // Inside the accepted window the primary score is flat, so a 20 uH part
+        // tied an exact 22 uH one and the footprint decided. For RANKING the
+        // value always pulls, if gently (the shared primitive stays unchanged).
+        if (o_val && s_val && *o_val > 0 && *s_val > 0)
+            penalty += opt.primary_weight * kPrimaryProximity * std::fabs(std::log(*s_val / *o_val));
         if (pv.verdict == WARN) {
             demote();
             // Say WHAT moved and by how much. A bare "value: warn" left the row
@@ -444,8 +449,18 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // and a 10 uF tantalum share every catalogue column and have different
     // failure modes, ESR, derating and bias behaviour.
     if (cat == "capacitor") {
-        const std::string conflict = cap_family_conflict(cap_family(str(original, "technology")),
-                                                         cap_family(str(cand, "technology")));
+        std::string conflict = cap_family_conflict(cap_family(str(original, "technology")),
+                                                   cap_family(str(cand, "technology")));
+        // A family of unstated sub-type ("ceramic" with no class) still has a
+        // construction: ceramic against film or electrolytic is a different part
+        // whatever the class. Compare the coarse groups when the fine families
+        // could not be told apart.
+        if (conflict.empty()) {
+            const std::string og = cap_group(str(original, "technology")),
+                              sg = cap_group(str(cand, "technology"));
+            if (!og.empty() && !sg.empty() && og != sg)
+                conflict = og + " replaced by " + sg + ": a different capacitor construction";
+        }
         if (!conflict.empty()) {
             params.push_back({{"name", "family"}, {"verdict", FAIL}});
             notes.push_back(conflict);

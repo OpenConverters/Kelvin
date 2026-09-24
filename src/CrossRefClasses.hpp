@@ -76,6 +76,25 @@ inline CapFamily cap_family(const std::string& technology) {
     return CapFamily::Unknown;
 }
 
+// The construction group, from the technology string alone — coarser than
+// cap_family, so it is defined even when the sub-type is not stated.
+inline std::string cap_group(const std::string& technology) {
+    std::string t;
+    for (char c : technology) t += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    if (t.empty()) return "";
+    if (t.find("ceramic") != std::string::npos || t.find("mlcc") != std::string::npos)
+        return "ceramic";
+    if (t.find("tantalum") != std::string::npos) return "tantalum";
+    if (t.find("alumin") != std::string::npos) return "aluminium";
+    if (t.find("film") != std::string::npos || t.find("polypropylene") != std::string::npos ||
+        t.find("polyester") != std::string::npos)
+        return "film";
+    if (t.find("supercap") != std::string::npos || t.find("edlc") != std::string::npos)
+        return "supercapacitor";
+    if (t.find("mica") != std::string::npos) return "mica";
+    return "";
+}
+
 inline const char* cap_family_name(CapFamily f) {
     switch (f) {
         case CapFamily::CeramicClass1: return "ceramic class 1";

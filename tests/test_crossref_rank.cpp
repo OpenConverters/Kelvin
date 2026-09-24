@@ -229,3 +229,21 @@ TEST_CASE("a varistor is matched on its varistor voltage", "[crossref][rank]") {
     REQUIRE(r["candidates"][0]["mpn"] == "same");
     REQUIRE(r["candidates"][1]["status"] == "no_substitute");
 }
+
+TEST_CASE("inside the accepted window the closer value ranks first", "[crossref][rank]") {
+    json original = mag("ORIG", 22e-6, 3.0);
+    json cands = json::array({mag("off9pct", 20e-6, 3.0), mag("exact", 22e-6, 3.0)});
+    auto r = cross_reference("magnetic", original, cands);
+    REQUIRE(r["candidates"][0]["mpn"] == "exact");
+}
+
+TEST_CASE("a ceramic of unstated class is not replaced by a film capacitor", "[crossref][rank]") {
+    json original = {{"mpn", "O"}, {"value_si", 1e-7}, {"voltage", 100.0}, {"technology", "ceramic"}};
+    json cands = json::array({{{"mpn", "film"}, {"value_si", 1e-7}, {"voltage", 100.0},
+                               {"technology", "film-polypropylene"}},
+                              {{"mpn", "mlcc"}, {"value_si", 1e-7}, {"voltage", 100.0},
+                               {"technology", "ceramic-class-2"}}});
+    auto r = cross_reference("capacitor", original, cands);
+    REQUIRE(r["candidates"][0]["mpn"] == "mlcc");
+    REQUIRE(r["candidates"][1]["status"] == "no_substitute");
+}

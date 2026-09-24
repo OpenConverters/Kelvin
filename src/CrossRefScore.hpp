@@ -117,6 +117,10 @@ inline ScoreResult score_range(std::optional<double> original, std::optional<dou
     return {penalty, FAIL, ratio};
 }
 
+//: Weight of |ln(sub/orig)| added to every accepted primary value — about the
+//: old Python ranker's |1 - ratio| pull (x primary_weight 4: a 9 % shift ~ 0.38).
+inline constexpr double kPrimaryProximity = 1.0;
+
 // ── Primary-value specification per category (mirrors PRIMARY_VALUE_SPECS) ───
 struct PrimaryValueSpec {
     Mode mode;
