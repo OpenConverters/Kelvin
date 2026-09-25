@@ -32,6 +32,11 @@ struct ParamSpec {
     bool magnitude = false;            // compare |value| (TCR, offset, bias)
     bool exclude_missing_sub = false;  // missing substitute value disqualifies (ParamOutcome)
     const ClassRank* rank = nullptr;   // class-equivalence map (dielectric / family / y-n)
+    // HIGHER only: the substitute still PASSES down to original x pass_factor.
+    // For a parameter whose spread is wider than the comparison (bead impedance
+    // is a +/-25 % figure, measured differently on each side), a few percent
+    // short is bookkeeping, not a regression.
+    std::optional<double> pass_factor = std::nullopt;
 };
 
 // ── Class-rank maps (mirror param_check.py) ──────────────────────────────────
@@ -130,7 +135,7 @@ inline ParamOutcome compare_numeric(const ParamSpec& spec, std::optional<double>
         double ceiling = spec.abs_tol ? ov + *spec.abs_tol : ov * spec.tol_factor;
         return sv <= ceiling ? WARN : FAIL;
     }
-    if (sv >= ov) return PASS;  // Higher
+    if (sv >= ov * spec.pass_factor.value_or(1.0)) return PASS;  // Higher
     double floor = spec.abs_tol ? ov - *spec.abs_tol : ov * spec.tol_factor;
     return sv >= floor ? WARN : FAIL;
 }
@@ -387,7 +392,9 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
         // part with no curve at all accrues no penalty and outranks genuinely
         // curve-matched parts, which is exactly the "missing data ranks best"
         // pathology.
-        {"impedance_100mhz", D::Higher, 0.8, std::nullopt, false, true, nullptr},
+        // pass_factor 0.85 matches the bead's primary-value rule (within 15 % IS
+        // the same bead); below that it warns, below 80 % it fails.
+        {"impedance_100mhz", D::Higher, 0.8, std::nullopt, false, true, nullptr, 0.85},
         // Peak |Z| and — critically — the frequency it occurs at. Two beads with
         // the same Z@100MHz can peak several-fold apart in height and in
         // frequency, which is what decides whether the part suppresses the noise

@@ -247,3 +247,11 @@ TEST_CASE("a ceramic of unstated class is not replaced by a film capacitor", "[c
     REQUIRE(r["candidates"][0]["mpn"] == "mlcc");
     REQUIRE(r["candidates"][1]["status"] == "no_substitute");
 }
+
+TEST_CASE("a bead a few percent under the original's impedance is the same bead", "[crossref][rank]") {
+    json original = {{"mpn", "O"}, {"value_si", 618.0}, {"impedance_100mhz", 618.0}};
+    json cands = json::array({{{"mpn", "B600"}, {"value_si", 600.0}, {"impedance_100mhz", 600.0}}});
+    auto r = cross_reference("chipBead", original, cands);
+    for (const auto& p : r["candidates"][0]["params"])
+        if (p["name"] == "impedance_100mhz") REQUIRE(p["verdict"] == "pass");
+}
