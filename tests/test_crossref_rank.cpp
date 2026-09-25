@@ -255,3 +255,19 @@ TEST_CASE("a bead a few percent under the original's impedance is the same bead"
     for (const auto& p : r["candidates"][0]["params"])
         if (p["name"] == "impedance_100mhz") REQUIRE(p["verdict"] == "pass");
 }
+
+TEST_CASE("a capacitor well above the original's value is not a drop-in", "[crossref][rank]") {
+    json original = {{"mpn", "O"}, {"value_si", 33e-6}, {"voltage", 100.0}};
+    auto r = cross_reference("capacitor", original,
+                             json::array({{{"mpn", "47u"}, {"value_si", 47e-6}, {"voltage", 100.0}}}));
+    REQUIRE(r["candidates"][0]["status"] == "partial");
+}
+
+TEST_CASE("with no stated temperature grade the 125 C part wins a tie", "[crossref][rank]") {
+    json original = {{"mpn", "O"}, {"value_si", 22e-6}, {"technology", "ceramic"}};
+    json cands = json::array(
+        {{{"mpn", "x5r"}, {"value_si", 22e-6}, {"technology", "ceramic-class-2"}, {"temp_max_C", 85.0}},
+         {{"mpn", "x7r"}, {"value_si", 22e-6}, {"technology", "ceramic-class-2"}, {"temp_max_C", 125.0}}});
+    auto r = cross_reference("capacitor", original, cands);
+    REQUIRE(r["candidates"][0]["mpn"] == "x7r");
+}

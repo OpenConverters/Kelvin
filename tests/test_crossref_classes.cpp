@@ -133,7 +133,12 @@ TEST_CASE("a substitute whose series names no class is reported unverified, not 
             verdict_seen = true;
         }
     CHECK(verdict_seen);
-    CHECK(std::string(c["notes"][0]).find("UNVERIFIED") != std::string::npos);
+    // The approval note must be there; its position is not the point (a +42 %
+    // value note may precede it).
+    bool unverified_noted = false;
+    for (const auto& n : c["notes"])
+        if (std::string(n).find("UNVERIFIED") != std::string::npos) unverified_noted = true;
+    CHECK(unverified_noted);
 }
 
 TEST_CASE("an equal or higher safety class passes without a caveat",

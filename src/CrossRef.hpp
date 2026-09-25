@@ -215,6 +215,13 @@ struct Options {
     size_t max_results = 25;
 };
 
+// A capacitor above this multiple of the original's value is capped at partial.
+inline constexpr double kCapDropInMaxRatio = 1.2;
+// When the original states no temperature grade, a candidate below 125 C pays
+// this much per degree short — a tie-breaker only (85 C X5R vs 125 C X7R costs
+// 0.08, far under any real parameter term), so the more capable grade wins a tie.
+inline constexpr double kUnknownTempGradePenaltyPerC = 0.002;
+
 // Non-numeric verdict penalties. Sized to sit in the same 0-5 band as the
 // numeric terms so no single categorical miss can outweigh the primary value.
 inline constexpr double kVerdictWarnPenalty = 0.5;
@@ -419,6 +426,17 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // value always pulls, if gently (the shared primitive stays unchanged).
         if (o_val && s_val && *o_val > 0 && *s_val > 0)
             penalty += opt.primary_weight * kPrimaryProximity * std::fabs(std::log(*s_val / *o_val));
+        // The capacitor window allows up to 1.5x on purpose (more bulk C is
+        // usually fine), but "recommended" means a drop-in, and a +42 % value is
+        // one only where the capacitance is bulk or decoupling — never in a
+        // timing, filter or compensation role, which the ranker cannot see.
+        if (cat == "capacitor" && pv.verdict == PASS && o_val && s_val && *o_val > 0 &&
+            *s_val / *o_val > kCapDropInMaxRatio) {
+            demote();
+            notes.push_back(signed_pct((*s_val / *o_val - 1.0) * 100.0) +
+                            " more capacitance than the original — fine for bulk or decoupling, "
+                            "not where the value sets a timing, filter or compensation point");
+        }
         if (pv.verdict == WARN) {
             demote();
             // Say WHAT moved and by how much. A bare "value: warn" left the row
@@ -721,6 +739,12 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             direction_blind = true;
             blind_axes.push_back(param_label(r.key));
         }
+    }
+
+    // ── temperature grade tie-break when the original states none ───────────
+    if (cat == "capacitor" && !num(original, "temp_max_C")) {
+        if (const auto t = num(cand, "temp_max_C"); t && *t < 125.0)
+            penalty += kUnknownTempGradePenaltyPerC * (125.0 - *t);
     }
 
     // ── operating-point requirements (the circuit, not the original) ────────
