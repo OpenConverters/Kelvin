@@ -177,7 +177,14 @@ inline std::vector<Rating> critical_ratings(const std::string& cat) {
 // op-amp is not a quad). Everything else demotes to 'partial'.
 inline bool is_hard_param(const std::string& cat, const std::string& key) {
     static const std::set<std::string> magnetic{"saturation_current", "rated_current"};
-    static const std::set<std::string> connector{"family", "positions"};
+    // A connector is half of a mated pair: the other gender, another interface
+    // standard or mounting style does not plug into what is on the board. Only a
+    // MISMATCH rejects — a record that omits one is unverified, not refused
+    // (none of these excludes a missing substitute). Pitch is deliberately NOT
+    // here: a different pitch is reported as a land-pattern change (partial,
+    // redesign), ranked below every part that keeps the pads.
+    static const std::set<std::string> connector{"family", "positions", "polarity",
+                                                 "interface_standard", "mounting"};
     static const std::set<std::string> analog{"subtype", "channels"};
     // mode: a 3rd-overtone crystal cannot cross with a fundamental one in either
     // direction — an overtone circuit's LC tank is inductive at the fundamental,
@@ -1198,7 +1205,15 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     if (cat == "timeBase" &&
         is_passive_resonator(str(original, "technology"), str(original, "device_type")) &&
         is_passive_resonator(str(cand, "technology"), str(cand, "device_type"))) {
-        auto o_cl = num(original, "load_capacitance"), s_cl = num(cand, "load_capacitance");
+        // Records state CL in farads (load_capacitance) or in pF — the parameter
+        // table's own key (load_capacitance_pF); read either, or the gate never
+        // sees a value from the latter and waves every CL through.
+        auto load_cl = [](const json& j) -> std::optional<double> {
+            if (auto f = num(j, "load_capacitance")) return f;
+            if (auto pf = num(j, "load_capacitance_pF")) return *pf * 1e-12;
+            return std::nullopt;
+        };
+        auto o_cl = load_cl(original), s_cl = load_cl(cand);
         if (auto ppm = crystal_pull_ppm(o_cl, s_cl)) {
             const double mag = std::abs(*ppm);
             if (mag > 5.0) {  // below this the pull is lost in the part's own tolerance

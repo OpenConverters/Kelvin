@@ -271,3 +271,30 @@ TEST_CASE("with no stated temperature grade the 125 C part wins a tie", "[crossr
     auto r = cross_reference("capacitor", original, cands);
     REQUIRE(r["candidates"][0]["mpn"] == "x7r");
 }
+
+TEST_CASE("a connector of the other gender is refused; another pitch is a redesign; silence is neither",
+          "[crossref][rank]") {
+    json o = {{"mpn", "O"}, {"family", "pinHeaderSocket"}, {"positions", 6},
+              {"polarity", "male"}, {"pitch_mm", 2.54}};
+    json cands = json::array(
+        {{{"mpn", "female"}, {"family", "pinHeaderSocket"}, {"positions", 6},
+          {"polarity", "female"}, {"pitch_mm", 2.54}},
+         {{"mpn", "2mm"}, {"family", "pinHeaderSocket"}, {"positions", 6},
+          {"polarity", "male"}, {"pitch_mm", 2.0}},
+         {{"mpn", "silent"}, {"family", "pinHeaderSocket"}, {"positions", 6}}});
+    auto r = cross_reference("connector", o, cands);
+    for (const auto& c : r["candidates"]) {
+        if (c["mpn"] == "female") REQUIRE(c["status"] == "no_substitute");
+        else if (c["mpn"] == "2mm") REQUIRE(c["status"] == "partial");
+        else REQUIRE(c["status"] != "no_substitute");
+    }
+}
+
+TEST_CASE("the crystal load-capacitance gate reads CL stated in pF", "[crossref][rank]") {
+    json o = {{"mpn", "O"}, {"subtype", "crystal"}, {"technology", "quartz"},
+              {"frequency", 16e6}, {"load_capacitance_pF", 12.0}};
+    json cands = json::array({{{"mpn", "cl18"}, {"subtype", "crystal"}, {"technology", "quartz"},
+                               {"frequency", 16e6}, {"load_capacitance_pF", 18.0}}});
+    auto r = cross_reference("timeBase", o, cands);
+    REQUIRE(r["candidates"][0]["status"] == "no_substitute");
+}
