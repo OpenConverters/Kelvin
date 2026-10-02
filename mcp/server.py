@@ -12,6 +12,8 @@ Every answer comes from the same C++ engine the web app and Kirchhoff run:
     catalogue search / lookup / recommend   PyKelvin (native, in-process)
     cross-reference                         xref.mjs (the web app's own
                                             crossref.js over the same WASM build)
+    BOM-file cross-reference                bomfile.py reads the file; xref.mjs
+                                            identifies every line and ranks it
 
 The split is deliberate. The substitute RANKER is C++ and PyKelvin exposes it, but
 turning "this MPN" into a scored candidate list also needs the per-family pre-gate
@@ -33,6 +35,7 @@ import re
 import subprocess
 import sys
 import threading
+import uuid
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parent.parent
@@ -969,6 +972,496 @@ def cross_reference(family: str, mpn: str, manufacturer: str | None = None,
         "missingSpecs": result.get("missingKeys") or None,
         "caveat": " ".join(caveats) or None,
     }))
+
+
+# --- a bill of materials, cross-referenced ------------------------------------
+# A BOM spreadsheet is N questions with one answer each, so it answers as the contract's `bom`
+# branch: one line per reference designator, every line with its own status. The file is read
+# here (bomfile.py); identification and ranking happen in the cross-reference worker, which
+# runs the web app's own runCrossRef (see xref.mjs, op `bom`).
+#
+# What a whole-BOM answer carries inline. Every line in full is too much for one result: the
+# board version of this tool (Faraday's crossref_board) came back at 691,751 characters for
+# 189 parts, two thirds of it spec tables, parameter verdicts and ranker notes, and clients
+# refuse a result that size outright. So the payload carries every LINE in a compact form, and
+# the full lines are stored under a handle: crossref_bom_line(crossref, ref) returns one line
+# exactly as it was computed. Nothing is recomputed to answer that, so the detail cannot
+# disagree with the summary.
+
+CROSSREF_INLINE_ROWS = 3        # unranked catalogue rows per line
+CROSSREF_INLINE_RANKED = 2      # ranked candidates per line: the best + one alternate
+BOM_SUFFIXES = (".csv", ".txt", ".tsv", ".xlsx")
+
+_IDENTIFICATION_WORDS = {
+    "exact": "identified exactly by part number",
+    "ambiguous": "part number carried by several catalogue parts",
+    "substring": "only partial part-number matches",
+    "value-package": "identified only by value and package",
+    "none": "not in the catalogue",
+    "unlookupable": "the BOM does not say what it is",
+    "not-a-part": "not a catalogue part",
+}
+
+
+def _work_dir() -> Path:
+    """Where stored BOM cross-references live, for crossref_bom_line to read back."""
+    resolved = os.environ.get("KELVIN_WORK_DIR", "").strip() or str(Path.home() / ".kelvin/work")
+    return Path(resolved)
+
+
+def _crossref_dir(crossref: str) -> Path:
+    if not re.fullmatch(r"[0-9a-f]{12}", crossref or ""):
+        raise ValueError(f"{crossref!r} is not a crossref_bom handle (12 hex characters)")
+    return _work_dir() / f"bom-{crossref}"
+
+
+def _read_bom(bom: str) -> tuple[dict, str]:
+    """The BOM file, parsed, and the name to call it by in an answer."""
+    from artifacts import display_name, resolved
+    from bomfile import read_bom_file
+
+    name = display_name(bom)
+    with resolved(bom, "KELVIN", "BOM") as path:
+        if path.is_dir():
+            raise ValueError(f"{bom} is a directory; crossref_bom reads one BOM file "
+                             f"({', '.join(BOM_SUFFIXES)})")
+        return read_bom_file(path, name), name
+
+
+def _ranked_inline(c: dict, best: bool) -> dict:
+    out: dict = {"mpn": c["mpn"]}
+    for key in ("manufacturer", "status", "grade"):
+        if c.get(key) is not None:
+            out[key] = c[key]
+    if best:
+        if c.get("direction") is not None:
+            out["direction"] = c["direction"]
+        if isinstance(c.get("penalty"), (int, float)):
+            out["penalty"] = round(float(c["penalty"]), 3)
+        params = c.get("params") or []
+        failing = [p for p in params if p.get("verdict") != "pass"]
+        if failing:
+            out["params"] = failing
+        out["_paramsPassed"] = len(params) - len(failing)
+        if c.get("notes"):
+            out["notes"] = [str(n)[:240] for n in c["notes"][:3]]
+    return out
+
+
+def _unranked(row: dict, match: str, family: str) -> dict:
+    """A catalogue row the line MIGHT be — not ranked, so no `status`: the contract's statuses
+    are the ranker's judgement, and nothing judged this row."""
+    out = {"mpn": row.get("mpn") or "(unnamed)",
+           "specs": {k: v for k, v in row.items()
+                     if k not in ("mpn", "manufacturer") and v is not None},
+           "_match": match, "_family": family}
+    if row.get("manufacturer") is not None:
+        out["manufacturer"] = row["manufacturer"]
+    return out
+
+
+def _bom_line(src: dict, g: dict) -> tuple[dict, list[str]]:
+    """One designator's line, in full (as stored), from its BOM row and its group's answer."""
+    match = g["match"]
+    line: dict = {"ref": src["ref"], "status": "unsourced", "mpn": None}
+    if src.get("value"):
+        line["value"] = src["value"]
+    if src.get("footprint"):
+        line["specs"] = {"footprint": src["footprint"]}
+    if src.get("partNumber"):
+        line["originalMpn"] = src["partNumber"]
+    ident: dict = {"certainty": match}
+    for key in ("family", "query", "normalised", "outsideSuggestedFamilies", "parsedValue",
+                "package", "tried", "families", "makerHint", "makerDisagrees",
+                "mpnScanTruncated"):
+        if g.get(key) not in (None, [], "", False):
+            ident[key] = g[key]
+    ident["bomRow"] = src["row"]
+    line["_identification"] = ident
+    if src.get("manufacturer"):
+        line["_bomManufacturer"] = src["manufacturer"]
+    if src.get("description"):
+        line["_bomDescription"] = src["description"]
+
+    notes: list[str] = []
+    diags: list[str] = []
+    if match in ("exact",):
+        orig = g["original"]
+        line["originalMpn"] = orig["mpn"]
+        line["kind"] = g["family"]
+        line["_originalManufacturer"] = orig.get("manufacturer")
+        how = ("ignoring case and punctuation" if g.get("normalised") else "exactly")
+        notes.append(f"identification: exact — {orig['mpn']} ({orig.get('manufacturer')}, "
+                     f"{g['family']}) matched {how} by part number"
+                     + (f" from '{g['query']}'" if g.get("query") != src.get("partNumber") else "")
+                     + (" — outside the families its designator and footprint suggest"
+                        if g.get("outsideSuggestedFamilies") else ""))
+        if g.get("makerDisagrees"):
+            notes.append(f"the BOM names the maker '{g['makerDisagrees']}', the catalogue part "
+                         f"is {orig.get('manufacturer')}'s")
+        x = g.get("xref") or {}
+        if g.get("xrefError"):
+            notes.append(f"the cross-reference failed: {g['xrefError']}")
+            diags.append(f"{src['ref']}: cross-reference failed: {g['xrefError']}")
+        elif x.get("already"):
+            line["status"] = "exact"
+            line["mpn"] = orig["mpn"]
+            line["manufacturer"] = orig.get("manufacturer")
+            notes.append(f"already a {orig.get('manufacturer')} part — nothing to substitute")
+        elif x.get("skipped") == "no-model":
+            notes.append(f"not cross-referenced: {x['why']}")
+        elif x.get("skipped"):
+            # Established, not assumed: the catalogue was asked who makes this family.
+            line["status"] = "no_substitute"
+            notes.append(x["why"])
+        else:
+            ranked = x.get("ranked") or []
+            for c in ranked:
+                # the maker lives on the shard row, not in the ranker's verdict
+                c.setdefault("manufacturer", (c.get("row") or {}).get("manufacturer"))
+                if isinstance(c.get("specs"), dict):
+                    c["specs"] = _no_nulls(c["specs"])
+            line["candidates"] = [_candidate(c) for c in ranked]
+            line["_crossref"] = {"poolTotal": x.get("poolTotal"),
+                                 "poolScored": x.get("poolScored"),
+                                 "targets": len(x.get("targets") or []),
+                                 "targetsFromCatalogue": bool(x.get("targetsFromFacet")),
+                                 "originalVerified": x.get("origVerified"),
+                                 "missingKeys": x.get("missingKeys") or [],
+                                 "originalSpecs": _no_nulls(x.get("origSpec") or {})}
+            if x.get("caveat"):
+                line["_crossref"]["caveat"] = x["caveat"]
+            if not ranked:
+                line["status"] = "no_substitute"
+                notes.append(f"no candidate from {len(x.get('targets') or [])} target "
+                             f"manufacturer(s) survived the ranker's pre-gate "
+                             f"({x.get('poolTotal', 0)} in the pool)")
+            else:
+                best = ranked[0]
+                line["status"] = best.get("status") or "no_substitute"
+                if line["status"] in ("recommended", "partial"):
+                    line["mpn"] = best["mpn"]
+                    line["manufacturer"] = best.get("manufacturer")
+            if x.get("origVerified") is False:
+                notes.append(f"the original's own record does not state "
+                             f"{', '.join(x.get('missing') or [])}, so no candidate can be "
+                             f"'recommended'")
+        if x.get("unknownTargets"):
+            notes.append(f"not a manufacturer of {g['family']} parts in the catalogue: "
+                         f"{', '.join(x['unknownTargets'])}")
+    else:
+        cands: list[dict] = []
+        if match == "ambiguous":
+            cands += [_unranked(r, "exact-ambiguous", g["family"]) for r in g.get("exactRows") or []]
+        for h in g.get("near") or []:
+            cands.append(_unranked(h["row"], "substring", h["family"]))
+        by_value = g.get("byValue") or {}
+        for row in by_value.get("rows") or []:
+            cands.append(_unranked(row, "value-package", by_value["family"]))
+        if cands:
+            line["candidates"] = cands
+        if by_value:
+            ident["byValue"] = {k: by_value[k] for k in
+                                ("family", "field", "tol", "total", "scanned", "truncated",
+                                 "matched", "matchedTarget", "unknownCase", "differs")
+                                if k in by_value}
+        if match == "value-package":
+            line["kind"] = by_value["family"]
+        if match in ("substring", "value-package"):
+            bits = []
+            if g.get("tried") and not g.get("near"):
+                bits.append(f"no catalogue part carries "
+                            f"{' or '.join(repr(t) for t in g['tried'])}, in any family")
+            if g.get("near"):
+                bits.append(f"{g.get('nearTotal')} catalogue part(s) contain "
+                            f"{' or '.join(repr(t) for t in g.get('tried') or [])}")
+            if by_value.get("matched"):
+                bits.append(f"{by_value['matched']} {by_value['family']}(s) match its value "
+                            f"and package"
+                            + (f" ({by_value['matchedTarget']} from the target maker(s), "
+                               f"listed first)" if by_value.get("matchedTarget") else ""))
+            if by_value.get("truncated"):
+                bits.append(f"only the first {by_value['scanned']:,} of {by_value['total']:,} "
+                            f"parts of that value were checked")
+            notes.append(f"identification: {match} — not cross-referenced, because the BOM "
+                         f"does not say which part this is: " + "; ".join(bits)
+                         + " (listed as candidates, unranked)")
+        else:
+            notes.append(f"identification: {match} — {_IDENTIFICATION_WORDS[match]}: "
+                         f"{g.get('why')}")
+    line["notes"] = "; ".join(notes)
+    return line, diags
+
+
+def _inline_line(line: dict, same_as: str | None) -> dict:
+    """A stored line, compacted for the payload. A designator that shares its BOM row's answer
+    with an earlier one carries the answer (status, part, identification certainty) but points
+    at that line for the candidates instead of repeating them."""
+    keep = ("ref", "status", "mpn", "manufacturer", "originalMpn", "kind", "value", "specs")
+    out = {k: line[k] for k in keep if k in line}
+    ident = line["_identification"]
+    out["_identification"] = {k: ident[k] for k in ("certainty", "family", "query", "normalised")
+                              if k in ident and not (k == "family" and ident[k] == line.get("kind"))
+                              and not (k == "query" and ident[k] == line.get("originalMpn"))}
+    if same_as:
+        out["_sameAs"] = same_as
+        out["notes"] = f"identification: {ident['certainty']} — as {same_as}"
+        return out
+    out["notes"] = line.get("notes") or ""
+    if line.get("_crossref") and line["status"] == "no_substitute":
+        out["_crossref"] = {k: line["_crossref"][k] for k in ("poolTotal", "targets")}
+    cands = line.get("candidates") or []
+    if cands and "status" in cands[0]:
+        out["candidates"] = [_ranked_inline(c, i == 0)
+                             for i, c in enumerate(cands[:CROSSREF_INLINE_RANKED])]
+        if len(cands) > CROSSREF_INLINE_RANKED:
+            out["_candidatesHeldBack"] = len(cands) - CROSSREF_INLINE_RANKED
+    elif cands:
+        out["candidates"] = [{k: c[k] for k in ("mpn", "manufacturer", "_match") if k in c}
+                             for c in cands[:CROSSREF_INLINE_ROWS]]
+        if len(cands) > CROSSREF_INLINE_ROWS:
+            out["_rowsHeldBack"] = len(cands) - CROSSREF_INLINE_ROWS
+    return out
+
+
+def _group_key(row: dict) -> str:
+    """Lines that will get the same answer: same BOM text, same designator prefix (the prefix
+    orders the family search, so C1 and R1 with one value string are different questions)."""
+    prefix = re.match(r"[A-Za-z_]*", row["ref"]).group(0).upper()
+    return json.dumps([prefix, row.get("partNumber"), row.get("manufacturer"), row.get("value"),
+                       row.get("description"), row.get("footprint")])
+
+
+@mcp.tool(
+    title="Cross-reference a BOM file",
+    description=(
+        "Cross-reference every line of a bill-of-materials spreadsheet (.csv, .txt, .xlsx) "
+        "into a target manufacturer (e.g. Würth) — deterministic, no LLM. Each designator is "
+        "identified in the Kelvin catalogue (part number first, exact or partial; value and "
+        "package otherwise) and every exactly identified part is ranked by Kelvin's own "
+        "cross-reference. Each line says how sure the identification is; lines Kelvin cannot "
+        "identify are reported as unsourced with the reason, never dropped. Takes a PATH "
+        "(local, file:// or artifact://), not the file's contents."
+    ),
+    structured_output=False,
+)
+def crossref_bom(bom: str, target_manufacturers: list[str] | None = None,
+                 same_type: bool = True, max_results: int = 5, top: int = 30) -> CallToolResult:
+    """Every line of a BOM file, identified and cross-referenced.
+
+    Args:
+        bom: the BOM file — a local path, file://, artifact://<id> (resolved against
+            KELVIN_ARTIFACT_BASE) or https:// URL. .csv / .txt / .tsv (comma, semicolon or tab)
+            or .xlsx; a title block above the header and grouped designators ("C1-C4",
+            "R1, R2") are fine.
+        target_manufacturers: substitutes only from these vendors, matched to the catalogue's
+            own spelling with case and accents ignored ("wurth" finds "Würth Elektronik").
+            Omitted: every vendor but the original's own.
+        same_type: keep substitutes of the original's own type (technology / device type).
+        max_results: ranked substitutes kept per line (stored in full; the payload carries the
+            best two).
+        top: how many BOM rows to name in the digest; the payload carries every line.
+    """
+    doc, name = _read_bom(bom)
+    max_results = max(1, min(int(max_results), 12))
+    targets = [t.strip() for t in (target_manufacturers or []) if t and t.strip()]
+
+    groups: dict[str, dict] = {}
+    for row in doc["rows"]:
+        groups.setdefault(_group_key(row), row)
+    result = _xref({"op": "bom",
+                    "lines": [{"key": k, **r} for k, r in groups.items()],
+                    "targets": targets, "sameType": bool(same_type),
+                    "maxResults": max_results, "listed": max_results})
+    answers = {g["key"]: g for g in result["groups"]}
+    missing = [k for k in groups if k not in answers]
+    if missing:
+        raise RuntimeError(f"the cross-reference worker answered {len(answers)} of "
+                           f"{len(groups)} BOM groups; it lost {len(missing)}")
+
+    lines, diagnostics, first_of = [], [], {}
+    inline = []
+    for row in doc["rows"]:
+        key = _group_key(row)
+        g = answers[key]
+        line, diags = _bom_line(row, g)
+        if g.get("xref"):
+            g["xref"].pop("originalRaw", None)
+        lines.append(line)
+        diagnostics += diags
+        inline.append(_inline_line(line, first_of.get(key)))
+        first_of.setdefault(key, row["ref"])
+
+    # A target named by the caller that makes none of the families the lines were identified
+    # in is said once, at the top: per line it reads as noise, and missing it reads as "Würth
+    # has nothing to offer" when the truth is "nobody called Würth was found".
+    asked = [g for g in answers.values()
+             if g.get("match") == "exact" and "unknownTargets" in (g.get("xref") or {})]
+    if targets and asked:
+        never = [t for t in targets
+                 if all(t in (g["xref"].get("unknownTargets") or []) for g in asked)]
+        if never:
+            diagnostics.append(
+                f"no manufacturer in the catalogue matches {', '.join(repr(t) for t in never)} "
+                f"in any family these lines were identified in")
+
+    certainty: dict[str, int] = {}
+    statuses: dict[str, int] = {}
+    for line in lines:
+        c = line["_identification"]["certainty"]
+        certainty[c] = certainty.get(c, 0) + 1
+        statuses[line["status"]] = statuses.get(line["status"], 0) + 1
+    sourced = sum(1 for line in lines if line["mpn"])
+
+    # What the file itself could not say, said up front: an unread column may be where the
+    # part numbers were, and a Windows-1252 read may have changed a µ or an Ω.
+    file_notes = list(doc["notes"])
+    if doc["unreadColumns"]:
+        file_notes.append(f"columns not read: {', '.join(repr(c) for c in doc['unreadColumns'])}")
+    if doc["ignoredColumns"]:
+        file_notes.append(f"duplicate columns ignored: {'; '.join(doc['ignoredColumns'])}")
+    if doc["skipped"]:
+        file_notes.append("rows skipped: " + ", ".join(f"{n} {why}" for why, n in doc["skipped"].items()))
+    diagnostics = list(doc["notes"]) + [f"{name}: {n}" for n in file_notes[len(doc["notes"]):]] \
+        + diagnostics
+
+    crossref = uuid.uuid4().hex[:12]
+    caveat = (
+        (" ".join(f"{name}: {n}." for n in doc["notes"]) + " " if doc["notes"] else "")
+        + "Deterministic catalogue cross-reference (Kelvin's ranker, run as the Kelvin web app "
+        "runs it). Only lines identified EXACTLY by part number were cross-referenced; a line "
+        "matched by value and package, or by a partial part number, lists the catalogue parts "
+        "it might be — unranked — because the BOM does not say which one it is. 'mpn' on a "
+        "line is the best-ranked substitute when Kelvin rates it recommended or partial, or "
+        "the original itself (status 'exact') when it already comes from a target maker. "
+        f"COMPACT: each line keeps at most {max_results} ranked candidates in the stored "
+        f"cross-reference, and this payload carries the best {CROSSREF_INLINE_RANKED} "
+        "(the rest counted in _candidatesHeldBack); the best candidate's passed checks are "
+        "counted in _paramsPassed (its `params` lists only those that did not pass); "
+        "candidates' spec tables, the alternates' checks and notes, and unranked catalogue "
+        f"rows beyond {CROSSREF_INLINE_ROWS} per line (_rowsHeldBack) are held back; a "
+        "designator sharing its BOM row's answer with an earlier one points at it with "
+        f"_sameAs. crossref_bom_line(crossref='{crossref}', ref=<ref>) returns any line in "
+        "full.")
+    payload: dict = {"mode": "bom", "lines": inline, "total": len(lines), "sourced": sourced,
+                     "caveat": caveat.strip()}
+    if len(targets) == 1:
+        payload["targetManufacturer"] = targets[0]
+    if diagnostics:
+        payload["diagnostics"] = diagnostics
+
+    out_dir = _crossref_dir(crossref)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "crossref.json").write_text(json.dumps({
+        "crossref": crossref, "bom": str(bom), "name": name, "targets": targets,
+        "sameType": bool(same_type), "maxResults": max_results,
+        "file": {k: doc[k] for k in ("format", "columns", "unreadColumns", "ignoredColumns",
+                                     "skipped", "notes", "headerRow")},
+        "full": {**payload, "lines": lines,
+                 "caveat": caveat.split(" COMPACT:")[0].strip()},
+    }), encoding="utf-8")
+
+    order = ("exact", "ambiguous", "value-package", "substring", "none", "unlookupable",
+             "not-a-part")
+    head = (f"{len(lines)} line(s) in {name} ({doc['format']}, header on row "
+            f"{doc['headerRow']}): "
+            + ", ".join(f"{certainty[m]} {_IDENTIFICATION_WORDS[m]}" for m in order
+                        if certainty.get(m))
+            + f".\nCross-reference: {sourced} of {len(lines)} line(s) carry a part ("
+            + ", ".join(f"{n} {s}" for s, n in sorted(statuses.items())) + ")"
+            + (f", targets {', '.join(targets)}" if targets
+               else ", targets: every vendor but the original's own") + ".")
+    if doc["notes"]:
+        head += "\n" + "\n".join(f"! {n}" for n in doc["notes"])
+    rows_digest = []
+    seen_keys: list[str] = []
+    refs_of: dict[str, list[str]] = {}
+    for row, line in zip(doc["rows"], lines):
+        key = _group_key(row)
+        if key not in refs_of:
+            seen_keys.append(key)
+            refs_of[key] = []
+        refs_of[key].append(row["ref"])
+    by_ref = {line["ref"]: line for line in lines}
+    for key in seen_keys[:max(1, int(top))]:
+        refs = refs_of[key]
+        line = by_ref[refs[0]]
+        said = line.get("originalMpn") or line.get("value") or "(nothing)"
+        verdict = (f"{line['mpn']} ({line.get('manufacturer')}) {line['status']}"
+                   if line.get("mpn") else line["status"])
+        best = (line.get("candidates") or [{}])[0]
+        if best.get("grade") and line.get("mpn"):
+            verdict += f"/{best['grade']}"
+        rows_digest.append(
+            f"  {','.join(refs[:6])}{'…' if len(refs) > 6 else ''} ({len(refs)}): {said} — "
+            f"{line['_identification']['certainty']} -> {verdict}"
+            # the reason, for a line that got no part; the identification itself is already
+            # in the row's certainty word
+            + (f" | {line['notes'].split(' — ', 1)[-1][:180]}"
+               if line["status"] in ("unsourced", "no_substitute") else ""))
+    digest = (head + "\n" + "\n".join(rows_digest)
+              + (f"\n  … {len(seen_keys) - len(rows_digest)} more BOM row(s) in the payload"
+                 if len(seen_keys) > len(rows_digest) else "")
+              + ("\n" + "\n".join(f"  ! {d}" for d in diagnostics[:10]) if diagnostics else "")
+              + f"\n(crossref {crossref} — crossref_bom_line(crossref, ref) returns one line in "
+                f"full: every candidate's spec table, every check, every note)")
+    return _result(digest, payload)
+
+
+@mcp.tool(
+    title="One BOM cross-reference line in full",
+    description=(
+        "One line of a completed crossref_bom, exactly as it was computed: every ranked "
+        "candidate's spec table, every parameter check and note, and how the line was "
+        "identified. crossref_bom's payload is compact on purpose; this is where its detail "
+        "lives."
+    ),
+    structured_output=False,
+)
+def crossref_bom_line(crossref: str, ref: str) -> CallToolResult:
+    """One designator of a stored BOM cross-reference.
+
+    Args:
+        crossref: the id crossref_bom returned.
+        ref: the reference designator, e.g. 'C12'.
+    """
+    path = _crossref_dir(crossref) / "crossref.json"
+    if not path.exists():
+        raise ValueError(f"no BOM cross-reference {crossref!r} — it was never run here, or "
+                         f"{path.parent} was removed. Run crossref_bom again.")
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    full = stored["full"]
+    found = [line for line in full["lines"] if line["ref"] == ref]
+    if not found:
+        refs = [line["ref"] for line in full["lines"]]
+        raise ValueError(f"no line {ref!r} in BOM cross-reference {crossref} — it holds "
+                         f"{len(refs)} line(s): {', '.join(refs[:20])}"
+                         + (" …" if len(refs) > 20 else ""))
+    line = found[0]
+    payload: dict = {"mode": "bom", "lines": [line], "total": 1,
+                     "sourced": 1 if line["mpn"] else 0, "caveat": full["caveat"]}
+    if full.get("targetManufacturer"):
+        payload["targetManufacturer"] = full["targetManufacturer"]
+    listing = []
+    for c in line.get("candidates") or []:
+        bits = [f"  {c['mpn']} ({c.get('manufacturer')})"]
+        if c.get("status"):
+            bits.append(f"{c['status']}/{c.get('grade')} penalty {c.get('penalty')}")
+            off = [f"{p['name']} {p['verdict']}" for p in c.get("params") or []
+                   if p.get("verdict") != "pass"]
+            if off:
+                bits.append("; ".join(off))
+        else:
+            bits.append(f"unranked, matched by {c.get('_match')}")
+        listing.append("  ".join(bits) + "".join(f"\n      - {n}" for n in c.get("notes") or []))
+    return _result(
+        f"{ref} in {stored['name']} (BOM row {line['_identification']['bomRow']}): "
+        f"{line['status']}"
+        + (f", original {line['originalMpn']}" if line.get("originalMpn") else "")
+        + (f" -> {line['mpn']} ({line.get('manufacturer')})" if line.get("mpn") else "")
+        + f"\n{line.get('notes') or ''}"
+        + ("\n" + "\n".join(listing) if listing else "\n  (no candidates)"),
+        payload)
 
 
 # --- the MCP Apps UI resource -----------------------------------------------

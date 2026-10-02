@@ -1,0 +1,16 @@
+"Bill of Materials","relay-io.PrjPcb"
+"Source Data From:","relay-io.PrjPcb"
+"Project:","relay-io.PrjPcb"
+"Variant:","None"
+
+"Report Date:","02/10/2026 10:14"
+
+"Comment","Description","Designator","Footprint","LibRef","Quantity","Manufacturer","Manufacturer Part Number"
+"2K2","Thick film resistor 2.2 kOhm ±1 %","R1, R2","RESC1005X40N","RES","2","YAGEO","RC0402FR-132K2L"
+"10k","Thick film resistor 10 kOhm ±1 %","R3-R5","RESC1005X40N","RES","3","YAGEO","RC0402FR-1310KL"
+"100nF","MLCC 100 nF 50 V X7R","C1-C4","CAPC1608X90N","CAP","4","Würth Elektronik","885012206095"
+"100nF","MLCC 100 nF 16 V X5R","C5","CAPC1005X55N","CAP","1","Taiyo Yuden","TMK105BJ104KV-F"
+"10µH","Power inductor 10 µH","L1","WE-TPC_3816","IND","1","Würth Elektronik","744031100"
+"ESD5Z5.0T1G","ESD protection diode 5 V","D1, D2","SOD-523","TVS","2","onsemi","ESD5Z5.0T1G"
+"SN74LVC1T45DCKR","Single-bit level shifter","U1","SC-70-6","IC","1","Texas Instruments","SN74LVC1T45DCKR"
+"","","","","","Total: 14","",""

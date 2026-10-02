@@ -1,0 +1,7 @@
+BOM export — test jig
+
+RefDes	MPN	Manufacturer	Qty	Description
+D1	ESD5Z5.0T1G	onsemi	1	TVS diode
+C1 C2	885012106006	Wurth Elektronik	2	MLCC 10uF
+C3	TMK105BJ104KV-F	Taiyo Yuden	1	MLCC 100nF
+U1	SN74LVC1T45DCKR	TI	1	level shifter

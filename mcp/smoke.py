@@ -7,7 +7,8 @@ in a chat session where "no candidates" and "nobody looked" read the same.
 
     KELVIN_TAS_DATA_DIR=/path/to/catalogue python3 mcp/smoke.py [--skip-xref]
 
---skip-xref leaves out cross_reference (the only tool needing Node + prebuilt shards).
+--skip-xref leaves out cross_reference and crossref_bom (the tools needing Node + prebuilt shards).
+The BOM-file parser has its own catalogue-free tests: python3 -m pytest mcp/test_bomfile.py
 """
 
 from __future__ import annotations
@@ -59,6 +60,158 @@ def check(label: str, condition: bool, detail: str = "") -> None:
 
 def text(result) -> str:
     return "\n".join(c.text for c in result.content)
+
+
+BOM_FIXTURES = Path(__file__).parent / "fixtures" / "bom"
+# A BOM payload carries every line, so its size grows with the BOM. The bound is per line:
+# Faraday's board version came back at 691,751 characters for 189 parts (~3,700 a line) before
+# it was compacted, and clients refuse a result that size outright.
+BOM_CHARS_PER_LINE = 800
+BOM_CHARS_ONE_LINE = 1500
+
+
+def _bom(path, **kw):
+    r = S.crossref_bom(str(path), **kw)
+    return r, r.structuredContent, {line["ref"]: line for line in r.structuredContent["lines"]}
+
+
+def _raises(label: str, fn, *needles: str) -> None:
+    try:
+        fn()
+        check(label, False, "no exception")
+    except ValueError as e:
+        check(label, all(n in str(e) for n in needles), str(e)[:160])
+
+
+def bom_checks() -> None:
+    import tempfile
+
+    print("crossref_bom(Altium CSV, Windows-1252, title block, grouped designators)")
+    r, p, by = _bom(BOM_FIXTURES / "altium_bom.csv")
+    conforms("crossref_bom (Altium)", p)
+    check("one line per designator", p["total"] == len(p["lines"]) == 14, f"{p['total']} lines")
+    check("grouped designators expand, each its own line",
+          {"R3", "R4", "R5", "C1", "C2", "C3", "C4", "D1", "D2"} <= set(by))
+    check("a designator sharing its row's answer points at the first",
+          by["R4"].get("_sameAs") == "R3" and by["R4"]["status"] == by["R3"]["status"]
+          and by["R4"]["mpn"] == by["R3"]["mpn"])
+    r1 = by["R1"]
+    check("a catalogued MPN is identified exactly",
+          r1["_identification"]["certainty"] == "exact" and r1["originalMpn"] == "RC0402FR-132K2L"
+          and r1["kind"] == "resistor" and "identification: exact" in r1["notes"])
+    check("... and cross-referenced by the ranker",
+          bool(r1.get("candidates")) and r1["candidates"][0].get("status") is not None
+          and r1["status"] in ("recommended", "partial", "no_substitute"),
+          f"{r1['status']} -> {r1['mpn']}")
+    check("every substitute is from another vendor when no target is named",
+          all(c.get("manufacturer") != "YAGEO" for c in r1["candidates"]))
+    u1 = by["U1"]
+    check("an MPN the catalogue lacks is unsourced, with its reason",
+          u1["status"] == "unsourced" and u1["mpn"] is None
+          and u1["_identification"]["certainty"] == "none"
+          and "no catalogue part carries 'SN74LVC1T45DCKR'" in u1["notes"], u1["notes"][:120])
+    c5 = by["C5"]
+    check("an unknown MPN with a value and package lists what it might be, unranked",
+          c5["status"] == "unsourced" and c5["_identification"]["certainty"] == "value-package"
+          and "TMK105BJ104KV-F" in c5["notes"]
+          and all("status" not in c for c in c5.get("candidates") or []),
+          c5["notes"][:120])
+    check("the Windows-1252 read is in the payload caveat, not only in the digest",
+          "Windows-1252" in p["caveat"])
+    check("unread columns and skipped rows are reported",
+          any("'LibRef'" in d for d in p.get("diagnostics") or [])
+          and any("1 totals" in d for d in p.get("diagnostics") or []))
+    size = len(json.dumps(p, ensure_ascii=False))
+    biggest = max(len(json.dumps(line, ensure_ascii=False)) for line in p["lines"])
+    check(f"the payload stays under {BOM_CHARS_PER_LINE} characters a line",
+          size <= BOM_CHARS_PER_LINE * p["total"] and biggest <= BOM_CHARS_ONE_LINE,
+          f"{size:,} chars for {p['total']} lines, biggest line {biggest:,}")
+
+    print("crossref_bom_line(the handle crossref_bom returned)")
+    handle = p["caveat"].split("crossref='")[1][:12]
+    line = S.crossref_bom_line(handle, "R1").structuredContent
+    conforms("crossref_bom_line", line)
+    full = line["lines"][0]
+    check("the stored line carries every ranked candidate with its spec table",
+          len(full["candidates"]) > len(r1["candidates"])
+          and all("specs" in c for c in full["candidates"]))
+    check("the stored line agrees with the compact one",
+          full["status"] == r1["status"] and full["mpn"] == r1["mpn"])
+    _raises("an unknown ref is refused, naming what the handle holds",
+            lambda: S.crossref_bom_line(handle, "Q99"), "no line 'Q99'", "R1")
+
+    print("crossref_bom(Altium CSV) into Würth, spelled without the umlaut")
+    r, p, by = _bom(BOM_FIXTURES / "altium_bom.csv", target_manufacturers=["wurth"])
+    conforms("crossref_bom (Würth target)", p)
+    check("a part already from the target maker is 'exact', itself",
+          by["C1"]["status"] == "exact" and by["C1"]["mpn"] == "885012206095"
+          and by["L1"]["status"] == "exact")
+    check("every substitute offered is the target maker's",
+          all("rth" in (line.get("manufacturer") or "")
+              for line in p["lines"] if line["mpn"]),
+          ", ".join(sorted({line.get("manufacturer") or "" for line in p["lines"] if line["mpn"]})))
+    check("targetManufacturer names the single target", p.get("targetManufacturer") == "wurth")
+
+    print("crossref_bom(KiCad CSV)")
+    r, p, by = _bom(BOM_FIXTURES / "kicad_bom.csv", target_manufacturers=["Würth Elektronik"])
+    conforms("crossref_bom (KiCad)", p)
+    check("a value-only line is matched by value and package",
+          by["C1"]["_identification"]["certainty"] == "value-package"
+          and by["C1"]["kind"] == "capacitor")
+    check("the target maker's parts of that value are listed first",
+          (by["C1"].get("candidates") or [{}])[0].get("manufacturer") == "Würth Elektronik")
+
+    print("crossref_bom(tab-separated .txt, via file://)")
+    r, p, by = _bom(f"file://{BOM_FIXTURES / 'tab_bom.txt'}",
+                    target_manufacturers=["WURTH", "Nobody Inc"])
+    conforms("crossref_bom (TSV)", p)
+    check("a manufacturer that makes nothing is said, once",
+          any("'Nobody Inc'" in d for d in p.get("diagnostics") or []))
+    check("the diode is identified and cross-referenced",
+          by["D1"]["_identification"]["certainty"] == "exact" and by["D1"]["kind"] == "diode")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        print("crossref_bom(.xlsx written here)")
+        import openpyxl
+
+        book = openpyxl.Workbook()
+        sheet = book.active
+        sheet.title = "BOM"
+        sheet.append(["Designator", "Qty", "Manufacturer", "MPN"])
+        sheet.append(["C1-C2", 2, "Würth Elektronik", 885012106006])
+        sheet.append(["R1", 1, "YAGEO", "RC0402FR-1310KL"])
+        xlsx = Path(tmp) / "bom.xlsx"
+        book.save(xlsx)
+        r, p, by = _bom(xlsx)
+        conforms("crossref_bom (xlsx)", p)
+        check("a numeric MPN cell is read as the ordering code",
+              by["C1"]["_identification"]["certainty"] == "exact"
+              and by["C1"]["originalMpn"] == "885012106006")
+
+        print("crossref_bom on a family Kelvin cannot cross-reference")
+        page = S._browse("controller", {"limit": 1, "sort": {"field": "lineno", "dir": "asc"}})
+        ctrl = page["rows"][0]
+        path = Path(tmp) / "ctrl.csv"
+        path.write_text(f"Designator,MPN\nU7,{ctrl['mpn']}\n", encoding="utf-8")
+        r, p, by = _bom(path)
+        conforms("crossref_bom (controller)", p)
+        check("an identified part with no cross-reference model is refused, not ranked",
+              by["U7"]["status"] == "unsourced"
+              and by["U7"]["_identification"]["certainty"] == "exact"
+              and "no cross-reference model" in by["U7"]["notes"], by["U7"]["notes"][:140])
+
+        print("crossref_bom refusals")
+        bad = Path(tmp) / "qty.csv"
+        bad.write_text("Designator,Quantity,MPN\nR1-R3,2,RC0402FR-1310KL\n", encoding="utf-8")
+        _raises("a quantity mismatch is refused, naming the row",
+                lambda: S.crossref_bom(str(bad)), "row 2", "Quantity is 2")
+        nohead = Path(tmp) / "nohead.csv"
+        nohead.write_text("Part,Amount\nRC0402FR-1310KL,3\n", encoding="utf-8")
+        _raises("no recognisable header is refused, listing what is there",
+                lambda: S.crossref_bom(str(nohead)), "no row names the BOM's columns",
+                "Part,Amount")
+        _raises("a missing file is refused by path",
+                lambda: S.crossref_bom(str(Path(tmp) / "absent.csv")), "no BOM at")
 
 
 def main() -> int:
@@ -237,9 +390,14 @@ def main() -> int:
         except ValueError as e:
             check("unmodelled family refused", "no cross-reference model" in str(e))
 
+    if SKIP_XREF:
+        print("crossref_bom: SKIPPED (--skip-xref)")
+    else:
+        bom_checks()
+
     print("the registered tool surface")
     tools = asyncio.run(S.mcp.list_tools())
-    check("every tool is registered", len(tools) == 7, ", ".join(t.name for t in tools))
+    check("every tool is registered", len(tools) == 9, ", ".join(t.name for t in tools))
     check("every tool has a description", all(t.description for t in tools))
 
     print("the MCP Apps widget")

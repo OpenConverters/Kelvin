@@ -1,0 +1,6 @@
+"Reference","Value","Datasheet","Footprint","Qty","DNP","MPN"
+"C1,C2","100n","~","Capacitor_SMD:C_0402_1005Metric","2","",""
+"C3","10u","~","Capacitor_SMD:C_0603_1608Metric","1","","885012106006"
+"R1,R2,R3","10k","~","Resistor_SMD:R_0402_1005Metric","3","",""
+"R4","2k2","~","Resistor_SMD:R_0402_1005Metric","1","","RC0402FR-132K2L"
+"U1","SN74LVC1T45DCKR","~","Package_TO_SOT_SMD:SOT-363_SC-70-6","1","",""

@@ -26,7 +26,7 @@ cd mcp && npm install && npm run build && cd ..             # the widget
 KELVIN_TAS_DATA_DIR=/path/to/TAS/data python3 mcp/server.py # 127.0.0.1:8402/mcp
 ```
 
-Python needs `mcp`, `uvicorn`, `starlette` and a built `PyKelvin`. `cross_reference` also needs
+Python needs `mcp`, `uvicorn`, `starlette`, `openpyxl` (for .xlsx BOMs) and a built `PyKelvin`; the tests also need `jsonschema` and `pytest`. `cross_reference` also needs
 `node` and prebuilt shards. The widget bundle must exist before the server starts — it raises
 rather than advertising a UI the host cannot fetch (see *Widgets*).
 
@@ -35,6 +35,8 @@ rather than advertising a UI the host cannot fetch (see *Widgets*).
 | `KELVIN_TAS_DATA_DIR` | the TAS NDJSON catalogue (`capacitors.ndjson`, `mosfets.ndjson`, …) | **required** |
 | `KELVIN_INDEX_DIR` | where the native engine keeps (and may rebuild) its `.kidx` shards | `~/.kelvin/index` |
 | `KELVIN_SHARD_DIR` | prebuilt `<family>.kidx` + `<family>.ndjson` the cross-reference worker reads | `web/public/kelvin` |
+| `KELVIN_WORK_DIR` | where `crossref_bom` stores each run in full, for `crossref_bom_line` | `~/.kelvin/work` |
+| `KELVIN_ARTIFACT_BASE` / `KELVIN_ARTIFACT_TOKEN` | resolve an `artifact://<id>` BOM against the orchestrator's artifact endpoint (`artifacts.py`, the same convention as Faraday / Hertz / Kirchhoff) | — |
 | `KELVIN_PUBLIC_HOST` / `KELVIN_ALLOW_ANY_HOST` / `KELVIN_ALLOWED_ORIGINS` | tunnel allowlisting | — |
 
 `KELVIN_INDEX_DIR` deliberately defaults away from `web/public/kelvin`: those shards are the
@@ -85,7 +87,7 @@ run at once as separate connectors.
 
 ## Tools
 
-Seven. The catalogue has twelve families and dozens of query shapes; collapsing them into one
+Nine. The catalogue has twelve families and dozens of query shapes; collapsing them into one
 `search_parts` with a real filter language beats a tool per family (past ~25 tools, hosts start
 picking the wrong one).
 
@@ -98,6 +100,8 @@ picking the wrong one).
 | `recommend_parts` | "rank real parts for this requirement" — Kelvin's deterministic selector | picker |
 | `spec_distribution` | "what is actually available" — histogram of one spec over a filtered slice | — |
 | `cross_reference` | "what can replace this part" — scored substitutes with per-parameter verdicts | picker |
+| `crossref_bom` | "cross-reference this BOM file into Würth" — every designator of a .csv / .txt / .xlsx BOM identified and ranked; compact, one `bom` line per designator | — |
+| `crossref_bom_line` | one line of a `crossref_bom` run in full: every candidate's spec table, check and note | — |
 
 `describe_family` exists because the query vocabulary is per-family and generated from
 `Browse.hpp`'s field table — so a caller learns the real field names instead of guessing, and an
@@ -108,12 +112,51 @@ is excluded by that filter (a browse filter is a user filter, not the selector's
 `spec_distribution` reports how many parts state the value at all, and a margin the record could
 not state stays `null` rather than becoming a 0 that would read as the binding constraint.
 
+## Cross-referencing a BOM file
+
+`crossref_bom(bom, target_manufacturers=None, same_type=True, max_results=5, top=30)` takes a
+**path** — local, `file://`, `artifact://<id>` or `https://` — never the file's contents, so a
+spreadsheet does not travel through the model context. `bomfile.py` reads it: comma, semicolon
+or tab text (UTF-8, UTF-16 with its BOM, or Windows-1252 — which is accepted but stated in the
+payload `caveat`, because a misread µ changes a value) and `.xlsx`. A title block above the
+header, grouped designators (`C1-C4`, `R1, R2`), totals rows and repeated headers are fine; a
+Quantity that disagrees with its designators, a row with no designator, a designator claimed
+twice, an ambiguous separator or several BOM-looking sheets are refused with the row named.
+Columns it does not recognise are listed in `diagnostics`, never silently dropped.
+
+Each designator is then identified in the catalogue (`xref.mjs`, op `bom`):
+
+| certainty | how | cross-referenced? |
+|---|---|---|
+| `exact` | a part-number candidate equals a catalogue MPN (ignoring case; `normalised` when only punctuation differs). `"ST USBLC6-2SC6"`-style cells are also tried without the maker word | yes — the web app's own `runCrossRef` |
+| `ambiguous` | several catalogue parts carry that exact MPN and the BOM's maker does not pick one | no — listed |
+| `substring` | catalogue MPNs merely contain it (an all-digit number must start the MPN) | no — listed |
+| `value-package` | no usable part number: the value (and rated voltage) in the family its unit names, and the footprint's package | no — listed, the target maker's parts first |
+| `none` / `unlookupable` / `not-a-part` | nothing matched / the BOM gives neither number nor value / a fiducial, hole, logo | no |
+
+The designator prefix, value unit and footprint name only ORDER the family search; every family
+is searched before a part number is called absent. Only an exact line is ranked, because the
+ranker needs one original; a part already from a target maker is `exact` itself. A family the
+ranker has no model for (`controller`, `analog`, …) is refused per line, never ranked with
+another family's model. Lines are never dropped: an unidentified line is `unsourced` with its
+reason in `notes`.
+
+The payload is compact — every line, but the best two ranked candidates with only their failing
+checks, three unranked rows, and `_sameAs` for designators that share a BOM row's answer (a
+test holds it under 800 characters a line). The full run is stored under a handle named in the
+`caveat`; `crossref_bom_line(crossref, ref)` returns one line exactly as computed.
+
+The identification heuristics restate the few functions of Faraday's `web/src/parts.js` they
+need (value parsing, package codes, family order) — Faraday imports Kelvin, not the other way
+round. If the two drift, the fix is to move those functions into Kelvin's `web/src` and have
+Faraday import them.
+
 ## Where each answer comes from
 
 ```
 list_families / describe_family / search_parts / part_details        PyKelvin  (native, in-process)
 recommend_parts                                                      PyKelvin  Engine.select
-cross_reference                                                      xref.mjs  (Node + the WASM build)
+cross_reference / crossref_bom                                       xref.mjs  (Node + the WASM build)
 ```
 
 The split is deliberate. The substitute **ranker** is C++ (`CrossRef.hpp`) and PyKelvin exposes
@@ -140,7 +183,7 @@ deny-by-default CSP iframe.
 
 One widget serves `search_parts`, `recommend_parts` and `cross_reference`: all three return the
 same shape (a ranked list of candidates) and pose the same question (pick one), so they
-normalise to one `candidates[]` envelope rather than three. The other four tools carry no
+normalise to one `candidates[]` envelope rather than three. The other six tools carry no
 `ui/resourceUri` at all — advertising a UI a tool does not fill is how you get a broken panel.
 
 The resource reads `dist/` from disk on every request, and hosts fetch the widget over MCP per
@@ -161,7 +204,12 @@ when that lands, this server should adopt it rather than keep a private copy.
 
 ```bash
 KELVIN_TAS_DATA_DIR=/path/to/TAS/data python3 mcp/smoke.py [--skip-xref]
+python3 -m pytest mcp/test_bomfile.py            # the BOM-file parser, no catalogue needed
 ```
+
+`smoke.py` runs `crossref_bom` on the fixtures in `fixtures/bom/` (an Altium CSV in
+Windows-1252 under a title block, a KiCad CSV, a tab-separated `.txt`) and on an `.xlsx` it
+writes, and validates every payload against the Moebius pipeline contract.
 
 Calls every tool against the real catalogue and asserts the answers are the catalogue's — that
 gates hold, that an impossible requirement names the gate that rejected it, that a missing part
