@@ -110,7 +110,7 @@
     "v_rated_min": 8.0
    },
    "expect": {
-    "alternatives": 367,
+    "alternatives": 368,
     "chosen": "870135375007",
     "margins": {
      "capacitance_ratio": 1.146341463414634,
@@ -130,12 +130,12 @@
     "v_rated_min": 25.0
    },
    "expect": {
-    "alternatives": 214,
-    "chosen": "860241481006",
+    "alternatives": 217,
+    "chosen": "C3216X5R1E476M",
     "margins": {
-     "capacitance_ratio": 1.1111111111111112,
+     "capacitance_ratio": 1.5824915824915826,
      "ripple_headroom": null,
-     "v_margin": 18.0
+     "v_margin": 1.0
     }
    },
    "tiebreaker": "highest_voltage_margin"
@@ -170,11 +170,11 @@
     "v_rated_min": 25.0
    },
    "expect": {
-    "alternatives": 130,
-    "chosen": "870025574001",
+    "alternatives": 139,
+    "chosen": "C3216X5R1E476M",
     "margins": {
-     "capacitance_ratio": 2.3636363636363638,
-     "ripple_headroom": 5.625,
+     "capacitance_ratio": 2.8484848484848486,
+     "ripple_headroom": 5.0,
      "v_margin": 1.0
     }
    },
@@ -190,12 +190,12 @@
     "v_rated_min": 25.0
    },
    "expect": {
-    "alternatives": 41,
-    "chosen": "885012008029",
+    "alternatives": 43,
+    "chosen": "GRM1555C1H472JA01D",
     "margins": {
-     "capacitance_ratio": 1.6075650118203308,
+     "capacitance_ratio": 1.111111111111111,
      "ripple_headroom": null,
-     "v_margin": 1.0
+     "v_margin": 2.0
     }
    },
    "tiebreaker": "highest_capacitance"
@@ -210,12 +210,12 @@
     "v_rated_min": 25.0
    },
    "expect": {
-    "alternatives": 23,
-    "chosen": "885012007044",
+    "alternatives": 25,
+    "chosen": "GRM1555C1H472JA01D",
     "margins": {
-     "capacitance_ratio": 1.1764705882352942,
+     "capacitance_ratio": 1.176470588235294,
      "ripple_headroom": null,
-     "v_margin": 1.0
+     "v_margin": 2.0
     }
    },
    "tiebreaker": "highest_capacitance"
@@ -290,7 +290,7 @@
     "v_rated_min": 225.0
    },
    "expect": {
-    "alternatives": 14,
+    "alternatives": 17,
     "chosen": "860241478003",
     "margins": {
      "capacitance_ratio": 1.6339869281045751,
@@ -310,12 +310,12 @@
     "v_rated_min": 225.0
    },
    "expect": {
-    "alternatives": 5,
-    "chosen": "860021374009",
+    "alternatives": 6,
+    "chosen": "B32924C3685M",
     "margins": {
-     "capacitance_ratio": 1.1764705882352942,
+     "capacitance_ratio": 1.1764705882352944,
      "ripple_headroom": null,
-     "v_margin": 1.7777777777777777
+     "v_margin": 1.3555555555555556
     }
    },
    "tiebreaker": "highest_capacitance"
@@ -450,12 +450,12 @@
     "v_rated_min": 8.0
    },
    "expect": {
-    "alternatives": 64,
-    "chosen": "885012005017",
+    "alternatives": 65,
+    "chosen": "885012206081",
     "margins": {
      "capacitance_ratio": 1.1111111111111112,
      "ripple_headroom": null,
-     "v_margin": 1.25
+     "v_margin": 6.25
     }
    },
    "tiebreaker": "lowest_esr"
@@ -470,7 +470,7 @@
     "v_rated_min": 8.0
    },
    "expect": {
-    "alternatives": 36,
+    "alternatives": 37,
     "chosen": "885012005017",
     "margins": {
      "capacitance_ratio": 1.1764705882352942,
@@ -490,7 +490,7 @@
     "v_rated_min": 31.5
    },
    "expect": {
-    "alternatives": 161,
+    "alternatives": 163,
     "chosen": "870135775004",
     "margins": {
      "capacitance_ratio": 1.1111111111111112,
@@ -510,12 +510,12 @@
     "v_rated_min": 31.5
    },
    "expect": {
-    "alternatives": 66,
-    "chosen": "860010572005",
+    "alternatives": 68,
+    "chosen": "C1206X7R1H476M230KC",
     "margins": {
      "capacitance_ratio": 1.1764705882352942,
      "ripple_headroom": null,
-     "v_margin": 1.1111111111111112
+     "v_margin": 1.5873015873015872
     }
    },
    "tiebreaker": "highest_capacitance"
@@ -530,7 +530,7 @@
     "v_rated_min": 31.5
    },
    "expect": {
-    "alternatives": 308,
+    "alternatives": 311,
     "chosen": "870135775004",
     "margins": {
      "capacitance_ratio": 2.0,
@@ -590,12 +590,12 @@
     "v_rated_min": 17.5
    },
    "expect": {
-    "alternatives": 231,
-    "chosen": "861011086027",
+    "alternatives": 232,
+    "chosen": "EETUTP471VAA",
     "margins": {
-     "capacitance_ratio": 3.658536585365854,
-     "ripple_headroom": 9.129186602870814,
-     "v_margin": 11.428571428571429
+     "capacitance_ratio": 1.146341463414634,
+     "ripple_headroom": 11.213014354066985,
+     "v_margin": 5.714285714285714
     }
    },
    "tiebreaker": "highest_ripple_headroom"
@@ -670,10 +670,8 @@
     "v_rated_min": 5.0
    },
    "expect": {
-    "error": "SelectionError",
     "rejections": {
-     "discontinued": 2979,
-     "unreadable_row": 521
+     "discontinued": 3500
     },
     "total": 3500
    },
@@ -689,10 +687,8 @@
     "v_rated_min": 1.0
    },
    "expect": {
-    "error": "SelectionError",
     "rejections": {
-     "discontinued": 2979,
-     "unreadable_row": 521
+     "discontinued": 3500
     },
     "total": 3500
    },

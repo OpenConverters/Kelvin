@@ -650,6 +650,78 @@ TEST_CASE("resistor view: zero ohms is a value, absent is not", "[index][views]"
 }
 
 // ---------------------------------------------------------------------------
+// A record whose part number is stated only as datasheetInfo.part.partNumber
+// is still a part. Six extractors read manufacturerInfo.reference alone and
+// dropped the record without one: 14,153 of TAS's 254,625 capacitors (13,091
+// of them Taiyo Yuden, plus Murata, TDK, Nichicon, Panasonic, Chemi-Con,
+// Rubycon and KEMET) were invisible to Kelvin, both as an original to identify
+// and as a cross-reference candidate. Resistors, controllers and magnetics
+// already fell back to partNumber; every family now does.
+// ---------------------------------------------------------------------------
+TEST_CASE("views: a record identified only by part.partNumber is indexed in every family",
+          "[index][views]") {
+    using nlohmann::json;
+    // manufacturerInfo with a name and NO reference; the MPN lives in part.partNumber
+    auto mi = [](const std::string& mpn, const json& part_extra, const json& electrical) {
+        json part = {{"partNumber", mpn}};
+        part.update(part_extra);
+        return json{{"name", "Taiyo Yuden"}, {"status", "production"},
+                    {"datasheetInfo", {{"part", part}, {"electrical", electrical}}}};
+    };
+
+    auto cap = kelvin::extract_capacitor(json{{"capacitor", {{"manufacturerInfo",
+        mi("MSASX45YAB7472KTCA01", {{"case", "1812"}},
+           {{"capacitance", 4.7e-9}, {"ratedVoltage", 2000.0}})}}}});
+    REQUIRE(cap.has_value());
+    CHECK(cap->mpn == "MSASX45YAB7472KTCA01");
+    CHECK(cap->manufacturer == "Taiyo Yuden");
+
+    auto mos = kelvin::extract_mosfet(json{{"semiconductor", {{"mosfet", {{"manufacturerInfo",
+        mi("PNONLY-MOS1", json::object(),
+           {{"drainSourceVoltage", 100.0}, {"continuousDrainCurrent", 10.0},
+            {"onResistance", 0.01}})}}}}}});
+    REQUIRE(mos.has_value());
+    CHECK(mos->mpn == "PNONLY-MOS1");
+
+    auto dio = kelvin::extract_diode(json{{"semiconductor", {{"diode", {{"manufacturerInfo",
+        mi("PNONLY-D1", json::object(),
+           {{"reverseVoltage", 100.0}, {"forwardCurrent", 1.0}, {"forwardVoltage", 0.7}})}}}}}});
+    REQUIRE(dio.has_value());
+    CHECK(dio->mpn == "PNONLY-D1");
+
+    auto igbt = kelvin::extract_igbt(json{{"semiconductor", {{"igbt", {{"manufacturerInfo",
+        mi("PNONLY-IGBT1", json::object(),
+           {{"collectorEmitterVoltage", 650.0}, {"continuousCollectorCurrent", 40.0}})}}}}}});
+    REQUIRE(igbt.has_value());
+    CHECK(igbt->mpn == "PNONLY-IGBT1");
+
+    auto bjt = kelvin::extract_bjt(json{{"semiconductor", {{"bjt", {{"manufacturerInfo",
+        mi("PNONLY-BJT1", json::object(),
+           {{"collectorEmitterVoltage", 45.0}, {"collectorCurrent", 0.1}})}}}}}});
+    REQUIRE(bjt.has_value());
+    CHECK(bjt->mpn == "PNONLY-BJT1");
+
+    auto var = kelvin::extract_varistor(json{{"varistor", {{"manufacturerInfo",
+        mi("PNONLY-VAR1", json::object(), {{"varistorVoltage", 470.0}})}}}});
+    REQUIRE(var.has_value());
+    CHECK(var->mpn == "PNONLY-VAR1");
+
+    // reference still wins when both are stated
+    json both = mi("PART-NUMBER", json::object(),
+                   {{"capacitance", 1e-6}, {"ratedVoltage", 50.0}});
+    both["reference"] = "REFERENCE";
+    auto ref_first = kelvin::extract_capacitor(json{{"capacitor", {{"manufacturerInfo", both}}}});
+    REQUIRE(ref_first.has_value());
+    CHECK(ref_first->mpn == "REFERENCE");
+
+    // and a record with neither is still refused: there is no part to name
+    json neither = mi("X", json::object(), {{"capacitance", 1e-6}, {"ratedVoltage", 50.0}});
+    neither["datasheetInfo"]["part"].erase("partNumber");
+    CHECK_FALSE(kelvin::extract_capacitor(
+        json{{"capacitor", {{"manufacturerInfo", neither}}}}).has_value());
+}
+
+// ---------------------------------------------------------------------------
 // A distance's best possible value is zero, so zero cannot also mean "nothing
 // seen yet". It did, and the collision cost exactly the parts the field exists
 // for: a bead sampled AT 100 MHz — the conventional test point, so most of

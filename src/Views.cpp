@@ -216,6 +216,7 @@ std::optional<MosfetRow> extract_mosfet(const json& env) {
     if (!part) part = &empty;
 
     auto mpn = get_str(*mi, "reference");
+    if (!mpn) mpn = get_str(*part, "partNumber");
     auto manuf = get_str(*mi, "name");
     if (!mpn || !manuf) return std::nullopt;
 
@@ -284,6 +285,7 @@ std::optional<DiodeRow> extract_diode(const json& env) {
     if (!part) part = &empty;
 
     auto mpn = get_str(*mi, "reference");
+    if (!mpn) mpn = get_str(*part, "partNumber");
     auto manuf = get_str(*mi, "name");
     if (!mpn || !manuf) return std::nullopt;
 
@@ -384,6 +386,7 @@ std::optional<CapacitorRow> extract_capacitor(const json& env) {
     if (!part) part = &empty;
 
     auto mpn = get_str(*mi, "reference");
+    if (!mpn) mpn = get_str(*part, "partNumber");
     auto manuf = get_str(*mi, "name");
     if (!mpn || !manuf) return std::nullopt;
 
@@ -574,6 +577,7 @@ std::optional<IgbtRow> extract_igbt(const json& env) {
     auto refs = semi_refs(env, "igbt", empty);
     if (!refs) return std::nullopt;
     auto mpn = get_str(*refs->mi, "reference");
+    if (!mpn) mpn = get_str(*refs->part, "partNumber");
     auto manuf = get_str(*refs->mi, "name");
     if (!mpn || !manuf) return std::nullopt;
     auto vces = get_num(*refs->elec, "collectorEmitterVoltage");
@@ -606,6 +610,7 @@ std::optional<BjtRow> extract_bjt(const json& env) {
     auto refs = semi_refs(env, "bjt", empty);
     if (!refs) return std::nullopt;
     auto mpn = get_str(*refs->mi, "reference");
+    if (!mpn) mpn = get_str(*refs->part, "partNumber");
     auto manuf = get_str(*refs->mi, "name");
     if (!mpn || !manuf) return std::nullopt;
     auto vceo = get_num(*refs->elec, "collectorEmitterVoltage");
@@ -641,6 +646,7 @@ std::optional<VaristorRow> extract_varistor(const json& env) {
     const json* part = obj_get(*di, "part");
     if (!part) part = &empty;
     auto mpn = get_str(*mi, "reference");
+    if (!mpn) mpn = get_str(*part, "partNumber");
     auto manuf = get_str(*mi, "name");
     if (!mpn || !manuf) return std::nullopt;
     auto vnom = resolve_field(*elec, "varistorVoltage");
