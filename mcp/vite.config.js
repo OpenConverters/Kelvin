@@ -10,7 +10,10 @@ export default defineConfig({
   plugins: [viteSingleFile()],
   build: {
     outDir: "dist",
-    rollupOptions: { input: "picker.html" },
+    // One bundle per run (singlefile inlines one entry): `npm run build` runs this once per
+    // widget with INPUT set, so the second run must not empty what the first wrote.
+    emptyOutDir: false,
+    rollupOptions: { input: process.env.INPUT || "picker.html" },
     assetsInlineLimit: 100_000_000,
     cssCodeSplit: false,
   },

@@ -120,7 +120,13 @@ UNITS_NOTE = (
 # Hertz; this one is built to be replaced by it, not to compete with it.)
 UI_RESOURCE_MIME = "text/html;profile=mcp-app"
 UI_PICKER_URI = "ui://kelvin/picker.html"
-UI_BUNDLES = {UI_PICKER_URI: Path(__file__).parent / "dist" / "picker.html"}
+# crossref_bom's result is a whole BOM, not a list to pick ONE from, so it gets a table of its
+# own. The widget source is the same file Faraday ships for crossref_board (both answer in the
+# contract's `bom` mode; it reads either producer's extras) — copied, not imported, so each
+# server's widgets build from its own repo.
+UI_CROSSREF_URI = "ui://kelvin/crossref-table.html"
+UI_BUNDLES = {UI_PICKER_URI: Path(__file__).parent / "dist" / "picker.html",
+              UI_CROSSREF_URI: Path(__file__).parent / "dist" / "crossref-table.html"}
 
 
 def _ui_meta(uri: str) -> dict:
@@ -130,6 +136,7 @@ def _ui_meta(uri: str) -> dict:
 
 
 UI_PICKER_META = _ui_meta(UI_PICKER_URI)
+UI_CROSSREF_META = _ui_meta(UI_CROSSREF_URI)
 
 
 def assert_widgets_resolve() -> None:
@@ -1241,9 +1248,13 @@ def _group_key(row: dict) -> str:
         "package otherwise) and every exactly identified part is ranked by Kelvin's own "
         "cross-reference. Each line says how sure the identification is; lines Kelvin cannot "
         "identify are reported as unsourced with the reason, never dropped. Takes a PATH "
-        "(local, file:// or artifact://), not the file's contents."
+        "(local, file:// or artifact://), not the file's contents. The result renders for the "
+        "user as a sortable, filterable table (one row per group of designators with the same "
+        "answer), so a reply should summarise it — totals and the lines worth a look — not "
+        "re-list it."
     ),
     structured_output=False,
+    meta=UI_CROSSREF_META,
 )
 def crossref_bom(bom: str, target_manufacturers: list[str] | None = None,
                  same_type: bool = True, max_results: int = 5, top: int = 30) -> CallToolResult:
@@ -1482,6 +1493,24 @@ def picker_widget() -> str:
     built as ONE self-contained file (vite-plugin-singlefile).
     """
     bundle = UI_BUNDLES[UI_PICKER_URI]
+    if not bundle.exists():                                     # pragma: no cover
+        raise FileNotFoundError(
+            f"{bundle} missing -- build the widget first: cd mcp && npm install && npm run build")
+    return bundle.read_text(encoding="utf-8")
+
+
+@mcp.resource(
+    UI_CROSSREF_URI,
+    name="kelvin-crossref-table",
+    title="Kelvin BOM cross-reference",
+    mime_type=UI_RESOURCE_MIME,
+)
+def crossref_widget() -> str:
+    """crossref_bom's result as a table: one row per group of designators with the same
+    answer, sectioned by status, sortable and filterable; selecting a row reports it back to
+    the model. The table is the tool's result drawn as it is, so the reply does not have to
+    re-type it."""
+    bundle = UI_BUNDLES[UI_CROSSREF_URI]
     if not bundle.exists():                                     # pragma: no cover
         raise FileNotFoundError(
             f"{bundle} missing -- build the widget first: cd mcp && npm install && npm run build")

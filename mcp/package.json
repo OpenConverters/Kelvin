@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Kelvin MCP App — ranked candidate picker (search + cross-reference)",
   "scripts": {
-    "build": "rm -rf dist && vite build",
+    "build": "rm -rf dist && INPUT=picker.html vite build && INPUT=crossref-table.html vite build",
     "dev": "vite"
   },
   "license": "ISC",

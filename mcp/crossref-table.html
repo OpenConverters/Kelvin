@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Cross-reference</title>
+    <style>
+      /* Keyed off data-theme set from the MCP host context, not prefers-color-scheme: a
+         widget's iframe answers that media query for the MACHINE, which is wrong the
+         moment the reader picks the other theme (same reasoning as board.html). Dark on
+         bare :root, light under the attribute. */
+      :root {
+        --bg: #15181d; --fg: #e7e9ee; --muted: #9aa3b0; --line: #333a44; --card: rgba(255,255,255,.05);
+        --head: #1b1f26; --accent: #5aa9ff; --chosen: rgba(90,169,255,.16);
+        --good: #4cc38a; --part: #e0b341; --bad: #ff6b61; --none: #8a93a0;
+      }
+      :root[data-theme="light"] {
+        --bg: #ffffff; --fg: #1c1f24; --muted: #6b7280; --line: #d7dbe0; --card: rgba(0,0,0,.035);
+        --head: #f3f4f6; --accent: #1d6fd8; --chosen: rgba(29,111,216,.12);
+        --good: #17803d; --part: #a86b00; --bad: #c62828; --none: #6b7280;
+      }
+      * { box-sizing: border-box; }
+      /* The GUI gives the frame a fixed, user-resizable height; the table scrolls inside
+         it under a sticky header rather than growing the frame. Every link in the height
+         chain resolves (see board.html for what happens when one does not). */
+      html, body { height: 100%; }
+      body {
+        /* An explicit background, not transparent: a table of light text must not depend
+           on the host page behind the frame happening to be dark. */
+        margin: 0; background: var(--bg); color: var(--fg);
+        font: 12.5px/1.4 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      #app { height: 100%; padding: 10px 12px 10px; display: flex; flex-direction: column; min-height: 0; }
+      .muted { color: var(--muted); }
+      .err { background: rgba(255,93,85,.12); border-radius: 6px; padding: 8px 10px; }
+      .head { flex: 0 0 auto; margin-bottom: 8px; }
+      h1 { font-size: 15px; margin: 0; font-weight: 650; letter-spacing: -.01em; }
+      .sub { color: var(--muted); font-size: 11.5px; margin-top: 3px; }
+      .bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 7px; }
+      .chip {
+        font: inherit; font-size: 11.5px; border-radius: 999px; padding: 2px 9px; cursor: pointer;
+        border: 1px solid var(--line); color: var(--fg); background: transparent;
+      }
+      .chip .n { font-weight: 700; margin-right: 4px; }
+      .chip.on { background: var(--chosen); border-color: var(--accent); }
+      .chip.recommended .n { color: var(--good); }
+      .chip.partial .n { color: var(--part); }
+      .chip.no_substitute .n { color: var(--bad); }
+      .chip.unsourced .n { color: var(--none); }
+      input.q {
+        font: inherit; font-size: 12px; margin-left: auto; min-width: 180px; padding: 3px 8px;
+        border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--fg);
+      }
+      .scroll { flex: 1 1 auto; min-height: 0; overflow: auto; border: 1px solid var(--line); border-radius: 6px; }
+      table { border-collapse: collapse; width: 100%; }
+      th {
+        position: sticky; top: 0; z-index: 1; background: var(--head); text-align: left;
+        font-size: 11px; font-weight: 650; color: var(--muted); padding: 6px 8px;
+        border-bottom: 1px solid var(--line); cursor: pointer; user-select: none; white-space: nowrap;
+      }
+      th .dir { color: var(--accent); margin-left: 3px; }
+      td { padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+      tr.row { cursor: pointer; }
+      tr.row:hover td { background: var(--card); }
+      tr.row.chosen td { background: var(--chosen); }
+      td:first-child { border-left: 4px solid transparent; }
+      tr.recommended td:first-child { border-left-color: var(--good); }
+      tr.partial td:first-child { border-left-color: var(--part); }
+      tr.no_substitute td:first-child { border-left-color: var(--bad); }
+      tr.unsourced td:first-child { border-left-color: var(--none); }
+      tr.group td {
+        background: var(--card); font-size: 11px; font-weight: 650; color: var(--muted);
+        text-transform: uppercase; letter-spacing: .05em; padding: 4px 8px; cursor: default;
+      }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; }
+      .refs { max-width: 210px; word-break: break-word; }
+      .maker { color: var(--muted); font-size: 11px; }
+      .note { color: var(--muted); font-size: 11px; margin-top: 2px; max-width: 420px; }
+      .qty { text-align: right; color: var(--muted); }
+      .badge {
+        display: inline-block; font-size: 10px; font-weight: 700; text-transform: uppercase;
+        letter-spacing: .04em; padding: 1px 5px; border-radius: 3px; border: 1px solid currentColor;
+        white-space: nowrap;
+      }
+      .badge.recommended { color: var(--good); }
+      .badge.partial { color: var(--part); }
+      .badge.no_substitute { color: var(--bad); }
+      .badge.unsourced { color: var(--none); }
+      /* A status or grade the widget does not know must LOOK unknown, never blend in. */
+      .badge:not(.recommended):not(.partial):not(.no_substitute):not(.unsourced):not(.grade) { color: var(--fg); border-style: dashed; }
+      .grade { color: var(--muted); }
+      .grade.drop_in { color: var(--good); }
+      .grade.minor_review { color: var(--part); }
+      .grade.major_review, .grade.redesign { color: var(--bad); }
+      .flag {
+        display: inline-block; font-size: 10.5px; padding: 0 5px; margin: 0 3px 2px 0;
+        border-radius: 3px; background: var(--card); border: 1px solid var(--line);
+      }
+      .foot { flex: 0 0 auto; color: var(--muted); font-size: 11px; margin-top: 6px; }
+    </style>
+  </head>
+  <body>
+    <div id="app"><div class="muted">Waiting for the cross-reference…</div></div>
+    <script type="module" src="/src/crossref-table.js"></script>
+  </body>
+</html>

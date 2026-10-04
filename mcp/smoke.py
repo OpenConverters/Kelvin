@@ -411,10 +411,19 @@ def main() -> int:
           "src=\"http" not in widget and "src='http" not in widget)
     # The three ranked-list tools carry the picker; the other four must not advertise
     # a UI they do not fill.
-    with_ui = {t.name for t in tools if (t.meta or {}).get("ui/resourceUri")}
-    check("the picker is on exactly the ranked-list tools",
-          with_ui == {"search_parts", "recommend_parts", "cross_reference"},
-          ", ".join(sorted(with_ui)))
+    with_ui = {t.name: t.meta["ui/resourceUri"] for t in tools
+               if (t.meta or {}).get("ui/resourceUri")}
+    picker, table = "ui://kelvin/picker.html", "ui://kelvin/crossref-table.html"
+    check("the picker is on exactly the ranked-list tools, the cross-reference table on "
+          "crossref_bom",
+          with_ui == {"search_parts": picker, "recommend_parts": picker,
+                      "cross_reference": picker, "crossref_bom": table},
+          ", ".join(f"{k}->{v}" for k, v in sorted(with_ui.items())))
+    table_html = S.crossref_widget()
+    check("the cross-reference table is self-contained HTML with no external fetch",
+          table_html.lstrip().startswith("<") and "<script" in table_html
+          and 'src="http' not in table_html and "src='http" not in table_html,
+          f"{len(table_html):,} bytes")
 
     print()
     if FAILURES:
