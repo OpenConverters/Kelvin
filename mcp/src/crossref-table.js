@@ -351,7 +351,10 @@ async function allLines(sc) {
 }
 
 app.ontoolresult = async (result) => {
-  const sc = result?.structuredContent;
+  let sc = result?.structuredContent;
+  // A large BOM answers as a job (contract `mode: "job"`); job_result carries the finished
+  // cross-reference nested in it, and the table draws that exactly as it draws a direct answer.
+  if (sc?.mode === "job" && sc.result) sc = sc.result;
   if (sc?.mode !== "bom" || !Array.isArray(sc.lines)) {
     state.error = "The tool returned no cross-reference for this widget.";
     render();

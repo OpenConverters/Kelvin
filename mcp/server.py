@@ -38,6 +38,8 @@ import threading
 import uuid
 from pathlib import Path
 
+import anyio
+
 _REPO = Path(__file__).resolve().parent.parent
 _SEARCHED = (_REPO / "build", _REPO / "build-latest")
 _FOUND = [p for d in _SEARCHED for p in list(d.glob("PyKelvin*.so")) + list(d.glob("PyKelvin*.pyd"))]
@@ -458,17 +460,21 @@ def _row_digest(row: dict, numeric_fields: list[str], count: int = 4) -> str:
             + (f" | {', '.join(specs)}" if specs else ""))
 
 
-# --- the cross-reference worker ---------------------------------------------
-# A long-lived Node process holding the WASM engine and the loaded shards. Started
-# on first use (nothing pays for it if cross_reference is never called) and
-# restarted if it dies, so one bad request cannot take the tool out for the
-# session. See xref.mjs for why cross-reference goes through Node at all.
+# --- the cross-reference workers --------------------------------------------
+# Long-lived Node processes holding the WASM engine and the loaded shards. Started on first
+# use (nothing pays for one that is never called) and restarted if they die, so one bad
+# request cannot take the tool out for the session. See xref.mjs for why cross-reference goes
+# through Node at all.
+#
+# TWO workers, not one. A worker answers one request at a time, and a whole BOM is minutes of
+# work: a 1,908-line quote kept the single worker at 98 % CPU for over six minutes on the
+# 4-core demo host, and every single-part cross_reference queued behind it for the whole run.
+# So BOM work has a worker of its own (`batch`) and the interactive tools keep theirs. Two,
+# never more: each holds every shard (~600 MB on the demo host, which has 8 GB).
+#
+# Within the batch worker a synchronous (small) BOM goes ahead of a background job's next
+# chunk, so a short BOM waits at most one chunk of a long one, never the whole of it.
 
-_xref_proc: subprocess.Popen | None = None
-_xref_lock = threading.Lock()
-_xref_id = 0
-_xref_fingerprint: str | None = None
-XREF_TIMEOUT_S = 300.0
 # The worker's source: its own file plus the cross-reference pipeline it imports.
 _XREF_SOURCES = (Path(__file__).parent / "xref.mjs",
                  _REPO / "web" / "src" / "crossref.js",
@@ -525,43 +531,85 @@ def _xref_start() -> subprocess.Popen:
     return proc
 
 
-def _xref(request: dict) -> dict:
-    """One request/response round-trip with the worker, restarting it if it died.
+class _XrefWorker:
+    """One Node worker and the queue in front of it."""
 
-    The worker is also restarted when its SOURCE changes. Without that, a fix to xref.mjs or
-    to the crossref pipeline it imports only lands whenever the worker next happens to die,
-    and until then the tool keeps answering from the old code — correctly-shaped answers from
-    superseded rules, which is the hardest kind of wrong to notice.
-    """
-    global _xref_proc, _xref_id, _xref_fingerprint
-    with _xref_lock:
-        current = _xref_source_fingerprint()
-        if _xref_proc is not None and _xref_proc.poll() is None and _xref_fingerprint != current:
-            _xref_proc.terminate()
+    def __init__(self, name: str):
+        self.name = name
+        self.proc: subprocess.Popen | None = None
+        self.fingerprint: str | None = None
+        self._next_id = 0
+        self._cv = threading.Condition()
+        self._busy = False
+        self._urgent = 0             # callers waiting that go ahead of background chunks
+
+    def _acquire(self, urgent: bool) -> None:
+        with self._cv:
+            if urgent:
+                self._urgent += 1
             try:
-                _xref_proc.wait(timeout=10)
-            except subprocess.TimeoutExpired:                   # pragma: no cover
-                _xref_proc.kill()
-            _xref_proc = None
-        if _xref_proc is None or _xref_proc.poll() is not None:
-            _xref_proc = _xref_start()
-            _xref_fingerprint = current
-        _xref_id += 1
-        request = {**request, "id": _xref_id}
+                while self._busy or (not urgent and self._urgent):
+                    self._cv.wait()
+            finally:
+                if urgent:
+                    self._urgent -= 1
+            self._busy = True
+
+    def _release(self) -> None:
+        with self._cv:
+            self._busy = False
+            self._cv.notify_all()
+
+    def call(self, request: dict, *, urgent: bool = True) -> dict:
+        """One request/response round-trip, restarting the worker if it died.
+
+        The worker is also restarted when its SOURCE changes. Without that, a fix to xref.mjs
+        or to the crossref pipeline it imports only lands whenever the worker next happens to
+        die, and until then the tool keeps answering from the old code — correctly-shaped
+        answers from superseded rules, which is the hardest kind of wrong to notice.
+        """
+        self._acquire(urgent)
         try:
-            _xref_proc.stdin.write(json.dumps(request) + "\n")
-            _xref_proc.stdin.flush()
-            line = _xref_proc.stdout.readline()
-        except (BrokenPipeError, ValueError) as error:
-            _xref_proc = None
-            raise RuntimeError(f"the cross-reference worker died mid-request: {error}") from error
-        if not line:
-            _xref_proc = None
-            raise RuntimeError("the cross-reference worker closed its output (it died)")
-        reply = json.loads(line)
-    if not reply.get("ok"):
-        raise ValueError(reply.get("error") or "cross-reference failed")
-    return reply["result"]
+            current = _xref_source_fingerprint()
+            if self.proc is not None and self.proc.poll() is None and self.fingerprint != current:
+                self.proc.terminate()
+                try:
+                    self.proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:               # pragma: no cover
+                    self.proc.kill()
+                self.proc = None
+            if self.proc is None or self.proc.poll() is not None:
+                self.proc = _xref_start()
+                self.fingerprint = current
+            self._next_id += 1
+            request = {**request, "id": self._next_id}
+            try:
+                self.proc.stdin.write(json.dumps(request) + "\n")
+                self.proc.stdin.flush()
+                line = self.proc.stdout.readline()
+            except (BrokenPipeError, ValueError) as error:
+                self.proc = None
+                raise RuntimeError(f"the {self.name} cross-reference worker died mid-request: "
+                                   f"{error}") from error
+            if not line:
+                self.proc = None
+                raise RuntimeError(f"the {self.name} cross-reference worker closed its output "
+                                   f"(it died)")
+            reply = json.loads(line)
+        finally:
+            self._release()
+        if not reply.get("ok"):
+            raise ValueError(reply.get("error") or "cross-reference failed")
+        return reply["result"]
+
+
+XREF_INTERACTIVE = _XrefWorker("interactive")
+XREF_BATCH = _XrefWorker("batch")
+
+
+def _xref(request: dict) -> dict:
+    """A request on the interactive worker — single parts, answered in well under a second."""
+    return XREF_INTERACTIVE.call(request)
 
 
 # --- tools ------------------------------------------------------------------
@@ -999,7 +1047,11 @@ CROSSREF_INLINE_ROWS = 3        # unranked catalogue rows per line
 CROSSREF_INLINE_RANKED = 2      # ranked candidates per line: the best + one alternate
 CROSSREF_INLINE_CHARS = 45_000  # Claude Code reads a result inline up to ~50k characters
 CROSSREF_PAGE_LINES = 50        # crossref_bom_lines' default page
-CROSSREF_CHUNK = 250            # BOM groups per worker request
+CROSSREF_CHUNK = 250            # BOM groups per worker request, answering in the call
+CROSSREF_JOB_CHUNK = 50         # ... in a job: small, so a synchronous BOM can get in between
+# Distinct BOM lines answered inside the call; above it crossref_bom submits a job. 150 lines
+# take ~10 s on one core here, ~30 s on the 4-core demo host — about what a chat turn tolerates.
+BOM_SYNC_MAX_LINES = int(os.environ.get("KELVIN_BOM_SYNC_MAX_LINES", "150"))
 BOM_SUFFIXES = (".csv", ".txt", ".tsv", ".xlsx")
 
 _IDENTIFICATION_WORDS = {
@@ -1258,6 +1310,167 @@ def _group_key(row: dict) -> str:
                        row.get("description"), row.get("footprint")])
 
 
+# --- BOM jobs ----------------------------------------------------------------
+# A large BOM is minutes of work (1,908 lines: ~2 min here, 6+ on the 4-core demo host), and a
+# tool call that outlives its callers' timeouts is not slow, it is unreachable. So it runs as a
+# job in the contract's shared `mode: "job"` envelope — the one Heaviside's submit_crossref
+# answers in — and a host follows it with job_status / job_result. Moebius's job card does
+# exactly that and mounts job_result's table when the job is done.
+#
+# One job runs at a time, on the batch worker: a second BOM queues behind the first rather
+# than starting a third ~600 MB worker. The queue lives in THIS PROCESS: a restart fails a
+# running job and drops queued ones (a finished one survives, on disk), and job_status says
+# so rather than reporting the job as unknown.
+
+class _Job:
+    def __init__(self, job_id: str, label: str, state: str = "queued", **extra):
+        self.id, self.label, self.state = job_id, label, state
+        self.phase = extra.get("phase", "")
+        self.submitted_at = extra.get("submittedAt") or _now()
+        self.finished_at = extra.get("finishedAt")
+        self.error = extra.get("error")
+        self.digest = extra.get("digest")
+        self.result = extra.get("result")
+
+    def envelope(self, *, with_result: bool = False) -> dict:
+        out = {"mode": "job", "job": self.id, "state": self.state,
+               "submittedAt": self.submitted_at, "label": self.label}
+        for key, value in (("phase", self.phase), ("finishedAt", self.finished_at),
+                           ("error", self.error)):
+            if value:
+                out[key] = value
+        if with_result and self.result is not None:
+            out["result"] = self.result
+        return out
+
+
+def _now() -> str:
+    from datetime import UTC, datetime
+    return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+class _Jobs:
+    def __init__(self):
+        from concurrent.futures import ThreadPoolExecutor
+        self._jobs: dict[str, _Job] = {}
+        self._lock = threading.Lock()
+        self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="kelvin-bom-job")
+
+    @staticmethod
+    def _path(job_id: str) -> Path:
+        if not re.fullmatch(r"[0-9a-f]{12}", job_id or ""):
+            raise ValueError(f"{job_id!r} is not a Kelvin job id (12 hex characters)")
+        return _work_dir() / "jobs" / f"{job_id}.json"
+
+    def _save(self, job: _Job) -> None:
+        path = self._path(job.id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps({**job.envelope(with_result=True), "digest": job.digest}),
+                       encoding="utf-8")
+        tmp.replace(path)
+
+    def submit(self, label: str, work) -> _Job:
+        """Queue `work(progress) -> (digest, payload)`; return the job at once."""
+        job = _Job(uuid.uuid4().hex[:12], label)
+        with self._lock:
+            self._jobs[job.id] = job
+        self._save(job)
+
+        def progress(phase: str) -> None:
+            job.phase = phase
+            self._save(job)
+
+        def run() -> None:
+            job.state = "running"
+            progress("starting the batch cross-reference worker")
+            try:
+                job.digest, job.result = work(progress)
+                job.state, job.phase = "done", ""
+            except Exception as error:     # the job's outcome, said on the job — not swallowed
+                job.state, job.error = "failed", f"{type(error).__name__}: {error}"
+            job.finished_at = _now()
+            self._save(job)
+
+        self._pool.submit(run)
+        return job
+
+    def get(self, job_id: str) -> _Job:
+        path = self._path(job_id)
+        with self._lock:
+            job = self._jobs.get(job_id)
+        if job is not None:
+            return job
+        if not path.exists():
+            raise ValueError(f"no Kelvin job {job_id!r} — it was never submitted here, or "
+                             f"{path} was removed")
+        stored = json.loads(path.read_text(encoding="utf-8"))
+        job = _Job(job_id, stored.get("label", ""), stored["state"],
+                   **{k: stored.get(k) for k in ("phase", "submittedAt", "finishedAt", "error",
+                                                 "digest", "result")})
+        if job.state in ("queued", "running"):
+            # On disk as unfinished but not in this process: the server restarted under it.
+            job.state, job.phase = "failed", ""
+            job.error = ("Kelvin restarted while this job was " + stored["state"] + ", and a "
+                         "job's queue lives in the server process, so the work was lost. "
+                         "Nothing is wrong with the BOM; submitting it again starts over.")
+            job.finished_at = job.finished_at or _now()
+            self._save(job)
+        return job
+
+
+JOBS = _Jobs()
+
+
+@mcp.tool(
+    title="BOM job status",
+    description=(
+        "Where a crossref_bom job has got to: queued | running | done | failed, with what it "
+        "is doing now. A large BOM is submitted as a job; poll this until 'done', then fetch "
+        "job_result. 'failed' can mean Kelvin restarted under the job — read the error."
+    ),
+    structured_output=False,
+)
+def job_status(job: str) -> CallToolResult:
+    """The state of a crossref_bom job.
+
+    Args:
+        job: the id crossref_bom returned.
+    """
+    handle = JOBS.get(job)
+    return _result(f"job {handle.id}: {handle.state}"
+                   + (f" — {handle.phase}" if handle.phase else "")
+                   + (f" — {handle.error}" if handle.error else "")
+                   + f" ({handle.label}, submitted {handle.submitted_at})",
+                   handle.envelope())
+
+
+@mcp.tool(
+    title="BOM job result",
+    description=(
+        "The finished cross-reference of a crossref_bom job — the same answer and table "
+        "crossref_bom gives a small BOM directly. Fails if the job is not done: it does not "
+        "wait, because waiting is what the job exists to avoid."
+    ),
+    # The table hangs off the tool a host is told to call for the result, not only off
+    # crossref_bom; the widget unwraps the job envelope.
+    meta=UI_CROSSREF_META,
+    structured_output=False,
+)
+def job_result(job: str) -> CallToolResult:
+    """The result of a finished crossref_bom job.
+
+    Args:
+        job: the id crossref_bom returned.
+    """
+    handle = JOBS.get(job)
+    if handle.state != "done":
+        raise ValueError(f"job {job} is {handle.state}, not done"
+                         + (f" — {handle.error}" if handle.error else "")
+                         + ". Poll job_status until it reports 'done'.")
+    return _result(handle.digest or "", handle.envelope(with_result=True))
+
+
 @mcp.tool(
     title="Cross-reference a BOM file",
     description=(
@@ -1270,14 +1483,21 @@ def _group_key(row: dict) -> str:
         "(local, file:// or artifact://), not the file's contents. The result renders for the "
         "user as a sortable, filterable table (one row per group of designators with the same "
         "answer), so a reply should summarise it — totals and the lines worth a look — not "
-        "re-list it."
+        "re-list it. A BOM of more than 150 distinct lines is NOT answered in the call: it "
+        "returns a job (mode 'job') at once; job_status(job) follows it and job_result(job) "
+        "returns the finished cross-reference. Until then nothing has been cross-referenced."
     ),
     structured_output=False,
     meta=UI_CROSSREF_META,
 )
-def crossref_bom(bom: str, target_manufacturers: list[str] | None = None,
-                 same_type: bool = True, max_results: int = 5, top: int = 30) -> CallToolResult:
+async def crossref_bom(bom: str, target_manufacturers: list[str] | None = None,
+                       same_type: bool = True, max_results: int = 5,
+                       top: int = 30) -> CallToolResult:
     """Every line of a BOM file, identified and cross-referenced.
+
+    A BOM of more than BOM_SYNC_MAX_LINES distinct lines is not answered in the call: it is
+    submitted as a job and the call returns the job (contract `mode: "job"`) at once. Poll
+    job_status(job); job_result(job) is the same answer this tool gives a small BOM directly.
 
     Args:
         bom: the BOM file — a local path, file://, artifact://<id> (resolved against
@@ -1292,27 +1512,67 @@ def crossref_bom(bom: str, target_manufacturers: list[str] | None = None,
             best two).
         top: how many BOM rows to name in the digest; the payload carries every line.
     """
+    # In a thread, never on the event loop: FastMCP runs a plain function ON the loop, so a
+    # BOM computed there froze the whole server — tools/list included — for as long as it ran,
+    # and every host's health check of Kelvin hung with it.
+    return await anyio.to_thread.run_sync(
+        _crossref_bom_call, bom, target_manufacturers, same_type, max_results, top)
+
+
+def _crossref_bom_call(bom, target_manufacturers, same_type, max_results, top) -> CallToolResult:
+    """Read the file (so a bad one is refused in the call, not minutes later), then answer a
+    small BOM directly and submit a large one as a job."""
     doc, name = _read_bom(bom)
     max_results = max(1, min(int(max_results), 12))
     targets = [t.strip() for t in (target_manufacturers or []) if t and t.strip()]
+    distinct = len({_group_key(row) for row in doc["rows"]})
+    if distinct <= BOM_SYNC_MAX_LINES:
+        digest, payload = _crossref_bom_compute(bom, doc, name, targets, bool(same_type),
+                                                max_results, top, urgent=True)
+        return _result(digest, payload)
+    label = (f"{name}: {distinct:,} BOM lines into "
+             + (", ".join(targets) if targets else "every vendor but the original's own"))
+    job = JOBS.submit(label, lambda progress: _crossref_bom_compute(
+        bom, doc, name, targets, bool(same_type), max_results, top, urgent=False,
+        progress=progress))
+    return _result(
+        f"{name} has {distinct:,} distinct BOM lines ({len(doc['rows']):,} designator rows) — "
+        f"too many to answer inside one call, so it was submitted as job {job.id} "
+        f"({job.state}). It runs on Kelvin's batch worker, so other Kelvin tools stay "
+        f"responsive meanwhile. Poll job_status(job='{job.id}'); job_result(job='{job.id}') "
+        "returns the finished cross-reference (the same table crossref_bom draws for a small "
+        "BOM). Nothing has been cross-referenced yet: do not report results until the job is "
+        "done.",
+        job.envelope())
 
+
+def _crossref_bom_compute(bom, doc, name, targets, same_type, max_results, top, *,
+                          urgent: bool, progress=None) -> tuple[str, dict]:
+    """The cross-reference of a parsed BOM, on the batch worker: (digest, `bom` payload)."""
     groups: dict[str, dict] = {}
     for row in doc["rows"]:
         groups.setdefault(_group_key(row), row)
-    # Sent in chunks: the worker's per-request timeout bounds one chunk, not the whole BOM —
-    # a 2,101-row quote is ~1,900 questions and minutes of work, which one request would not
-    # be allowed to finish.
+    # Sent in chunks: the worker's per-request work is bounded by a chunk, not by the whole
+    # BOM, and a synchronous BOM waiting for the batch worker gets in between two chunks of a
+    # job instead of after all of them.
     keyed = [{"key": k, **_xref_line(r)} for k, r in groups.items()]
+    chunk = CROSSREF_CHUNK if urgent else CROSSREF_JOB_CHUNK
     answers = {}
-    for start in range(0, len(keyed), CROSSREF_CHUNK):
-        result = _xref({"op": "bom", "lines": keyed[start:start + CROSSREF_CHUNK],
-                        "targets": targets, "sameType": bool(same_type),
-                        "maxResults": max_results, "listed": max_results})
+    for start in range(0, len(keyed), chunk):
+        if progress:
+            progress(f"identifying and ranking BOM lines {start + 1:,}–"
+                     f"{min(start + chunk, len(keyed)):,} of {len(keyed):,}")
+        result = XREF_BATCH.call({"op": "bom", "lines": keyed[start:start + chunk],
+                                  "targets": targets, "sameType": same_type,
+                                  "maxResults": max_results, "listed": max_results},
+                                 urgent=urgent)
         answers.update({g["key"]: g for g in result["groups"]})
     missing = [k for k in groups if k not in answers]
     if missing:
         raise RuntimeError(f"the cross-reference worker answered {len(answers)} of "
                            f"{len(groups)} BOM groups; it lost {len(missing)}")
+    if progress:
+        progress(f"writing the cross-reference of {len(keyed):,} BOM lines")
 
     lines, diagnostics, first_of = [], [], {}
     inline = []
@@ -1389,7 +1649,7 @@ def crossref_bom(bom: str, target_manufacturers: list[str] | None = None,
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "crossref.json").write_text(json.dumps({
         "crossref": crossref, "bom": str(bom), "name": name, "targets": targets,
-        "sameType": bool(same_type), "maxResults": max_results,
+        "sameType": same_type, "maxResults": max_results,
         "file": {k: doc[k] for k in ("format", "columns", "unreadColumns", "ignoredColumns",
                                      "skipped", "notes", "headerRow")},
         "full": {**payload, "lines": lines,
@@ -1456,7 +1716,7 @@ def crossref_bom(bom: str, target_manufacturers: list[str] | None = None,
               + ("\n" + "\n".join(f"  ! {d}" for d in diagnostics[:10]) if diagnostics else "")
               + f"\n(crossref {crossref} — crossref_bom_line(crossref, ref) returns one line in "
                 f"full: every candidate's spec table, every check, every note)")
-    return _result(digest, payload)
+    return digest, payload
 
 
 @mcp.tool(

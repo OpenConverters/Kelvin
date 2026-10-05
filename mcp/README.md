@@ -102,6 +102,8 @@ picking the wrong one).
 | `cross_reference` | "what can replace this part" — scored substitutes with per-parameter verdicts | picker |
 | `crossref_bom` | "cross-reference this BOM file into Würth" — every designator of a .csv / .txt / .xlsx BOM identified and ranked; compact, one `bom` line per designator | — |
 | `crossref_bom_line` | one line of a `crossref_bom` run in full: every candidate's spec table, check and note | — |
+| `crossref_bom_lines` | a page of a `crossref_bom` run's compact lines (what the table widget loads for a long BOM) | — |
+| `job_status` / `job_result` | a BOM of more than 150 distinct lines (`KELVIN_BOM_SYNC_MAX_LINES`) is not answered in the call: `crossref_bom` returns a job (`mode: "job"`, the contract's shared envelope) at once, runs it on a second, batch xref worker so the interactive tools stay sub-second, and these follow and fetch it | crossref table (`job_result`) |
 
 `describe_family` exists because the query vocabulary is per-family and generated from
 `Browse.hpp`'s field table — so a caller learns the real field names instead of guessing, and an

@@ -70,8 +70,13 @@ BOM_CHARS_PER_LINE = 800
 BOM_CHARS_ONE_LINE = 1500
 
 
+def _crossref_bom(path, **kw):
+    """crossref_bom is async (it computes in a thread, off the server's event loop)."""
+    return asyncio.run(S.crossref_bom(str(path), **kw))
+
+
 def _bom(path, **kw):
-    r = S.crossref_bom(str(path), **kw)
+    r = _crossref_bom(path, **kw)
     return r, r.structuredContent, {line["ref"]: line for line in r.structuredContent["lines"]}
 
 
@@ -204,16 +209,16 @@ def bom_checks() -> None:
         bad = Path(tmp) / "qty.csv"
         bad.write_text("Designator,Quantity,MPN\nR1-R3,2,RC0402FR-1310KL\n", encoding="utf-8")
         _raises("a quantity mismatch is refused, naming the row",
-                lambda: S.crossref_bom(str(bad)), "row 2", "Quantity is 2")
+                lambda: _crossref_bom(str(bad)), "row 2", "Quantity is 2")
         nohead = Path(tmp) / "nohead.csv"
         # One column: nothing for Jev to map either (a header Kelvin does not know but with
         # two or more columns goes to Jev — test_bomfile.py covers that, mocked and live).
         nohead.write_text("Parts\nRC0402FR-1310KL\n", encoding="utf-8")
         _raises("no recognisable header is refused, listing what is there",
-                lambda: S.crossref_bom(str(nohead)), "no row names the BOM's columns",
+                lambda: _crossref_bom(str(nohead)), "no row names the BOM's columns",
                 "Parts")
         _raises("a missing file is refused by path",
-                lambda: S.crossref_bom(str(Path(tmp) / "absent.csv")), "no BOM at")
+                lambda: _crossref_bom(str(Path(tmp) / "absent.csv")), "no BOM at")
 
 
 def main() -> int:
@@ -373,14 +378,14 @@ def main() -> int:
 
         print("the cross-reference worker restarts when its source changes")
         S._xref({"op": "families"})                       # ensure a worker is up
-        first = S._xref_proc.pid
+        first = S.XREF_INTERACTIVE.proc.pid
         stamp = S._XREF_SOURCES[0]
         original = stamp.read_bytes()
         try:
             stamp.write_bytes(original + b"\n// staleness probe\n")
             S._xref({"op": "families"})
             check("a source edit restarts the worker instead of serving the old code",
-                  S._xref_proc.pid != first, f"pid {first} -> {S._xref_proc.pid}")
+                  S.XREF_INTERACTIVE.proc.pid != first, f"pid {first} -> {S.XREF_INTERACTIVE.proc.pid}")
         finally:
             stamp.write_bytes(original)
         S._xref({"op": "families"})                       # back to the real source
@@ -399,7 +404,7 @@ def main() -> int:
 
     print("the registered tool surface")
     tools = asyncio.run(S.mcp.list_tools())
-    check("every tool is registered", len(tools) == 9, ", ".join(t.name for t in tools))
+    check("every tool is registered", len(tools) == 12, ", ".join(t.name for t in tools))
     check("every tool has a description", all(t.description for t in tools))
 
     print("the MCP Apps widget")
@@ -417,9 +422,10 @@ def main() -> int:
                if (t.meta or {}).get("ui/resourceUri")}
     picker, table = "ui://kelvin/picker.html", "ui://kelvin/crossref-table.html"
     check("the picker is on exactly the ranked-list tools, the cross-reference table on "
-          "crossref_bom",
+          "crossref_bom and job_result",
           with_ui == {"search_parts": picker, "recommend_parts": picker,
-                      "cross_reference": picker, "crossref_bom": table},
+                      "cross_reference": picker, "crossref_bom": table,
+                      "job_result": table},
           ", ".join(f"{k}->{v}" for k, v in sorted(with_ui.items())))
     table_html = S.crossref_widget()
     check("the cross-reference table is self-contained HTML with no external fetch",
