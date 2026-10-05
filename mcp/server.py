@@ -997,6 +997,9 @@ def cross_reference(family: str, mpn: str, manufacturer: str | None = None,
 
 CROSSREF_INLINE_ROWS = 3        # unranked catalogue rows per line
 CROSSREF_INLINE_RANKED = 2      # ranked candidates per line: the best + one alternate
+CROSSREF_INLINE_CHARS = 45_000  # Claude Code reads a result inline up to ~50k characters
+CROSSREF_PAGE_LINES = 50        # crossref_bom_lines' default page
+CROSSREF_CHUNK = 250            # BOM groups per worker request
 BOM_SUFFIXES = (".csv", ".txt", ".tsv", ".xlsx")
 
 _IDENTIFICATION_WORDS = {
@@ -1084,6 +1087,11 @@ def _bom_line(src: dict, g: dict) -> tuple[dict, list[str]]:
         if g.get(key) not in (None, [], "", False):
             ident[key] = g[key]
     ident["bomRow"] = src["row"]
+    if len(src.get("refs") or []) > 1:
+        line["_refs"] = src["refs"]
+        ident["bomRows"] = src["rows"]
+    if src.get("quantity") is not None:
+        line["_quantity"] = src["quantity"]
     line["_identification"] = ident
     if src.get("manufacturer"):
         line["_bomManufacturer"] = src["manufacturer"]
@@ -1204,7 +1212,8 @@ def _inline_line(line: dict, same_as: str | None) -> dict:
     """A stored line, compacted for the payload. A designator that shares its BOM row's answer
     with an earlier one carries the answer (status, part, identification certainty) but points
     at that line for the candidates instead of repeating them."""
-    keep = ("ref", "status", "mpn", "manufacturer", "originalMpn", "kind", "value", "specs")
+    keep = ("ref", "status", "mpn", "manufacturer", "originalMpn", "kind", "value", "specs",
+            "_refs", "_quantity")
     out = {k: line[k] for k in keep if k in line}
     ident = line["_identification"]
     out["_identification"] = {k: ident[k] for k in ("certainty", "family", "query", "normalised")
@@ -1231,10 +1240,20 @@ def _inline_line(line: dict, same_as: str | None) -> dict:
     return out
 
 
+def _xref_line(row: dict) -> dict:
+    """What the worker reads of a BOM row. Its `ref` orders the family search by designator
+    prefix (C -> capacitor), so a line id or a row number is not passed as one."""
+    out = {k: row.get(k) for k in ("partNumber", "manufacturer", "value", "description",
+                                     "footprint", "row")}
+    out["ref"] = row["ref"] if row.get("refKind", "designator") == "designator" else ""
+    return out
+
+
 def _group_key(row: dict) -> str:
     """Lines that will get the same answer: same BOM text, same designator prefix (the prefix
     orders the family search, so C1 and R1 with one value string are different questions)."""
-    prefix = re.match(r"[A-Za-z_]*", row["ref"]).group(0).upper()
+    prefix = (re.match(r"[A-Za-z_]*", row["ref"]).group(0).upper()
+              if row.get("refKind", "designator") == "designator" else "")
     return json.dumps([prefix, row.get("partNumber"), row.get("manufacturer"), row.get("value"),
                        row.get("description"), row.get("footprint")])
 
@@ -1280,11 +1299,16 @@ def crossref_bom(bom: str, target_manufacturers: list[str] | None = None,
     groups: dict[str, dict] = {}
     for row in doc["rows"]:
         groups.setdefault(_group_key(row), row)
-    result = _xref({"op": "bom",
-                    "lines": [{"key": k, **r} for k, r in groups.items()],
-                    "targets": targets, "sameType": bool(same_type),
-                    "maxResults": max_results, "listed": max_results})
-    answers = {g["key"]: g for g in result["groups"]}
+    # Sent in chunks: the worker's per-request timeout bounds one chunk, not the whole BOM —
+    # a 2,101-row quote is ~1,900 questions and minutes of work, which one request would not
+    # be allowed to finish.
+    keyed = [{"key": k, **_xref_line(r)} for k, r in groups.items()]
+    answers = {}
+    for start in range(0, len(keyed), CROSSREF_CHUNK):
+        result = _xref({"op": "bom", "lines": keyed[start:start + CROSSREF_CHUNK],
+                        "targets": targets, "sameType": bool(same_type),
+                        "maxResults": max_results, "listed": max_results})
+        answers.update({g["key"]: g for g in result["groups"]})
     missing = [k for k in groups if k not in answers]
     if missing:
         raise RuntimeError(f"the cross-reference worker answered {len(answers)} of "
@@ -1370,7 +1394,23 @@ def crossref_bom(bom: str, target_manufacturers: list[str] | None = None,
                                      "skipped", "notes", "headerRow")},
         "full": {**payload, "lines": lines,
                  "caveat": caveat.split(" COMPACT:")[0].strip()},
+        "inline": inline,
     }), encoding="utf-8")
+
+    # A BOM of thousands of lines does not fit inline even compacted (2,101 quote lines are
+    # ~1 MB), and Claude Code saves a result above ~50k characters to a file the model then
+    # greps piecemeal. Then the payload carries the totals and no lines; the table widget
+    # loads every line through crossref_bom_lines, and so can the model, a status at a time.
+    if len(json.dumps(payload, ensure_ascii=False)) > CROSSREF_INLINE_CHARS:
+        payload["lines"] = []
+        payload["caveat"] = (
+            f"LINES HELD BACK: this BOM has {len(lines)} lines, too many to carry inline; "
+            "this payload carries the totals only, the table drawn for the user shows every "
+            "line, and crossref_bom_lines(crossref='" + crossref + "', status=<status>, "
+            "offset=<n>) pages them (compact). Identification: "
+            + ", ".join(f"{n} {_IDENTIFICATION_WORDS[c]}" for c, n in sorted(certainty.items()))
+            + ". Status: " + ", ".join(f"{n} {st}" for st, n in sorted(statuses.items()))
+            + ". " + payload["caveat"])
 
     order = ("exact", "ambiguous", "value-package", "substring", "none", "unlookupable",
              "not-a-part")
@@ -1442,7 +1482,8 @@ def crossref_bom_line(crossref: str, ref: str) -> CallToolResult:
                          f"{path.parent} was removed. Run crossref_bom again.")
     stored = json.loads(path.read_text(encoding="utf-8"))
     full = stored["full"]
-    found = [line for line in full["lines"] if line["ref"] == ref]
+    found = [line for line in full["lines"]
+             if line["ref"] == ref or ref in (line.get("_refs") or ())]
     if not found:
         refs = [line["ref"] for line in full["lines"]]
         raise ValueError(f"no line {ref!r} in BOM cross-reference {crossref} — it holds "
@@ -1473,6 +1514,62 @@ def crossref_bom_line(crossref: str, ref: str) -> CallToolResult:
         + f"\n{line.get('notes') or ''}"
         + ("\n" + "\n".join(listing) if listing else "\n  (no candidates)"),
         payload)
+
+
+@mcp.tool(
+    title="A page of a BOM cross-reference's lines",
+    description=(
+        "The compact lines of a completed crossref_bom, a page at a time — what crossref_bom "
+        "holds back when a BOM is too long to carry inline. Filter by status (exact, "
+        "recommended, partial, no_substitute, unsourced). crossref_bom_line(crossref, ref) "
+        "returns one line in full."
+    ),
+    structured_output=False,
+)
+def crossref_bom_lines(crossref: str, status: str | None = None, offset: int = 0,
+                       limit: int = CROSSREF_PAGE_LINES) -> CallToolResult:
+    """Compact lines of a stored BOM cross-reference.
+
+    Args:
+        crossref: the id crossref_bom returned.
+        status: only lines with this status; omitted, every line.
+        offset: the first line to return (0-based, after the status filter).
+        limit: how many lines to return (1..1000).
+    """
+    path = _crossref_dir(crossref) / "crossref.json"
+    if not path.exists():
+        raise ValueError(f"no BOM cross-reference {crossref!r} — it was never run here, or "
+                         f"{path.parent} was removed. Run crossref_bom again.")
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    full = stored["full"]
+    inline = stored["inline"]
+    known = ("exact", "recommended", "partial", "no_substitute", "unsourced")
+    if status is not None and status not in known:
+        raise ValueError(f"status {status!r} is not one of {', '.join(known)}")
+    offset, limit = max(0, int(offset)), max(1, min(int(limit), 1000))
+    chosen = [line for line in inline if status is None or line["status"] == status]
+    page = chosen[offset:offset + limit]
+    # A line pointing at an earlier one (_sameAs) is useless without it: the earlier line
+    # comes along when it is not on this page.
+    refs = {line["ref"] for line in page}
+    by_ref = {line["ref"]: line for line in inline}
+    extra = [by_ref[line["_sameAs"]] for line in page
+             if line.get("_sameAs") and line["_sameAs"] not in refs]
+    lines = list({line["ref"]: line for line in extra + page}.values())
+    payload: dict = {"mode": "bom", "lines": lines, "total": full["total"],
+                     "sourced": full["sourced"],
+                     "caveat": (f"Lines {offset + 1}-{offset + len(page)} of {len(chosen)}"
+                                + (f" with status {status}" if status else "")
+                                + f" of BOM cross-reference {crossref} ({full['total']} lines in "
+                                  f"all), compact as in crossref_bom; crossref_bom_line("
+                                  f"crossref='{crossref}', ref=<ref>) returns one in full.")}
+    if full.get("targetManufacturer"):
+        payload["targetManufacturer"] = full["targetManufacturer"]
+    more = len(chosen) - offset - len(page)
+    return _result(f"{len(page)} line(s) of {len(chosen)}"
+                   + (f" ({status})" if status else "") + f" from {stored['name']}"
+                   + (f"; {more} more from offset {offset + len(page)}" if more > 0 else ""),
+                   payload)
 
 
 # --- the MCP Apps UI resource -----------------------------------------------

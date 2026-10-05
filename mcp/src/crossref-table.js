@@ -41,6 +41,7 @@ const MATCH_WORDS = {
 const state = {
   payload: null, groups: [], error: "",
   filter: "all", query: "", sort: { key: "status", dir: 1 }, chosen: "", crossref: "",
+  loading: "",
 };
 
 // ── shaping ────────────────────────────────────────────────────────────────
@@ -76,6 +77,10 @@ function shape(line, target, byRef) {
     ?? (best?.params ?? []).filter((p) => p.verdict === "warn" || p.verdict === "fail").map((p) => p.name);
   return {
     ref: line.ref,
+    // A merged line (Kelvin: the same part on several rows of a designator-less BOM) carries
+    // every reference in _refs and the summed quantity in _quantity.
+    refs: line._refs ?? [line.ref],
+    quantity: line._quantity ?? null,
     status: line.status,
     original: line.originalMpn ?? null,
     originalMaker: line._originalManufacturer ?? null,
@@ -126,13 +131,18 @@ function compactRefs(refs) {
 function group(lines) {
   const byKey = new Map();
   for (const l of lines) {
-    const { ref, ...answer } = l;
+    const { ref, refs, quantity, ...answer } = l;
     const key = JSON.stringify(answer);
-    if (!byKey.has(key)) byKey.set(key, { ...answer, refs: [] });
-    byKey.get(key).refs.push(ref);
+    if (!byKey.has(key)) byKey.set(key, { ...answer, refs: [], quantity: null, counted: true });
+    const g = byKey.get(key);
+    g.refs.push(...refs);
+    // A quantity is shown only when every line in the group states one; otherwise the
+    // positions are counted (a designator BOM) or the cell says nothing (a line-id BOM).
+    if (quantity === null) g.counted = false; else g.quantity = (g.quantity ?? 0) + quantity;
   }
   return [...byKey.values()].map((g) => ({
     ...g, refs: g.refs.sort(naturalRef), refText: compactRefs(g.refs), id: g.refs[0],
+    qty: g.counted ? g.quantity : g.refs.length,
   }));
 }
 
@@ -143,7 +153,7 @@ const SORTS = {
   status: (a, b) => statusRank(a.status) - statusRank(b.status)
     || (GRADE_RANK[a.grade] ?? 9) - (GRADE_RANK[b.grade] ?? 9) || naturalRef(a.id, b.id),
   refs: (a, b) => naturalRef(a.id, b.id),
-  qty: (a, b) => a.refs.length - b.refs.length,
+  qty: (a, b) => (a.qty ?? 0) - (b.qty ?? 0),
   original: (a, b) => String(a.original ?? a.value ?? "").localeCompare(String(b.original ?? b.value ?? "")),
   sub: (a, b) => String(a.sub ?? "").localeCompare(String(b.sub ?? "")),
   grade: (a, b) => (GRADE_RANK[a.grade] ?? 9) - (GRADE_RANK[b.grade] ?? 9),
@@ -198,7 +208,7 @@ function row(g) {
     onclick: () => choose(g),
   },
   el("td", { class: "mono refs" }, g.refText),
-  el("td", { class: "qty" }, g.refs.length),
+  el("td", { class: "qty" }, g.qty ?? "—"),
   el("td", {},
     el("div", { class: "mono" }, g.original ?? (g.value ? `value ${g.value}` : "—")),
     g.originalMaker || g.kind
@@ -221,7 +231,10 @@ function render() {
   const root = document.getElementById("app");
   if (state.error) { root.replaceChildren(el("div", { class: "err" }, state.error)); return; }
   const p = state.payload;
-  if (!p) { root.replaceChildren(el("div", { class: "muted" }, "Waiting for the cross-reference…")); return; }
+  if (!p || state.loading) {
+    root.replaceChildren(el("div", { class: "muted" }, state.loading || "Waiting for the cross-reference…"));
+    return;
+  }
 
   const statuses = STATUS_ORDER.filter((s) => state.groups.some((g) => g.status === s));
   const unknown = [...new Set(state.groups.map((g) => g.status))].filter((s) => !STATUS_ORDER.includes(s));
@@ -304,7 +317,7 @@ async function choose(g) {
       + (g.grade ? `, grade ${g.grade}` : "") + (g.flags.length ? `, flags ${g.flags.join(", ")}` : "")
       : null,
     g.notes ? `[notes] ${g.notes}` : null,
-    state.crossref ? `[full line] crossref_line(crossref='${state.crossref}', ref='${g.id}')` : null,
+    state.crossref ? `[full line] ${state.lineTool}(crossref='${state.crossref}', ref='${g.id}')` : null,
   ].filter(Boolean).join("\n");
   await app.updateModelContext({
     content: [{ type: "text", text }],
@@ -312,7 +325,32 @@ async function choose(g) {
   });
 }
 
-app.ontoolresult = (result) => {
+/**
+ * Every line of the cross-reference. A BOM too long to carry inline (Kelvin's crossref_bom
+ * above ~45k characters) arrives with its totals and no lines; they are then fetched from the
+ * server a page at a time with crossref_bom_lines, so the table still shows all of them.
+ */
+async function allLines(sc) {
+  if (sc.lines.length >= sc.total || !state.crossref) return sc.lines;
+  const lines = [];
+  const seen = new Set();
+  for (let offset = 0; offset < sc.total; offset += 1000) {
+    state.loading = `Loading lines ${offset + 1}–${Math.min(offset + 1000, sc.total)} of ${sc.total}…`;
+    render();
+    const r = await app.callServerTool({
+      name: "crossref_bom_lines", arguments: { crossref: state.crossref, offset, limit: 1000 },
+    });
+    if (r.isError) throw new Error(`crossref_bom_lines failed: ${(r.content ?? []).map((c) => c.text).join(" ")}`);
+    const page = r.structuredContent?.lines;
+    if (!Array.isArray(page) || !page.length) throw new Error(`crossref_bom_lines returned no lines at offset ${offset}`);
+    for (const l of page) if (!seen.has(l.ref)) { seen.add(l.ref); lines.push(l); }
+  }
+  state.loading = "";
+  if (lines.length !== sc.total) throw new Error(`loaded ${lines.length} lines, the BOM has ${sc.total}`);
+  return lines;
+}
+
+app.ontoolresult = async (result) => {
   const sc = result?.structuredContent;
   if (sc?.mode !== "bom" || !Array.isArray(sc.lines)) {
     state.error = "The tool returned no cross-reference for this widget.";
@@ -322,10 +360,13 @@ app.ontoolresult = (result) => {
   state.payload = sc;
   // The run's id is stated in the caveat (crossref_board has no other field for it); a
   // payload without one simply gets no crossref_line pointer.
-  state.crossref = /crossref_line\(crossref='([0-9a-f]+)'/.exec(sc.caveat ?? "")?.[1] ?? "";
+  const handle = /(crossref(?:_bom)?_line)s?\(crossref='([0-9a-f]+)'/.exec(sc.caveat ?? "");
+  state.crossref = handle?.[2] ?? "";
+  state.lineTool = handle?.[1] ?? "crossref_line";
   try {
-    const byRef = new Map(sc.lines.map((l) => [l.ref, l]));
-    state.groups = group(sc.lines.map((l) => shape(l, sc.targetManufacturer, byRef)));
+    const lines = await allLines(sc);
+    const byRef = new Map(lines.map((l) => [l.ref, l]));
+    state.groups = group(lines.map((l) => shape(l, sc.targetManufacturer, byRef)));
     state.error = "";
     render();
   } catch (err) {

@@ -206,10 +206,12 @@ def bom_checks() -> None:
         _raises("a quantity mismatch is refused, naming the row",
                 lambda: S.crossref_bom(str(bad)), "row 2", "Quantity is 2")
         nohead = Path(tmp) / "nohead.csv"
-        nohead.write_text("Part,Amount\nRC0402FR-1310KL,3\n", encoding="utf-8")
+        # One column: nothing for Jev to map either (a header Kelvin does not know but with
+        # two or more columns goes to Jev — test_bomfile.py covers that, mocked and live).
+        nohead.write_text("Parts\nRC0402FR-1310KL\n", encoding="utf-8")
         _raises("no recognisable header is refused, listing what is there",
                 lambda: S.crossref_bom(str(nohead)), "no row names the BOM's columns",
-                "Part,Amount")
+                "Parts")
         _raises("a missing file is refused by path",
                 lambda: S.crossref_bom(str(Path(tmp) / "absent.csv")), "no BOM at")
 
