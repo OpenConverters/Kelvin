@@ -44,6 +44,9 @@ CapacitorTiebreaker capacitor_tiebreaker_from_string(const std::string& s);
 struct MosfetConstraints {
     double vds_min = 0, id_min = 0, rds_on_max = 0, qg_max = 0;
     std::set<std::string> technology_allowed{"Si", "SiC", "GaN"};
+    // SAS designRequirements.channel (nChannel / pChannel). Absent = either channel; when
+    // set, a part of the other channel — or one whose record names none — is refused.
+    std::optional<std::string> channel;
     bool exclude_discontinued = true;
     std::optional<double> op_i_rms, op_vds, op_duty, op_fsw;
     void validate() const {
@@ -57,6 +60,9 @@ struct MosfetConstraints {
         pos(qg_max, "qg_max");
         if (technology_allowed.empty())
             throw InvalidOptions("MosfetConstraints.technology_allowed cannot be empty");
+        if (channel && *channel != "nChannel" && *channel != "pChannel")
+            throw InvalidOptions("MosfetConstraints.channel must be nChannel or pChannel, got '" +
+                                 *channel + "'");
     }
 };
 
@@ -134,10 +140,14 @@ struct IgbtConstraints {
 struct BjtConstraints {
     double vceo_min = 0, ic_min = 0;
     std::optional<double> hfe_min;  // minimumDcCurrentGain
+    std::optional<std::string> polarity;  // SAS designRequirements.polarity (npn / pnp); absent = either
     bool exclude_discontinued = true;
     void validate() const {
         if (!(vceo_min > 0)) throw InvalidOptions("BjtConstraints.vceo_min must be positive");
         if (!(ic_min > 0)) throw InvalidOptions("BjtConstraints.ic_min must be positive");
+        if (polarity && *polarity != "npn" && *polarity != "pnp")
+            throw InvalidOptions("BjtConstraints.polarity must be npn or pnp, got '" + *polarity +
+                                 "'");
     }
 };
 

@@ -68,7 +68,13 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // "0402 -> 0.4 nH" table was not an approximation of it. 3,544 Wuerth parts
 // carry a per-part figure as of TAS 3589b2e; before that 745 records shared one
 // value and no ceramic had one at all (ABT #1122).
-constexpr uint32_t kFormatVersion = 13;
+// v14 reads P-channel MOSFET and PNP ratings as magnitudes and records the polarity
+// (MosfetRow.channel, BjtRow.polarity), and indexes AC-only capacitors with their AC
+// rating (CapacitorRow.v_rated_ac; v_rated absent). Before it, 919 signed P-channel
+// MOSFETs, 571 PNP transistors and 2,275 AC-only capacitors were unreadable rows, and
+// the 493 P-channel MOSFETs stored with positive ratings were indexed as if N-channel
+// (ABT #1749).
+constexpr uint32_t kFormatVersion = 14;
 
 // Identity of the code that produces rows, so a cached shard can be recognised as
 // having been built by a DIFFERENT extractor than the one running now (ABT #426).
@@ -222,6 +228,7 @@ void row_io(Ar& ar, MosfetRow& r) {
     ar.dbl(r.rth_jc);
     ar.dbl(r.tj_max);
     ar.str(r.technology);
+    ar.str(r.channel);      // v14
     ar.boolean(r.is_production);
     ar.boolean(r.datasheet_usable);
 }
@@ -259,6 +266,7 @@ void row_io(Ar& ar, CapacitorRow& r) {
     ar.dbl(r.esl);          // v12
     ar.dbl(r.temp_min_c);
     ar.dbl(r.temp_max_c);
+    ar.dbl(r.v_rated_ac);   // v14
     ar.boolean(r.is_production);
 }
 
@@ -293,6 +301,7 @@ void row_io(Ar& ar, BjtRow& r) {
     ar.dbl(r.power_dissipation);
     ar.dbl(r.tj_max);
     ar.str(r.technology);
+    ar.str(r.polarity);     // v14
     ar.boolean(r.is_production);
 }
 

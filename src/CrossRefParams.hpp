@@ -361,6 +361,9 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
         {"qg", D::Lower, 2.0, std::nullopt, false, false, nullptr},
         {"coss", D::Lower, 2.0, std::nullopt, false, false, nullptr},
         {"vgs_threshold_max", D::Lower, 2.0, std::nullopt, false, false, nullptr},
+        // A P-channel part is not a substitute for an N-channel one, whatever its ratings
+        // (the ratings are magnitudes for both). Identity, so a mismatch rejects.
+        {"channel", D::ExactMatch, 0.0, std::nullopt, false, false, nullptr},
     };
     static const std::vector<ParamSpec> kDiode = {
         {"vf", D::Lower, 1.2, std::nullopt, false, false, nullptr},

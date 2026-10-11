@@ -61,6 +61,18 @@ std::optional<double> resolve_field(const json& o, const char* key,
 
 bool pos(const std::optional<double>& x) { return x.has_value() && *x > 0.0; }
 
+// TAS stores a P-channel MOSFET's or a PNP transistor's ratings signed as the datasheet
+// prints them (V_DS = -30 V, I_D = -5 A); older rows carry the bare magnitude. The selector
+// compares magnitudes, so a negative rating is read as its magnitude when the part says it
+// is of the negative polarity. A negative rating on a part that says it is N-channel / NPN,
+// or that names no polarity at all, contradicts itself: it stays unreadable (counted), never
+// silently flipped — guessing which half of the record is wrong is not the indexer's call.
+std::optional<double> rating_magnitude(std::optional<double> v, bool negative_polarity) {
+    if (!v) return std::nullopt;
+    if (*v < 0.0) return negative_polarity ? std::optional<double>(-*v) : std::nullopt;
+    return v;
+}
+
 // Physical body size + case code, shared by every family extractor: the
 // cross-reference footprint check needs a real size, because a substitute that
 // does not fit the board is not a substitute. Dimensions are
@@ -220,8 +232,10 @@ std::optional<MosfetRow> extract_mosfet(const json& env) {
     auto manuf = get_str(*mi, "name");
     if (!mpn || !manuf) return std::nullopt;
 
-    auto vds = get_num(*elec, "drainSourceVoltage");
-    auto id = get_num(*elec, "continuousDrainCurrent");
+    const std::string channel = get_str(*part, "subType").value_or("");
+    const bool p_channel = channel == "pChannel";
+    auto vds = rating_magnitude(get_num(*elec, "drainSourceVoltage"), p_channel);
+    auto id = rating_magnitude(get_num(*elec, "continuousDrainCurrent"), p_channel);
     auto rds = get_num(*elec, "onResistance");
     if (!pos(vds) || !pos(id) || !pos(rds)) return std::nullopt;
 
@@ -237,7 +251,13 @@ std::optional<MosfetRow> extract_mosfet(const json& env) {
     auto coss_o = get_num(*elec, "outputCapacitance");
     if (coss_o && *coss_o < 0.0) return std::nullopt;
 
+    // A P-channel threshold is a negative interval (-2.5 … -1 V): its worst case, the largest
+    // magnitude, is the MINIMUM bound, negated. A legacy positive record keeps the old read.
     auto vgs = resolve_field(*elec, "gateThresholdVoltage", PEAS::DimensionalValues::MAXIMUM);
+    if (p_channel) {
+        auto lo = resolve_field(*elec, "gateThresholdVoltage", PEAS::DimensionalValues::MINIMUM);
+        if (lo && *lo < 0.0) vgs = -*lo;
+    }
     double vgs_max = vgs.value_or(0.0);
 
     MosfetRow r;
@@ -250,8 +270,11 @@ std::optional<MosfetRow> extract_mosfet(const json& env) {
     r.qg_total = qg_total;
     if (pos(coss_o)) r.coss = *coss_o;
     r.vgs_threshold_max = vgs_max;
-    if (auto v = get_num(*elec, "onResistanceVgs"); pos(v)) r.rds_on_vgs = *v;
-    if (auto v = get_num(*elec, "gateSourceVoltageMax"); pos(v)) r.vgs_max = *v;
+    if (auto v = rating_magnitude(get_num(*elec, "onResistanceVgs"), p_channel); pos(v))
+        r.rds_on_vgs = *v;
+    if (auto v = rating_magnitude(get_num(*elec, "gateSourceVoltageMax"), p_channel); pos(v))
+        r.vgs_max = *v;
+    r.channel = channel;
     r.qualification = get_str(*part, "qualification").value_or("");
     r.technology = get_str(*part, "technology").value_or("");
     auto status = get_str(*mi, "status");
@@ -391,8 +414,13 @@ std::optional<CapacitorRow> extract_capacitor(const json& env) {
     if (!mpn || !manuf) return std::nullopt;
 
     auto cap_nom = resolve_field(*elec, "capacitance");
+    // A line-safety (X/Y) or AC film capacitor may be rated for AC only: CAS accepts
+    // voltageRatedAcMax in place of ratedVoltage. Such a part has no DC rating, so v_rated
+    // stays ABSENT (NaN) and the DC selector refuses it under its own reason — but it is a
+    // real part to browse and cross-reference, not an unreadable row.
     auto v_rated = get_num(*elec, "ratedVoltage");
-    if (!pos(cap_nom) || !pos(v_rated)) return std::nullopt;
+    auto v_rated_ac = get_num(*elec, "voltageRatedAcMax");
+    if (!pos(cap_nom) || !(pos(v_rated) || pos(v_rated_ac))) return std::nullopt;
 
     // Leave both ABSENT (NaN) when the record does not state them. `>= 0` used to accept
     // a stated 0 as real and substitute 0.0 for a missing one, which are the two ways to
@@ -411,7 +439,8 @@ std::optional<CapacitorRow> extract_capacitor(const json& env) {
     r.manufacturer = *manuf;
     fill_dimensions(r, *di, *part);
     r.capacitance = *cap_nom;
-    r.v_rated = *v_rated;
+    if (pos(v_rated)) r.v_rated = *v_rated;
+    if (pos(v_rated_ac)) r.v_rated_ac = *v_rated_ac;
     if (pos(ripple_o)) r.ripple_current_rms = *ripple_o;
     if (pos(esr_o)) r.esr = *esr_o;
     if (pos(esl_o)) r.esl = *esl_o;
@@ -613,8 +642,10 @@ std::optional<BjtRow> extract_bjt(const json& env) {
     if (!mpn) mpn = get_str(*refs->part, "partNumber");
     auto manuf = get_str(*refs->mi, "name");
     if (!mpn || !manuf) return std::nullopt;
-    auto vceo = get_num(*refs->elec, "collectorEmitterVoltage");
-    auto ic = get_num(*refs->elec, "collectorCurrent");
+    const std::string polarity = get_str(*refs->part, "subType").value_or("");
+    const bool pnp = polarity == "pnp";
+    auto vceo = rating_magnitude(get_num(*refs->elec, "collectorEmitterVoltage"), pnp);
+    auto ic = rating_magnitude(get_num(*refs->elec, "collectorCurrent"), pnp);
     if (!pos(vceo) || !pos(ic)) return std::nullopt;
     BjtRow r;
     r.mpn = *mpn;
@@ -628,6 +659,7 @@ std::optional<BjtRow> extract_bjt(const json& env) {
                     .value_or(0.0);
     r.power_dissipation = get_num(*refs->elec, "powerDissipation").value_or(0.0);
     r.technology = get_str(*refs->part, "technology").value_or("");
+    r.polarity = polarity;
     auto st = get_str(*refs->mi, "status");
     r.is_production = st && *st == "production";
     return r;

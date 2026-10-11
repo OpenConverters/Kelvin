@@ -768,3 +768,82 @@ TEST_CASE("magnetic view: a bead measured at 100 MHz keeps its 100 MHz figure",
     CHECK_FALSE(kelvin::present(far->impedance_100mhz));
     CHECK(far->impedance_peak == 300.0);
 }
+
+// ---------------------------------------------------------------------------
+// TAS stores P-channel MOSFET and PNP ratings signed as the datasheet prints them.
+// The extractors required them positive, so 919 P-channel MOSFETs and 571 PNP
+// transistors were unreadable rows, and 2,275 AC-only capacitors (no ratedVoltage,
+// a voltageRatedAcMax instead) with them (ABT #1749).
+// ---------------------------------------------------------------------------
+TEST_CASE("views: a signed P-channel MOSFET is read as magnitudes and keeps its channel",
+          "[index][views]") {
+    using nlohmann::json;
+    auto mos = [](const std::string& sub, double vds, double id) {
+        json part = {{"partNumber", "PCH1"}};
+        if (!sub.empty()) part["subType"] = sub;
+        return json{{"semiconductor", {{"mosfet", {{"manufacturerInfo",
+            {{"name", "ROHM"}, {"datasheetInfo", {{"part", part}, {"electrical",
+                {{"drainSourceVoltage", vds}, {"continuousDrainCurrent", id},
+                 {"onResistance", 0.05}, {"onResistanceVgs", -10.0},
+                 {"gateThresholdVoltage", {{"minimum", -2.5}, {"maximum", -1.0}}}}}}}}}}}}}};
+    };
+    auto p = kelvin::extract_mosfet(mos("pChannel", -30.0, -5.0));
+    REQUIRE(p.has_value());
+    CHECK(p->vds_rated == 30.0);
+    CHECK(p->id_continuous == 5.0);
+    CHECK(p->rds_on_vgs == 10.0);
+    CHECK(p->vgs_threshold_max == 2.5);  // worst case = largest magnitude
+    CHECK(p->channel == "pChannel");
+
+    auto legacy = kelvin::extract_mosfet(mos("pChannel", 30.0, 5.0));  // old magnitude convention
+    REQUIRE(legacy.has_value());
+    CHECK(legacy->vds_rated == 30.0);
+    CHECK(legacy->channel == "pChannel");
+
+    auto n = kelvin::extract_mosfet(mos("nChannel", 30.0, 5.0));
+    REQUIRE(n.has_value());
+    CHECK(n->channel == "nChannel");
+
+    // a negative rating on a part that says N-channel, or names no channel, contradicts itself
+    CHECK_FALSE(kelvin::extract_mosfet(mos("nChannel", -30.0, -5.0)).has_value());
+    CHECK_FALSE(kelvin::extract_mosfet(mos("", -30.0, -5.0)).has_value());
+}
+
+TEST_CASE("views: a signed PNP transistor is read as magnitudes and keeps its polarity",
+          "[index][views]") {
+    using nlohmann::json;
+    auto bjt = [](const std::string& sub, double vceo, double ic) {
+        return json{{"semiconductor", {{"bjt", {{"manufacturerInfo",
+            {{"name", "Nexperia"}, {"datasheetInfo",
+              {{"part", {{"partNumber", "BC807"}, {"subType", sub}}},
+               {"electrical", {{"collectorEmitterVoltage", vceo}, {"collectorCurrent", ic}}}}}}}}}}}};
+    };
+    auto p = kelvin::extract_bjt(bjt("pnp", -45.0, -0.5));
+    REQUIRE(p.has_value());
+    CHECK(p->vceo_rated == 45.0);
+    CHECK(p->ic_continuous == 0.5);
+    CHECK(p->polarity == "pnp");
+    CHECK_FALSE(kelvin::extract_bjt(bjt("npn", -45.0, -0.5)).has_value());
+}
+
+TEST_CASE("views: an AC-only capacitor is indexed with its AC rating and no DC rating",
+          "[index][views]") {
+    using nlohmann::json;
+    auto cap = [](const json& electrical) {
+        return json{{"capacitor", {{"manufacturerInfo",
+            {{"name", "KEMET"}, {"datasheetInfo",
+              {{"part", {{"partNumber", "C901U101KZYDAA7317"}}}, {"electrical", electrical}}}}}}}};
+    };
+    auto ac = kelvin::extract_capacitor(cap({{"capacitance", 1e-10}, {"voltageRatedAcMax", 400.0}}));
+    REQUIRE(ac.has_value());
+    CHECK(ac->v_rated_ac == 400.0);
+    CHECK_FALSE(kelvin::present(ac->v_rated));
+
+    auto both = kelvin::extract_capacitor(
+        cap({{"capacitance", 1e-7}, {"ratedVoltage", 630.0}, {"voltageRatedAcMax", 250.0}}));
+    REQUIRE(both.has_value());
+    CHECK(both->v_rated == 630.0);
+    CHECK(both->v_rated_ac == 250.0);
+
+    CHECK_FALSE(kelvin::extract_capacitor(cap({{"capacitance", 1e-7}})).has_value());
+}

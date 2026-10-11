@@ -71,6 +71,7 @@ inline const FieldTable<MosfetRow>& fields<MosfetRow>() {
          {"rth_jc", &MosfetRow::rth_jc},
          {"tj_max", &MosfetRow::tj_max}},
         {{"technology", &MosfetRow::technology},
+         {"channel", &MosfetRow::channel},
          {"qualification", &MosfetRow::qualification}},
         {{"is_production", &MosfetRow::is_production},
          {"datasheet_usable", &MosfetRow::datasheet_usable}},
@@ -101,6 +102,7 @@ inline const FieldTable<CapacitorRow>& fields<CapacitorRow>() {
     static const FieldTable<CapacitorRow> t{
         {{"capacitance", &CapacitorRow::capacitance},
          {"v_rated", &CapacitorRow::v_rated},
+         {"v_rated_ac", &CapacitorRow::v_rated_ac},
          {"ripple_current_rms", &CapacitorRow::ripple_current_rms},
          {"esr", &CapacitorRow::esr},
          {"esl", &CapacitorRow::esl},
@@ -157,7 +159,8 @@ inline const FieldTable<BjtRow>& fields<BjtRow>() {
          {"hfe_min", &BjtRow::hfe_min},
          {"power_dissipation", &BjtRow::power_dissipation},
          {"tj_max", &BjtRow::tj_max}},
-        {{"technology", &BjtRow::technology}},
+        {{"technology", &BjtRow::technology},
+         {"polarity", &BjtRow::polarity}},
         {{"is_production", &BjtRow::is_production}},
         {}};
     return t;

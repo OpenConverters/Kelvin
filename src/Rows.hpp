@@ -114,6 +114,10 @@ struct MosfetRow : RowBase {
     std::string qualification;     // AEC-Q101 etc., when the datasheet states it
     double rth_ja = kNaN(), rth_jc = kNaN(), tj_max = kNaN();
     std::string technology;   // Si / SiC / GaN (part.technology)
+    // part.subType: nChannel / pChannel (or powerBlock, or "" when the record names none).
+    // The ratings above are magnitudes for both channels, so without this a P-channel part
+    // is indistinguishable from an N-channel one of the same ratings.
+    std::string channel;
     bool is_production = false;
     bool datasheet_usable = false;  // !_datasheet_unusable(datasheetUrl), precomputed at index time
     // Python evidence tier: qg_total <= 0 OR datasheet unusable.
@@ -152,7 +156,11 @@ struct DiodeRow : RowBase {
 };
 
 struct CapacitorRow : RowBase {
-    double capacitance = 0, v_rated = 0;
+    double capacitance = 0;
+    // DC rating. ABSENT (NaN) on a part rated for AC only (line-safety X/Y and AC film
+    // capacitors), which then carries v_rated_ac instead; every indexed row has one of the two.
+    double v_rated = kNaN();
+    double v_rated_ac = kNaN();  // electrical.voltageRatedAcMax
     // NOT 0. Most of the catalogue does not publish these — 204,060 records carry no ESR
     // and 218,775 no ripple current — and writing 0.0 for "not stated" is an in-band
     // sentinel: nothing downstream can tell an absent value from a real one, because they
@@ -213,6 +221,7 @@ struct BjtRow : RowBase {
     double vceo_rated = 0, ic_continuous = 0, hfe_min = 0, power_dissipation = 0;
     double tj_max = kNaN();
     std::string technology;
+    std::string polarity;  // part.subType: npn / pnp; ratings above are magnitudes for both
     bool is_production = false;
     bool no_thermal() const { return !present(tj_max); }
 };

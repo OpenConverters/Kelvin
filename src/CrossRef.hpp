@@ -197,6 +197,7 @@ inline bool is_hard_param(const std::string& cat, const std::string& key) {
     static const std::set<std::string> timebase{"subtype", "technology", "frequency", "mode",
                                                 "output_type"};
     if (cat == "magnetic" || cat == "chipBead") return magnetic.count(key) > 0;
+    if (cat == "mosfet") return key == "channel";
     if (cat == "connector") return connector.count(key) > 0;
     if (cat == "analog") return analog.count(key) > 0;
     if (cat == "timeBase") return timebase.count(key) > 0;

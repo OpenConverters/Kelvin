@@ -64,6 +64,7 @@ json select_mosfet(const Shard<MosfetRow>& shard, const MosfetConstraints& c, Mo
             c.technology_allowed.find(m.technology) == c.technology_allowed.end()) {
             rej["technology"]++; continue;
         }
+        if (c.channel && m.channel != *c.channel) { rej["channel_mismatch"]++; continue; }
         if (m.vds_rated < c.vds_min) { rej["vds_rated_low"]++; continue; }
         if (m.id_continuous < c.id_min) { rej["id_continuous_low"]++; continue; }
         if (m.rds_on > c.rds_on_max) { rej["rds_on_high"]++; continue; }
@@ -225,6 +226,9 @@ json select_capacitor(const Shard<CapacitorRow>& shard, const CapacitorConstrain
             c.technology_allowed.find(x.technology) == c.technology_allowed.end()) {
             rej["technology"]++; continue;
         }
+        // An AC-only part (line-safety X/Y) has no DC rating: NaN would compare false and
+        // wave it through, so it is refused under its own reason before the DC compare.
+        if (!present(x.v_rated)) { rej["no_dc_rating"]++; continue; }
         if (x.v_rated < c.v_rated_min) { rej["v_rated_low"]++; continue; }
         if (x.capacitance < c.capacitance_min) { rej["capacitance_low"]++; continue; }
         if (x.capacitance > c.capacitance_max) { rej["capacitance_high"]++; continue; }
@@ -526,6 +530,7 @@ json select_bjt(const Shard<BjtRow>& shard, const BjtConstraints& c, BjtTiebreak
     std::vector<const BjtRow*> passing;
     for (const auto& b : shard.rows) {
         if (c.exclude_discontinued && !b.is_production) { rej["discontinued"]++; continue; }
+        if (c.polarity && b.polarity != *c.polarity) { rej["polarity_mismatch"]++; continue; }
         if (b.vceo_rated < c.vceo_min) { rej["vceo_low"]++; continue; }
         if (b.ic_continuous < c.ic_min) { rej["ic_low"]++; continue; }
         if (c.hfe_min.has_value() && b.hfe_min < *c.hfe_min) { rej["hfe_low"]++; continue; }

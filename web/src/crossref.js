@@ -46,7 +46,9 @@ export const XREF = [
     primary: { row: 'capacitance', label: 'C', unit: 'F', acceptLo: 0.80, acceptHi: 4.00 },
     sameFacet: { f: 'technology', label: 'technology' },
     hardKeys: ['voltage'],
-    hardMin: [{ row: 'v_rated', factor: 0.9 }],
+    // An AC-only original (line-safety X/Y) has no DC rating to gate on; its AC rating
+    // stands in, and only then — a DC original is never gated on an AC figure.
+    hardMin: [{ row: 'v_rated', factor: 0.9 }, { row: 'v_rated_ac', factor: 0.9, onlyWithout: 'v_rated' }],
     // `family` is the series name, and for a capacitor across the mains it is the
     // only place the IEC 60384-14 line-safety approval appears — the catalogue has
     // no safety-class field (ABT #677), so the vendors' own series names ("MKP-X1 R",
@@ -55,10 +57,11 @@ export const XREF = [
     // parts drop-in upgrades for an X1 original (ABT #557). The ranker reads it ONLY
     // when the ORIGINAL's series names a class, so nothing changes for the rest of
     // the catalogue.
-    spec: (r) => ({ ...base(r), value_si: nz(r.capacitance), voltage: nz(r.v_rated), esr: nz(r.esr), ripple_current: nz(r.ripple_current_rms), technology: r.technology ?? '', dielectric_code: r.dielectric_code ?? '', family: r.family ?? '', esr_frequency: nz(r.esr_frequency), temp_min_C: r.temp_min_c, temp_max_C: r.temp_max_c }),
+    spec: (r) => ({ ...base(r), value_si: nz(r.capacitance), voltage: nz(r.v_rated), esr: nz(r.esr), ripple_current: nz(r.ripple_current_rms), technology: r.technology ?? '', dielectric_code: r.dielectric_code ?? '', family: r.family ?? '', voltage_ac: nz(r.v_rated_ac), esr_frequency: nz(r.esr_frequency), temp_min_C: r.temp_min_c, temp_max_C: r.temp_max_c }),
     params: [
       { key: 'value', label: 'C', row: 'capacitance', unit: 'F' },
       { key: 'voltage', label: 'V rated', row: 'v_rated', unit: 'V' },
+      { key: 'voltage_ac', label: 'V rated AC', row: 'v_rated_ac', unit: 'V' },
       { key: 'esr', label: 'ESR', row: 'esr', unit: 'Ω' },
       { key: 'ripple_current', label: 'I ripple', row: 'ripple_current_rms', unit: 'A' },
     ],
@@ -85,7 +88,9 @@ export const XREF = [
     sameFacet: { f: 'technology', label: 'technology' },
     hardKeys: ['vds'],
     hardMin: [{ row: 'vds_rated', factor: 0.9 }],
-    spec: (r) => ({ ...base(r), vds: nz(r.vds_rated), id: nz(r.id_continuous), rds_on: nz(r.rds_on), qg: nz(r.qg_total), coss: nz(r.coss), vgs_threshold_max: nz(r.vgs_threshold_max), rds_on_vgs: nz(r.rds_on_vgs), vgs_max: nz(r.vgs_max), technology: r.technology ?? '', qualification: r.qualification ?? '' }),
+    // A P-channel part never substitutes for an N-channel one: keep the pool to the original's channel.
+    sameStr: ['channel'],
+    spec: (r) => ({ ...base(r), vds: nz(r.vds_rated), id: nz(r.id_continuous), rds_on: nz(r.rds_on), qg: nz(r.qg_total), coss: nz(r.coss), vgs_threshold_max: nz(r.vgs_threshold_max), rds_on_vgs: nz(r.rds_on_vgs), vgs_max: nz(r.vgs_max), technology: r.technology ?? '', qualification: r.qualification ?? '', channel: r.channel || null }),
     params: [
       { key: 'vds', label: 'Vds', row: 'vds_rated', unit: 'V' },
       { key: 'id', label: 'Id', row: 'id_continuous', unit: 'A' },
@@ -309,6 +314,7 @@ export async function runCrossRef({ family, original, manufacturers, sameType = 
     filters[f.primary.row] = { min: origSpec.value_si * f.primary.acceptLo, max: origSpec.value_si * f.primary.acceptHi }
   }
   for (const h of f.hardMin ?? []) {
+    if (h.onlyWithout && nz(original[h.onlyWithout]) != null) continue
     const o = nz(original[h.row])
     if (o != null) filters[h.row] = { min: o * h.factor }
   }
@@ -319,6 +325,9 @@ export async function runCrossRef({ family, original, manufacturers, sameType = 
   for (const e of f.exactNum ?? []) {
     const v = nz(original[e.row])
     if (v != null) filters[e.row] = { min: v * (1 - e.tol), max: v * (1 + e.tol) }
+  }
+  for (const k of f.sameStr ?? []) {
+    if (original[k]) filters[k] = [original[k]]
   }
   if (sameType && f.sameFacet && original[f.sameFacet.f]) {
     filters[f.sameFacet.f] = [original[f.sameFacet.f]]

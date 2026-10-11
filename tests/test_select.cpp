@@ -317,3 +317,63 @@ TEST_CASE("select: a part that cannot be wired as the circuit's windings fails w
             CHECK(cand.at("verdictByDimension").at("windingStructure") == "unknown");
     }
 }
+
+// A requirement that names the channel keeps a P-channel part out of an N-channel socket
+// (and vice versa); without it either channel is acceptable (ABT #1749).
+TEST_CASE("select: a MOSFET requirement's channel refuses the other channel", "[select][mosfet]") {
+    auto line = [](const std::string& mpn, const std::string& sub, double sign) {
+        return "{\"semiconductor\":{\"mosfet\":{\"manufacturerInfo\":{\"name\":\"ACME\",\"reference\":\"" +
+               mpn + "\",\"status\":\"production\",\"datasheetUrl\":\"https://acme.com/x.pdf\","
+               "\"datasheetInfo\":{\"part\":{\"technology\":\"Si\",\"subType\":\"" + sub +
+               "\"},\"electrical\":{\"drainSourceVoltage\":" + num(sign * 60) +
+               ",\"continuousDrainCurrent\":" + num(sign * 10) +
+               ",\"onResistance\":0.02,\"totalGateCharge\":1e-8}}}}}}";
+    };
+    auto shard = shard_from({line("NCH", "nChannel", 1), line("PCH", "pChannel", -1)});
+    REQUIRE(shard.rows.size() == 2);
+    MosfetConstraints c;
+    c.vds_min = 40;
+    c.id_min = 5;
+    c.rds_on_max = 0.1;
+    c.qg_max = 1;
+    auto any = select_mosfet(shard, c, MosfetTiebreaker::LowestRdsOn, 10);
+    CHECK(any["candidates"].size() == 2);
+    c.channel = "nChannel";
+    auto n = select_mosfet(shard, c, MosfetTiebreaker::LowestRdsOn, 10);
+    REQUIRE(n["candidates"].size() == 1);
+    CHECK(n["candidates"][0]["mpn"] == "NCH");
+    CHECK(n["rejections"]["channel_mismatch"] == 1);
+    c.channel = "pChannel";
+    auto p = select_mosfet(shard, c, MosfetTiebreaker::LowestRdsOn, 10);
+    REQUIRE(p["candidates"].size() == 1);
+    CHECK(p["candidates"][0]["mpn"] == "PCH");
+    c.channel = "powerBlock";
+    CHECK_THROWS_AS(select_mosfet(shard, c, MosfetTiebreaker::LowestRdsOn, 10), InvalidOptions);
+}
+
+// An AC-only capacitor has no DC rating; NaN compares false, so without its own gate it
+// would pass every DC voltage requirement.
+TEST_CASE("select: an AC-only capacitor never meets a DC voltage requirement", "[select][capacitor]") {
+    std::string path = std::string(KELVIN_TEST_DIR) + "/_select_cap_tmp.ndjson";
+    {
+        std::ofstream f(path, std::ios::binary | std::ios::trunc);
+        f << "{\"capacitor\":{\"manufacturerInfo\":{\"name\":\"ACME\",\"reference\":\"ACONLY\",\"status\":"
+             "\"production\",\"datasheetInfo\":{\"part\":{\"technology\":\"film-polypropylene\"},"
+             "\"electrical\":{\"capacitance\":1e-7,\"voltageRatedAcMax\":275}}}}}\n";
+        f << "{\"capacitor\":{\"manufacturerInfo\":{\"name\":\"ACME\",\"reference\":\"DC\",\"status\":"
+             "\"production\",\"datasheetInfo\":{\"part\":{\"technology\":\"film-polypropylene\"},"
+             "\"electrical\":{\"capacitance\":1e-7,\"ratedVoltage\":400}}}}}\n";
+    }
+    auto shard = build_capacitor_shard(path);
+    std::remove(path.c_str());
+    REQUIRE(shard.rows.size() == 2);
+    CHECK(shard.meta.unreadable_row_count == 0);
+    CapacitorConstraints c;
+    c.capacitance_min = 9e-8;
+    c.capacitance_max = 2e-7;
+    c.v_rated_min = 100;
+    auto r = select_capacitor(shard, c, CapacitorTiebreaker::LowestEsr, 10);
+    REQUIRE(r["candidates"].size() == 1);
+    CHECK(r["candidates"][0]["mpn"] == "DC");
+    CHECK(r["rejections"]["no_dc_rating"] == 1);
+}

@@ -40,6 +40,7 @@ export const FAMILIES = [
     columns: [
       { f: 'capacitance', label: 'C', unit: 'F' },
       { f: 'v_rated', label: 'V rated', unit: 'V' },
+      { f: 'v_rated_ac', label: 'V AC', unit: 'V' },
       { f: 'ripple_current_rms', label: 'I ripple', unit: 'A' },
       { f: 'esr', label: 'ESR', unit: 'Ω' },
     ],
@@ -67,7 +68,7 @@ export const FAMILIES = [
       { f: 'coss', label: 'Coss', unit: 'F' },
       { f: 'tj_max', label: 'Tj max', unit: '°C', plain: true },
     ],
-    facets: [{ f: 'technology', label: 'Technology' }],
+    facets: [{ f: 'technology', label: 'Technology' }, { f: 'channel', label: 'Channel' }],
     recommend: {
       fields: [
         { key: 'ratedDrainSourceVoltage', label: 'Vds >=', unit: 'V', required: true, placeholder: '60' },
@@ -176,7 +177,7 @@ export const FAMILIES = [
       { f: 'hfe_min', label: 'hFE min', unit: '', plain: true },
       { f: 'power_dissipation', label: 'P', unit: 'W' },
     ],
-    facets: [{ f: 'technology', label: 'Type' }],
+    facets: [{ f: 'technology', label: 'Type' }, { f: 'polarity', label: 'Polarity' }],
     recommend: {
       fields: [
         { key: 'ratedCollectorEmitterVoltage', label: 'Vceo >=', unit: 'V', required: true, placeholder: '40' },

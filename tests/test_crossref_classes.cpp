@@ -1429,3 +1429,21 @@ TEST_CASE("a zener's guaranteed window is compared, not just its marked voltage"
     CHECK(verdict_of(tighter, "vz_tolerance_pct") == UNVERIFIED);
     CHECK_FALSE(tighter.contains("notes"));
 }
+
+// The ratings of a P-channel and an N-channel MOSFET are both magnitudes, so nothing
+// numeric tells them apart: the channel is identity, and a mismatch rejects (ABT #1749).
+TEST_CASE("a P-channel MOSFET is never a substitute for an N-channel one",
+          "[crossref][classes][rank]") {
+    json original = {{"mpn", "N"}, {"vds", 60.0}, {"id", 10.0}, {"rds_on", 0.02},
+                     {"channel", "nChannel"}};
+    json cands = json::array({
+        {{"mpn", "P"}, {"vds", 60.0}, {"id", 10.0}, {"rds_on", 0.02}, {"channel", "pChannel"}},
+        {{"mpn", "N2"}, {"vds", 60.0}, {"id", 10.0}, {"rds_on", 0.02}, {"channel", "nChannel"}},
+        {{"mpn", "U"}, {"vds", 60.0}, {"id", 10.0}, {"rds_on", 0.02}}});
+    auto r = cross_reference("mosfet", original, cands, Options{});
+    std::map<std::string, std::string> st;
+    for (const auto& c : r["candidates"]) st[c["mpn"]] = c["status"];
+    CHECK(st["P"] == "no_substitute");
+    CHECK(st["N2"] != "no_substitute");
+    CHECK(st["U"] != "no_substitute");  // a record naming no channel is unverified, not refused
+}

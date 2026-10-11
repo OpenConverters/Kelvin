@@ -51,6 +51,7 @@ MosfetConstraints mosfet_constraints(const json& req, std::optional<double> op_f
     c.id_min = id_min;
     c.rds_on_max = rds_on_max;
     c.qg_max = INFINITY;  // Kirchhoff emits no gate-charge limit (Python math.inf)
+    if (std::string ch = opt_str(req, "channel"); !ch.empty()) c.channel = ch;
     if (op_fsw && *op_fsw > 0 && vds_min > kHvSwitchingLossVds) {
         c.op_i_rms = id_min;
         c.op_vds = vds_min;
@@ -118,6 +119,7 @@ BjtConstraints bjt_constraints(const json& req) {
     c.vceo_min = req_num(req, "ratedCollectorEmitterVoltage");
     c.ic_min = req_num(req, "ratedCollectorCurrent");
     c.hfe_min = opt_num(req, "minimumDcCurrentGain");
+    if (std::string pol = opt_str(req, "polarity"); !pol.empty()) c.polarity = pol;
     return c;
 }
 
