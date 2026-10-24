@@ -253,10 +253,19 @@ std::optional<MosfetRow> extract_mosfet(const json& env) {
 
     // A P-channel threshold is a negative interval (-2.5 … -1 V): its worst case, the largest
     // magnitude, is the MINIMUM bound, negated. A legacy positive record keeps the old read.
-    auto vgs = resolve_field(*elec, "gateThresholdVoltage", PEAS::DimensionalValues::MAXIMUM);
-    if (p_channel) {
-        auto lo = resolve_field(*elec, "gateThresholdVoltage", PEAS::DimensionalValues::MINIMUM);
-        if (lo && *lo < 0.0) vgs = -*lo;
+    //
+    // Only a STATED bound is a maximum. The resolver's MAXIMUM preference falls back to the
+    // nominal and then to the minimum when the record has no maximum, which is right for a
+    // value but wrong for a guaranteed limit: 1,350 catalogue MOSFETs state only a nominal
+    // threshold and 668 only a minimum, and each one reached the ranker as a worst-case
+    // Vgs(th)max — BSC028N08NS5's typical 2.3 V was reported as its maximum and drove a
+    // gate-threshold warn the record does not support (ABT #2045). With no stated bound the
+    // field stays 0, which the spec builder reads as unknown.
+    std::optional<double> vgs;
+    if (const json* gtv = obj_get(*elec, "gateThresholdVoltage"); gtv && gtv->is_object()) {
+        auto hi = get_num(*gtv, "maximum"), lo = get_num(*gtv, "minimum");
+        if (p_channel && lo && *lo < 0.0) vgs = -*lo;
+        else if (pos(hi)) vgs = hi;
     }
     double vgs_max = vgs.value_or(0.0);
 

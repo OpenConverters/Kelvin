@@ -126,7 +126,8 @@ if (KELVIN_BUILD_TESTS AND NOT EMSCRIPTEN AND KELVIN_TOP)
         tests/test_crossref_golden.cpp
         tests/test_mfr_policy.cpp
         tests/test_browse.cpp
-        tests/test_spice_model.cpp)
+        tests/test_spice_model.cpp
+        tests/test_qarlos_fixes.cpp)
     target_compile_definitions(test_kelvin PRIVATE
         KELVIN_TEST_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests")
     target_link_libraries(test_kelvin PRIVATE kelvin Catch2::Catch2WithMain)

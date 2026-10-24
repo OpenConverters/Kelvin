@@ -1186,6 +1186,18 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                             std::to_string(static_cast<int>(*o_rv)) +
                             " V) — it will be higher at the original's drive level");
         }
+        // The candidate's Rds(on) with no stated test Vgs, against an original whose is
+        // stated: the two numbers may not describe the same drive, so the rds_on verdict
+        // above is a comparison of unknown basis. Say so instead of letting the "pass"
+        // stand alone — BSC028N08NS5's 2.8 mOhm (no Vgs on record) passed against a
+        // 3.4 mOhm-at-10 V original with nothing beside it (ABT #2045).
+        if (o_rv && !s_rv && num(cand, "rds_on")) {
+            params.push_back({{"name", "rds_on_basis"}, {"verdict", UNVERIFIED}});
+            notes.push_back("the substitute's record does not state the Vgs its Rds(on) is "
+                            "specified at (the original's is at " + volts(*o_rv) +
+                            " V), so the Rds(on) comparison may not hold at the original's "
+                            "drive — confirm it from the datasheet");
+        }
         // Vgs(max) is the gate's absolute rating: a lower one can be exceeded by
         // the existing driver and destroy the part.
         auto o_gm = num(original, "vgs_max"), s_gm = num(cand, "vgs_max");
