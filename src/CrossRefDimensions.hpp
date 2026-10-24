@@ -193,6 +193,23 @@ inline std::optional<Dims> resolve_dimensions(const std::string& case_code,
     }
 
     // 3) Aluminium electrolytic / any "DxL" can code -> diameter x diameter x length.
+    //    A THREE-token "LxWxH" (an SMD vertical-chip can: "6.3x6.3x5.8", "8x8x11.7") is
+    //    read first and as stated: the DxL pattern below matches its first two tokens and
+    //    took the second WIDTH for the length, so a 5.8 mm tall can was compared as 6.3 mm
+    //    and an 11.7 mm one as 8 mm, and the height verdicts were wrong both ways
+    //    (ABT #2030).
+    if (cat == "capacitor" || cat.empty()) {
+        static const std::regex lwh(
+            R"((?:^|[^0-9.])(\d{1,3}(?:\.\d{1,2})?)\s*[xX]\s*(\d{1,3}(?:\.\d{1,2})?)\s*[xX]\s*(\d{1,3}(?:\.\d{1,2})?)(?:[^0-9.]|$))");
+        std::smatch m;
+        if (std::regex_search(raw, m, lwh)) {
+            const double l = std::stod(m[1].str()), w = std::stod(m[2].str()),
+                         h = std::stod(m[3].str());
+            if (l > 0 && w > 0 && h > 0 && l <= 100 && w <= 100 && h <= 100)
+                return to_metres(LWH{l, w, h});
+            return std::nullopt;  // three tokens that are not a body: no guess from two of them
+        }
+    }
     {
         static const std::regex dxl(R"((\d{1,2}(?:\.\d)?)\s*[xX]\s*(\d{1,3}(?:\.\d)?))");
         std::smatch m;
