@@ -203,11 +203,11 @@ def verify(case, finding, model, timeout):
     prompt = ("A reviewer claims the following defect. Try to refute it.\n\n```json\n"
               + json.dumps(payload, ensure_ascii=False, indent=1)
               + "\n```\n\nReply with the strict JSON described.")
-    cmd = [CLAUDE, "-p", prompt, "--append-system-prompt", VERIFY_SYSTEM]
+    cmd = [CLAUDE, "-p", "--append-system-prompt", VERIFY_SYSTEM]
     if model:
         cmd += ["--model", model]
     try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        p = subprocess.run(cmd, input=prompt, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         return {"verdict": "refuted", "reason": f"verifier timed out after {timeout}s"}
     if p.returncode != 0:
@@ -288,11 +288,11 @@ def judge(case, model, timeout):
     payload = json.dumps(compact(case), ensure_ascii=False, indent=1)
     prompt = ("Audit this cross-reference result.\n\n"
               "```json\n" + payload + "\n```\n\nReply with the strict JSON described.")
-    cmd = [CLAUDE, "-p", prompt, "--append-system-prompt", SYSTEM]
+    cmd = [CLAUDE, "-p", "--append-system-prompt", SYSTEM]
     if model:
         cmd += ["--model", model]
     try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        p = subprocess.run(cmd, input=prompt, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         return {"_judge_error": f"claude timed out after {timeout}s"}
     if p.returncode != 0:

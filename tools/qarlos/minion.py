@@ -219,12 +219,12 @@ def main():
         return 0
 
     print(f"minion: ticket #{a.id} -> {route} ({repo})")
-    cmd = [CLAUDE, "-p", prompt, "--append-system-prompt", SYSTEM,
+    cmd = [CLAUDE, "-p", "--append-system-prompt", SYSTEM,
            "--model", a.model, "--effort", a.effort,
            "--permission-mode", "bypassPermissions",
            "--add-dir", str(repo), "--add-dir", str(Path.home() / "PSMA")]
     try:
-        p = subprocess.run(cmd, cwd=str(repo), capture_output=True, text=True,
+        p = subprocess.run(cmd, cwd=str(repo), input=prompt, capture_output=True, text=True,
                            timeout=a.timeout)
     except subprocess.TimeoutExpired:
         print(f"minion: TIMED OUT after {a.timeout}s")
