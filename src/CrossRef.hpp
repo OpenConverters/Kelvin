@@ -135,6 +135,24 @@ inline std::string vz_band(const json& p) {
 // round the fit test compares them, so two parts read comparably. A record that
 // states only one land axis says which axis it is and that the other is absent,
 // rather than inventing it.
+// The inductance-drop criteria a saturation-current record states, for a note.
+inline std::string isat_basis(const std::vector<isat::Point>& pts) {
+    std::string out;
+    for (const auto& p : pts) {
+        if (!p.percent_drop) continue;
+        char buf[48];
+        std::snprintf(buf, sizeof buf, "%g A at %g %% drop", p.current, *p.percent_drop);
+        out += (out.empty() ? "" : ", ") + std::string(buf);
+    }
+    if (out.empty()) {
+        char buf[64];
+        std::snprintf(buf, sizeof buf, "%g A at no stated criterion",
+                      pts.empty() ? 0.0 : pts.front().current);
+        out = buf;
+    }
+    return out;
+}
+
 inline std::string land_mm(const Dims& d) {
     if (has_land(d))
         return mm(std::max(*d.length, *d.width)) + " x " + mm(std::min(*d.length, *d.width)) +
@@ -393,6 +411,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // "upgrade" would be a claim about a comparison that never happened.
     bool direction_blind = false;
     std::vector<std::string> blind_axes;
+    // Isat on both sides but at criteria that cannot be brought together (ABT #2042): the
+    // same blindness, with its own note (written where it is detected).
+    bool isat_basis_blind = false;
     auto note_direction = [&](Dir dir, std::optional<double> o, std::optional<double> s) {
         if (!o || !s || *o <= 0 || *s <= 0) return;
         const double ratio = *s / *o;
@@ -692,7 +713,41 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                                  ? over_dimensioning_penalty(o, s, 1.0)
                                                  : over_dimensioning_penalty(s, o, 1.0));
         }
-        if (numeric) note_direction(spec.dir, o, s);
+        if (numeric) {
+            // Isat is compared at a common inductance-drop criterion, so its direction is too:
+            // the raw scalars may be quoted at 10 % and 30 % drop and say nothing about which
+            // part saturates first. With no common criterion there is no direction to count,
+            // and the note names both bases (ABT #2042).
+            std::optional<double> od = o, sd = s;
+            bool basis_mismatch = false;
+            if (spec.key == "saturation_current") {
+                const auto op = isat::resolve_points(original), sp = isat::resolve_points(cand);
+                if (!op.empty() && !sp.empty() && (isat::has_basis(op) || isat::has_basis(sp))) {
+                    if (auto t = isat::common_percent_drop(op, sp)) {
+                        od = isat::isat_at_percent_drop(op, *t);
+                        sd = isat::isat_at_percent_drop(sp, *t);
+                    } else {
+                        basis_mismatch = true;
+                        notes.push_back("saturation current quoted at different criteria (" +
+                                        isat_basis(op) + " on the original, " + isat_basis(sp) +
+                                        " on the substitute) — not directly comparable; confirm "
+                                        "the substitute's Isat at the original's criterion");
+                    }
+                }
+            }
+            // A WARN or FAIL on a directional parameter IS a regression on it, whatever the
+            // ratio: a 34.9 A Isat against 36 A warned, sat inside the +/-5 % neutral band
+            // and the row came back 'upgrade' beside its own warn (ABT #2039).
+            if (basis_mismatch) {
+                // The hard axis could not be weighed, exactly the direction_blind situation:
+                // a reassuring direction would be a claim about a comparison not made.
+                if (is_hard_param(cat, spec.key)) isat_basis_blind = true;
+            } else if (verdict == WARN || verdict == FAIL) {
+                ++worse;
+            } else {
+                note_direction(spec.dir, od, sd);
+            }
+        }
         if (numeric && is_hard_param(cat, spec.key) && !o && s) {
             direction_blind = true;
             blind_axes.push_back(param_label(spec.key));
@@ -742,7 +797,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         } else {
             penalty += opt.overdim_weight * over_dimensioning_penalty(o, s, 1.0);
         }
-        note_direction(r.mode == Mode::HigherBetter ? Dir::Higher : Dir::Lower, o, s);
+        if (v.verdict == WARN || v.verdict == FAIL)
+            ++worse;  // a shortfall verdict is a regression, inside the neutral band or not
+        else
+            note_direction(r.mode == Mode::HigherBetter ? Dir::Higher : Dir::Lower, o, s);
         if (r.hard && !o && s) {
             direction_blind = true;
             blind_axes.push_back(param_label(r.key));
@@ -1026,6 +1084,22 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // TALLER substitute is a risk; a shorter one keeps the pads and asks less
         // of the enclosure.
         HeightFit hfit = height_fit(o_dims, s_dims);
+        // A magnetic is verified ONLY from its drawing (see dims_of), and its height is the
+        // axis that varies most across one footprint: a 2.5 x 2.0 mm body ships 1.0 to 1.2 mm
+        // tall. The original stating a height and the substitute's record stating none left
+        // the axis silent, and VLS252012HBX-100M-1 came back drop_in against a 1.0 mm
+        // LQH2HPH100MGR (ABT #2029). The clearance is UNVERIFIED and the grade is capped the
+        // way an unverified footprint caps it.
+        if (hfit == HeightFit::Unknown && (cat == "magnetic" || cat == "chipBead") && o_dims &&
+            o_dims->height && (!s_dims || !s_dims->height) && !out.contains("height_fit")) {
+            out["height_fit"] = "unknown";
+            params.push_back({{"name", "height"}, {"verdict", UNVERIFIED}});
+            demote();
+            notes.push_back("the substitute's record states no height (the original is " +
+                            mm(*o_dims->height) +
+                            " mm tall), so vertical clearance could not be verified; confirm it "
+                            "from the datasheet");
+        }
         if (hfit != HeightFit::Unknown) {
             out["height_fit"] = height_fit_name(hfit);
             params.push_back({{"name", "height"},
@@ -1363,6 +1437,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                : h == "much_taller" ? HeightFit::MuchTaller
                                     : HeightFit::Unknown;
     }
+    // An unverified clearance caps the grade exactly as an unverified footprint does.
+    if (out.value("height_fit", "") == "unknown") footprint_unverified = true;
     out["grade"] = grade_for(status, tier, any_warn, any_fail, footprint_unverified,
                              missing_required_data, hfit);
 
@@ -1381,7 +1457,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // on evidence that never covered the parameter the match turns on. A measured regression
     // stands — blindness elsewhere cannot make a regression we did see disappear — and so does
     // "mixed", which already carries one.
-    out["direction"] = (direction_blind && (dir == "upgrade" || dir == "equivalent"))
+    out["direction"] = ((direction_blind || isat_basis_blind) &&
+                        (dir == "upgrade" || dir == "equivalent"))
                            ? "unknown"
                            : dir;
     return out;

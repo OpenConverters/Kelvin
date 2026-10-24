@@ -33,7 +33,14 @@ export const XREF = [
     // CURVE. Ranking it against the inductor config would ask for a primary
     // value that does not exist, so the family adapts to the chosen original.
     variantFor: (orig) => (orig?.device_type === 'chipBead' ? BEAD_VARIANT : null),
-    spec: (r) => ({ ...base(r), value_si: nz(r.inductance), saturation_current: nz(r.saturation_current), rated_current: nz(r.rated_current), dcr: nz(r.dcr) }),
+    // saturation_points carries the inductance-drop criterion the Isat is quoted at, when the
+    // record states one: 10 % / 20 % / 30 % ratings are different numbers, and the ranker
+    // compares them only at a common criterion (ABT #2042). Absent basis -> no points, and
+    // the scalar is compared as a basis-unknown legacy value.
+    spec: (r) => ({ ...base(r), value_si: nz(r.inductance), saturation_current: nz(r.saturation_current),
+      saturation_points: nz(r.saturation_current) != null && r.saturation_percent_drop != null
+        ? [{ percent_drop: r.saturation_percent_drop, current: r.saturation_current }] : null,
+      rated_current: nz(r.rated_current), dcr: nz(r.dcr) }),
     params: [
       { key: 'value', label: 'L', row: 'inductance', unit: 'H' },
       { key: 'saturation_current', label: 'Isat', row: 'saturation_current', unit: 'A' },

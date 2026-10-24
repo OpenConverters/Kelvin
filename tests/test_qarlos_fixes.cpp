@@ -114,3 +114,59 @@ TEST_CASE("qarlos #2032: an axial resistor's diameter is its width and height", 
     CHECK(r->width_m == Approx(3.68e-3));
     CHECK(r->height_m == Approx(3.68e-3));
 }
+
+// ABT #2039: a WARN on a directional parameter counts as a regression for direction.
+TEST_CASE("qarlos #2039: a warned Isat makes the direction mixed, not upgrade",
+          "[qarlos][crossref]") {
+    json orig = {{"mpn", "AMELH6030S-R38MT"}, {"value_si", 0.38e-6}, {"saturation_current", 36.0},
+                 {"rated_current", 29.0}, {"dcr", 0.0012}};
+    json cand = {{"mpn", "SPM10054T-R47M-HZ"}, {"value_si", 0.38e-6}, {"saturation_current", 34.9},
+                 {"rated_current", 36.0}, {"dcr", 0.0008}};
+    kelvin::crossref::Options opt;
+    opt.check_footprint = false;
+    auto r = kelvin::crossref::cross_reference("magnetic", orig, json::array({cand}), opt);
+    const json& c = r["candidates"][0];
+    CHECK(verdict_of(c, "saturation_current") == "warn");
+    CHECK(c["direction"] == "mixed");
+}
+
+// ABT #2042: Isat at 30 % drop is not compared against Isat at 10 % drop as if equal.
+TEST_CASE("qarlos #2042: Isat across different drop criteria warns and names both",
+          "[qarlos][crossref][isat]") {
+    json orig = {{"mpn", "744774218"}, {"value_si", 150e-6}, {"saturation_current", 0.5},
+                 {"saturation_points", json::array({{{"percent_drop", 10.0}, {"current", 0.5}}})},
+                 {"rated_current", 0.42}};
+    json cand = {{"mpn", "VLS5045EX-151M"}, {"value_si", 150e-6}, {"saturation_current", 0.56},
+                 {"saturation_points", json::array({{{"percent_drop", 30.0}, {"current", 0.56}}})},
+                 {"rated_current", 0.42}};
+    kelvin::crossref::Options opt;
+    opt.check_footprint = false;
+    auto r = kelvin::crossref::cross_reference("magnetic", orig, json::array({cand}), opt);
+    const json& c = r["candidates"][0];
+    CHECK(verdict_of(c, "saturation_current") == "warn");
+    CHECK(has_note(c, "different criteria"));
+    CHECK(c["direction"] == "unknown");
+    // the extractor records the criterion of the headline point
+    json env = {{"magnetic", {{"manufacturerInfo", {{"name", "TDK"}, {"reference", "VLS5045EX-151M"},
+        {"datasheetInfo", {{"electrical", json::array({{{"inductance", {{"nominal", 150e-6}}},
+            {"saturationCurrentPeak", 0.56},
+            {"saturationCurrents", json::array({{{"percentInductanceDrop", 30.0}, {"current", 0.56}}})}}})}}}}}}}};
+    auto row = kelvin::extract_magnetic(env);
+    REQUIRE(row.has_value());
+    CHECK(row->saturation_percent_drop == 30.0);
+}
+
+// ABT #2029: a known original height against an unknown candidate height is not a drop-in.
+TEST_CASE("qarlos #2029: unknown candidate height caps a magnetic at minor_review",
+          "[qarlos][crossref][dims]") {
+    json orig = {{"mpn", "LQH2HPH100MGR"}, {"value_si", 10e-6}, {"saturation_current", 0.6},
+                 {"rated_current", 0.5}, {"length_m", 2.5e-3}, {"width_m", 2.0e-3},
+                 {"height_m", 1.0e-3}};
+    json cand = {{"mpn", "VLS252012HBX-100M-1"}, {"value_si", 10e-6}, {"saturation_current", 0.7},
+                 {"rated_current", 0.6}, {"length_m", 2.5e-3}, {"width_m", 2.0e-3}};
+    auto r = kelvin::crossref::cross_reference("magnetic", orig, json::array({cand}));
+    const json& c = r["candidates"][0];
+    CHECK(verdict_of(c, "height") == "unverified");
+    CHECK(c["grade"] == "minor_review");
+    CHECK(has_note(c, "states no height"));
+}

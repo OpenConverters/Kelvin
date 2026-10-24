@@ -250,8 +250,10 @@ inline bool has_basis(const std::vector<Point>& pts) {
     return false;
 }
 
-// I_sat interpolated to target_pct inductance drop; nullopt when no based points.
-// Clamps beyond the measured range rather than extrapolating a divergent slope.
+// I_sat interpolated to target_pct inductance drop; nullopt when no based points or when
+// the target lies OUTSIDE the stated criteria. It used to clamp to the nearest stated point,
+// which read a lone 10 %-drop rating as the part's 20 %-drop rating and compared it as such
+// (ABT #2042): a rating at a criterion the record does not reach is not on record.
 inline std::optional<double> isat_at_percent_drop(const std::vector<Point>& all, double target) {
     std::vector<const Point*> pts;
     for (const auto& p : all)
@@ -271,7 +273,27 @@ inline std::optional<double> isat_at_percent_drop(const std::vector<Point>& all,
         double frac = (target - *below->percent_drop) / (*above->percent_drop - *below->percent_drop);
         return below->current + frac * (above->current - below->current);
     }
-    return below ? below->current : above->current;
+    return std::nullopt;
+}
+
+// A criterion BOTH sides can be read at: the canonical 20 % first, else any criterion one
+// side states that the other states or brackets. nullopt when no such criterion exists —
+// the two ratings are then of different (or unknown) basis and not directly comparable.
+inline std::optional<double> common_percent_drop(const std::vector<Point>& op,
+                                                 const std::vector<Point>& sp) {
+    if (isat_at_percent_drop(op, kCanonicalPercentDrop) &&
+        isat_at_percent_drop(sp, kCanonicalPercentDrop))
+        return kCanonicalPercentDrop;
+    std::vector<double> targets;
+    for (const auto* side : {&op, &sp})
+        for (const auto& p : *side)
+            if (p.percent_drop) targets.push_back(*p.percent_drop);
+    std::sort(targets.begin(), targets.end(), [](double a, double b) {
+        return std::abs(a - kCanonicalPercentDrop) < std::abs(b - kCanonicalPercentDrop);
+    });
+    for (double t : targets)
+        if (isat_at_percent_drop(op, t) && isat_at_percent_drop(sp, t)) return t;
+    return std::nullopt;
 }
 
 // The single most representative I_sat when bases can't be matched: a based point
@@ -293,9 +315,10 @@ enum class Verdict { Adequate, Shortfall, Uncertain };
 // Mirrors compare_isat: both based -> normalize + compare; else headline compare
 // that only calls SHORTFALL when the gap is too large for any basis diff.
 inline Verdict compare(const std::vector<Point>& op, const std::vector<Point>& sp, double margin) {
-    auto o_at = isat_at_percent_drop(op, kCanonicalPercentDrop);
-    auto s_at = isat_at_percent_drop(sp, kCanonicalPercentDrop);
-    if (o_at && s_at) return (*s_at >= margin * *o_at) ? Verdict::Adequate : Verdict::Shortfall;
+    if (auto t = common_percent_drop(op, sp)) {
+        const double o_at = *isat_at_percent_drop(op, *t), s_at = *isat_at_percent_drop(sp, *t);
+        return (s_at >= margin * o_at) ? Verdict::Adequate : Verdict::Shortfall;
+    }
     auto o_raw = headline(op), s_raw = headline(sp);
     if (!o_raw || !s_raw) return Verdict::Uncertain;
     double ratio = *s_raw / *o_raw;

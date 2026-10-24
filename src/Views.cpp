@@ -767,10 +767,25 @@ namespace {
 //   2. the saturationCurrents [{percentInductanceDrop,current}] table — the current at the point
 //      nearest the 20 % inductance-drop industry convention (falls back to the largest current when
 //      no point states a basis). Returns NaN when neither is present.
-double magnetic_saturation_current(const json& elec) {
-    auto peak = get_num(elec, "saturationCurrentPeak");
-    if (peak && *peak > 0) return *peak;
+double magnetic_saturation_current(const json& elec, double& percent_drop) {
+    percent_drop = kNaN();
     const json* tbl = obj_get(elec, "saturationCurrents");
+    auto peak = get_num(elec, "saturationCurrentPeak");
+    if (peak && *peak > 0) {
+        // The scalar's basis is the table entry that states the same current, if any —
+        // a scalar with no matching entry is of unknown basis and stays NaN.
+        if (tbl && tbl->is_array())
+            for (const auto& p : *tbl) {
+                if (!p.is_object()) continue;
+                auto cur = get_num(p, "current");
+                auto pd = get_num(p, "percentInductanceDrop");
+                if (cur && pd && *pd >= 0 && std::fabs(*cur - *peak) <= 1e-9 * *peak) {
+                    percent_drop = *pd;
+                    break;
+                }
+            }
+        return *peak;
+    }
     if (tbl && tbl->is_array()) {
         const json* best = nullptr;
         double best_dist = 0.0, max_cur = kNaN();
@@ -785,7 +800,10 @@ double magnetic_saturation_current(const json& elec) {
                 if (!best || d < best_dist) { best = &p; best_dist = d; }
             }
         }
-        if (best) return get_num(*best, "current").value_or(kNaN());
+        if (best) {
+            percent_drop = get_num(*best, "percentInductanceDrop").value_or(kNaN());
+            return get_num(*best, "current").value_or(kNaN());
+        }
         return max_cur;  // no stated basis -> the largest quoted current
     }
     return kNaN();
@@ -821,7 +839,7 @@ std::optional<MagneticRow> extract_magnetic(const json& env) {
         const json& elec = elec_arr->front();
         auto L = resolve_field(elec, "inductance");
         if (L && *L > 0) r.inductance = *L;
-        r.saturation_current = magnetic_saturation_current(elec);
+        r.saturation_current = magnetic_saturation_current(elec, r.saturation_percent_drop);
         const json* rc = obj_get(elec, "ratedCurrents");
         if (rc && rc->is_array()) {
             double best = kNaN();

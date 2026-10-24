@@ -183,6 +183,7 @@ inline const FieldTable<MagneticRow>& fields<MagneticRow>() {
     static const FieldTable<MagneticRow> t{
         {{"inductance", &MagneticRow::inductance},
          {"saturation_current", &MagneticRow::saturation_current},
+         {"saturation_percent_drop", &MagneticRow::saturation_percent_drop},
          {"rated_current", &MagneticRow::rated_current},
          {"dcr", &MagneticRow::dcr},
          {"srf", &MagneticRow::srf},

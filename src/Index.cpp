@@ -74,7 +74,10 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // MOSFETs, 571 PNP transistors and 2,275 AC-only capacitors were unreadable rows, and
 // the 493 P-channel MOSFETs stored with positive ratings were indexed as if N-channel
 // (ABT #1749).
-constexpr uint32_t kFormatVersion = 14;
+// v15 records the inductance-drop criterion of a magnetic's headline Isat
+// (MagneticRow.saturation_percent_drop), so the ranker can refuse to compare a 30 %-drop
+// rating against a 10 %-drop one as if they were the same number (ABT #2042).
+constexpr uint32_t kFormatVersion = 15;
 
 // Identity of the code that produces rows, so a cached shard can be recognised as
 // having been built by a DIFFERENT extractor than the one running now (ABT #426).
@@ -322,6 +325,7 @@ void row_io(Ar& ar, MagneticRow& r) {
     io_base(ar, r);
     ar.dbl(r.inductance);
     ar.dbl(r.saturation_current);
+    ar.dbl(r.saturation_percent_drop);  // v15
     ar.dbl(r.rated_current);
     ar.dbl(r.dcr);
     ar.dbl(r.srf);

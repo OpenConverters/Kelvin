@@ -241,6 +241,12 @@ struct VaristorRow : RowBase {
 struct MagneticRow : RowBase {
     double inductance = kNaN();           // H  — electrical[0].inductance (nominal)
     double saturation_current = kNaN();   // A  — saturationCurrentPeak, else the ~20%-drop table headline
+    // %  — the inductance-drop criterion saturation_current is quoted at, from the record's
+    // saturationCurrents table (NaN when the record states none for that point). Vendors quote
+    // Isat at 10 %, 20 % or 30 % drop, and a bare scalar let a 0.56 A @30 % part read as an
+    // upgrade on a 0.5 A @10 % original (ABT #2042). The ranker compares only at a common
+    // criterion.
+    double saturation_percent_drop = kNaN();
     double rated_current = kNaN();        // A  — max(ratedCurrents[])
     double dcr = kNaN();                  // Ω  — dcResistance (worst-case / maximum), else dcResistances[0]
     double srf = kNaN();                  // Hz — selfResonantFrequency
