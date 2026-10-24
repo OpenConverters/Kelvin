@@ -73,6 +73,38 @@ std::optional<double> rating_magnitude(std::optional<double> v, bool negative_po
     return v;
 }
 
+// A PEAS `curve` ({xData, yData, xLabel?, yLabel?}) read at x by log-log interpolation
+// between the two samples that bracket it. nullopt when the curve is malformed, a label
+// names a different unit than the caller expects, or x lies outside the sampled range —
+// a value outside what was measured is not on record.
+std::optional<double> curve_at(const json* c, double x, const char* x_unit, const char* y_unit) {
+    if (!c || !c->is_object()) return std::nullopt;
+    if (auto xl = get_str(*c, "xLabel"); xl && xl->find(x_unit) == std::string::npos)
+        return std::nullopt;
+    if (auto yl = get_str(*c, "yLabel");
+        yl && (yl->find(y_unit) == std::string::npos || yl->find(std::string("m") + y_unit) != std::string::npos))
+        return std::nullopt;
+    const json* xs = obj_get(*c, "xData");
+    const json* ys = obj_get(*c, "yData");
+    if (!xs || !ys || !xs->is_array() || !ys->is_array() || xs->size() != ys->size())
+        return std::nullopt;
+    bool have_lo = false, have_hi = false;
+    double xlo = 0, ylo = 0, xhi = 0, yhi = 0;
+    for (size_t i = 0; i < xs->size(); ++i) {
+        const json& xv = (*xs)[i];
+        const json& yv = (*ys)[i];
+        if (!xv.is_number() || !yv.is_number()) continue;
+        const double xi = xv.get<double>(), yi = yv.get<double>();
+        if (!(xi > 0) || !(yi > 0)) continue;
+        if (xi == x) return yi;
+        if (xi < x && (!have_lo || xi > xlo)) { xlo = xi; ylo = yi; have_lo = true; }
+        if (xi > x && (!have_hi || xi < xhi)) { xhi = xi; yhi = yi; have_hi = true; }
+    }
+    if (!have_lo || !have_hi) return std::nullopt;
+    const double t = (std::log(x) - std::log(xlo)) / (std::log(xhi) - std::log(xlo));
+    return std::exp(std::log(ylo) + t * (std::log(yhi) - std::log(ylo)));
+}
+
 // Physical body size + case code, shared by every family extractor: the
 // cross-reference footprint check needs a real size, because a substitute that
 // does not fit the board is not a substitute. Dimensions are
@@ -474,6 +506,18 @@ std::optional<CapacitorRow> extract_capacitor(const json& env) {
     r.family = get_str(*mi, "family").value_or("");
     if (r.family.empty()) r.family = get_str(*part, "series").value_or("");
     if (auto v = get_num(*elec, "esrFrequency"); pos(v)) r.esr_frequency = *v;
+    // No scalar ESR, but a measured ESR-vs-frequency curve: read it AT 100 kHz, the
+    // frequency the catalogue's scalar ESRs are overwhelmingly quoted at, and say so in
+    // esr_frequency. TDK publishes the curve and no scalar, so every TDK candidate reached
+    // the ranker with "no ESR" while its record carried 325 measured points (ABT #2031).
+    // Only an INTERPOLATION between two samples that bracket 100 kHz is taken — never an
+    // extrapolation — and only from a curve whose labels, when present, say Hz and ohm.
+    if (!present(r.esr)) {
+        if (auto v = curve_at(obj_get(*elec, "esrPoints"), 1e5, "[Hz]", "Ohm"); v) {
+            r.esr = *v;
+            r.esr_frequency = 1e5;
+        }
+    }
     // Operating temperature range: a substitute must cover the original's, at
     // both ends. Present on essentially every capacitor record.
     if (const json* th = obj_get(*di, "thermal")) {
