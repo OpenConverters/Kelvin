@@ -77,7 +77,9 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // v15 records the inductance-drop criterion of a magnetic's headline Isat
 // (MagneticRow.saturation_percent_drop), so the ranker can refuse to compare a 30 %-drop
 // rating against a 10 %-drop one as if they were the same number (ABT #2042).
-constexpr uint32_t kFormatVersion = 15;
+// v16 carries a timing device's operating-temperature range (TimingRow.temp_min_c /
+// temp_max_c), which the cross-reference compares (ABT #2033, #2046).
+constexpr uint32_t kFormatVersion = 16;
 
 // Identity of the code that produces rows, so a cached shard can be recognised as
 // having been built by a DIFFERENT extractor than the one running now (ABT #426).
@@ -374,6 +376,8 @@ void row_io(Ar& ar, TimingRow& r) {
     ar.str(r.technology);
     ar.str(r.output_type);
     ar.str(r.mode);
+    ar.dbl(r.temp_min_c);   // v16
+    ar.dbl(r.temp_max_c);   // v16
     ar.boolean(r.is_production);
 }
 

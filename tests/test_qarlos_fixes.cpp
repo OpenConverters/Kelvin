@@ -170,3 +170,28 @@ TEST_CASE("qarlos #2029: unknown candidate height caps a magnetic at minor_revie
     CHECK(c["grade"] == "minor_review");
     CHECK(has_note(c, "states no height"));
 }
+
+// ABT #2033 / #2046: a timing device's operating-temperature range is extracted and compared.
+TEST_CASE("qarlos #2033/#2046: timing temperature range is extracted and gates",
+          "[qarlos][views][crossref]") {
+    json env = {{"timeBase", {{"oscillator", {{"manufacturerInfo", {{"name", "TXC CORPORATION"},
+        {"reference", "7V-25.000MAKV-T"},
+        {"datasheetInfo", {{"electrical", {{"frequency", 25e6}, {"technology", "quartzCrystal"}}},
+                           {"thermal", {{"operatingTemperature", {{"minimum", -40.0}, {"maximum", 125.0}}}}}}}}}}}}}};
+    auto row = kelvin::extract_timing(env);
+    REQUIRE(row.has_value());
+    CHECK(row->temp_min_c == -40.0);
+    CHECK(row->temp_max_c == 125.0);
+
+    json orig = {{"mpn", "7V-25.000MAKV-T"}, {"subtype", "oscillator"}, {"technology", "quartzCrystal"},
+                 {"frequency", 25e6}, {"temp_min_C", -40.0}, {"temp_max_C", 125.0}};
+    json narrow = {{"mpn", "FA-238 25.0000MD-AJ0"}, {"subtype", "oscillator"},
+                   {"technology", "quartzCrystal"}, {"frequency", 25e6},
+                   {"temp_min_C", -20.0}, {"temp_max_C", 70.0}};
+    auto r = kelvin::crossref::cross_reference("timeBase", orig, json::array({narrow}));
+    const json& c = r["candidates"][0];
+    CHECK(verdict_of(c, "temp_max_C") == "fail");
+    CHECK(c["grade"] == "major_review");
+    CHECK(c["direction"] == "downgrade");
+    CHECK(has_note(c, "rated only to +70"));
+}

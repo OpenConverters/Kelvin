@@ -307,6 +307,12 @@ struct TimingRow : RowBase {
     std::string technology;               // quartzCrystal / mems / crystalOscillator / tcxo / …
     std::string output_type;
     std::string mode;
+    // degC — thermal.operatingTemperature, stated by 22,366 of the 22,418 records. It was not
+    // extracted, so a -10..+70 degC crystal ranked first as an 'upgrade' for a -40..+125 degC
+    // original with no temperature verdict at all (ABT #2033, #2046). Negative and zero are
+    // ordinary values here, not absence.
+    double temp_min_c = kNaN();
+    double temp_max_c = kNaN();
     bool is_production = false;
 };
 

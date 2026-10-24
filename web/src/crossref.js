@@ -121,12 +121,17 @@ export const XREF = [
       load_capacitance_pF: r.load_capacitance != null ? r.load_capacitance * 1e12 : null,
       esr: nz(r.esr), output_type: r.output_type ?? '', mode: r.mode ?? '',
       tolerance_ppm: r.frequency_tolerance != null ? r.frequency_tolerance * 1e6 : null,
-      stability_ppm: r.frequency_stability != null ? r.frequency_stability * 1e6 : null }),
+      stability_ppm: r.frequency_stability != null ? r.frequency_stability * 1e6 : null,
+      // Raw, NOT through nz(): a cold limit is negative and 0 degC is a real rating. The
+      // ranker's PARAM_SPECS compare both ends (ABT #2033, #2046).
+      temp_min_C: r.temp_min_c ?? null, temp_max_C: r.temp_max_c ?? null }),
     params: [
       { key: 'frequency', label: 'f', row: 'frequency', unit: 'Hz' },
       { key: 'load_capacitance_pF', label: 'CL', row: 'load_capacitance', unit: 'F' },
       { key: 'esr', label: 'ESR', row: 'esr', unit: 'Ω' },
       { key: 'tolerance_ppm', label: 'tol', row: 'frequency_tolerance', unit: 'ppm', scale: 1e6 },
+      { key: 'temp_min_C', label: 'T min', row: 'temp_min_c', unit: '°C' },
+      { key: 'temp_max_C', label: 'T max', row: 'temp_max_c', unit: '°C' },
     ],
   },
   {
