@@ -111,7 +111,11 @@ std::optional<double> curve_at(const json* c, double x, const char* x_unit, cons
 // dimensionWithTolerance in TAS, so they go through the resolver rather than
 // being hand-read. Absent stays NaN — the ranker then falls back to resolving
 // the case code, and reports "unknown" if that fails too, never assuming a fit.
-void fill_dimensions(RowBase& r, const json& di, const json& part) {
+// `lies_flat`: the body's axis is PARALLEL to the board (an axial or MELF resistor), so a
+// stated diameter is its width and its height and the length stays the length. Without it a
+// diameter is read as an upright can, which turned a 9.53 mm-long PTF65 into a 3.68 x 3.68 mm
+// footprint standing 9.53 mm tall (ABT #2032).
+void fill_dimensions(RowBase& r, const json& di, const json& part, bool lies_flat = false) {
     // Mount type first: `thickness` below needs it, because the same T label names a
     // different axis on a chip than on a leaded body. Three schemas spell the SAME fact
     // three ways: `mechanical.assemblyType` (semiconductors, magnetics),
@@ -151,7 +155,11 @@ void fill_dimensions(RowBase& r, const json& di, const json& part) {
         // explicit drawing and a case code yield the same box instead of two
         // incomparable ones. Dropping the diameter left every can in the catalogue
         // with no seat at all, and the footprint check with nothing to compare.
-        if (pos(dia)) {
+        if (pos(dia) && lies_flat) {
+            if (!present(r.length_m) && present(r.height_m)) r.length_m = r.height_m;
+            r.width_m = *dia;
+            r.height_m = *dia;
+        } else if (pos(dia)) {
             const double axial = present(r.height_m) ? r.height_m : r.length_m;
             r.length_m = *dia;
             r.width_m = *dia;
@@ -573,7 +581,8 @@ std::optional<ResistorRow> extract_resistor(const json& env) {
     ResistorRow r;
     r.mpn = *mpn;
     r.manufacturer = get_str(*mi, "name").value_or("");
-    fill_dimensions(r, *di, *part);
+    // A resistor that states a diameter is an axial or MELF body, which lies on the board.
+    fill_dimensions(r, *di, *part, /*lies_flat=*/true);
     r.resistance = *r_nom;
     r.tolerance = tol;
     r.power_rating = pw;

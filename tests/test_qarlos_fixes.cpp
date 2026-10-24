@@ -101,3 +101,16 @@ TEST_CASE("qarlos #2031: ESR is interpolated from esrPoints at 100 kHz", "[qarlo
     CHECK_FALSE(kelvin::present(s->esr));
     CHECK_FALSE(kelvin::present(s->esr_frequency));
 }
+
+// ABT #2032: an axial resistor lies flat — length is the length, diameter is W and H.
+TEST_CASE("qarlos #2032: an axial resistor's diameter is its width and height", "[qarlos][views]") {
+    json env = {{"resistor", {{"manufacturerInfo", {{"name", "Vishay"}, {"reference", "PTF6595K300BZBF"},
+        {"datasheetInfo", {{"part", json::object()},
+                           {"electrical", {{"resistance", 95300.0}, {"powerRating", 0.5}}},
+                           {"mechanical", {{"length", 9.53e-3}, {"diameter", 3.68e-3}}}}}}}}}};
+    auto r = kelvin::extract_resistor(env);
+    REQUIRE(r.has_value());
+    CHECK(r->length_m == Approx(9.53e-3));
+    CHECK(r->width_m == Approx(3.68e-3));
+    CHECK(r->height_m == Approx(3.68e-3));
+}
