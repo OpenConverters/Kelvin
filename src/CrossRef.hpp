@@ -925,6 +925,21 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             }
         }
 
+        // Standoff band, two-sided (Alf 2026-10-25, ABT #2034): the standoff is the rail the
+        // part guards, so one more than 10 % above the original's clamps too late for it —
+        // a 12 V part on a 5.5 V line. WARN, not FAIL.
+        if (const auto ov = num(original, "vrrm"), sv = num(cand, "vrrm");
+            ov && sv && *sv > *ov * 1.10) {
+            params.push_back({{"name", "standoff_band"}, {"verdict", WARN}});
+            demote();
+            penalty += opt.gate_weight * kVerdictWarnPenalty;
+            ++worse;
+            notes.push_back("standoff " + volts(*sv) + " V against the original's " + volts(*ov) +
+                            " V (" + signed_pct(100.0 * (*sv / *ov - 1.0)) +
+                            ") — a protection part for a higher rail; it clamps later than the "
+                            "protected circuit expects");
+        }
+
         // Polarity.
         const TvsPolarity op = tvs_polarity_from_mpn(str(original, "mpn")),
                           sp = tvs_polarity_from_mpn(str(cand, "mpn"));

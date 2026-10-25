@@ -272,10 +272,25 @@ TEST_CASE("qarlos #2034: higher standoff is no upgrade; breakdown window above w
     CHECK(c["direction"] == "downgrade");
     CHECK(c["grade"] != "drop_in");
     CHECK(has_note(c, "protection level rises"));
-    // Without the breakdown data the standoff alone may not read as an upgrade either.
+    // Without the breakdown data the standoff alone may not read as an upgrade either:
+    // within the 10 % band it is equivalent, beyond it a WARN capped at minor_review.
     auto r2 = kelvin::crossref::cross_reference("diode", tvs("SMBJ5.0A", 5.0),
-                                                json::array({tvs("SMBJ12A", 12.0)}));
+                                                json::array({tvs("SMBJ5.0B", 5.4)}));
     CHECK(r2["candidates"][0]["direction"] == "equivalent");
+    CHECK(verdict_of(r2["candidates"][0], "standoff_band") == "");
+}
+
+TEST_CASE("qarlos #2034: standoff more than 10 % above the original's warns",
+          "[qarlos][crossref]") {
+    json orig = {{"mpn", "SP0518CAAT"}, {"technology", "esd"}, {"vrrm", 5.5}, {"case_code", "SOD-323"}};
+    json cand = {{"mpn", "SD12T1G"}, {"technology", "esd"}, {"vrrm", 12.0}, {"case_code", "SOD-323"}};
+    auto r = kelvin::crossref::cross_reference("diode", orig, json::array({cand}));
+    const json& c = r["candidates"][0];
+    CHECK(verdict_of(c, "standoff_band") == "warn");
+    CHECK(verdict_of(c, "vrrm") == "pass");
+    CHECK(c["grade"] == "minor_review");
+    CHECK(c["status"] != "no_substitute");
+    CHECK(has_note(c, "standoff 12 V against the original's 5.5 V"));
 }
 
 // #2040 / #2049: clamping voltage compared at equal waveforms; #2050: Cj compared.
