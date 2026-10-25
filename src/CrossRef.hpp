@@ -56,6 +56,10 @@ inline std::optional<double> num(const json& o, const char* k) {
     return std::nullopt;
 }
 
+inline bool flag(const json& o, const char* k) {
+    auto it = o.find(k);
+    return it != o.end() && it->is_boolean() && it->get<bool>();
+}
 inline std::string str(const json& o, const char* k) {
     auto it = o.find(k);
     if (it == o.end() || it->is_null() || !it->is_string()) return "";
@@ -781,6 +785,170 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                         " against the original's " + vz_band(original) +
                         " — confirm the reference or clamp level tolerates the wider window");
 
+    // ── transient protection (tvs / esd originals) ───────────────────────────
+    // A protection diode is chosen for the surge it absorbs, the level it clamps to and the
+    // capacitance it hangs on the line — none of which Vrrm (its standoff) says. Nothing of
+    // it was compared: a 400 W SMAJ came back 'upgrade' for a 15 kW 15KP, a 90 pF part
+    // 'recommended' for a 1.2 pF one, a unidirectional part for a bidirectional one
+    // (ABT #2036, #2038, #2040, #2041, #2048-#2051). Rules, Alf 2026-10-25:
+    //  * Ppk / Ipp / Vc are compared only between ratings stated at the SAME impulse; a
+    //    different or unstated waveform leaves the parameter UNVERIFIED with a note, and for
+    //    the surge ratings caps the grade as missing required data (not a rejection).
+    //  * a breakdown window reaching above the original's raises the protection level: WARN.
+    //  * uni-directional for a bi-directional original (decoded from the classic series
+    //    order code) FAILS; an undecodable polarity is UNVERIFIED.
+    const std::string o_tech = str(original, "technology");
+    const bool protection = cat == "diode" && (o_tech == "tvs" || o_tech == "esd");
+    bool surge_blind = false;
+    if (protection) {
+        auto fmt = [](double v, const char* unit) {
+            char b[48];
+            std::snprintf(b, sizeof b, "%g %s", v, unit);
+            return std::string(b);
+        };
+        auto at_wf = [](const std::string& wf) {
+            return wf.empty() ? std::string("at no stated waveform") : "at " + wf + " us";
+        };
+        // One waveform-bound rating. `cap` = its unknowns cap the grade (the surge ratings).
+        auto waveform_rated = [&](const char* key, const char* wf_key, Dir dir, double tol,
+                                  const char* label, const char* unit, bool cap,
+                                  const char* consequence) {
+            const auto o = num(original, key), s = num(cand, key);
+            if (!o && !s) return;
+            const std::string ow = str(original, wf_key), sw = str(cand, wf_key);
+            if (!o) {  // the original states nothing to hold the substitute to
+                params.push_back({{"name", key}, {"verdict", UNVERIFIED}});
+                return;
+            }
+            auto unverified = [&](const std::string& why) {
+                params.push_back({{"name", key}, {"verdict", UNVERIFIED}});
+                notes.push_back(why);
+                if (cap) {
+                    demote();
+                    penalty += opt.gate_weight * kVerdictFailPenalty;
+                    missing_required_data = true;
+                    // The rating the protection match turns on went unweighed, so a
+                    // reassuring direction would be a claim about a comparison not made.
+                    surge_blind = true;
+                }
+            };
+            if (!s) {
+                unverified(std::string("substitute's record carries no ") + label +
+                           " — the original states " + fmt(*o, unit) + " " + at_wf(ow) +
+                           "; confirm it from the datasheet before this swap");
+                return;
+            }
+            if (ow.empty() || sw.empty() || ow != sw) {
+                unverified(std::string(label) + " stated at different or unstated impulses (" +
+                           fmt(*o, unit) + " " + at_wf(ow) + " on the original, " +
+                           fmt(*s, unit) + " " + at_wf(sw) +
+                           " on the substitute) — not comparable; confirm the substitute's " +
+                           label + " at the original's waveform");
+                return;
+            }
+            const ParamSpec spec{key, dir, tol, std::nullopt, false, false, nullptr};
+            const char* v = compare_numeric(spec, o, s).verdict;
+            params.push_back({{"name", key}, {"verdict", v}});
+            if (v == FAIL || v == WARN) {
+                demote();
+                penalty += opt.gate_weight * (v == FAIL ? kVerdictFailPenalty : kVerdictWarnPenalty);
+                ++worse;
+                notes.push_back(std::string(label) + " " + fmt(*s, unit) + " against the original's " +
+                                fmt(*o, unit) + " " + at_wf(ow) + " (" +
+                                signed_pct(100.0 * (*s / *o - 1.0)) + ") — " + consequence);
+            } else {
+                note_direction(dir, o, s);
+            }
+        };
+        waveform_rated("peak_pulse_power", "peak_pulse_power_waveform", Dir::Higher, 0.9,
+                       "peak pulse power", "W", true,
+                       "the substitute absorbs less surge energy than the original is rated for");
+        waveform_rated("peak_pulse_current", "peak_pulse_current_waveform", Dir::Higher, 0.9,
+                       "peak pulse current", "A", true,
+                       "the substitute survives less surge current than the original is rated for");
+        waveform_rated("clamping_voltage", "clamping_waveform", Dir::Lower, 1.05,
+                       "clamping voltage", "V", false,
+                       "the protected circuit sees a higher voltage during a surge; re-check its "
+                       "rating");
+
+        // Junction capacitance loads the line being protected (a high-speed I/O is what an
+        // ESD part guards). Stated without an impulse, so compared directly.
+        if (const auto oc = num(original, "junction_capacitance"),
+            sc = num(cand, "junction_capacitance");
+            oc || sc) {
+            const ParamSpec spec{"junction_capacitance", Dir::Lower, 2.0, std::nullopt, false,
+                                 false, nullptr};
+            const char* v = compare_numeric(spec, oc, sc).verdict;
+            params.push_back({{"name", "junction_capacitance"}, {"verdict", v}});
+            if (v == FAIL || v == WARN) {
+                demote();
+                penalty += opt.gate_weight * (v == FAIL ? kVerdictFailPenalty : kVerdictWarnPenalty);
+                ++worse;
+                notes.push_back("junction capacitance " + fmt(*sc * 1e12, "pF") +
+                                " against the original's " + fmt(*oc * 1e12, "pF") +
+                                " — more load on the protected line; check its signal integrity");
+            } else if (oc && !sc) {
+                notes.push_back("substitute's record carries no junction capacitance — the "
+                                "original states " + fmt(*oc * 1e12, "pF") +
+                                "; confirm the load on the protected line from the datasheet");
+            } else {
+                note_direction(Dir::Lower, oc, sc);
+            }
+        }
+
+        // Breakdown window: where the part begins to conduct. Upper ends when both state
+        // one, else lower ends.
+        {
+            const auto olo = num(original, "vz_min_V"), ohi = num(original, "vz_max_V");
+            const auto slo = num(cand, "vz_min_V"), shi = num(cand, "vz_max_V");
+            std::optional<double> oe, se;
+            if (ohi && shi) oe = ohi, se = shi;
+            else if (olo && slo) oe = olo, se = slo;
+            if (oe && se) {
+                const bool above = *se > *oe * (1.0 + 1e-3);
+                params.push_back({{"name", "breakdown_window"}, {"verdict", above ? WARN : PASS}});
+                if (above) {
+                    demote();
+                    penalty += opt.gate_weight * kVerdictWarnPenalty;
+                    ++worse;
+                    auto band = [&](std::optional<double> lo, std::optional<double> hi) {
+                        return (lo ? volts(*lo) : std::string("?")) + "-" +
+                               (hi ? volts(*hi) : std::string("?")) + " V";
+                    };
+                    notes.push_back("breakdown window " + band(slo, shi) +
+                                    " reaches above the original's " + band(olo, ohi) +
+                                    " — the substitute starts to conduct later, so the protection "
+                                    "level rises; re-check what the protected circuit tolerates");
+                }
+            } else if (olo || ohi || slo || shi) {  // one side states none: not comparable
+                params.push_back({{"name", "breakdown_window"}, {"verdict", UNVERIFIED}});
+            }
+        }
+
+        // Polarity.
+        const TvsPolarity op = tvs_polarity_from_mpn(str(original, "mpn")),
+                          sp = tvs_polarity_from_mpn(str(cand, "mpn"));
+        if (op != TvsPolarity::Unknown || sp != TvsPolarity::Unknown) {
+            if (op == TvsPolarity::Bi && sp == TvsPolarity::Uni) {
+                params.push_back({{"name", "polarity"}, {"verdict", FAIL}});
+                demote();
+                penalty += opt.gate_weight * kVerdictFailPenalty;
+                ++worse;
+                notes.push_back("unidirectional substitute for a bidirectional original (decoded "
+                                "from the part numbers) — it does not clamp a negative excursion, "
+                                "it conducts it as a forward diode");
+            } else if (op == TvsPolarity::Unknown || sp == TvsPolarity::Unknown) {
+                params.push_back({{"name", "polarity"}, {"verdict", UNVERIFIED}});
+                if (op == TvsPolarity::Bi)
+                    notes.push_back("the original is bidirectional (decoded from its part number); "
+                                    "the substitute's polarity cannot be read from its record or "
+                                    "part number — confirm it clamps both polarities");
+            } else {
+                params.push_back({{"name", "polarity"}, {"verdict", PASS}});
+            }
+        }
+    }
+
     // ── critical ratings (Vds / Vrrm / rated voltage / Id / If) ──────────────
     for (const auto& r : critical_ratings(cat)) {
         auto o = num(original, r.key), s = num(cand, r.key);
@@ -799,7 +967,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         }
         if (v.verdict == WARN || v.verdict == FAIL)
             ++worse;  // a shortfall verdict is a regression, inside the neutral band or not
-        else
+        else if (!(protection && std::string(r.key) == "vrrm"))
+            // A protection diode's standoff is the rail it guards, not a margin: a 12 V
+            // standoff part on a 5.5 V line clamps later, which is no upgrade (ABT #2034).
             note_direction(r.mode == Mode::HigherBetter ? Dir::Higher : Dir::Lower, o, s);
         if (r.hard && !o && s) {
             direction_blind = true;
@@ -1394,8 +1564,30 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                         "worse on that axis is unknown, whatever the other parameters say");
     }
 
-    // Honesty: an unverified original can never be a clean 'recommended'.
-    if (!opt.original_verified) {
+    // ── retracted sources (ABT #2035) ────────────────────────────────────────
+    // Every source the substitute's record cites has been retracted (VLIN1626-02G: a
+    // category browse page naming no order code). What the row says may be right, but
+    // nothing verifies it, so no verdict drawn from it may read 'pass' or 'fits': each
+    // becomes UNVERIFIED, the grade is capped as missing required data and the direction
+    // is unknown. Regressions stay as they are — data that already disqualifies the part
+    // does not become better for being unsourced.
+    const bool cand_retracted = flag(cand, "provenance_retracted");
+    if (cand_retracted) {
+        for (auto& p : params)
+            if (p.value("verdict", "") == PASS) p["verdict"] = UNVERIFIED;
+        if (out.value("footprint", "") == "fits") out["footprint"] = "unknown";
+        if (out.value("height_fit", "") == "fits") out["height_fit"] = "unknown";
+        demote();
+        penalty += opt.gate_weight * kVerdictFailPenalty;
+        missing_required_data = true;
+        notes.push_back("every source cited by the substitute's record is retracted — none of "
+                        "its data is verified; confirm the part from its datasheet before "
+                        "relying on any verdict here");
+    }
+
+    // Honesty: an unverified original can never be a clean 'recommended'. An original
+    // whose every source is retracted is unverified the same way (ABT #2035).
+    if (!opt.original_verified || flag(original, "provenance_retracted")) {
         if (status == "recommended") status = "partial";
         out["original_unverified"] = true;
     }
@@ -1457,8 +1649,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // on evidence that never covered the parameter the match turns on. A measured regression
     // stands — blindness elsewhere cannot make a regression we did see disappear — and so does
     // "mixed", which already carries one.
-    out["direction"] = ((direction_blind || isat_basis_blind) &&
-                        (dir == "upgrade" || dir == "equivalent"))
+    out["direction"] = (cand_retracted || ((direction_blind || isat_basis_blind || surge_blind) &&
+                                           (dir == "upgrade" || dir == "equivalent")))
                            ? "unknown"
                            : dir;
     return out;
@@ -1490,7 +1682,8 @@ inline json cross_reference(const std::string& category, const json& original,
     json cands = json::array();
     for (size_t i = 0; i < scored.size() && i < opt.max_results; ++i) cands.push_back(scored[i]);
     return {{"category", category},
-            {"original_verified", opt.original_verified},
+            {"original_verified",
+             opt.original_verified && !flag(original, "provenance_retracted")},
             {"candidates", cands}};
 }
 

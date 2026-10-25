@@ -94,6 +94,12 @@ struct RowBase {
     // more reliable than inferring it from a package string, which is all
     // Heaviside had. Empty when the record does not state it.
     std::string mount;
+    // Every datasheetInfo.provenance entry of the record is retracted: whatever the row says
+    // rests on a source that has been withdrawn (VLIN1626-02G's one citation is a category
+    // browse page naming no order code), so none of it can verify a pass or a fit. False when
+    // the record states no provenance at all — that is a different gap, not a retraction
+    // (ABT #2035).
+    bool provenance_retracted = false;
 };
 
 struct MosfetRow : RowBase {
@@ -151,6 +157,17 @@ struct DiodeRow : RowBase {
     double vz_min = kNaN(), vz_max = kNaN(), vz_tolerance = kNaN();
     double rth_ja = kNaN(), rth_jc = kNaN(), tj_max = kNaN();
     std::string technology;   // part.subType (schottky / fastRecovery / ...)
+    // Transient-suppression specs (tvs / esd). These, not Vrrm, are what a protection diode
+    // IS: the surge it absorbs, the level it clamps to, the capacitance it loads the line
+    // with. None was carried, so a 400 W SMAJ came back an 'upgrade' for a 15 kW 15KP and a
+    // 90 pF part 'recommended' for a 1.2 pF one (ABT #2036, #2040, #2041, #2048-#2051).
+    // NaN when the record does not state the value. A surge rating is only meaningful at the
+    // impulse it was measured with (10/1000 vs 8/20 differ several-fold), so each carries the
+    // record's stated waveform; empty = not stated, never assumed.
+    double clamping_voltage = kNaN(), clamping_current = kNaN();
+    double peak_pulse_power = kNaN(), peak_pulse_current = kNaN();
+    double junction_capacitance = kNaN();
+    std::string clamping_waveform, peak_pulse_power_waveform, peak_pulse_current_waveform;
     bool is_production = false;
     bool no_thermal() const { return !present(rth_ja) || !present(tj_max); }
 };

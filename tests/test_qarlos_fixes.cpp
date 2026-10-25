@@ -195,3 +195,171 @@ TEST_CASE("qarlos #2033/#2046: timing temperature range is extracted and gates",
     CHECK(c["direction"] == "downgrade");
     CHECK(has_note(c, "rated only to +70"));
 }
+
+// ── TVS / ESD (ABT #2034, #2036, #2038, #2040, #2041, #2047-#2051) ───────────
+namespace {
+json tvs_env(const std::string& mpn, json elec, json extra_di = json::object()) {
+    json di = {{"part", {{"partNumber", mpn}, {"subType", "tvs"}}}, {"electrical", elec}};
+    for (auto& [k, v] : extra_di.items()) di[k] = v;
+    return {{"semiconductor", {{"diode", {{"manufacturerInfo",
+        {{"name", "Littelfuse"}, {"reference", mpn}, {"datasheetInfo", di}}}}}}}};
+}
+json tvs(const std::string& mpn, double standoff) {
+    return {{"mpn", mpn}, {"technology", "tvs"}, {"vrrm", standoff}};
+}
+}  // namespace
+
+// #2047: a TVS's working rating is its standoff, never the reverseVoltage some importers
+// filled with the breakdown maximum. The surge specs are extracted with their waveforms.
+TEST_CASE("qarlos #2047: tvs vrrm is the standoff; surge specs carry their waveform",
+          "[qarlos][views]") {
+    auto row = kelvin::extract_diode(tvs_env("P6KE180A",
+        {{"standoffVoltage", 180.0}, {"reverseVoltage", 221.0},
+         {"peakPulsePower", 600.0}, {"peakPulsePowerWaveform", "10/1000"},
+         {"peakPulseCurrent", 2.1}, {"clampingVoltage", 290.0}, {"clampingCurrent", 2.1},
+         {"clampingWaveform", "10/1000"}, {"junctionCapacitance", 5e-11}}));
+    REQUIRE(row.has_value());
+    CHECK(row->vrrm_rated == 180.0);
+    CHECK(row->peak_pulse_power == 600.0);
+    CHECK(row->peak_pulse_power_waveform == "10/1000");
+    CHECK(row->peak_pulse_current == 2.1);
+    CHECK(row->peak_pulse_current_waveform.empty());
+    CHECK(row->clamping_voltage == 290.0);
+    CHECK(row->junction_capacitance == 5e-11);
+    CHECK_FALSE(row->provenance_retracted);
+}
+
+// #2036 / #2041 / #2048: surge ratings are compared at equal waveforms and a shortfall
+// is a regression; an unstated or different waveform is unverified and caps the grade.
+TEST_CASE("qarlos #2036/#2041/#2048: peak pulse power compared at equal waveforms only",
+          "[qarlos][crossref]") {
+    json orig = tvs("15KP30A", 30.0);
+    orig.update({{"peak_pulse_power", 15000.0}, {"peak_pulse_power_waveform", "10/1000"},
+                 {"peak_pulse_current", 296.0}, {"peak_pulse_current_waveform", "10/1000"}});
+    json weak = tvs("SMAJ30A", 30.0);
+    weak.update({{"peak_pulse_power", 400.0}, {"peak_pulse_power_waveform", "10/1000"},
+                 {"peak_pulse_current", 8.3}, {"peak_pulse_current_waveform", "10/1000"}});
+    json other_wf = tvs("SMBJ30A", 30.0);
+    other_wf.update({{"peak_pulse_power", 20000.0}, {"peak_pulse_power_waveform", "8/20"}});
+    auto r = kelvin::crossref::cross_reference("diode", orig, json::array({weak, other_wf}));
+    const json* w = nullptr; const json* o = nullptr;
+    for (const auto& c : r["candidates"]) (c["mpn"] == "SMAJ30A" ? w : o) = &c;
+    REQUIRE(w); REQUIRE(o);
+    CHECK(verdict_of(*w, "peak_pulse_power") == "fail");
+    CHECK(verdict_of(*w, "peak_pulse_current") == "fail");
+    CHECK((*w)["grade"] == "major_review");
+    CHECK((*w)["direction"] == "downgrade");
+    CHECK((*w)["status"] != "no_substitute");  // a demotion, not a hard reject
+    CHECK(has_note(*w, "peak pulse power 400 W against the original's 15000 W at 10/1000 us"));
+    CHECK(verdict_of(*o, "peak_pulse_power") == "unverified");
+    CHECK(verdict_of(*o, "peak_pulse_current") == "unverified");
+    CHECK((*o)["grade"] == "major_review");
+    CHECK((*o)["direction"] == "unknown");  // the surge axis went unweighed
+    CHECK(has_note(*o, "different or unstated impulses"));
+}
+
+// #2034: a higher standoff is not an upgrade; a breakdown window above the original's warns.
+TEST_CASE("qarlos #2034: higher standoff is no upgrade; breakdown window above warns",
+          "[qarlos][crossref]") {
+    json orig = tvs("SMBJ5.0A", 5.0);
+    orig.update({{"vz_min_V", 6.4}, {"vz_max_V", 7.0}});
+    json high = tvs("SMBJ12A", 12.0);
+    high.update({{"vz_min_V", 13.3}, {"vz_max_V", 14.7}});
+    auto r = kelvin::crossref::cross_reference("diode", orig, json::array({high}));
+    const json& c = r["candidates"][0];
+    CHECK(verdict_of(c, "vrrm") == "pass");
+    CHECK(verdict_of(c, "breakdown_window") == "warn");
+    CHECK(c["direction"] == "downgrade");
+    CHECK(c["grade"] != "drop_in");
+    CHECK(has_note(c, "protection level rises"));
+    // Without the breakdown data the standoff alone may not read as an upgrade either.
+    auto r2 = kelvin::crossref::cross_reference("diode", tvs("SMBJ5.0A", 5.0),
+                                                json::array({tvs("SMBJ12A", 12.0)}));
+    CHECK(r2["candidates"][0]["direction"] == "equivalent");
+}
+
+// #2040 / #2049: clamping voltage compared at equal waveforms; #2050: Cj compared.
+TEST_CASE("qarlos #2040/#2049/#2050: clamping voltage and junction capacitance are compared",
+          "[qarlos][crossref]") {
+    json orig = tvs("P4KE300A", 256.0);
+    orig.update({{"clamping_voltage", 414.0}, {"clamping_waveform", "10/1000"},
+                 {"junction_capacitance", 1.2e-12}});
+    json cand = tvs("SMAJ300A", 300.0);
+    cand.update({{"clamping_voltage", 602.0}, {"clamping_waveform", "10/1000"},
+                 {"junction_capacitance", 9e-11}});
+    auto r = kelvin::crossref::cross_reference("diode", orig, json::array({cand}));
+    const json& c = r["candidates"][0];
+    CHECK(verdict_of(c, "clamping_voltage") == "fail");
+    CHECK(verdict_of(c, "junction_capacitance") == "fail");
+    CHECK(c["grade"] == "major_review");
+    CHECK(c["direction"] == "downgrade");
+    CHECK(has_note(c, "clamping voltage 602 V"));
+    // An unstated clamping waveform leaves it unverified, without capping the grade.
+    json nowf = tvs("SMAJ300A", 300.0);
+    nowf["clamping_voltage"] = 300.0;
+    auto r2 = kelvin::crossref::cross_reference("diode", orig, json::array({nowf}));
+    CHECK(verdict_of(r2["candidates"][0], "clamping_voltage") == "unverified");
+}
+
+// #2038 / #2049: polarity decoded from the classic series order code.
+TEST_CASE("qarlos #2038/#2049: unidirectional for bidirectional fails; unknown is unverified",
+          "[qarlos][crossref]") {
+    using kelvin::crossref::TvsPolarity;
+    using kelvin::crossref::tvs_polarity_from_mpn;
+    CHECK(tvs_polarity_from_mpn("15KP30CA") == TvsPolarity::Bi);
+    CHECK(tvs_polarity_from_mpn("3KP210C") == TvsPolarity::Bi);
+    CHECK(tvs_polarity_from_mpn("1.5KE30CA") == TvsPolarity::Bi);
+    CHECK(tvs_polarity_from_mpn("SMBJ5.0CA-13-F") == TvsPolarity::Bi);
+    CHECK(tvs_polarity_from_mpn("30KPA39A-HRA") == TvsPolarity::Uni);
+    CHECK(tvs_polarity_from_mpn("SMAJ26A") == TvsPolarity::Uni);
+    CHECK(tvs_polarity_from_mpn("SMBJ15-E3/52") == TvsPolarity::Uni);
+    CHECK(tvs_polarity_from_mpn("PTVS3-380C-TH") == TvsPolarity::Unknown);
+    CHECK(tvs_polarity_from_mpn("SM5S40ATHE3/I") == TvsPolarity::Unknown);
+
+    json orig = tvs("15KP30CA", 30.0);
+    auto r = kelvin::crossref::cross_reference(
+        "diode", orig, json::array({tvs("SMAJ30A", 30.0), tvs("PTVS3-380C", 30.0),
+                                    tvs("SMCJ30CA", 30.0)}));
+    for (const auto& c : r["candidates"]) {
+        if (c["mpn"] == "SMAJ30A") {
+            CHECK(verdict_of(c, "polarity") == "fail");
+            CHECK(c["grade"] == "major_review");
+            CHECK(has_note(c, "unidirectional substitute for a bidirectional original"));
+        } else if (c["mpn"] == "PTVS3-380C") {
+            CHECK(verdict_of(c, "polarity") == "unverified");
+            CHECK(has_note(c, "confirm it clamps both polarities"));
+        } else {
+            CHECK(verdict_of(c, "polarity") == "pass");
+        }
+    }
+}
+
+// #2035: a record whose every provenance entry is retracted verifies nothing.
+TEST_CASE("qarlos #2035: all-retracted provenance is flagged and verifies nothing",
+          "[qarlos][views][crossref]") {
+    json retracted = json::array({{{"source", "manufacturerParametric"}, {"retracted", true}}});
+    json mixed = json::array({{{"source", "a"}, {"retracted", true}}, {{"source", "b"}}});
+    CHECK(kelvin::all_provenance_retracted(
+        tvs_env("VLIN1626-02G", {{"standoffVoltage", 16.0}}, {{"provenance", retracted}})));
+    CHECK_FALSE(kelvin::all_provenance_retracted(
+        tvs_env("X", {{"standoffVoltage", 16.0}}, {{"provenance", mixed}})));
+    CHECK_FALSE(kelvin::all_provenance_retracted(tvs_env("X", {{"standoffVoltage", 16.0}})));
+    CHECK(kelvin::all_provenance_retracted(json{{"capacitor", {{"manufacturerInfo",
+        {{"datasheetInfo", {{"provenance", retracted}}}}}}}}));
+
+    json orig = {{"mpn", "SP0518CAAT"}, {"technology", "esd"}, {"vrrm", 5.5}, {"case_code", "SOD-323"}};
+    json cand = {{"mpn", "VLIN1626-02G"}, {"technology", "esd"}, {"vrrm", 5.5},
+                 {"case_code", "SOD-323"}, {"provenance_retracted", true}};
+    auto r = kelvin::crossref::cross_reference("diode", orig, json::array({cand}));
+    const json& c = r["candidates"][0];
+    CHECK(verdict_of(c, "vrrm") == "unverified");
+    CHECK(c["grade"] == "major_review");
+    CHECK(c["status"] == "partial");
+    CHECK(c["direction"] == "unknown");
+    CHECK(has_note(c, "retracted"));
+    // As the original: the result is not a verified one.
+    json o2 = cand; json c2 = orig;
+    auto r2 = kelvin::crossref::cross_reference("diode", o2, json::array({c2}));
+    CHECK(r2["original_verified"] == false);
+    CHECK(r2["candidates"][0]["status"] == "partial");
+}

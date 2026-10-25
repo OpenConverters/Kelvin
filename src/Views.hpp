@@ -23,6 +23,10 @@ bool datasheet_unusable(const std::string& url);
 // CTAS intendedTopologies -> HS short topology name (selector.py _normalize_ctas_topology).
 std::string normalize_ctas_topology(const std::string& name);
 
+// True when the record states provenance and EVERY entry is retracted (ABT #2035).
+// Family-agnostic; the index builder stamps it on every row.
+bool all_provenance_retracted(const json& env);
+
 // Extractors. Locator fields (lineno/src_offset/src_length) are left default; the caller sets them.
 std::optional<MosfetRow> extract_mosfet(const json& env);
 std::optional<DiodeRow> extract_diode(const json& env);

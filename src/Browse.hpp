@@ -91,8 +91,16 @@ inline const FieldTable<DiodeRow>& fields<DiodeRow>() {
          {"vz_tolerance", &DiodeRow::vz_tolerance},
          {"rth_ja", &DiodeRow::rth_ja},
          {"rth_jc", &DiodeRow::rth_jc},
-         {"tj_max", &DiodeRow::tj_max}},
-        {{"technology", &DiodeRow::technology}},
+         {"tj_max", &DiodeRow::tj_max},
+         {"clamping_voltage", &DiodeRow::clamping_voltage},
+         {"clamping_current", &DiodeRow::clamping_current},
+         {"peak_pulse_power", &DiodeRow::peak_pulse_power},
+         {"peak_pulse_current", &DiodeRow::peak_pulse_current},
+         {"junction_capacitance", &DiodeRow::junction_capacitance}},
+        {{"technology", &DiodeRow::technology},
+         {"clamping_waveform", &DiodeRow::clamping_waveform},
+         {"peak_pulse_power_waveform", &DiodeRow::peak_pulse_power_waveform},
+         {"peak_pulse_current_waveform", &DiodeRow::peak_pulse_current_waveform}},
         {{"is_production", &DiodeRow::is_production}},
         {}};
     return t;
@@ -574,6 +582,7 @@ json browse_rows(const Shard<Row>& shard, const json& query) {
         o["heightM"] = std::isnan(r.height_m) ? json(nullptr) : json(r.height_m);
         if (!r.case_code.empty()) o["caseCode"] = r.case_code;
         if (!r.mount.empty()) o["mount"] = r.mount;
+        if (r.provenance_retracted) o["provenanceRetracted"] = true;  // ABT #2035
         for (const auto& [name, mem] : t.nums) {
             double v = r.*mem;
             if (std::isnan(v)) o[name] = nullptr;

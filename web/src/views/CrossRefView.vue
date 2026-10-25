@@ -308,7 +308,7 @@ function openPart(r) {
 
         <template v-else-if="result">
           <p v-if="!result.origVerified" class="honesty mono" data-testid="honesty-banner">
-            original's {{ result.missing.join(', ') }} not documented — candidates are capped at
+            <template v-if="result.missing.length">original's {{ result.missing.join(', ') }} not documented</template><template v-if="result.missing.length && result.originalRetracted">; </template><template v-if="result.originalRetracted">every source of the original's record is retracted</template> — candidates are capped at
             “partial” (a substitute can't be cleanly recommended against an unverified original)
           </p>
 

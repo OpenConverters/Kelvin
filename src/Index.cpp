@@ -79,7 +79,10 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // rating against a 10 %-drop one as if they were the same number (ABT #2042).
 // v16 carries a timing device's operating-temperature range (TimingRow.temp_min_c /
 // temp_max_c), which the cross-reference compares (ABT #2033, #2046).
-constexpr uint32_t kFormatVersion = 16;
+// v17 carries a tvs/esd diode's surge, clamp and capacitance specs with their stated
+// waveforms (ABT #2036, #2040, #2041, #2048-#2051), and on EVERY family's row whether all of
+// the record's provenance is retracted (RowBase.provenance_retracted, ABT #2035).
+constexpr uint32_t kFormatVersion = 17;
 
 // Identity of the code that produces rows, so a cached shard can be recognised as
 // having been built by a DIFFERENT extractor than the one running now (ABT #426).
@@ -215,6 +218,7 @@ void io_base(Ar& ar, RowBase& r) {
     ar.dbl(r.height_m);
     ar.str(r.case_code);
     ar.str(r.mount);
+    ar.boolean(r.provenance_retracted);  // v17
 }
 
 template <class Ar>
@@ -253,6 +257,14 @@ void row_io(Ar& ar, DiodeRow& r) {
     ar.dbl(r.rth_jc);
     ar.dbl(r.tj_max);
     ar.str(r.technology);
+    ar.dbl(r.clamping_voltage);        // v17
+    ar.dbl(r.clamping_current);        // v17
+    ar.dbl(r.peak_pulse_power);        // v17
+    ar.dbl(r.peak_pulse_current);      // v17
+    ar.dbl(r.junction_capacitance);    // v17
+    ar.str(r.clamping_waveform);       // v17
+    ar.str(r.peak_pulse_power_waveform);    // v17
+    ar.str(r.peak_pulse_current_waveform);  // v17
     ar.boolean(r.is_production);
 }
 
@@ -578,6 +590,7 @@ void parse_region(const std::string& path, const std::string& content, size_t be
                 row->lineno = phys;
                 row->src_offset = static_cast<uint64_t>(i);
                 row->src_length = static_cast<uint32_t>(raw_len);
+                row->provenance_retracted = all_provenance_retracted(env);
                 out.rows.push_back(std::move(*row));
                 out.meta.row_count += 1;
             } else {

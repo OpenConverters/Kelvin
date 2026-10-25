@@ -204,13 +204,26 @@ export const XREF = [
     spec: (r) => ({ ...base(r), vrrm: nz(r.vrrm_rated), if_avg: nz(r.if_avg_rated), vf: nz(r.vf_typ),
       qrr: r.qrr ?? null, trr: r.trr ?? null, technology: r.technology ?? '',
       vz_min_V: nz(r.vz_min), vz_max_V: nz(r.vz_max),
-      vz_tolerance_pct: r.vz_tolerance != null ? r.vz_tolerance * 100 : null }),
+      vz_tolerance_pct: r.vz_tolerance != null ? r.vz_tolerance * 100 : null,
+      // tvs / esd protection specs, each with the impulse it is stated at: the ranker
+      // compares a surge rating only against one stated at the SAME waveform
+      // (ABT #2036, #2040, #2041, #2048-#2051). Empty waveform = not stated.
+      clamping_voltage: nz(r.clamping_voltage), clamping_current: nz(r.clamping_current),
+      peak_pulse_power: nz(r.peak_pulse_power), peak_pulse_current: nz(r.peak_pulse_current),
+      junction_capacitance: nz(r.junction_capacitance),
+      clamping_waveform: r.clamping_waveform ?? '',
+      peak_pulse_power_waveform: r.peak_pulse_power_waveform ?? '',
+      peak_pulse_current_waveform: r.peak_pulse_current_waveform ?? '' }),
     params: [
       { key: 'vrrm', label: 'Vrrm', row: 'vrrm_rated', unit: 'V' },
       { key: 'if_avg', label: 'If avg', row: 'if_avg_rated', unit: 'A' },
       { key: 'vf', label: 'Vf', row: 'vf_typ', unit: 'V' },
       { key: 'qrr', label: 'Qrr', row: 'qrr', unit: 'C' },
       { key: 'vz_tolerance_pct', label: 'Vbr tol', row: 'vz_tolerance', unit: '%', scale: 100 },
+      { key: 'clamping_voltage', label: 'Vc', row: 'clamping_voltage', unit: 'V' },
+      { key: 'peak_pulse_power', label: 'Ppk', row: 'peak_pulse_power', unit: 'W' },
+      { key: 'peak_pulse_current', label: 'Ipp', row: 'peak_pulse_current', unit: 'A' },
+      { key: 'junction_capacitance', label: 'Cj', row: 'junction_capacitance', unit: 'F' },
     ],
   },
 ]
@@ -254,6 +267,9 @@ export function base(r) {
     case_code: r.caseCode ?? '',
     mount: r.mount ?? '',
     is_production: r.is_production,
+    // Every provenance entry of the record is retracted: the ranker treats its data as
+    // unverified (ABT #2035).
+    provenance_retracted: r.provenanceRetracted === true,
   }
 }
 
@@ -349,12 +365,14 @@ export async function runCrossRef({ family, original, manufacturers, sameType = 
   const rows = pool.rows.filter((r) => !(r.mpn === original.mpn && r.manufacturer === original.manufacturer))
   const rowByKey = new Map(rows.map((r) => [keyOf(r), r]))
   const missing = originalMissing(f, origSpec)
-  const origVerified = missing.length === 0
+  // An original whose every source is retracted is not a verified spec either (ABT #2035).
+  const origVerified = missing.length === 0 && original.provenanceRetracted !== true
   const ranked = rows.length
     ? (await crossReference(f.category, { ...origSpec, _key: keyOf(original) },
         rows.map((r) => ({ ...f.spec(r), _key: keyOf(r) })),
         { original_verified: origVerified, max_results: Number(maxResults) })).candidates
     : []
   return { fam: f, origSpec, ranked, rowByKey, poolTotal: pool.total,
-           poolScored: rows.length, origVerified, missing }
+           poolScored: rows.length, origVerified, missing,
+           originalRetracted: original.provenanceRetracted === true }
 }

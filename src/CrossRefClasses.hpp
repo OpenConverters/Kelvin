@@ -491,6 +491,46 @@ inline std::string sulfur_resistance_conflict(const std::string& substitute_fami
            "before using it where the original's anti-sulfuration was the reason for it";
 }
 
+// ── TVS polarity, from the classic series part number ───────────────────────
+// SAS records state no polarity, but the classic TVS series encode it in the order code
+// the same way at every vendor: <series><standoff V><grade>, where a grade beginning
+// with C (C / CA) is BIDIRECTIONAL and A (or no grade letter) is unidirectional —
+// 15KP30CA / 15KP30A, SMBJ15CA / SMBJ15A, 3KP210C / 3KP210. A unidirectional part does
+// not clamp a negative excursion (it conducts as a forward diode), so it is not a
+// substitute for a bidirectional one (ABT #2038, #2049). Only the series listed here are
+// decoded; any other part number is UNKNOWN, never guessed.
+enum class TvsPolarity { Unknown, Uni, Bi };
+
+inline TvsPolarity tvs_polarity_from_mpn(const std::string& mpn) {
+    std::string u;
+    for (char c : mpn) u += static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    // Longest first, so 15KPA is not read as 15KP + "A…".
+    static const char* const kSeries[] = {"5.0SMDJ", "1.5SMC", "1.5SMB", "30KPA", "20KPA",
+                                          "15KPA",   "1.5KE",  "P4SMA",  "P6SMB", "P4KE",
+                                          "P6KE",    "SMAJ",   "SMBJ",   "SMCJ",  "SMDJ",
+                                          "SMLJ",    "15KP",   "5KP",    "3KP",   "SA"};
+    for (const char* series : kSeries) {
+        const std::string p(series);
+        if (u.compare(0, p.size(), p) != 0) continue;
+        size_t i = p.size();
+        const size_t digits_at = i;
+        while (i < u.size() && std::isdigit(static_cast<unsigned char>(u[i]))) ++i;
+        if (i == digits_at) return TvsPolarity::Unknown;  // no standoff code: not this series
+        if (i + 1 < u.size() && u[i] == '.' && std::isdigit(static_cast<unsigned char>(u[i + 1]))) {
+            ++i;
+            while (i < u.size() && std::isdigit(static_cast<unsigned char>(u[i]))) ++i;
+        }
+        if (i == u.size()) return TvsPolarity::Uni;
+        const char g = u[i];
+        if (g == 'C') return TvsPolarity::Bi;
+        if (g == 'A') return TvsPolarity::Uni;
+        // No grade letter, straight into a packing / qualification suffix (SMBJ15-E3/52).
+        if (g == '-' || g == '/' || g == '_' || g == ' ') return TvsPolarity::Uni;
+        return TvsPolarity::Unknown;
+    }
+    return TvsPolarity::Unknown;
+}
+
 // ── Diode device configuration: two-terminal discrete vs bridge module ───────
 // The ranker models a catalogue "diode" as a two-terminal device: one Vrrm, one
 // Vf, one If(AV), two pads. A single-phase BRIDGE RECTIFIER is a different

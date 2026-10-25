@@ -373,17 +373,23 @@ std::optional<DiodeRow> extract_diode(const json& env) {
     const std::string sub = get_str(*part, "subType").value_or("");
     const bool rectifier_like = (sub != "zener" && sub != "tvs" && sub != "esd");
 
-    auto vrrm = get_num(*elec, "reverseVoltage");
+    const bool protection = (sub == "tvs" || sub == "esd");
+    // A protection diode's working rating is its STANDOFF voltage, and only that. Reading
+    // reverseVoltage first took the BREAKDOWN maximum some importers wrote there: P6KE180A
+    // (standoff 180 V) reached the ranker as a 221 V part and passed a 210 V original's
+    // check while already conducting at 200 V (ABT #2047). Every tvs/esd record states a
+    // standoff; one that does not is unreadable, not read from another field.
+    std::optional<double> vrrm =
+        protection ? resolve_field(*elec, "standoffVoltage") : get_num(*elec, "reverseVoltage");
     auto if_avg = get_num(*elec, "forwardCurrent");
     auto vf = get_num(*elec, "forwardVoltage");
-    if (!pos(vrrm)) {
+    if (!pos(vrrm) && sub == "zener") {
         // resolve_field, NOT get_num: a zener's breakdownVoltage is a
         // dimensionWithTolerance ({minimum, nominal, maximum} — Vz is a graded range, so
         // all 8,274 of them are objects), and get_num reads none of it. Using it left
         // every zener unindexed even after the subtype gate was fixed, which looked like
         // the gate had not worked at all.
-        if (sub == "zener") vrrm = resolve_field(*elec, "breakdownVoltage");
-        else if (sub == "tvs" || sub == "esd") vrrm = resolve_field(*elec, "standoffVoltage");
+        vrrm = resolve_field(*elec, "breakdownVoltage");
     }
     if (!pos(vrrm)) return std::nullopt;
     if (rectifier_like && (!pos(if_avg) || !pos(vf))) return std::nullopt;
@@ -430,6 +436,16 @@ std::optional<DiodeRow> extract_diode(const json& env) {
         if (pos(lo) && pos(hi) && *hi >= *lo) r.vz_tolerance = (*hi - *lo) / (*hi + *lo);
     }
     r.technology = get_str(*part, "subType").value_or("");
+    // The surge / clamp / capacitance specs, each with the impulse it was stated at
+    // (ABT #2036, #2040, #2041, #2048-#2051). Absent stays NaN / "", never a default.
+    if (auto v = get_num(*elec, "clampingVoltage"); pos(v)) r.clamping_voltage = *v;
+    if (auto v = get_num(*elec, "clampingCurrent"); pos(v)) r.clamping_current = *v;
+    if (auto v = get_num(*elec, "peakPulsePower"); pos(v)) r.peak_pulse_power = *v;
+    if (auto v = get_num(*elec, "peakPulseCurrent"); pos(v)) r.peak_pulse_current = *v;
+    if (auto v = get_num(*elec, "junctionCapacitance"); pos(v)) r.junction_capacitance = *v;
+    r.clamping_waveform = get_str(*elec, "clampingWaveform").value_or("");
+    r.peak_pulse_power_waveform = get_str(*elec, "peakPulsePowerWaveform").value_or("");
+    r.peak_pulse_current_waveform = get_str(*elec, "peakPulseCurrentWaveform").value_or("");
     auto status = get_str(*mi, "status");
     r.is_production = status.has_value() && *status == "production";
     const json* thermal = obj_get(*di, "thermal");
@@ -442,6 +458,28 @@ std::optional<DiodeRow> extract_diode(const json& env) {
         if (tj) r.tj_max = *tj;
     }
     return r;
+}
+
+// Every record nests its manufacturerInfo one or two levels down ({"capacitor": {…}},
+// {"semiconductor": {"diode": {…}}}); find it without knowing the family.
+static const json* find_manufacturer_info(const json& o, int depth) {
+    if (!o.is_object() || depth > 2) return nullptr;
+    if (const json* mi = obj_get(o, "manufacturerInfo")) return mi;
+    for (const auto& [k, v] : o.items())
+        if (const json* mi = find_manufacturer_info(v, depth + 1)) return mi;
+    return nullptr;
+}
+
+bool all_provenance_retracted(const json& env) {
+    const json* mi = find_manufacturer_info(env, 0);
+    const json* di = mi ? obj_get(*mi, "datasheetInfo") : nullptr;
+    const json* pv = di ? obj_get(*di, "provenance") : nullptr;
+    if (!pv || !pv->is_array() || pv->empty()) return false;
+    for (const json& e : *pv) {
+        const json* r = e.is_object() ? obj_get(e, "retracted") : nullptr;
+        if (!r || !r->is_boolean() || !r->get<bool>()) return false;
+    }
+    return true;
 }
 
 std::optional<CapacitorRow> extract_capacitor(const json& env) {
