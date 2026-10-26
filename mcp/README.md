@@ -114,7 +114,7 @@ codex mcp add kelvin --url https://kelvin.openconverters.com/mcp               #
 Cursor / VS Code / Gemini CLI / ChatGPT connectors: add a remote server with that URL.
 Discovery for agents and crawlers that do not speak MCP yet: `/llms.txt`,
 `/.well-known/mcp/server-card.json` (also `/.well-known/mcp.json`), and `mcp/server.json` for the
-official MCP registry (`com.openconverters/kelvin`; publishing it is a manual, authenticated step).
+official MCP registry (`io.github.OpenConverters/kelvin`; publishing it is a manual, authenticated step).
 The server also offers three prompts (`find_replacement`, `shortlist_parts`, `spec_landscape`).
 
 ## Tools

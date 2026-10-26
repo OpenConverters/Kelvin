@@ -1,8 +1,8 @@
 {
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
-  "name": "com.openconverters/kelvin",
+  "name": "io.github.OpenConverters/kelvin",
   "title": "Kelvin — power electronics components",
-  "description": "Read-only, deterministic parts catalogue for power electronics: search, lookup, selection, cross-reference, spec distributions.",
+  "description": "Read-only parts catalogue for power electronics: search, selection, cross-reference.",
   "websiteUrl": "https://kelvin.openconverters.com",
   "version": "0.1.0",
   "remotes": [{"type": "streamable-http", "url": "https://kelvin.openconverters.com/mcp"}]
