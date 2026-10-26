@@ -85,6 +85,20 @@ run at once as separate connectors.
    same misleading OAuth error. A connector added earlier serves a *cached* tool list — remove
    and re-add it after the tool surface changes.
 
+## Public deployment (kelvin.openconverters.com/mcp)
+
+Live at `https://kelvin.openconverters.com/mcp` — add it as a custom connector (no sign-in). It
+is a **second instance** beside Moebius's `moebius-kelvin.service` (:8402, loopback), run as
+`kelvin-mcp-public.service` (`web/scripts/kelvin-mcp-public.service`, :8412, `KELVIN_PUBLIC_MODE=1`)
+from `/cache/kelvin-mcp-public/` (code rsynced from `mcp/`; `build` and `web` symlink to the
+Moebius engine copy; its own `index/`). nginx proxies `/mcp` to it (`web/scripts/nginx-kelvin.conf`).
+
+Public mode serves the seven read-only catalogue tools only. The BOM tools read a file the caller
+names, so they are not registered (and their widget is dropped) unless `KELVIN_ARTIFACT_BASE` is
+set, and then only `artifact://` references are accepted. There is no auth, by decision: the
+catalogue is already public on the site. To update: rsync `mcp/` to the box and
+`systemctl restart kelvin-mcp-public`.
+
 ## Tools
 
 Nine. The catalogue has twelve families and dozens of query shapes; collapsing them into one
