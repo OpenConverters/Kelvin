@@ -15,14 +15,9 @@ Facts every form asks for:
 |---|---|---|
 | Official MCP registry | `mcp-publisher publish` (org namespace needs an Owner PAT with `read:org`) | **published** |
 | PulseMCP | ingests the official registry automatically | nothing to do; check pulsemcp.com/servers after the next weekly crawl |
-| Glama | indexes public GitHub repos; `glama.json` in the repo root names the maintainer for claiming | file added; claim at glama.ai/mcp/servers once indexed |
+| Glama | auto-ingested from the official registry | **listed:** https://glama.ai/mcp/connectors/io.github.OpenConverters/kelvin (scored badge live); `glama.json` names the maintainer for claiming |
 | Smithery | smithery.ai/new → "URL" (external remote server), GitHub login | needs the owner's login |
 | mcp.so | mcp.so/submit form, GitHub login | needs the owner's login |
-| awesome-mcp-servers (punkpeanut) | pull request adding a line under the electronics / hardware section | needs a GitHub login (`gh auth login`) |
+| awesome-remote-mcp-servers (punkpeye) | pull request, Science & Research; requires a Glama connector badge (Glama ingested us from the official registry) | **PR open: punkpeye/awesome-remote-mcp-servers#3021** |
+| awesome-mcp-servers (punkpeye) | out of scope: that list is for installable servers, remote-only ones go to the list above | not applicable |
 | MCP Market, Cursor Directory, others | web forms with the facts above | needs the owner's login |
-
-PR line for awesome-mcp-servers:
-
-```
-- [OpenConverters/Kelvin](https://github.com/OpenConverters/Kelvin) 🐍 ☁️ - Read-only parts catalogue for power electronics (~1.4 M MOSFETs, diodes, capacitors, resistors, magnetics, controllers…): parametric search, selection, scored cross-reference. Remote: https://kelvin.openconverters.com/mcp
-```
