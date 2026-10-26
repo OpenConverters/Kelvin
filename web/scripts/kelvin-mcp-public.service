@@ -18,6 +18,7 @@ Environment=KELVIN_TAS_DATA_DIR=/cache/kelvin-tas
 Environment=KELVIN_SHARD_DIR=/cache/kelvin
 # Its own index dir: never share shards with the Moebius instance or the site.
 Environment=KELVIN_INDEX_DIR=/cache/kelvin-mcp-public/index
+Environment=KELVIN_USAGE_LOG=/cache/kelvin-mcp-public/usage/usage.jsonl
 ExecStart=/cache/moebius/venv/bin/python /cache/moebius/engines/kelvin/mcp/server.py
 Restart=on-failure
 RestartSec=5

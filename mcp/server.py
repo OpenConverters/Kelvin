@@ -35,6 +35,7 @@ import re
 import subprocess
 import sys
 import threading
+import time
 import uuid
 from pathlib import Path
 
@@ -220,6 +221,157 @@ INSTRUCTIONS = (
 mcp = FastMCP("Kelvin", instructions=INSTRUCTIONS, website_url="https://kelvin.openconverters.com",
               host="127.0.0.1", port=PORT, transport_security=_security,
               stateless_http=PUBLIC_MODE)
+
+
+# --- usage log + health -------------------------------------------------------
+# What the operator needs to know to improve the catalogue, and nothing that identifies a person:
+# tool, family, outcome, empty-or-not and duration. No IP, no header, no argument values — a
+# search's filters can name a project's parts, so they stay out. One JSON line per call to
+# KELVIN_USAGE_LOG (unset = no logging).
+USAGE_LOG = os.environ.get("KELVIN_USAGE_LOG", "").strip()
+_usage_lock = threading.Lock()
+
+
+def _usage_record(name: str, arguments: dict | None, ok: bool, result, seconds: float) -> None:
+    family = (arguments or {}).get("family")
+    payload = getattr(result, "structuredContent", None) if result is not None else None
+    empty = None
+    if ok and isinstance(payload, dict):
+        if "candidates" in payload:
+            empty = not payload["candidates"]
+    line = {"t": int(time.time()), "tool": name,
+            "family": family if isinstance(family, str) and len(family) < 24 else None,
+            "ok": ok, "empty": empty, "ms": int(seconds * 1000)}
+    with _usage_lock, open(USAGE_LOG, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(line) + "\n")
+
+
+def _instrument_usage() -> None:
+    """Wrap the tool manager's dispatch so every tool call leaves one usage line."""
+    if not USAGE_LOG:
+        return
+    Path(USAGE_LOG).parent.mkdir(parents=True, exist_ok=True)
+    manager = mcp._tool_manager
+    original = manager.call_tool
+
+    async def logged(name, arguments, *args, **kwargs):
+        started = time.monotonic()
+        try:
+            result = await original(name, arguments, *args, **kwargs)
+        except Exception:
+            _usage_record(name, arguments, False, None, time.monotonic() - started)
+            raise
+        _usage_record(name, arguments, True, result, time.monotonic() - started)
+        return result
+
+    manager.call_tool = logged
+
+
+from starlette.responses import JSONResponse   # noqa: E402
+
+
+@mcp.custom_route("/health", methods=["GET"])
+async def health(_request):
+    """Liveness for the restart check: the engine module is loaded and the catalogue is there.
+
+    Deliberately cheap — it must answer in milliseconds even while a search is running, and it
+    reports no paths, versions or counts.
+    """
+    try:
+        ok = bool(kelvin.family_names()) and Path(_data_dir()).is_dir()
+    except Exception:                                   # noqa: BLE001 — any failure is "unhealthy"
+        ok = False
+    return JSONResponse({"ok": ok}, status_code=200 if ok else 503)
+
+
+# --- per-part pages ---------------------------------------------------------
+# https://<host>/part/<family>/<mpn> — one part as a plain HTML page with schema.org JSON-LD, and
+# the same as JSON at <mpn>.json. The web app is a client-rendered SPA, which a crawler or an AI
+# fetcher cannot read; this is the citable, indexable form of a part. Public mode only (the page
+# is a lookup of the open catalogue, like the tools).
+
+import html as _html                              # noqa: E402
+from urllib.parse import quote as _quote          # noqa: E402
+from starlette.responses import HTMLResponse      # noqa: E402
+
+
+def _part_lookup(family: str, mpn: str, manufacturer: str | None):
+    """(row, record, other_rows) for an EXACT MPN; None when absent. Pure lookup, no search."""
+    key = _family(family)
+    page = _browse(key, {"filters": {"mpn": mpn}, "limit": 50})
+    rows = [r for r in (page.get("rows") or []) if (r.get("mpn") or "").lower() == mpn.lower()]
+    if manufacturer:
+        rows = [r for r in rows if (r.get("manufacturer") or "").lower() == manufacturer.lower()]
+    if not rows:
+        return key, None, None, []
+    row = rows[0]
+    record = _eng_handle().fetch_record(key, row["srcOffset"], row["srcLength"])
+    return key, row, record, rows[1:]
+
+
+def _part_page(key: str, row: dict, record, others: list, base: str) -> str:
+    numeric = kelvin.family_fields(key)["numeric"]
+    strings = kelvin.family_fields(key)["string"]
+    esc = _html.escape
+    rows_html = "".join(
+        f"<tr><th>{esc(n)}</th><td>{esc(f'{row[n]:.6g}')} <small>({esc(_eng(row[n]))})</small></td></tr>"
+        for n in numeric if row.get(n) is not None)
+    rows_html += "".join(
+        f"<tr><th>{esc(n)}</th><td>{esc(str(row[n]))}</td></tr>"
+        for n in strings if row.get(n))
+    info = (record or {}).get("manufacturerInfo") or {}
+    datasheet = _retagged(info.get("datasheetUrl") or "")
+    title = f"{row['mpn']} — {row.get('manufacturer') or 'unknown manufacturer'} ({key})"
+    ld = {"@context": "https://schema.org", "@type": "Product", "mpn": row["mpn"],
+          "name": title, "category": f"Electronic components / {key}",
+          "brand": {"@type": "Brand", "name": row.get("manufacturer") or ""},
+          **({"url": datasheet} if datasheet.startswith("https://") else {})}
+    also = "".join(
+        f'<li><a href="{base}/part/{_quote(key)}/{_quote(o["mpn"], safe="")}'
+        f'?manufacturer={_quote(o.get("manufacturer") or "", safe="")}">'
+        f'{esc(o["mpn"])} — {esc(o.get("manufacturer") or "")}</a></li>' for o in others)
+    return (
+        "<!doctype html><html lang=en><head><meta charset=utf-8>"
+        "<meta name=viewport content='width=device-width,initial-scale=1'>"
+        f"<title>{esc(title)} — Kelvin</title>"
+        f"<meta name=description content='{esc(title)}: specifications from the Kelvin open "
+        f"power-electronics component catalogue.'>"
+        f'<script type="application/ld+json">{json.dumps(ld).replace("</", "<\\/")}</script>'
+        "<style>body{font:16px/1.5 system-ui,sans-serif;max-width:46rem;margin:2rem auto;"
+        "padding:0 1rem}th{text-align:left;padding-right:1.5rem;color:#555}td,th{padding:.15rem 0}"
+        "</style></head><body>"
+        f"<h1>{esc(row['mpn'])}</h1><p>{esc(row.get('manufacturer') or '')} · {esc(key)}"
+        f"{' · case ' + esc(str(row['caseCode'])) if row.get('caseCode') else ''}</p>"
+        f"<table>{rows_html}</table>"
+        + (f'<p><a href="{esc(datasheet)}" rel="nofollow">Datasheet</a></p>' if datasheet else "")
+        + (f"<p>Same MPN from other manufacturers:</p><ul>{also}</ul>" if also else "")
+        + "<p>Values are SI base units; a spec not listed is not stated in the part's record "
+          "(it is not zero). Machine access: MCP at <a href=\"/mcp\">/mcp</a>, "
+          "<a href=\"/llms.txt\">/llms.txt</a>. Open catalogue — "
+          f'<a href="{base}/">Kelvin</a>.</p></body></html>')
+
+
+@mcp.custom_route("/part/{family}/{mpn:path}", methods=["GET"])
+async def part_page(request):
+    mpn = request.path_params["mpn"]
+    as_json = mpn.endswith(".json")
+    if as_json:
+        mpn = mpn[:-5]
+    manufacturer = request.query_params.get("manufacturer")
+    try:
+        key, row, record, others = await anyio.to_thread.run_sync(
+            _part_lookup, request.path_params["family"], mpn, manufacturer)
+    except ValueError as error:                       # unknown family
+        return JSONResponse({"error": str(error)}, status_code=404)
+    if row is None:
+        return JSONResponse({"error": f"no {key} with MPN {mpn!r}"}, status_code=404)
+    base = "https://" + (_public_host or "kelvin.openconverters.com")
+    if as_json:
+        return JSONResponse(_retagged({"family": key, "part": _row_candidate(row),
+                                       "record": record,
+                                       "sameMpnOtherManufacturers": [o.get("manufacturer")
+                                                                     for o in others]}))
+    return HTMLResponse(_part_page(key, row, record, others, base))
 
 
 # --- helpers ----------------------------------------------------------------
@@ -2007,6 +2159,7 @@ def build_app():
             mcp.remove_tool(tool)
         UI_BUNDLES.pop(UI_CROSSREF_URI, None)
         mcp._resource_manager._resources.pop(UI_CROSSREF_URI, None)
+    _instrument_usage()
     assert_widgets_resolve()
     app = mcp.streamable_http_app()
     app.add_middleware(

@@ -1,0 +1,6 @@
+[Unit]
+Description=Kelvin MCP health check (restarts the service when it stops answering)
+
+[Service]
+Type=oneshot
+ExecStart=/cache/kelvin-mcp-public/kelvin-mcp-health.sh
