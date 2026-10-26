@@ -29,9 +29,11 @@
 - A part whose record does not state a field is excluded by a filter on it; absence is never 0.
 - If the original part's record is incomplete, no substitute is graded "recommended".
 - Results are capped: search returns at most the first 1000 matches; narrow the filters instead of paging.
+- Licence: data CC BY 4.0 (attribute "Kelvin parts catalogue, OpenConverters"), code MIT. Check the datasheet before relying on a value.
 - Fair use: the server rate-limits per client. Do not crawl; ask specific questions.
 
 ## Source and code
 
 - Web app: https://kelvin.openconverters.com
 - Code: https://github.com/OpenConverters/Kelvin
+- Per-part pages (HTML + JSON-LD): https://kelvin.openconverters.com/part/<family>/<mpn> (append .json for JSON)
