@@ -27,7 +27,7 @@ from starlette.responses import JSONResponse
 
 API_VERSION = "v1"
 _PREFIX = f"/api/{API_VERSION}"
-_PUBLIC = {"_permalink": "permalink", "_sourceUrl": "sourceUrl"}
+_PUBLIC = {"_permalink": "permalink", "_sourceUrl": "sourceUrl", "_reportUrl": "reportUrl"}
 
 # Per-IP sliding window, in memory only: the address is never written anywhere (the usage log
 # and telemetry deliberately carry no IP).
@@ -166,6 +166,17 @@ def register(mcp, S) -> None:
         facets = q.get("with_facets", "false").lower() in ("1", "true", "yes")
         return await run(request, "search", fam, lambda: S.search_parts(fam, filters, sort, limit, offset, facets))
 
+    @mcp.custom_route(f"{_PREFIX}/quality", methods=["GET"])
+    async def api_quality(request):
+        wait = _limited(request)
+        if wait is not None:
+            return error(429, "rate_limited", "rate limit", {"Retry-After": str(int(wait + 1))})
+        doc = S._quality_doc()
+        if doc is None:
+            return error(503, "unavailable", "no quality report published yet")
+        return JSONResponse({"dataVersion": S._data_version(), **doc},
+                            headers={"Cache-Control": "public, max-age=3600"})
+
     @mcp.custom_route(f"{_PREFIX}/openapi.json", methods=["GET"])
     async def api_openapi(_request):
         return JSONResponse(openapi(base()), headers={"Cache-Control": "public, max-age=3600"})
@@ -193,6 +204,7 @@ def openapi(server_url: str) -> dict:
         "servers": [{"url": server_url}],
         "paths": {
             f"{_PREFIX}/families": {"get": {"operationId": "listFamilies", "responses": {"200": ok}}},
+            f"{_PREFIX}/quality": {"get": {"operationId": "dataQuality", "responses": {"200": ok, "503": err}}},
             f"{_PREFIX}/part/{{family}}/{{mpn}}": {"get": {
                 "operationId": "getPart", "parameters": [family, mpn, maker], "responses": responses}},
             f"{_PREFIX}/crossref/{{family}}/{{mpn}}": {"get": {

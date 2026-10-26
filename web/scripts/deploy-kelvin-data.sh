@@ -229,4 +229,6 @@ if [[ -z "${SKIP_SITEMAPS:-}" ]]; then
   "$HERE/scripts/build-sitemaps.sh" "$SRC"
   "$HERE/scripts/ship-sitemaps.sh"
 fi
+# 7. The public /quality page, from the latest metrics run (refuses a stale run).
+if [[ -z "${SKIP_QUALITY:-}" ]]; then "$HERE/scripts/ship-quality.sh"; fi
 echo "Kelvin data deploy verified."

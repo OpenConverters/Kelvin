@@ -6,3 +6,4 @@ test-results/
 playwright-report/
 src/generated/
 .sitemaps/
+.quality/

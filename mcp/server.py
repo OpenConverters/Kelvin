@@ -495,6 +495,9 @@ def _part_page(key: str, row: dict, record, others: list, base: str, found: dict
         f"{' · case ' + esc(str(row['caseCode'])) if row.get('caseCode') else ''}</p>"
         f"<table>{rows_html}</table>"
         + (f'<p><a href="{esc(datasheet)}" rel="nofollow">Datasheet</a></p>' if datasheet else "")
+        + f'<p><a href="{esc(_report_url(key, row["mpn"], row.get("manufacturer")))}" '
+          f'rel="nofollow">Report a problem with this part</a> (opens a public GitHub issue) · '
+          f'<a href="{base}/quality">data quality</a></p>'
         + _substitutes_html(key, row, found, base)
         + (f"<p>Same MPN from other manufacturers:</p><ul>{also}</ul>" if also else "")
         + "<p>Values are SI base units; a spec not listed is not stated in the part's record "
@@ -606,6 +609,84 @@ async def family_index(request):
         return JSONResponse({"error": f"{key} has no page {page_no}"}, status_code=404)
     base = "https://" + (_public_host or "kelvin.openconverters.com")
     return HTMLResponse(_index_page(key, page_no, rows, page["total"], base))
+
+
+# --- data quality (ABT #1924) -----------------------------------------------------------------
+# /quality is the catalogue's own measured quality, republished from the metrics run
+# (web/scripts/build-quality.py -> quality.json, shipped with each data deploy). Nothing here is
+# computed or rounded up: a number the metrics run did not produce does not appear.
+QUALITY_FILE = Path(os.environ.get("KELVIN_QUALITY_FILE", "").strip()
+                    or Path.home() / ".kelvin/quality.json")
+_QUALITY_COLUMNS = (("existence", "Part exists"), ("traced", "Fields traced to a source"),
+                    ("fields", "Core fields present"), ("curves", "Datasheet curves present"),
+                    ("url", "Source URL alive"), ("valid", "Schema-valid, physics-plausible"))
+
+
+def _quality_doc() -> dict | None:
+    try:
+        return json.loads(QUALITY_FILE.read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def _pct(v) -> str:
+    return "n/a" if v is None else f"{v * 100:.1f} %"
+
+
+def _quality_page(doc: dict, base: str) -> str:
+    esc = _html.escape
+    head = "".join(f"<th>{esc(label)}</th>" for _, label in _QUALITY_COLUMNS)
+    body = "".join(
+        f"<tr><th>{esc(fam)}</th><td>{f['live']:,}</td><td>{f['quarantined']:,}</td>"
+        f"<td><b>{_pct(f['quality'])}</b></td><td>{_pct(f['coverage'])}</td>"
+        + "".join(f"<td>{_pct(f['checks'].get(k))}</td>" for k, _ in _QUALITY_COLUMNS) + "</tr>"
+        for fam, f in doc["families"].items())
+    whole = doc["wholeDatabase"]
+    return (
+        "<!doctype html><html lang=en><head><meta charset=utf-8>"
+        "<meta name=viewport content='width=device-width,initial-scale=1'>"
+        "<title>Data quality — Kelvin</title>"
+        "<meta name=description content='How good the Kelvin component catalogue measurably is, "
+        "per family, from the latest quality run.'>"
+        "<style>body{font:16px/1.5 system-ui,sans-serif;max-width:64rem;margin:2rem auto;"
+        "padding:0 1rem}table{border-collapse:collapse;display:block;overflow-x:auto}"
+        "td,th{padding:.25rem .6rem;text-align:right;border-bottom:1px solid #ddd}"
+        "th:first-child{text-align:left}</style></head><body>"
+        f"<h1>Data quality</h1><p>Measured {esc(doc['date'])}. Whole TAS database: quality "
+        f"<b>{_pct(whole['quality'])}</b>, coverage <b>{_pct(whole['coverage'])}</b>. "
+        "These are the numbers the quality run produced, unrounded by hand and not curated.</p>"
+        "<table><tr><th>Family</th><th>Live parts</th><th>Quarantined</th><th>Quality</th>"
+        f"<th>Coverage</th>{head}</tr>{body}</table>"
+        "<h2>What the numbers mean</h2><ul>"
+        "<li><b>Quality</b> is a weighted checklist per part (the existence of the part, fields "
+        "traced to the source they were read from, core fields present, datasheet curves present, "
+        "a live source URL, schema validity and physics plausibility). It is a completeness and "
+        "evidence score, <b>not an accuracy rate</b>: a part can score low because its record is "
+        "sparse and still be correct.</li>"
+        "<li><b>Quarantined</b> rows are held out of the live catalogue pending review and count "
+        "as zero in the family's quality.</li>"
+        "<li><b>Coverage</b> is live parts divided by the estimated number of in-scope parts in "
+        "the datasheet archive the catalogue is measured against.</li>"
+        "<li>&ldquo;Fields traced to a source&rdquo; is the honest provenance number: how much of "
+        "each record is covered by a source it was actually read from, rather than a URL it "
+        "merely cites.</li></ul>"
+        "<h2>Controls</h2><ul>"
+        "<li>A fabricated-parts check runs before every shard build and every data deploy; a "
+        "failure blocks the build.</li>"
+        "<li>The Blade Runner physics validator flags impossible and suspicious values; flagged "
+        "parts lose quality and show as findings.</li>"
+        "<li>Every part page links to a public issue form for reporting a wrong value; reports "
+        "are mirrored into the fix loop.</li></ul>"
+        f'<p>JSON: <a href="{base}/api/v1/quality">/api/v1/quality</a> · '
+        f'<a href="{base}/">Kelvin</a></p></body></html>')
+
+
+@mcp.custom_route("/quality", methods=["GET"])
+async def quality_page(_request):
+    doc = _quality_doc()
+    if doc is None:
+        return JSONResponse({"error": "no quality report published yet"}, status_code=503)
+    return HTMLResponse(_quality_page(doc, "https://" + (_public_host or "kelvin.openconverters.com")))
 
 
 # --- helpers ----------------------------------------------------------------
@@ -799,6 +880,23 @@ def _permalink(family: str, mpn: str, manufacturer: str | None = None) -> str:
     return url + (f"?manufacturer={quote(manufacturer, safe='')}" if manufacturer else "")
 
 
+REPORT_REPO = "OpenConverters/Kelvin"
+
+
+def _report_url(family: str, mpn: str, manufacturer: str | None) -> str:
+    """A prefilled PUBLIC GitHub issue for a wrong part (ABT #1924). Public on purpose: the fix
+    loop reads it from there (web/scripts/triage-reports.py mirrors it into the private
+    tracker), and the reporter sees what happened to the report."""
+    from urllib.parse import urlencode
+    body = (f"Part: {_permalink(family, mpn, manufacturer)}\n"
+            f"Catalogue version: {_data_version()}\n\n"
+            "What is wrong (the field, the value Kelvin shows, the value on the datasheet, and "
+            "the datasheet page or link):\n\n")
+    return (f"https://github.com/{REPORT_REPO}/issues/new?"
+            + urlencode({"labels": "data-quality", "title": f"Wrong data: {mpn} ({family})",
+                         "body": body}))
+
+
 def _cited_parts(payload: dict) -> list[dict]:
     parts = [payload.get("part"), payload.get("original"), *(payload.get("candidates") or [])]
     return [p for p in parts if isinstance(p, dict) and p.get("mpn")]
@@ -822,6 +920,10 @@ def _cite(summary: str, payload: dict) -> str:
         datasheet = ((body or {}).get("manufacturerInfo") or {}).get("datasheetUrl")
         if datasheet:
             p["_sourceUrl"] = datasheet
+    if payload.get("mode") == "details" and isinstance(payload.get("part"), dict):
+        part = payload["part"]
+        part["_reportUrl"] = _report_url(family, part["mpn"], part.get("manufacturer"))
+        summary += f"\nWrong data? Report it (public issue): {part['_reportUrl']}"
     quoted = "\n".join(f"  {p['mpn']}: {p['_permalink']}" for p in parts[:6])
     return summary + (f"\nLinks (catalogue data version {version}):\n{quoted}" if quoted else "")
 

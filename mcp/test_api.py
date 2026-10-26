@@ -31,7 +31,7 @@ def strip(o):
     if isinstance(o, dict):
         return {k: strip(v) for k, v in o.items()
                 if k not in ("permalink", "sourceUrl", "dataVersion",
-                             "_permalink", "_sourceUrl", "_dataVersion")}
+                             "_permalink", "_sourceUrl", "_dataVersion", "reportUrl", "_reportUrl")}
     if isinstance(o, list):
         return [strip(v) for v in o]
     return o
@@ -161,3 +161,31 @@ def test_part_page_lists_substitutes_from_cache_then_survives_busy_worker(tmp_pa
     finally:
         S._page_xref_lock.release()
     assert busy.status_code == 200 and "Computed on request" in busy.text
+
+
+def test_quality_page_and_json_come_from_the_published_report(tmp_path, monkeypatch, client):
+    report = tmp_path / "quality.json"
+    monkeypatch.setattr(S, "QUALITY_FILE", report)
+    assert client.get("/quality").status_code == 503              # nothing published: say so
+    assert client.get("/api/v1/quality").status_code == 503
+    doc = {"date": "2026-10-26", "specVersion": "1", "wholeDatabase": {"quality": 0.64424, "coverage": 0.29404},
+           "families": {"igbt": {"live": 1978, "quarantined": 779, "quality": 0.29493, "coverage": 0.50485,
+                                 "checks": {"existence": 0.66382, "traced": 0.21149, "fields": 0.36725,
+                                            "curves": None, "url": 0.66317, "valid": 1.0}}}}
+    report.write_text(json.dumps(doc))
+    page = client.get("/quality").text
+    assert "64.4 %" in page and "29.5 %" in page and "n/a" in page and "not an accuracy rate" in page
+    assert client.get("/api/v1/quality").json()["families"]["igbt"]["quality"] == 0.29493
+
+
+def test_report_link_is_a_prefilled_public_issue_everywhere(client):
+    mpn = first_mpn(client)
+    html = client.get(f"/part/capacitor/{mpn}").text
+    assert "Report a problem with this part" in html
+    part = client.get(f"/api/v1/part/capacitor/{mpn}").json()["part"]
+    url = part["reportUrl"]
+    assert url.startswith("https://github.com/OpenConverters/Kelvin/issues/new?")
+    from urllib.parse import parse_qs, urlsplit
+    q = parse_qs(urlsplit(url).query)
+    assert mpn in q["title"][0] and part["permalink"] in q["body"][0] and q["labels"] == ["data-quality"]
+    assert url in S.part_details("capacitor", mpn).content[0].text
