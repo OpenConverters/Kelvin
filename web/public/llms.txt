@@ -1,0 +1,37 @@
+# Kelvin — power-electronics component catalogue for AI agents
+
+> Deterministic parts librarian over the TAS catalogue: about 1.4 million real parts across MOSFETs, diodes,
+> capacitors, resistors, magnetics (inductors, transformers, chokes, ferrite beads), controllers,
+> IGBTs, BJTs, varistors/TVS, analog ICs, timing devices and connectors. No LLM inside: every
+> answer is computed by Kelvin's C++ engine, with datasheet links and per-parameter verdicts.
+
+## Use it from an AI (Model Context Protocol, no sign-in)
+
+- MCP endpoint (Streamable HTTP): https://kelvin.openconverters.com/mcp
+- Server card: https://kelvin.openconverters.com/.well-known/mcp/server-card.json
+- Claude Code:  claude mcp add --transport http kelvin https://kelvin.openconverters.com/mcp
+- Codex CLI / Gemini CLI / Cursor / VS Code / ChatGPT connectors / any MCP client: add a remote
+  server with the URL above (transport: streamable-http, authentication: none).
+
+## Tools (all read-only)
+
+- list_families — the 12 component families; which have a selector and a cross-reference.
+- describe_family — exact filterable field names for one family. Call before search_parts.
+- search_parts — parametric search: numeric ranges, categorical values, MPN, manufacturer, facets.
+- part_details — one part by MPN with its full catalogue record and datasheet links.
+- recommend_parts — rank real parts for a designRequirements block (deterministic selector).
+- cross_reference — scored substitutes for an MPN, with per-parameter pass/warn/fail.
+- spec_distribution — histogram of one spec over a filtered slice (what is actually available).
+
+## Conventions that matter when answering
+
+- Values are SI base units (F, H, V, A, Ω, Hz, s); tolerance is a fraction.
+- A part whose record does not state a field is excluded by a filter on it; absence is never 0.
+- If the original part's record is incomplete, no substitute is graded "recommended".
+- Results are capped: search returns at most the first 1000 matches; narrow the filters instead of paging.
+- Fair use: the server rate-limits per client. Do not crawl; ask specific questions.
+
+## Source and code
+
+- Web app: https://kelvin.openconverters.com
+- Code: https://github.com/OpenConverters/Kelvin

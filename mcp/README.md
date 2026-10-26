@@ -96,8 +96,26 @@ Moebius engine copy; its own `index/`). nginx proxies `/mcp` to it (`web/scripts
 Public mode serves the seven read-only catalogue tools only. The BOM tools read a file the caller
 names, so they are not registered (and their widget is dropped) unless `KELVIN_ARTIFACT_BASE` is
 set, and then only `artifact://` references are accepted. There is no auth, by decision: the
-catalogue is already public on the site. To update: rsync `mcp/` to the box and
+catalogue is already public on the site. Abuse limits: nginx allows each client IP 40 requests/min
+(burst 20, 6 concurrent; excess gets HTTP 429 — `web/scripts/nginx-mcp-limits.conf` + the `/mcp`
+block), and a search returns at most its first 1000 matches (`PUBLIC_MAX_WINDOW`), so the catalogue
+is queried with filters, not paged out. To update: rsync `mcp/` to the box and
 `systemctl restart kelvin-mcp-public`.
+
+### Connecting any AI
+
+Plain MCP over Streamable HTTP, no sign-in, so nothing is Claude-specific:
+
+```bash
+claude mcp add --transport http kelvin https://kelvin.openconverters.com/mcp   # Claude Code
+codex mcp add kelvin --url https://kelvin.openconverters.com/mcp               # Codex CLI
+```
+
+Cursor / VS Code / Gemini CLI / ChatGPT connectors: add a remote server with that URL.
+Discovery for agents and crawlers that do not speak MCP yet: `/llms.txt`,
+`/.well-known/mcp/server-card.json` (also `/.well-known/mcp.json`), and `mcp/server.json` for the
+official MCP registry (`com.openconverters/kelvin`; publishing it is a manual, authenticated step).
+The server also offers three prompts (`find_replacement`, `shortlist_parts`, `spec_landscape`).
 
 ## Tools
 

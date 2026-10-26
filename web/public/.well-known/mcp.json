@@ -1,0 +1,13 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/mcp-server-card/v1.json",
+  "name": "com.openconverters/kelvin",
+  "title": "Kelvin — power electronics components",
+  "description": "Deterministic, read-only parts catalogue for power electronics (MOSFETs, diodes, capacitors, resistors, magnetics, controllers, IGBTs, BJTs, varistors/TVS, analog ICs, timing, connectors): parametric search, part lookup, requirement-based selection, scored cross-reference and spec distributions. No LLM inside.",
+  "websiteUrl": "https://kelvin.openconverters.com",
+  "documentationUrl": "https://kelvin.openconverters.com/llms.txt",
+  "remotes": [
+    {"type": "streamable-http", "url": "https://kelvin.openconverters.com/mcp"}
+  ],
+  "authentication": {"required": false},
+  "capabilities": {"tools": true, "prompts": true, "resources": true}
+}

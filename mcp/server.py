@@ -108,6 +108,14 @@ FAMILY_NOTES = {
 # invent. They are fully browsable.
 BROWSE_ONLY = ("analog", "timing")
 
+# Families the substitute ranker (CrossRef.hpp) has a parameter model for. The rest are refused
+# by name, never ranked with another family's model — say so up front instead of at call time.
+XREF_FAMILIES = ("magnetic", "capacitor", "resistor", "mosfet", "timing", "connector", "diode")
+
+# A public server must not be a bulk-export endpoint: the catalogue is searched with filters, not
+# paged end to end. A caller who needs more narrows the filters (facet counts say how).
+PUBLIC_MAX_WINDOW = 1000
+
 UNITS_NOTE = (
     "All values are SI base units (F, H, V, A, Ω, Hz, s, C, m) except where the field name says "
     "otherwise: temp_min_c / temp_max_c are °C, tolerance is a fraction (0.01 = 1 %), positions "
@@ -433,6 +441,29 @@ def _eng_handle():
         return _engine
 
 
+def _catalogue_drift(family: str, rows: int) -> str | None:
+    """Does the cross-reference's shard set describe the same catalogue as the native engine?
+
+    Two engines read two directories (see the README); if they disagree about how many parts a
+    family holds, search_parts and cross_reference silently answer about different catalogues.
+    Say so, in the result and on stderr, instead of letting the two quietly diverge.
+    """
+    shard_dir = (os.environ.get("KELVIN_SHARD_DIR", "").strip()
+                 or str(_REPO / "web" / "public" / "kelvin"))
+    try:
+        manifest = json.loads((Path(shard_dir) / "manifest.json").read_text())
+        theirs = manifest["families"][family]["rows"]
+    except (OSError, ValueError, KeyError):
+        return None                      # no manifest to compare with: nothing to assert
+    if theirs == rows:
+        return None
+    message = (f"catalogue mismatch for {family}: search/lookup see {rows:,} parts but the "
+               f"cross-reference shards in {shard_dir} describe {theirs:,} — point "
+               f"KELVIN_TAS_DATA_DIR and KELVIN_SHARD_DIR at the same catalogue.")
+    print("kelvin: " + message, file=sys.stderr)
+    return message
+
+
 def _browse(family: str, query: dict) -> dict:
     """browse(), with the family's own vocabulary attached to a bad-field error.
 
@@ -663,9 +694,11 @@ def list_families() -> CallToolResult:
         note, requires = FAMILY_NOTES.get(name, ("", []))
         families.append({"family": name, "holds": note,
                          "selector": name not in BROWSE_ONLY,
+                         "crossReference": name in XREF_FAMILIES,
                          "requirementKeys": requires})
         lines.append(f"  {name}: {note}"
-                     + ("" if name not in BROWSE_ONLY else "  [browse only]"))
+                     + ("" if name not in BROWSE_ONLY else "  [browse only]")
+                     + ("" if name in XREF_FAMILIES else "  [no cross_reference]"))
     return _result(
         f"{len(families)} component families:\n" + "\n".join(lines)
         + "\n\ndescribe_family gives one family's part count and the exact fields it can be "
@@ -693,8 +726,10 @@ def describe_family(family: str) -> CallToolResult:
     fields = kelvin.family_fields(key)
     note, requires = FAMILY_NOTES.get(key, ("", []))
     page = _browse(key, {"limit": 0})
+    drift = _catalogue_drift(key, page.get("rowCount"))
     return _result(
-        f"{key} — {note}, {page.get('rowCount'):,} parts.\n"
+        (f"WARNING: {drift}\n" if drift else "")
+        + f"{key} — {note}, {page.get('rowCount'):,} parts.\n"
         f"  numeric (filter {{min,max}}, sort, distribution): {', '.join(fields['numeric'])}\n"
         f"  categorical (filter as a list of values, facetable): "
         f"{', '.join(fields['string'] + fields['list']) or '(none)'}\n"
@@ -711,6 +746,8 @@ def describe_family(family: str) -> CallToolResult:
                     "categorical": fields["string"] + fields["list"],
                     "boolean": fields["boolean"]},
          "requires": requires, "selector": key not in BROWSE_ONLY,
+         "crossReference": key in XREF_FAMILIES,
+         **({"caveat": drift} if drift else {}),
          "catalogueTotal": page.get("rowCount"), "units": UNITS_NOTE})
 
 
@@ -741,6 +778,12 @@ def search_parts(family: str, filters: dict | None = None, sort: dict | None = N
     """
     key = _family(family)
     query: dict = {"limit": max(0, min(int(limit), 200)), "offset": max(0, int(offset))}
+    if PUBLIC_MODE and query["offset"] + query["limit"] > PUBLIC_MAX_WINDOW:
+        raise ValueError(
+            f"this public server returns at most the first {PUBLIC_MAX_WINDOW} matches of a "
+            f"search (offset + limit); narrow the filters instead of paging. with_facets=true "
+            f"shows which values and ranges are left to filter on, and spec_distribution shows "
+            f"how a spec is spread.")
     if filters:
         query["filters"] = filters
     if sort:
@@ -1875,6 +1918,40 @@ def crossref_bom_lines(crossref: str, status: str | None = None, offset: int = 0
 
 
 # --- the MCP Apps UI resource -----------------------------------------------
+
+# --- prompts ------------------------------------------------------------------
+# Reusable starting points for the questions this catalogue exists to answer. Any MCP client can
+# list them; they only tell the model WHICH tools to use and in what order — every verdict still
+# comes from the tools.
+
+@mcp.prompt(title="Find a replacement for a part")
+def find_replacement(mpn: str, family: str = "", target_manufacturers: str = "") -> str:
+    """Second-source / drop-in replacement search for one MPN."""
+    fam = (f"in the {family} family" if family else
+           "(call list_families first if the family is unclear)")
+    maker = (f" restricted to {target_manufacturers}" if target_manufacturers else "")
+    return (f"Find replacements for {mpn} {fam}{maker}. Use part_details to confirm the original "
+            f"is in the catalogue, then cross_reference. Report each substitute's per-parameter "
+            f"verdicts and failing checks, and say plainly when the original's own record is "
+            f"incomplete (the honesty cap) instead of calling anything a drop-in.")
+
+
+@mcp.prompt(title="Shortlist parts for a requirement")
+def shortlist_parts(family: str, requirement: str) -> str:
+    """Rank real, stocked parts against a plain-language requirement."""
+    return (f"Shortlist {family} parts for: {requirement}. Call describe_family({family!r}) for the "
+            f"exact fields and requirement keys, then recommend_parts with SI-unit requirements, "
+            f"or search_parts with filters if no selector exists. Quote datasheet links from the "
+            f"results and say which requirement each candidate meets with least margin.")
+
+
+@mcp.prompt(title="What is available for a spec")
+def spec_landscape(family: str, spec: str) -> str:
+    """How a spec is spread across the catalogue before choosing a value."""
+    return (f"Show how {spec} is distributed across {family} parts: describe_family to confirm the "
+            f"field name, then spec_distribution, and report how many parts state the value at "
+            f"all. Do not treat unstated values as zero.")
+
 
 @mcp.resource(
     UI_PICKER_URI,
