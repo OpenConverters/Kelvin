@@ -1,0 +1,28 @@
+# Public, read-only Kelvin MCP (no auth by decision: the catalogue is already public on the
+# site). Runs BESIDE moebius-kelvin.service (8402, loopback, Moebius pipeline with the BOM
+# tools) — a second instance, so Moebius is untouched. nginx proxies
+# https://kelvin.openconverters.com/mcp to it (see nginx-kelvin.conf).
+[Unit]
+Description=Kelvin MCP (public, read-only catalogue tools)
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/cache/moebius/engines/kelvin/mcp
+Environment=KELVIN_PUBLIC_MODE=1
+Environment=KELVIN_MCP_PORT=8412
+Environment=KELVIN_PUBLIC_HOST=kelvin.openconverters.com
+Environment=KELVIN_LINK_TAG=oc
+Environment=KELVIN_TAS_DATA_DIR=/cache/kelvin-tas
+Environment=KELVIN_SHARD_DIR=/cache/kelvin
+# Its own index dir: never share shards with the Moebius instance or the site.
+Environment=KELVIN_INDEX_DIR=/cache/kelvin-mcp-public/index
+ExecStart=/cache/moebius/venv/bin/python /cache/moebius/engines/kelvin/mcp/server.py
+Restart=on-failure
+RestartSec=5
+Nice=10
+MemoryMax=3G
+
+[Install]
+WantedBy=multi-user.target

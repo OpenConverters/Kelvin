@@ -73,7 +73,7 @@ from mcp.server.fastmcp import FastMCP                 # noqa: E402
 from mcp.server.transport_security import (            # noqa: E402
     TransportSecuritySettings,
 )
-from mcp.types import CallToolResult, TextContent      # noqa: E402
+from mcp.types import CallToolResult, TextContent, ToolAnnotations   # noqa: E402
 
 # --- what each family holds -------------------------------------------------
 # Kelvin's own family list comes from the engine (kelvin.family_names()); this is
@@ -162,7 +162,7 @@ def assert_widgets_resolve() -> None:
 # sign-in failure. Behind a tunnel the Host is the PUBLIC name — name it here.
 # Hertz uses 8400 and Kirchhoff 8401, so Kelvin takes 8402 and all three can run
 # at once as separate connectors.
-PORT = 8402
+PORT = int(os.environ.get("KELVIN_MCP_PORT", "8402"))
 _public_host = os.environ.get("KELVIN_PUBLIC_HOST", "").strip()
 if "://" in _public_host:                       # a pasted URL is fine; a Host has no scheme/path
     _public_host = _public_host.split("://", 1)[1]
@@ -184,7 +184,34 @@ else:
                  os.environ.get("KELVIN_ALLOWED_ORIGINS", "").split(",") if o.strip()]
     _security = TransportSecuritySettings(allowed_hosts=_allowed, allowed_origins=_origins)
 
-mcp = FastMCP("Kelvin", host="127.0.0.1", port=PORT, transport_security=_security)
+# KELVIN_PUBLIC_MODE=1 is the deployment where anyone can reach the server (no auth, by
+# decision: the catalogue is already public on kelvin.openconverters.com). It serves the
+# read-only catalogue tools only. The BOM tools read a file the CALLER names, so they stay off
+# unless an artifact endpoint is configured (KELVIN_ARTIFACT_BASE) — and even then only an
+# artifact:// reference is accepted, never a path on this machine or an arbitrary URL.
+PUBLIC_MODE = os.environ.get("KELVIN_PUBLIC_MODE") == "1"
+BOM_TOOLS = ("crossref_bom", "crossref_bom_line", "crossref_bom_lines", "job_status", "job_result")
+
+_READ_NOTES = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True,
+                              openWorldHint=False)
+# A BOM run stores its result under KELVIN_WORK_DIR for the *_line tools, so it is not
+# read-only — but it only adds, never overwrites or deletes.
+_BOM_NOTES = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=True,
+                             openWorldHint=False)
+
+INSTRUCTIONS = (
+    "Kelvin is a deterministic parts librarian over the TAS component catalogue (no LLM inside). "
+    "Start with list_families, then describe_family for the exact field names before "
+    "search_parts — an unknown filter field is an error, not ignored. part_details looks up one "
+    "MPN; recommend_parts ranks parts for a requirement; cross_reference finds scored substitutes "
+    "for an MPN; spec_distribution shows what is actually available. Values are SI base units. "
+    "A part whose record does not state a field is excluded by a filter on it — absence is never "
+    "reported as 0."
+)
+
+mcp = FastMCP("Kelvin", instructions=INSTRUCTIONS, website_url="https://kelvin.openconverters.com",
+              host="127.0.0.1", port=PORT, transport_security=_security,
+              stateless_http=PUBLIC_MODE)
 
 
 # --- helpers ----------------------------------------------------------------
@@ -615,6 +642,7 @@ def _xref(request: dict) -> dict:
 # --- tools ------------------------------------------------------------------
 
 @mcp.tool(
+    annotations=_READ_NOTES,
     title="List catalogue families",
     description=(
         "Every component family in the TAS catalogue, with how many parts it holds and whether "
@@ -646,6 +674,7 @@ def list_families() -> CallToolResult:
 
 
 @mcp.tool(
+    annotations=_READ_NOTES,
     title="Describe a family's query vocabulary",
     description=(
         "The exact field names one family can be filtered, sorted and bucketed on, and the "
@@ -686,6 +715,7 @@ def describe_family(family: str) -> CallToolResult:
 
 
 @mcp.tool(
+    annotations=_READ_NOTES,
     title="Search the parts catalogue",
     description=(
         "Parametric search over one family: numeric ranges, categorical values, MPN substring "
@@ -758,6 +788,7 @@ def search_parts(family: str, filters: dict | None = None, sort: dict | None = N
 
 
 @mcp.tool(
+    annotations=_READ_NOTES,
     title="Look up one part",
     description=(
         "One part by MPN: its extracted specs and, optionally, the full TAS catalogue record "
@@ -818,6 +849,7 @@ def part_details(family: str, mpn: str, manufacturer: str | None = None,
 
 
 @mcp.tool(
+    annotations=_READ_NOTES,
     title="Recommend parts for a requirement",
     description=(
         "Kelvin's deterministic selector: rank real parts against a designRequirements block "
@@ -900,6 +932,7 @@ def recommend_parts(family: str, requirements: dict, options: dict | None = None
 
 
 @mcp.tool(
+    annotations=_READ_NOTES,
     title="Distribution of a spec",
     description=(
         "How one numeric spec is distributed across a filtered slice of a family — bucket counts "
@@ -948,6 +981,7 @@ def spec_distribution(family: str, field: str, filters: dict | None = None,
 
 
 @mcp.tool(
+    annotations=_READ_NOTES,
     title="Cross-reference a part",
     description=(
         "Find substitutes for a part by MPN — the deterministic, program-only cross-reference "
@@ -1083,6 +1117,9 @@ def _read_bom(bom: str) -> tuple[dict, str]:
     from bomfile import read_bom_file
 
     name = display_name(bom)
+    if PUBLIC_MODE and not str(bom).strip().startswith("artifact://"):
+        raise ValueError("this public server reads a BOM only as artifact://<id>; a path on the "
+                         "server or an arbitrary URL is not accepted")
     with resolved(bom, "KELVIN", "BOM") as path:
         if path.is_dir():
             raise ValueError(f"{bom} is a directory; crossref_bom reads one BOM file "
@@ -1423,6 +1460,7 @@ JOBS = _Jobs()
 
 
 @mcp.tool(
+    annotations=_BOM_NOTES,
     title="BOM job status",
     description=(
         "Where a crossref_bom job has got to: queued | running | done | failed, with what it "
@@ -1446,6 +1484,7 @@ def job_status(job: str) -> CallToolResult:
 
 
 @mcp.tool(
+    annotations=_BOM_NOTES,
     title="BOM job result",
     description=(
         "The finished cross-reference of a crossref_bom job — the same answer and table "
@@ -1472,6 +1511,7 @@ def job_result(job: str) -> CallToolResult:
 
 
 @mcp.tool(
+    annotations=_BOM_NOTES,
     title="Cross-reference a BOM file",
     description=(
         "Cross-reference every line of a bill-of-materials spreadsheet (.csv, .txt, .xlsx) "
@@ -1720,6 +1760,7 @@ def _crossref_bom_compute(bom, doc, name, targets, same_type, max_results, top, 
 
 
 @mcp.tool(
+    annotations=_BOM_NOTES,
     title="One BOM cross-reference line in full",
     description=(
         "One line of a completed crossref_bom, exactly as it was computed: every ranked "
@@ -1777,6 +1818,7 @@ def crossref_bom_line(crossref: str, ref: str) -> CallToolResult:
 
 
 @mcp.tool(
+    annotations=_BOM_NOTES,
     title="A page of a BOM cross-reference's lines",
     description=(
         "The compact lines of a completed crossref_bom, a page at a time — what crossref_bom "
@@ -1883,6 +1925,11 @@ def build_app():
     """
     from starlette.middleware.cors import CORSMiddleware
 
+    if PUBLIC_MODE and not os.environ.get("KELVIN_ARTIFACT_BASE", "").strip():
+        for tool in BOM_TOOLS:
+            mcp.remove_tool(tool)
+        UI_BUNDLES.pop(UI_CROSSREF_URI, None)
+        mcp._resource_manager._resources.pop(UI_CROSSREF_URI, None)
     assert_widgets_resolve()
     app = mcp.streamable_http_app()
     app.add_middleware(
