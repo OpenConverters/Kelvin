@@ -178,6 +178,17 @@ Errors are always `{"error": {"code", "message"}}` (400 bad request, 404 not fou
 with `Retry-After`). Tests: `KELVIN_TAS_DATA_DIR=... python3 -m pytest mcp/test_api.py` compares each
 route with its tool and validates the OpenAPI document (needs `openapi-spec-validator`).
 
+## Sitemaps and family index pages
+
+`python3 mcp/sitemaps.py [OUT_DIR]` (default `~/.kelvin/sitemaps`, or `KELVIN_SITEMAP_DIR`) writes a
+sitemap index plus `sitemap-<family>-<n>.xml` files of 40,000 part URLs each, one per row the part
+page can serve (a part whose MPN is shipped by several vendors gets `?manufacturer=`). Run it on
+every data deploy; the server serves them at `/sitemap.xml` and `/sitemap-*.xml`, and answers 503
+for a directory built from a different catalogue instead of listing parts that may no longer exist.
+`/part/<family>?page=N` is a plain HTML index of 200 parts a page with previous/next links, so a
+crawler that ignores sitemaps can still walk the whole catalogue. `web/public/robots.txt` points at
+the sitemap. Tests: `python3 -m pytest mcp/test_sitemaps.py`.
+
 ## Cross-referencing a BOM file
 
 `crossref_bom(bom, target_manufacturers=None, same_type=True, max_results=5, top=30)` takes a

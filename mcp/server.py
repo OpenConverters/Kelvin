@@ -441,6 +441,84 @@ async def part_page(request):
     return HTMLResponse(_part_page(key, row, record, others, base))
 
 
+# --- sitemaps and family index pages (ABT #1915) -----------------------------------------------
+# sitemap.xml and its children are built by sitemaps.py on each data deploy and served from
+# KELVIN_SITEMAP_DIR. A directory built from another catalogue is refused rather than served: a
+# sitemap that lists parts the deployed data no longer holds sends crawlers to 404s.
+import sitemaps as _sitemaps                      # noqa: E402
+from starlette.responses import Response          # noqa: E402
+
+INDEX_PAGE_SIZE = 200
+
+
+@mcp.custom_route("/sitemap.xml", methods=["GET"])
+async def sitemap_index(request):
+    return await _sitemap_file("sitemap.xml")
+
+
+@mcp.custom_route("/sitemap-{name}.xml", methods=["GET"])
+async def sitemap_part(request):
+    return await _sitemap_file(f"sitemap-{request.path_params['name']}.xml")
+
+
+async def _sitemap_file(name: str):
+    directory = _sitemaps.default_dir()
+    try:
+        built = json.loads((directory / "build.json").read_text())
+    except (OSError, ValueError):
+        return JSONResponse({"error": "sitemaps not built; run mcp/sitemaps.py"}, status_code=503)
+    if built.get("dataVersion") != _data_version():
+        return JSONResponse({"error": "sitemaps were built from a different catalogue; rebuild"},
+                            status_code=503)
+    path = directory / name
+    if path.parent != directory or not path.is_file():           # no path tricks, no guessing
+        return JSONResponse({"error": "no such sitemap"}, status_code=404)
+    return Response(path.read_bytes(), media_type="application/xml",
+                    headers={"Cache-Control": "public, max-age=3600"})
+
+
+def _index_page(key: str, page_no: int, rows: list, total: int, base: str) -> str:
+    esc = _html.escape
+    items = "".join(
+        f'<li><a href="{base}/part/{_quote(key)}/{_quote(r["mpn"], safe="")}'
+        f'?manufacturer={_quote(r.get("manufacturer") or "", safe="")}">{esc(r["mpn"])}</a>'
+        f' — {esc(r.get("manufacturer") or "")}</li>' for r in rows)
+    last = max(1, -(-total // INDEX_PAGE_SIZE))
+    nav = " ".join(
+        f'<a href="{base}/part/{_quote(key)}?page={n}">{label}</a>'
+        for n, label in ((page_no - 1, "previous"), (page_no + 1, "next"))
+        if 1 <= n <= last)
+    return ("<!doctype html><html lang=en><head><meta charset=utf-8>"
+            "<meta name=viewport content='width=device-width,initial-scale=1'>"
+            f"<title>{esc(key)} parts, page {page_no} of {last} — Kelvin</title>"
+            f"<link rel=canonical href='{base}/part/{_quote(key)}?page={page_no}'>"
+            "<style>body{font:16px/1.5 system-ui,sans-serif;max-width:46rem;margin:2rem auto;"
+            "padding:0 1rem}</style></head><body>"
+            f"<h1>{esc(key)}</h1><p>{total:,} parts, page {page_no} of {last}. {nav}</p>"
+            f"<ul>{items}</ul><p>{nav}</p>"
+            f'<p><a href="{base}/">Kelvin</a> — open power-electronics component catalogue.</p>'
+            "</body></html>")
+
+
+@mcp.custom_route("/part/{family}", methods=["GET"])
+async def family_index(request):
+    try:
+        page_no = max(1, int(request.query_params.get("page", "1")))
+    except ValueError:
+        return JSONResponse({"error": "page must be an integer"}, status_code=400)
+    try:
+        key = _family(request.path_params["family"])
+        page = await anyio.to_thread.run_sync(
+            _browse, key, {"limit": INDEX_PAGE_SIZE, "offset": (page_no - 1) * INDEX_PAGE_SIZE})
+    except ValueError as error:
+        return JSONResponse({"error": str(error)}, status_code=404)
+    rows = page.get("rows") or []
+    if not rows:
+        return JSONResponse({"error": f"{key} has no page {page_no}"}, status_code=404)
+    base = "https://" + (_public_host or "kelvin.openconverters.com")
+    return HTMLResponse(_index_page(key, page_no, rows, page["total"], base))
+
+
 # --- helpers ----------------------------------------------------------------
 
 # --- the pipeline result contract (Moebius contracts/pipeline_result.json, ABT #685) --------
