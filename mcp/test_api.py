@@ -122,3 +122,17 @@ def test_part_page_links_to_its_json_alternate(client):
     assert href.startswith("https://kelvin.openconverters.com/api/v1/part/capacitor/")
     local = href.split("kelvin.openconverters.com", 1)[1]
     assert client.get(local).status_code == 200
+
+
+def test_non_finite_numbers_become_null_not_a_500(client, monkeypatch):
+    """The engine reports an unstated value as NaN; JSON cannot carry it (found live: a select
+    result with a NaN margin answered 500)."""
+    from mcp.types import CallToolResult, TextContent
+    nan = CallToolResult(content=[TextContent(type="text", text="x")],
+                         structuredContent={"mode": "recommend", "family": "capacitor",
+                                            "candidates": [{"mpn": "A", "margins": {"m": float("nan"),
+                                                                                    "n": float("inf")}}]})
+    monkeypatch.setattr(S, "recommend_parts", lambda *a, **k: nan)
+    response = client.post("/api/v1/select/capacitor", json={"requirements": {}})
+    assert response.status_code == 200
+    assert response.json()["candidates"][0]["margins"] == {"m": None, "n": None}

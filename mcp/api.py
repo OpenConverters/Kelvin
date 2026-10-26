@@ -17,6 +17,7 @@ public host and the telemetry sinks.
 from __future__ import annotations
 
 import json
+import math
 import os
 import threading
 import time
@@ -75,6 +76,8 @@ def register(mcp, S) -> None:
             return {_PUBLIC.get(k, k): public(v) for k, v in o.items()}
         if isinstance(o, list):
             return [public(v) for v in o]
+        if isinstance(o, float) and not math.isfinite(o):
+            return None          # the engine marks "not stated" as NaN; JSON has no NaN, null is it
         return o
 
     def error(status: int, code: str, message: str, headers: dict | None = None):
