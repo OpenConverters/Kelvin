@@ -79,3 +79,25 @@ def test_family_index_pages_page_through_the_family(client):
     assert client.get("/part/igbt?page=99999").status_code == 404
     assert client.get("/part/igbt?page=x").status_code == 400
     assert client.get("/part/nosuchfamily").status_code == 404
+
+
+def test_data_version_depends_on_names_and_sizes_not_mtimes(tmp_path, monkeypatch):
+    """The sitemaps are built on one machine and checked by another: the same data must give the
+    same version on both, or the server refuses every sitemap it is sent."""
+    import os
+    data = tmp_path / "data"
+    data.mkdir()
+    (data / "capacitors.ndjson").write_text("{}\n")
+    monkeypatch.setenv("KELVIN_TAS_DATA_DIR", str(data))
+    monkeypatch.setenv("KELVIN_SHARD_DIR", str(tmp_path))
+    (tmp_path / "manifest.json").write_text("{}")
+
+    def version():
+        monkeypatch.setattr(S, "_DATA_VERSION", None)
+        return S._data_version()
+
+    first = version()
+    os.utime(data / "capacitors.ndjson", (1_000_000_000, 1_000_000_000))
+    assert version() == first
+    (data / "capacitors.ndjson").write_text("{}\n{}\n")
+    assert version() != first

@@ -683,16 +683,18 @@ _DATA_VERSION: str | None = None
 def _data_version() -> str:
     """Identifies the catalogue an answer was computed from.
 
-    sha256 over each family file's name, size and mtime (symlinks followed) plus the shard
-    manifest — it changes whenever a data deploy changes any family file. Computed once per
-    process: the catalogue is replaced by a restart, not under a running server.
+    sha256 over each family file's name and size (symlinks followed) plus the shard manifest —
+    it changes whenever a data deploy changes any family file. No mtimes: the same data must
+    give the same version on the machine that builds the sitemaps and on the one that serves
+    them. Computed once per process: the catalogue is replaced by a restart, not under a
+    running server.
     """
     global _DATA_VERSION
     if _DATA_VERSION is None:
         h = hashlib.sha256()
         for f in sorted(Path(_data_dir()).glob("*.ndjson")):
             st = f.stat()
-            h.update(f"{f.name}:{st.st_size}:{int(st.st_mtime)}\n".encode())
+            h.update(f"{f.name}:{st.st_size}\n".encode())
         shard_dir = (os.environ.get("KELVIN_SHARD_DIR", "").strip()
                      or str(_REPO / "web" / "public" / "kelvin"))
         try:

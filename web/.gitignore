@@ -5,3 +5,4 @@ public/kelvin/
 test-results/
 playwright-report/
 src/generated/
+.sitemaps/

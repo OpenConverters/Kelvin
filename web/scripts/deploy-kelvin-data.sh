@@ -221,4 +221,12 @@ print(f"  {base}: serving the deployed buildIds")
 PY
   rm -f /tmp/kelvin-live-manifest.$$
 done
+# 6. Sitemaps for the per-part pages. Built from the data set just shipped (never the master
+# TAS data) and proven live by ship-sitemaps.sh, which rolls back if the box refuses them or any
+# sampled URL is not a part page. SKIP_SITEMAPS=1 to leave them alone (they then go stale: the
+# service answers 503 for sitemaps built from a different catalogue until this is run).
+if [[ -z "${SKIP_SITEMAPS:-}" ]]; then
+  "$HERE/scripts/build-sitemaps.sh" "$SRC"
+  "$HERE/scripts/ship-sitemaps.sh"
+fi
 echo "Kelvin data deploy verified."
