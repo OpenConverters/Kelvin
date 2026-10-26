@@ -64,7 +64,7 @@ def main() -> int:
             problems.append(f"{url}: {code}")
             continue
         mpn = unescape(re.search(r"<h1>(.*?)</h1>", page, re.S).group(1)) if "<h1>" in page else ""
-        ld = re.search(r'<script type="application/ld\\+json">(.*?)</script>', page, re.S)
+        ld = re.search(r'<script type="application/ld\+json">(.*?)</script>', page, re.S)
         checks = {
             "h1 holds the MPN": bool(mpn),
             "title holds the MPN": bool(mpn) and mpn in unescape(re.search(r"<title>(.*?)</title>", page, re.S).group(1)),
