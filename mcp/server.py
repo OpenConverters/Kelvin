@@ -585,8 +585,76 @@ def _result(summary: str, payload: dict) -> CallToolResult:
     and the widget renders it as a link: tagging only one of them would leave the
     wrong attribution on whichever the engineer actually clicked.
     """
+    summary = _cite(summary, payload)
     return CallToolResult(content=[TextContent(type="text", text=_retagged(summary))],
                           structuredContent=_retagged(payload))
+
+
+# --- citation (ABT #1919) ----------------------------------------------------------------
+# An assistant that relies on an answer must be able to show its user why: every part in a
+# catalogue result carries its permalink and the version of the catalogue it was computed from.
+# The structured fields are underscore-prefixed because the pipeline contract is closed and
+# reserves `_` for exactly this; the text digest — the only channel the model reads — quotes the
+# links itself.
+_CITED_MODES = ("details", "search", "recommend", "crossref")
+_DATA_VERSION: str | None = None
+
+
+def _data_version() -> str:
+    """Identifies the catalogue an answer was computed from.
+
+    sha256 over each family file's name, size and mtime (symlinks followed) plus the shard
+    manifest — it changes whenever a data deploy changes any family file. Computed once per
+    process: the catalogue is replaced by a restart, not under a running server.
+    """
+    global _DATA_VERSION
+    if _DATA_VERSION is None:
+        h = hashlib.sha256()
+        for f in sorted(Path(_data_dir()).glob("*.ndjson")):
+            st = f.stat()
+            h.update(f"{f.name}:{st.st_size}:{int(st.st_mtime)}\n".encode())
+        shard_dir = (os.environ.get("KELVIN_SHARD_DIR", "").strip()
+                     or str(_REPO / "web" / "public" / "kelvin"))
+        try:
+            h.update((Path(shard_dir) / "manifest.json").read_bytes())
+        except OSError:
+            pass                                      # no manifest: the family files still count
+        _DATA_VERSION = h.hexdigest()[:16]
+    return _DATA_VERSION
+
+
+def _permalink(family: str, mpn: str, manufacturer: str | None = None) -> str:
+    from urllib.parse import quote
+    url = (f"https://{_public_host or 'kelvin.openconverters.com'}"
+           f"/part/{quote(family)}/{quote(mpn, safe='')}")
+    return url + (f"?manufacturer={quote(manufacturer, safe='')}" if manufacturer else "")
+
+
+def _cited_parts(payload: dict) -> list[dict]:
+    parts = [payload.get("part"), payload.get("original"), *(payload.get("candidates") or [])]
+    return [p for p in parts if isinstance(p, dict) and p.get("mpn")]
+
+
+def _cite(summary: str, payload: dict) -> str:
+    """Stamp a catalogue result with its data version and per-part permalinks (in place on
+    `payload`); return the digest with the top links quoted."""
+    family = payload.get("family")
+    if payload.get("mode") not in _CITED_MODES or not family:
+        return summary
+    version = _data_version()
+    parts = _cited_parts(payload)
+    for p in parts:
+        # On the part, not the result: the pipeline contract is closed at the result level and
+        # reserves a leading underscore only on a candidate.
+        p["_permalink"] = _permalink(family, p["mpn"], p.get("manufacturer"))
+        p["_dataVersion"] = version
+        # The record is {<family>: {manufacturerInfo: {datasheetUrl}}}; the URL as stored.
+        body = next(iter(p["record"].values()), {}) if isinstance(p.get("record"), dict) else {}
+        datasheet = ((body or {}).get("manufacturerInfo") or {}).get("datasheetUrl")
+        if datasheet:
+            p["_sourceUrl"] = datasheet
+    quoted = "\n".join(f"  {p['mpn']}: {p['_permalink']}" for p in parts[:6])
+    return summary + (f"\nLinks (catalogue data version {version}):\n{quoted}" if quoted else "")
 
 
 def _eng(value, unit: str = "") -> str:

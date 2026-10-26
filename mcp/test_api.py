@@ -29,7 +29,9 @@ def client():
 def strip(o):
     """Remove what the API adds, so the rest can be compared with the tool's payload."""
     if isinstance(o, dict):
-        return {k: strip(v) for k, v in o.items() if k not in ("permalink", "dataVersion", "_family")}
+        return {k: strip(v) for k, v in o.items()
+                if k not in ("permalink", "sourceUrl", "dataVersion",
+                             "_permalink", "_sourceUrl", "_dataVersion")}
     if isinstance(o, list):
         return [strip(v) for v in o]
     return o
@@ -77,7 +79,7 @@ def test_every_part_carries_its_permalink(client):
     assert body["candidates"]
     for c in body["candidates"]:
         assert c["permalink"].startswith(SIX + "capacitor/"), c
-    assert "_family" not in json.dumps(body)
+    assert "_permalink" not in json.dumps(body)
 
 
 def test_errors_have_one_closed_shape(client):

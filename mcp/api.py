@@ -16,18 +16,17 @@ public host and the telemetry sinks.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import threading
 import time
-from pathlib import Path
 
 import anyio
 from starlette.responses import JSONResponse
 
 API_VERSION = "v1"
 _PREFIX = f"/api/{API_VERSION}"
+_PUBLIC = {"_permalink": "permalink", "_sourceUrl": "sourceUrl"}
 
 # Per-IP sliding window, in memory only: the address is never written anywhere (the usage log
 # and telemetry deliberately carry no IP).
@@ -68,45 +67,15 @@ def register(mcp, S) -> None:
     """Add the /api/v1 routes to `mcp`. `S` is the server module (engine, tools, helpers)."""
 
     base = lambda: "https://" + (S._public_host or "kelvin.openconverters.com")  # noqa: E731
-    version_cache: dict[str, str] = {}
 
-    def data_version() -> str:
-        """Identifies the catalogue an answer was computed from.
-
-        sha256 over each family file's name, size and mtime (symlinks followed) plus the shard
-        manifest — it changes whenever a data deploy changes any family file. Computed once per
-        process: the catalogue is replaced by a restart, not under a running server.
-        """
-        if "v" not in version_cache:
-            h = hashlib.sha256()
-            data = Path(S._data_dir())
-            for f in sorted(data.glob("*.ndjson")):
-                st = f.stat()
-                h.update(f"{f.name}:{st.st_size}:{int(st.st_mtime)}\n".encode())
-            shard_dir = (os.environ.get("KELVIN_SHARD_DIR", "").strip()
-                         or str(S._REPO / "web" / "public" / "kelvin"))
-            try:
-                h.update((Path(shard_dir) / "manifest.json").read_bytes())
-            except OSError:
-                pass                                  # no manifest: the family files still count
-            version_cache["v"] = h.hexdigest()[:16]
-        return version_cache["v"]
-
-    def permalink(family: str, mpn: str, manufacturer: str | None) -> str:
-        from urllib.parse import quote
-        url = f"{base()}/part/{quote(family)}/{quote(mpn, safe='')}"
-        return url + (f"?manufacturer={quote(manufacturer, safe='')}" if manufacturer else "")
-
-    def cite(obj):
-        """Give every part object in a payload its permalink (in place)."""
-        if isinstance(obj, dict):
-            if obj.get("mpn") and obj.get("_family"):
-                obj["permalink"] = permalink(obj.pop("_family"), obj["mpn"], obj.get("manufacturer"))
-            for v in obj.values():
-                cite(v)
-        elif isinstance(obj, list):
-            for v in obj:
-                cite(v)
+    def public(o):
+        """The tools stamp citation fields with a leading underscore (the pipeline contract
+        reserves it); on the public API they are ordinary, documented fields."""
+        if isinstance(o, dict):
+            return {_PUBLIC.get(k, k): public(v) for k, v in o.items()}
+        if isinstance(o, list):
+            return [public(v) for v in o]
+        return o
 
     def error(status: int, code: str, message: str, headers: dict | None = None):
         return JSONResponse({"error": {"code": code, "message": message}}, status_code=status,
@@ -130,50 +99,27 @@ def register(mcp, S) -> None:
             message = str(exc)
             return error(404 if message.startswith("no ") else 400,
                          "not_found" if message.startswith("no ") else "bad_request", message)
-        payload = dict(result.structuredContent or {})
+        payload = public(dict(result.structuredContent or {}))
         payload.setdefault("family", family)
         S._telemetry("api_" + route, payload.get("family"),
                      {"channel": "api", "ok": True, "seconds": round(time.monotonic() - started, 3)},
                      _PREFIX + "/" + route)
-        return JSONResponse({"dataVersion": data_version(), **payload},
+        return JSONResponse({"dataVersion": S._data_version(), **payload},
                             headers={"Cache-Control": "public, max-age=300"})
-
-    def tag_family(payload_call, family):
-        """Run a tool and mark each candidate/part with the family so cite() can link it."""
-        def call():
-            result = payload_call()
-            key = S._family(family)
-
-            def mark(o):
-                if isinstance(o, dict):
-                    if o.get("mpn"):
-                        o["_family"] = key
-                    for v in o.values():
-                        mark(v)
-                elif isinstance(o, list):
-                    for v in o:
-                        mark(v)
-            sc = result.structuredContent
-            if sc is not None:
-                mark(sc)
-                cite(sc)
-            return result
-        return call
 
     @mcp.custom_route(f"{_PREFIX}/families", methods=["GET"])
     async def api_families(request):
         wait = _limited(request)
         if wait is not None:
             return error(429, "rate_limited", "rate limit", {"Retry-After": str(int(wait + 1))})
-        return JSONResponse({"dataVersion": data_version(), "families": S.kelvin.family_names()},
+        return JSONResponse({"dataVersion": S._data_version(), "families": S.kelvin.family_names()},
                             headers={"Cache-Control": "public, max-age=300"})
 
     @mcp.custom_route(_PREFIX + "/part/{family}/{mpn:path}", methods=["GET"])
     async def api_part(request):
         q = request.query_params
         fam, mpn = request.path_params["family"], request.path_params["mpn"]
-        return await run(request, "part", fam, tag_family(
-            lambda: S.part_details(fam, mpn, q.get("manufacturer"), True), fam))
+        return await run(request, "part", fam, lambda: S.part_details(fam, mpn, q.get("manufacturer"), True))
 
     @mcp.custom_route(_PREFIX + "/crossref/{family}/{mpn:path}", methods=["GET"])
     async def api_crossref(request):
@@ -185,9 +131,8 @@ def register(mcp, S) -> None:
             limit = int(q.get("max_results", "12"))
         except ValueError:
             return error(400, "bad_request", "max_results must be an integer")
-        return await run(request, "crossref", fam, tag_family(
-            lambda: S.cross_reference(fam, mpn, q.get("manufacturer"), targets or None,
-                                      same_type, limit), fam))
+        return await run(request, "crossref", fam, lambda: S.cross_reference(fam, mpn, q.get("manufacturer"), targets or None,
+                                      same_type, limit))
 
     @mcp.custom_route(_PREFIX + "/select/{family}", methods=["POST"])
     async def api_select(request):
@@ -202,9 +147,8 @@ def register(mcp, S) -> None:
             limit = int(body.get("max_results", 12))
         except (TypeError, ValueError):
             return error(400, "bad_request", "max_results must be an integer")
-        return await run(request, "select", fam, tag_family(
-            lambda: S.recommend_parts(fam, body["requirements"], body.get("options"), limit,
-                                      False), fam))
+        return await run(request, "select", fam, lambda: S.recommend_parts(fam, body["requirements"], body.get("options"), limit,
+                                      False))
 
     @mcp.custom_route(_PREFIX + "/search/{family}", methods=["GET"])
     async def api_search(request):
@@ -217,8 +161,7 @@ def register(mcp, S) -> None:
         except ValueError:
             return error(400, "bad_request", "filters and sort must be JSON; limit and offset integers")
         facets = q.get("with_facets", "false").lower() in ("1", "true", "yes")
-        return await run(request, "search", fam, tag_family(
-            lambda: S.search_parts(fam, filters, sort, limit, offset, facets), fam))
+        return await run(request, "search", fam, lambda: S.search_parts(fam, filters, sort, limit, offset, facets))
 
     @mcp.custom_route(f"{_PREFIX}/openapi.json", methods=["GET"])
     async def api_openapi(_request):

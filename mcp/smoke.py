@@ -58,6 +58,19 @@ def check(label: str, condition: bool, detail: str = "") -> None:
         FAILURES.append(label)
 
 
+def cited(label: str, result) -> None:
+    """ABT #1919: the answer can be cited and re-checked — a data version, a permalink on every
+    part, and the permalinks quoted in the digest the model actually reads."""
+    payload = result.structuredContent
+    parts = [p for p in [payload.get("part"), payload.get("original"),
+                         *payload.get("candidates", [])] if p]
+    check(f"{label}: every part has a permalink and the catalogue data version",
+          bool(parts) and all((p.get("_permalink") or "").startswith("https://")
+                              and p.get("_dataVersion") for p in parts))
+    check(f"{label}: the digest quotes the permalink and version",
+          parts[0]["_permalink"] in text(result) and parts[0]["_dataVersion"] in text(result))
+
+
 def text(result) -> str:
     return "\n".join(c.text for c in result.content)
 
@@ -253,6 +266,7 @@ def main() -> int:
                                 "v_rated": {"min": 300}},
                        sort={"field": "capacitance", "dir": "asc"}, limit=5, with_facets=True)
     conforms("search_parts", r.structuredContent)
+    cited("search_parts", r)
     page = r.structuredContent
     rows = page["candidates"]                      # the shared ranked-list envelope
     check("matches found", page["total"] > 0, f"{page['total']:,} parts")
@@ -288,6 +302,10 @@ def main() -> int:
     r = S.part_details("capacitor", mpn, include_record=True)
     payload = r.structuredContent
     conforms("part_details", payload)
+    cited("part_details", r)
+    stored = next(iter(payload["part"]["record"].values()))["manufacturerInfo"].get("datasheetUrl")
+    check("part_details: the datasheet link is carried as the source URL as stored",
+          bool(stored) and payload["part"].get("_sourceUrl") == stored)
     check("the part came back", payload["part"]["mpn"] == mpn)
     check("the full TAS record came back", "capacitor" in (payload["part"].get("record") or {}))
     check("record is THAT part",
@@ -305,6 +323,7 @@ def main() -> int:
                                      "ratedContinuousDrainCurrent": 5,
                                      "maximumOnResistance": 0.1}, max_results=5)
     conforms("recommend_parts", r.structuredContent)
+    cited("recommend_parts", r)
     cands = r.structuredContent["candidates"]
     check("candidates returned", len(cands) > 0, f"best: {cands[0]['mpn']}")
     # Margins are ratios of the part's rating to the requirement, so clearing a gate means >= 1.
@@ -347,6 +366,7 @@ def main() -> int:
         r = S.cross_reference("capacitor", mpn, max_results=5)
         x = r.structuredContent
         conforms("cross_reference", x)
+        cited("cross_reference", r)
         check("the original resolved", x["original"]["mpn"] == mpn)
         check("a candidate pool was scored", x["total"] > 0, f"{x['total']:,} pre-gated")
         check("substitutes ranked best-first",
