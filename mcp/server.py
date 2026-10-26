@@ -488,9 +488,7 @@ def _part_page(key: str, row: dict, record, others: list, base: str, found: dict
         f"<meta name=description content='{esc(title)}: specifications from the Kelvin open "
         f"power-electronics component catalogue.'>"
         f'<script type="application/ld+json">{json.dumps(ld).replace("</", "<\\/")}</script>'
-        "<style>body{font:16px/1.5 system-ui,sans-serif;max-width:46rem;margin:2rem auto;"
-        "padding:0 1rem}th{text-align:left;padding-right:1.5rem;color:#555}td,th{padding:.15rem 0}"
-        "</style></head><body>"
+        + _page_css("46rem") + "</head><body>"
         f"<h1>{esc(row['mpn'])}</h1><p>{esc(row.get('manufacturer') or '')} · {esc(key)}"
         f"{' · case ' + esc(str(row['caseCode'])) if row.get('caseCode') else ''}</p>"
         f"<table>{rows_html}</table>"
@@ -584,8 +582,7 @@ def _index_page(key: str, page_no: int, rows: list, total: int, base: str) -> st
             "<meta name=viewport content='width=device-width,initial-scale=1'>"
             f"<title>{esc(key)} parts, page {page_no} of {last} — Kelvin</title>"
             f"<link rel=canonical href='{base}/part/{_quote(key)}?page={page_no}'>"
-            "<style>body{font:16px/1.5 system-ui,sans-serif;max-width:46rem;margin:2rem auto;"
-            "padding:0 1rem}</style></head><body>"
+            + _page_css("46rem") + "</head><body>"
             f"<h1>{esc(key)}</h1><p>{total:,} parts, page {page_no} of {last}. {nav}</p>"
             f"<ul>{items}</ul><p>{nav}</p>"
             f'<p><a href="{base}/">Kelvin</a> — open power-electronics component catalogue.</p>'
@@ -648,14 +645,11 @@ def _quality_page(doc: dict, base: str) -> str:
         "<title>Data quality — Kelvin</title>"
         "<meta name=description content='How good the Kelvin component catalogue measurably is, "
         "per family, from the latest quality run.'>"
-        "<style>body{font:16px/1.5 system-ui,sans-serif;max-width:64rem;margin:2rem auto;"
-        "padding:0 1rem}table{border-collapse:collapse;display:block;overflow-x:auto}"
-        "td,th{padding:.25rem .6rem;text-align:right;border-bottom:1px solid #ddd}"
-        "th:first-child{text-align:left}</style></head><body>"
+        + _page_css("64rem") + "</head><body>"
         f"<h1>Data quality</h1><p>Measured {esc(doc['date'])}. Whole TAS database: quality "
         f"<b>{_pct(whole['quality'])}</b>, coverage <b>{_pct(whole['coverage'])}</b>. "
         "These are the numbers the quality run produced, unrounded by hand and not curated.</p>"
-        "<table><tr><th>Family</th><th>Live parts</th><th>Quarantined</th><th>Quality</th>"
+        "<table class=num><tr><th>Family</th><th>Live parts</th><th>Quarantined</th><th>Quality</th>"
         f"<th>Coverage</th>{head}</tr>{body}</table>"
         "<h2>What the numbers mean</h2><ul>"
         "<li><b>Quality</b> is a weighted checklist per part (the existence of the part, fields "
@@ -878,6 +872,23 @@ def _permalink(family: str, mpn: str, manufacturer: str | None = None) -> str:
     url = (f"https://{_public_host or 'kelvin.openconverters.com'}"
            f"/part/{quote(family)}/{quote(mpn, safe='')}")
     return url + (f"?manufacturer={quote(manufacturer, safe='')}" if manufacturer else "")
+
+
+# One stylesheet for every public page. It declares both colour schemes itself: left to the
+# browser, a forced dark mode paints black text on grey with hard white rules.
+def _page_css(width: str) -> str:
+    return ("<style>:root{color-scheme:light dark;--bg:#fff;--fg:#1d2127;--muted:#5b6470;"
+            "--rule:#e1e5ea;--link:#0b5cad;--head:#f4f6f8}"
+            "@media (prefers-color-scheme:dark){:root{--bg:#161a1f;--fg:#d9dee4;--muted:#9aa4b1;"
+            "--rule:#2b323a;--link:#6cb0ff;--head:#1d232a}}"
+            f"body{{font:16px/1.55 system-ui,sans-serif;max-width:{width};margin:2rem auto;"
+            "padding:0 1rem;background:var(--bg);color:var(--fg)}"
+            "a{color:var(--link)}table{border-collapse:collapse;display:block;overflow-x:auto}"
+            "th{text-align:left;font-weight:600;color:var(--muted);padding:.3rem 1rem .3rem 0}"
+            "td{padding:.3rem .6rem .3rem 0}tr+tr>*{border-top:1px solid var(--rule)}"
+            "table.num td,table.num th{text-align:right}table.num th:first-child{text-align:left}"
+            "table.num th{background:var(--head);padding:.3rem .6rem}small{color:var(--muted)}"
+            "</style>")
 
 
 REPORT_REPO = "OpenConverters/Kelvin"
