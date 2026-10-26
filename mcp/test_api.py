@@ -113,3 +113,12 @@ def test_openapi_is_valid_and_covers_every_route(client):
     served = {r.path for r in S.mcp._custom_starlette_routes if r.path.startswith("/api/v1/")}
     documented = {re.sub(r"\{mpn\}", "{mpn:path}", p) for p in spec["paths"]} | {"/api/v1/openapi.json"}
     assert served == documented
+
+
+def test_part_page_links_to_its_json_alternate(client):
+    mpn = first_mpn(client)
+    html = client.get(f"/part/capacitor/{mpn}").text
+    href = re.search(r"<link rel=alternate type='application/json' href='([^']+)'", html).group(1)
+    assert href.startswith("https://kelvin.openconverters.com/api/v1/part/capacitor/")
+    local = href.split("kelvin.openconverters.com", 1)[1]
+    assert client.get(local).status_code == 200

@@ -398,6 +398,8 @@ def _part_page(key: str, row: dict, record, others: list, base: str) -> str:
         "<!doctype html><html lang=en><head><meta charset=utf-8>"
         "<meta name=viewport content='width=device-width,initial-scale=1'>"
         f"<title>{esc(title)} — Kelvin</title>"
+        f"<link rel=alternate type='application/json' href='{base}/api/v1/part/{_quote(key)}/"
+        f"{_quote(row['mpn'], safe='')}?manufacturer={_quote(row.get('manufacturer') or '', safe='')}'>"
         f"<meta name=description content='{esc(title)}: specifications from the Kelvin open "
         f"power-electronics component catalogue.'>"
         f'<script type="application/ld+json">{json.dumps(ld).replace("</", "<\\/")}</script>'
