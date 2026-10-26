@@ -2212,6 +2212,11 @@ def crossref_widget() -> str:
     return bundle.read_text(encoding="utf-8")
 
 
+import api as _api                                # noqa: E402
+
+_api.register(mcp, sys.modules[__name__])
+
+
 def build_app():
     """Starlette app with CORS.
 

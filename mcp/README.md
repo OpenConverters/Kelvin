@@ -157,6 +157,27 @@ is excluded by that filter (a browse filter is a user filter, not the selector's
 `spec_distribution` reports how many parts state the value at all, and a margin the record could
 not state stays `null` rather than becoming a 0 that would read as the binding constraint.
 
+## HTTP API (`/api/v1`)
+
+The same engine over plain URLs, for scripts and tools that do not speak MCP (ABT #1916). There is
+no second implementation: each route calls the MCP tool of the same name and returns its structured
+payload, plus `dataVersion` (identifies the catalogue the answer came from) and a `permalink` on
+every part. No auth, CORS open, rate-limited per client address (`KELVIN_API_RATE_LIMIT` requests per
+`KELVIN_API_RATE_WINDOW` seconds, default 60 per 60; the address is held in memory only).
+
+| Route | Tool |
+|---|---|
+| `GET /api/v1/families` | list_families |
+| `GET /api/v1/search/{family}?filters=<json>&sort=<json>&limit=&offset=&with_facets=` | search_parts |
+| `GET /api/v1/part/{family}/{mpn}?manufacturer=` | part_details |
+| `GET /api/v1/crossref/{family}/{mpn}?manufacturer=&target_manufacturers=a,b&same_type=&max_results=` | cross_reference |
+| `POST /api/v1/select/{family}` `{"requirements": {...}, "options": {...}, "max_results": 12}` | recommend_parts |
+| `GET /api/v1/openapi.json` | the OpenAPI 3.1 description |
+
+Errors are always `{"error": {"code", "message"}}` (400 bad request, 404 not found, 429 rate limited
+with `Retry-After`). Tests: `KELVIN_TAS_DATA_DIR=... python3 -m pytest mcp/test_api.py` compares each
+route with its tool and validates the OpenAPI document (needs `openapi-spec-validator`).
+
 ## Cross-referencing a BOM file
 
 `crossref_bom(bom, target_manufacturers=None, same_type=True, max_results=5, top=30)` takes a
