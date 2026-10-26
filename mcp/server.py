@@ -232,6 +232,66 @@ USAGE_LOG = os.environ.get("KELVIN_USAGE_LOG", "").strip()
 _usage_lock = threading.Lock()
 
 
+# --- product telemetry (the same two sinks the web app uses) ------------------------------------
+# kelvin.openconverters.com reports to the local oc-telemetry receiver (Postgres) and to the shared
+# Umami instance. MCP traffic is product usage too, so it goes to the same two places, as events
+# named mcp_<tool>. Fire-and-forget on one daemon thread with a bounded queue: telemetry must
+# never slow or break a tool call, so a full queue drops the event. Env, all optional:
+#   KELVIN_TELEMETRY_URL   e.g. http://127.0.0.1:8787/telemetry
+#   KELVIN_UMAMI_URL       e.g. http://127.0.0.1:3000/stats/api/send
+#   KELVIN_UMAMI_WEBSITE_ID  the kelvin.openconverters.com website id
+# Only tool, family, outcome and duration travel — never filters, MPN searches or any IP.
+import queue            # noqa: E402
+import urllib.request   # noqa: E402
+
+TELEMETRY_URL = os.environ.get("KELVIN_TELEMETRY_URL", "").strip()
+UMAMI_URL = os.environ.get("KELVIN_UMAMI_URL", "").strip()
+UMAMI_WEBSITE_ID = os.environ.get("KELVIN_UMAMI_WEBSITE_ID", "").strip()
+_SERVER_VERSION = "0.1.0"
+_tel_queue: "queue.Queue[tuple[str, str | None, dict, str]]" = queue.Queue(maxsize=1000)
+_tel_started = False
+_UMAMI_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36 KelvinMCP"
+
+
+def _tel_post(url: str, body: dict, headers: dict) -> None:
+    request = urllib.request.Request(url, json.dumps(body).encode(),
+                                     {"Content-Type": "application/json", **headers})
+    with urllib.request.urlopen(request, timeout=3) as response:
+        response.read()
+
+
+def _tel_worker() -> None:
+    while True:
+        event, target, props, path = _tel_queue.get()
+        try:
+            if TELEMETRY_URL:
+                _tel_post(TELEMETRY_URL, {"site": "kelvin", "session_id": "mcp", "event_type": event,
+                                          "target": target, "props": props,
+                                          "environment": "production",
+                                          "app_version": _SERVER_VERSION}, {})
+            if UMAMI_URL and UMAMI_WEBSITE_ID:
+                _tel_post(UMAMI_URL, {"type": "event", "payload": {
+                    "website": UMAMI_WEBSITE_ID, "hostname": "kelvin.openconverters.com",
+                    "url": path, "name": event, "language": "en-US",
+                    "data": {**props, **({"target": target} if target else {})}}},
+                    {"User-Agent": _UMAMI_UA})
+        except Exception as error:                      # noqa: BLE001 — never propagate
+            print(f"kelvin: telemetry send failed: {type(error).__name__}: {error}", file=sys.stderr)
+
+
+def _telemetry(event: str, target: str | None, props: dict, path: str) -> None:
+    global _tel_started
+    if not (TELEMETRY_URL or (UMAMI_URL and UMAMI_WEBSITE_ID)):
+        return
+    if not _tel_started:
+        _tel_started = True
+        threading.Thread(target=_tel_worker, name="kelvin-telemetry", daemon=True).start()
+    try:
+        _tel_queue.put_nowait((event, target, props, path))
+    except queue.Full:
+        pass
+
+
 def _usage_record(name: str, arguments: dict | None, ok: bool, result, seconds: float) -> None:
     family = (arguments or {}).get("family")
     payload = getattr(result, "structuredContent", None) if result is not None else None
@@ -242,15 +302,19 @@ def _usage_record(name: str, arguments: dict | None, ok: bool, result, seconds: 
     line = {"t": int(time.time()), "tool": name,
             "family": family if isinstance(family, str) and len(family) < 24 else None,
             "ok": ok, "empty": empty, "ms": int(seconds * 1000)}
-    with _usage_lock, open(USAGE_LOG, "a", encoding="utf-8") as handle:
-        handle.write(json.dumps(line) + "\n")
+    _telemetry(f"mcp_{name}", line["family"],
+               {"channel": "mcp", "ok": ok, "empty": empty, "ms": line["ms"]}, "/mcp")
+    if USAGE_LOG:
+        with _usage_lock, open(USAGE_LOG, "a", encoding="utf-8") as handle:
+            handle.write(json.dumps(line) + "\n")
 
 
 def _instrument_usage() -> None:
     """Wrap the tool manager's dispatch so every tool call leaves one usage line."""
-    if not USAGE_LOG:
+    if not (USAGE_LOG or TELEMETRY_URL or UMAMI_URL):
         return
-    Path(USAGE_LOG).parent.mkdir(parents=True, exist_ok=True)
+    if USAGE_LOG:
+        Path(USAGE_LOG).parent.mkdir(parents=True, exist_ok=True)
     manager = mcp._tool_manager
     original = manager.call_tool
 
@@ -366,6 +430,9 @@ async def part_page(request):
     if row is None:
         return JSONResponse({"error": f"no {key} with MPN {mpn!r}"}, status_code=404)
     base = "https://" + (_public_host or "kelvin.openconverters.com")
+    _telemetry("mcp_part_page", key,
+               {"channel": "web-part-page", "json": as_json, "mpn": row["mpn"]},
+               f"/part/{key}/{row['mpn']}")
     if as_json:
         return JSONResponse(_retagged({"family": key, "part": _row_candidate(row),
                                        "record": record,

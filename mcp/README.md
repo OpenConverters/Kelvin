@@ -102,6 +102,17 @@ block), and a search returns at most its first 1000 matches (`PUBLIC_MAX_WINDOW`
 is queried with filters, not paged out. To update: rsync `mcp/` to the box and
 `systemctl restart kelvin-mcp-public`.
 
+### Telemetry
+
+Every tool call and part-page view is reported to the same two sinks as the web app — the
+`oc-telemetry` receiver (Postgres, site `kelvin`) and the shared Umami instance (website
+`kelvin.openconverters.com`) — as events `mcp_<tool>` (`mcp_part_page` for the pages), with
+`channel`, `ok`, `empty` and `ms` props and the family as target. Never filters, search text or IPs.
+Configured by `KELVIN_TELEMETRY_URL`, `KELVIN_UMAMI_URL` and `KELVIN_UMAMI_WEBSITE_ID`; fire-and-forget
+on a bounded queue, so it can never slow or fail a call. All MCP calls arrive from the server itself,
+so Umami shows them as one visitor — use the event counts, not the visitor count. The raw
+per-call log is `KELVIN_USAGE_LOG` (JSONL).
+
 ### Connecting any AI
 
 Plain MCP over Streamable HTTP, no sign-in, so nothing is Claude-specific:
