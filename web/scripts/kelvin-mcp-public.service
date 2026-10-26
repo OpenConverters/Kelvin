@@ -19,6 +19,7 @@ Environment=KELVIN_SHARD_DIR=/cache/kelvin
 # Its own index dir: never share shards with the Moebius instance or the site.
 Environment=KELVIN_INDEX_DIR=/cache/kelvin-mcp-public/index
 Environment=KELVIN_SITEMAP_DIR=/cache/kelvin-mcp-public/sitemaps
+Environment=KELVIN_PAGE_CACHE_DIR=/cache/kelvin-mcp-public/page-cache
 Environment=KELVIN_USAGE_LOG=/cache/kelvin-mcp-public/usage/usage.jsonl
 # Product telemetry: the same two sinks the web app uses (oc-telemetry -> Postgres, shared Umami).
 Environment=KELVIN_TELEMETRY_URL=http://127.0.0.1:8787/telemetry

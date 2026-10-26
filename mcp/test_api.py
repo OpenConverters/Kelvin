@@ -136,3 +136,28 @@ def test_non_finite_numbers_become_null_not_a_500(client, monkeypatch):
     response = client.post("/api/v1/select/capacitor", json={"requirements": {}})
     assert response.status_code == 200
     assert response.json()["candidates"][0]["margins"] == {"m": None, "n": None}
+
+
+def test_part_page_lists_substitutes_from_cache_then_survives_busy_worker(tmp_path, monkeypatch, client):
+    monkeypatch.setattr(S, "PAGE_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(S, "_page_cache_written", 0)
+    mpn = first_mpn(client)
+    html = client.get(f"/part/capacitor/{mpn}").text
+    assert "<h2>Substitutes</h2>" in html and "scored candidates" in html
+    assert "<th>Grade</th>" in html and html.count("/part/capacitor/") >= 3
+    cached = json.loads(next(tmp_path.rglob("*.json")).read_text())
+    assert cached["candidates"] and all(c["manufacturer"] for c in cached["candidates"])
+    assert list(tmp_path.rglob("*.json")), "the computed table was not cached"
+
+    # A cached page needs no worker at all.
+    monkeypatch.setattr(S, "_xref", lambda *_: (_ for _ in ()).throw(AssertionError("recomputed")))
+    assert "<th>Grade</th>" in client.get(f"/part/capacitor/{mpn}").text
+
+    # An uncached page asked for while the worker is busy renders without a table, not a wait.
+    other = client.get("/api/v1/search/capacitor", params={"limit": 2}).json()["candidates"][1]["mpn"]
+    assert S._page_xref_lock.acquire(blocking=False)
+    try:
+        busy = client.get(f"/part/capacitor/{other}")
+    finally:
+        S._page_xref_lock.release()
+    assert busy.status_code == 200 and "Computed on request" in busy.text

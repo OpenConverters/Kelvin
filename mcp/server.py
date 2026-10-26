@@ -373,7 +373,92 @@ def _part_lookup(family: str, mpn: str, manufacturer: str | None):
     return key, row, record, rows[1:]
 
 
-def _part_page(key: str, row: dict, record, others: list, base: str) -> str:
+# Substitutes on the part page (ABT #1915). A crawler or an AI fetcher that cannot run the app
+# should still read what replaces a part. A cross-reference costs 0.1-6 s warm, so it is computed
+# when a page is first asked for and kept on disk per catalogue version; at most ONE such
+# computation runs at a time, and a page asked for while another is running renders without the
+# table (and a link to the API) instead of queueing — a crawler must not be able to occupy the
+# shared cross-reference worker. Unset KELVIN_PAGE_CACHE_DIR = no substitutes on pages.
+PAGE_CACHE_DIR = os.environ.get("KELVIN_PAGE_CACHE_DIR", "").strip()
+PAGE_CACHE_MAX = int(os.environ.get("KELVIN_PAGE_CACHE_MAX", "50000"))
+PAGE_XREF_SHOWN = 5
+_page_xref_lock = threading.Lock()
+_page_cache_written = 0
+
+
+def _page_candidates(key: str, row: dict) -> dict | None:
+    """Top substitutes for a page, from the cache or computed now; None when unavailable."""
+    global _page_cache_written
+    if not PAGE_CACHE_DIR:
+        return None
+    version = _data_version()
+    name = hashlib.sha1(f"{row['mpn']}\0{row.get('manufacturer') or ''}".encode()).hexdigest()
+    path = Path(PAGE_CACHE_DIR) / version / key / f"{name[:2]}" / f"{name}.json"
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        pass
+    if not _page_xref_lock.acquire(blocking=False):
+        return None                                   # busy: do not queue behind a crawler
+    try:
+        try:
+            result = _xref({"op": "crossref", "family": key, "mpn": row["mpn"],
+                            "manufacturer": row.get("manufacturer"), "manufacturers": [],
+                            "sameType": True, "maxResults": PAGE_XREF_SHOWN})
+        except Exception:                             # noqa: BLE001 — not cross-referenceable
+            return None
+        out = {"dataVersion": version, "total": result.get("poolTotal"),
+               "originalVerified": result.get("origVerified"),
+               "candidates": [
+                   {**{k: c.get(k) for k in ("mpn", "grade", "direction", "footprint")
+                       if c.get(k) is not None},
+                    # the ranker keeps the vendor on the scored row, not on the verdict
+                    "manufacturer": c.get("manufacturer") or (c.get("row") or {}).get("manufacturer")}
+                   for c in (result.get("ranked") or [])[:PAGE_XREF_SHOWN]]}
+        if _page_cache_written < PAGE_CACHE_MAX:
+            if _page_cache_written == 0:              # first write of this process: drop old versions
+                import shutil
+                for old in Path(PAGE_CACHE_DIR).glob("*"):
+                    if old.name != version:
+                        shutil.rmtree(old, ignore_errors=True)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(f".{os.getpid()}.tmp")
+            tmp.write_text(json.dumps(out))
+            tmp.replace(path)
+            _page_cache_written += 1
+        return out
+    finally:
+        _page_xref_lock.release()
+
+
+def _substitutes_html(key: str, row: dict, found: dict | None, base: str) -> str:
+    esc = _html.escape
+    api = (f"{base}/api/v1/crossref/{_quote(key)}/{_quote(row['mpn'], safe='')}"
+           f"?manufacturer={_quote(row.get('manufacturer') or '', safe='')}")
+    link = f'<a href="{esc(api)}" rel="nofollow">full cross-reference as JSON</a>'
+    if not found or not found["candidates"]:
+        return (f"<h2>Substitutes</h2><p>{'None found among other manufacturers\' parts' if found else 'Computed on request'}: "
+                f"{link}.</p>")
+    rows = "".join(
+        f'<tr><td><a href="{base}/part/{_quote(key)}/{_quote(c["mpn"], safe="")}'
+        f'?manufacturer={_quote(c.get("manufacturer") or "", safe="")}">{esc(c["mpn"])}</a></td>'
+        f'<td>{esc(c.get("manufacturer") or "")}</td><td>{esc(c.get("grade") or "")}</td>'
+        f'<td>{esc(c.get("direction") or "")}</td><td>{esc(c.get("footprint") or "")}</td></tr>'
+        for c in found["candidates"])
+    caution = ("" if found.get("originalVerified") is not False else
+               "<p><b>This part's own record is incomplete, so no substitute is graded "
+               "recommended.</b></p>")
+    return (f"<h2>Substitutes</h2><p>Best {len(found['candidates'])} of "
+            f"{found.get('total') or '?'} scored candidates from other manufacturers "
+            f"(catalogue version {esc(found['dataVersion'])}).</p>{caution}"
+            "<table><tr><th>Part</th><th>Manufacturer</th><th>Grade</th><th>Direction</th>"
+            f"<th>Footprint</th></tr>{rows}</table>"
+            "<p>Grades: drop_in, minor_review, major_review, redesign, no_substitute. "
+            "&ldquo;unverified&rdquo; means a record is silent on that point, not that the "
+            f"part passed it. {link}.</p>")
+
+
+def _part_page(key: str, row: dict, record, others: list, base: str, found: dict | None = None) -> str:
     numeric = kelvin.family_fields(key)["numeric"]
     strings = kelvin.family_fields(key)["string"]
     esc = _html.escape
@@ -410,6 +495,7 @@ def _part_page(key: str, row: dict, record, others: list, base: str) -> str:
         f"{' · case ' + esc(str(row['caseCode'])) if row.get('caseCode') else ''}</p>"
         f"<table>{rows_html}</table>"
         + (f'<p><a href="{esc(datasheet)}" rel="nofollow">Datasheet</a></p>' if datasheet else "")
+        + _substitutes_html(key, row, found, base)
         + (f"<p>Same MPN from other manufacturers:</p><ul>{also}</ul>" if also else "")
         + "<p>Values are SI base units; a spec not listed is not stated in the part's record "
           "(it is not zero). Machine access: MCP at <a href=\"/mcp\">/mcp</a>, "
@@ -440,7 +526,8 @@ async def part_page(request):
                                        "record": record,
                                        "sameMpnOtherManufacturers": [o.get("manufacturer")
                                                                      for o in others]}))
-    return HTMLResponse(_part_page(key, row, record, others, base))
+    found = await anyio.to_thread.run_sync(_page_candidates, key, row)
+    return HTMLResponse(_part_page(key, row, record, others, base, found))
 
 
 # --- sitemaps and family index pages (ABT #1915) -----------------------------------------------
