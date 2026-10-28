@@ -11,6 +11,7 @@ export const MAX_PINS = KSERIES.length
 export const store = reactive({
   view: 'home', // home | catalog | recommend | crossref | compare | stats
   family: 'magnetic',
+  statsHome: true, // stats view: the all-families overview (true) or one family's survey (false)
   pins: [], // [{family, mpn, manufacturer, srcOffset, srcLength, color}]
   pinNote: '',
   drawer: null, // {family, mpn, manufacturer, srcOffset, srcLength}
@@ -75,14 +76,14 @@ export function record(family, srcOffset, srcLength) {
 // ── URL state: #/<view>/<family> (shareable mode+family; filters stay in-page) ─
 export function syncUrl() {
   watch(
-    () => [store.view, store.family],
-    ([view, family]) => {
+    () => [store.view, store.family, store.statsHome],
+    ([view, family, statsHome]) => {
       // home is the bare site root: no family to carry, so no hash at all
       if (view === 'home') {
         if (location.hash) history.replaceState(null, '', location.pathname + location.search)
         return
       }
-      const h = `#/${view}/${family}`
+      const h = view === 'stats' && statsHome ? '#/stats' : `#/${view}/${family}`
       if (location.hash !== h) history.replaceState(null, '', h)
     },
     { immediate: true },
@@ -99,10 +100,16 @@ export function restoreFromUrl(validFamilies) {
     store.view = 'home'
     return
   }
+  if (location.hash === '#/stats') {
+    store.view = 'stats'
+    store.statsHome = true
+    return
+  }
   const m = location.hash.match(/^#\/(catalog|recommend|crossref|compare|stats)\/([a-z]+)$/)
   if (!m) return
   store.view = m[1]
   if (validFamilies.includes(m[2])) store.family = m[2]
+  if (m[1] === 'stats') store.statsHome = false
 }
 
 // Back/forward + pasted #-links switch views without a reload. syncUrl writes via

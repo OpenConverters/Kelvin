@@ -68,7 +68,7 @@ const fmt = (n) => n.toLocaleString('en-US')
           <a class="btn primary" href="#/catalog/magnetic">Browse the catalogue ›</a>
           <a class="btn" href="#/recommend/mosfet">Recommend a part ›</a>
           <a class="btn" href="#/crossref/mosfet">Cross-reference ›</a>
-          <a class="btn" href="#/stats/capacitor">Stats ›</a>
+          <a class="btn" href="#/stats">Stats ›</a>
         </div>
       </div>
       <dl class="headline mono" aria-label="catalogue totals">

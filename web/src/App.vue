@@ -11,6 +11,7 @@ import RecommendView from './views/RecommendView.vue'
 import CrossRefView from './views/CrossRefView.vue'
 import CompareView from './views/CompareView.vue'
 import StatsView from './views/StatsView.vue'
+import StatsHome from './views/StatsHome.vue'
 import HomeView from './views/HomeView.vue'
 import PartDrawer from './components/PartDrawer.vue'
 
@@ -63,7 +64,7 @@ onMounted(async () => {
     boot.detail = ''
     // pre-cool the active family — but not on the home page, which is built from a
     // few-KB build-time summary and must not pull a multi-MB shard nobody asked for
-    if (store.view !== 'home') ensureShard(store.family)
+    if (store.view !== 'home' && !onStatsHome()) ensureShard(store.family)
   } catch (e) {
     boot.error = e.message
     boot.detail = ''
@@ -71,9 +72,17 @@ onMounted(async () => {
 })
 
 // leaving home for a data view: start cooling that family's shard right away
+// the all-families stats overview is built from the same build-time summary as home
+const onStatsHome = () => store.view === 'stats' && store.statsHome
 watch(() => store.view, (view, from) => {
-  if (from === 'home' && view !== 'home' && boot.phase === 'ready') ensureShard(store.family).catch(() => {})
+  if (from === 'home' && view !== 'home' && !onStatsHome() && boot.phase === 'ready') ensureShard(store.family).catch(() => {})
 })
+
+// the Stats tab always opens the all-families overview; a family is one click further
+function openView(key) {
+  if (key === 'stats') store.statsHome = true
+  store.view = key
+}
 
 const VIEWS = [
   { key: 'home', label: 'Home' },
@@ -109,7 +118,7 @@ const VIEWS = [
           v-for="v in VIEWS" :key="v.key"
           class="mode" :class="{ active: store.view === v.key }"
           type="button"
-          @click="store.view = v.key"
+          @click="openView(v.key)"
         >
           {{ v.label }}
           <span v-if="v.key === 'compare' && store.pins.length" class="pin-count mono">{{ store.pins.length }}</span>
@@ -144,6 +153,7 @@ const VIEWS = [
       <CatalogView v-else-if="store.view === 'catalog'" :counts="counts" />
       <RecommendView v-else-if="store.view === 'recommend'" />
       <CrossRefView v-else-if="store.view === 'crossref'" />
+      <StatsHome v-else-if="store.view === 'stats' && store.statsHome" />
       <StatsView v-else-if="store.view === 'stats'" :counts="counts" />
       <CompareView v-else />
     </main>

@@ -151,6 +151,21 @@ test.describe('kelvin site', () => {
     expect(errors).toEqual([])
   })
 
+  test('stats tab opens the all-families overview, a family opens its survey', async ({ page }) => {
+    await page.goto('/')
+    await page.locator('nav.modes').getByRole('button', { name: 'Stats' }).click()
+    await expect(page).toHaveURL(/#\/stats$/)
+    await expect(page.locator('.stats-home .tile-value').first()).toBeVisible()
+    await expect(page.locator('.stats-home .bar-row')).toHaveCount(12)
+    await expect(page.locator('.hist')).toHaveCount(0)
+    await page.locator('.stats-home .bar-row').first().click()
+    await expect(page).toHaveURL(/#\/stats\/capacitor$/)
+    await expect(page.locator('.hist svg rect').first()).toBeVisible({ timeout: 30_000 })
+    await page.getByRole('button', { name: '‹ All stats' }).click()
+    await expect(page).toHaveURL(/#\/stats$/)
+    await expect(page.locator('.stats-home')).toBeVisible()
+  })
+
   test('stats view renders tiles, vendor share and histograms', async ({ page }) => {
     await page.goto('/#/stats/magnetic')
     await expect(page.locator('.tile-value').first()).toBeVisible({ timeout: 30_000 })

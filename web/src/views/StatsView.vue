@@ -157,6 +157,7 @@ const hoverBucket = ref(null) // {histField, i, ...bar}
 <template>
   <div class="stats">
     <div class="family-strip">
+      <button class="fam-tab" type="button" @click="store.statsHome = true">‹ All stats</button>
       <button
         v-for="f in FAMILIES" :key="f.key"
         class="fam-tab" :class="{ active: f.key === store.family }"
