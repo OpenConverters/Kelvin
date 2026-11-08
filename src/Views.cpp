@@ -567,12 +567,25 @@ std::optional<CapacitorRow> extract_capacitor(const json& env) {
         }
     }
     // Operating temperature range: a substitute must cover the original's, at
-    // both ends. Present on essentially every capacitor record.
+    // both ends. CAS carries it under two keys: its own `thermal.temperature` and the PEAS
+    // datasheetInfoThermal `thermal.operatingTemperature`, both {minimum, maximum}. Of the
+    // 604,716 published records (2026-11-08), 476,195 state a thermal block: 466,726 use
+    // only `temperature`, 9,391 only `operatingTemperature`, 78 both (all 78 agree).
+    // Reading only `temperature` dropped the -40..105 C range of EEEHC0J221XP, so 85 C
+    // substitutes got no temperature verdict (Qarlos 2026-11-08). Each end is read from whichever key states it; when both
+    // state an end and they DISAGREE, that end is left unknown — picking one would be a
+    // silent choice between two contradicting datasheet claims.
     if (const json* th = obj_get(*di, "thermal")) {
-        if (const json* t = obj_get(*th, "temperature")) {
-            if (auto v = get_num(*t, "minimum")) r.temp_min_c = *v;
-            if (auto v = get_num(*t, "maximum")) r.temp_max_c = *v;
-        }
+        const json* a = obj_get(*th, "temperature");
+        const json* b = obj_get(*th, "operatingTemperature");
+        auto end = [&](const char* k) -> std::optional<double> {
+            std::optional<double> va = a ? get_num(*a, k) : std::nullopt;
+            std::optional<double> vb = b ? get_num(*b, k) : std::nullopt;
+            if (va && vb) return (*va == *vb) ? va : std::nullopt;
+            return va ? va : vb;
+        };
+        if (auto v = end("minimum")) r.temp_min_c = *v;
+        if (auto v = end("maximum")) r.temp_max_c = *v;
     }
     r.technology = tech;
     auto status = get_str(*mi, "status");

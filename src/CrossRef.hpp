@@ -752,7 +752,18 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 note_direction(spec.dir, od, sd);
             }
         }
-        if (numeric && is_hard_param(cat, spec.key) && !o && s) {
+        // The original states only a rated current and the substitute saturates below it
+        // (compare_saturation_current). That axis WAS weighed — and came out behind — so it
+        // is not reported as blind; say which two figures were set against each other.
+        const bool isat_vs_rating = spec.key == "saturation_current" &&
+                                    (verdict == WARN || verdict == FAIL) &&
+                                    isat_below_original_rating(original, cand);
+        if (isat_vs_rating)
+            notes.push_back("the original's record states no saturation current, but the "
+                            "substitute saturates below the original's rated current — it "
+                            "cannot carry the current the original is rated for without "
+                            "losing inductance");
+        if (numeric && is_hard_param(cat, spec.key) && !o && s && !isat_vs_rating) {
             direction_blind = true;
             blind_axes.push_back(param_label(spec.key));
         }

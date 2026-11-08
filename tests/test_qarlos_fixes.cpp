@@ -458,3 +458,104 @@ TEST_CASE("qarlos 2026-11-08: a MOSFET with no stated qualification is unknown-g
     CHECK(has_note(*ci, "substitute is commercial"));
 }
 
+// ── Qarlos audit of 2026-11-08: magnetics + capacitors ───────────────────────
+
+// PL8132NLT (iNRCORE) states only a rated current (2.7 A); VLCF4020T-270MR48 states only an
+// Isat (0.48 A). Neither like-for-like compare had both operands, so both axes came back
+// unverified and the row was graded minor_review (run2 seed 20263126). A substitute that
+// saturates below the original's rated current is saturated at a current the original is
+// specified to carry: that is a regression, not an unknown.
+TEST_CASE("qarlos 2026-11-08: Isat below the original's rated current fails the magnetic",
+          "[qarlos][crossref][isat]") {
+    // spec blocks exactly as web/src/crossref.js builds them from the two shard rows
+    json orig = {{"mpn", "PL8132NLT"}, {"value_si", 2.91e-5}, {"rated_current", 2.7}};
+    json cand = {{"mpn", "VLCF4020T-270MR48"}, {"value_si", 2.7e-5},
+                 {"saturation_current", 0.48}, {"dcr", 0.496}};
+    kelvin::crossref::Options opt;
+    opt.check_footprint = false;
+    auto r = kelvin::crossref::cross_reference("magnetic", orig, json::array({cand}), opt);
+    const json& c = r["candidates"][0];
+    CHECK(verdict_of(c, "saturation_current") == "fail");
+    CHECK(c["grade"] == "major_review");
+    CHECK(c["direction"] == "downgrade");
+    CHECK(has_note(c, "saturates below the original's rated current"));
+    CHECK_FALSE(has_note(c, "could not be weighed"));
+
+    // just under the rating (inside the 0.9 tolerance) warns
+    json near = cand;
+    near["saturation_current"] = 2.6;
+    auto rn = kelvin::crossref::cross_reference("magnetic", orig, json::array({near}), opt);
+    CHECK(verdict_of(rn["candidates"][0], "saturation_current") == "warn");
+
+    // at or above the rating proves nothing about the original's own Isat: still unverified,
+    // still direction-blind (the one-way rule is not an equivalence)
+    json above = cand;
+    above["saturation_current"] = 3.0;
+    auto ra = kelvin::crossref::cross_reference("magnetic", orig, json::array({above}), opt);
+    CHECK(verdict_of(ra["candidates"][0], "saturation_current") == "unverified");
+    CHECK(has_note(ra["candidates"][0], "could not be weighed"));
+
+    // the substitute is read at its most lenient stated criterion: a 10 % figure below the
+    // rating does not fail a part whose 30 % figure clears it
+    json pts = cand;
+    pts["saturation_current"] = 2.0;
+    pts["saturation_points"] = json::array({{{"percent_drop", 10.0}, {"current", 2.0}},
+                                            {{"percent_drop", 30.0}, {"current", 2.9}}});
+    auto rp = kelvin::crossref::cross_reference("magnetic", orig, json::array({pts}), opt);
+    CHECK(verdict_of(rp["candidates"][0], "saturation_current") == "unverified");
+}
+
+// EEEHC0J221XP (Panasonic) states its range as thermal.operatingTemperature, the PEAS key;
+// the extractor read only CAS's thermal.temperature, so the -40..105 C range was dropped and
+// 85 C substitutes got no temperature verdict (run3 seed 20264135).
+TEST_CASE("qarlos 2026-11-08: capacitor temperature range is read from operatingTemperature too",
+          "[qarlos][views][crossref]") {
+    auto cap = [](json thermal) {
+        return json{{"capacitor", {{"manufacturerInfo", {{"name", "Panasonic"},
+            {"reference", "EEEHC0J221XP"}, {"status", "production"},
+            {"datasheetInfo", {{"part", {{"technology", "aluminum-electrolytic-wet"}}},
+                {"electrical", {{"capacitance", {{"nominal", 220e-6}}}, {"ratedVoltage", 6.3}}},
+                {"thermal", thermal}}}}}}}};
+    };
+    auto pea = kelvin::extract_capacitor(
+        cap({{"operatingTemperature", {{"minimum", -40.0}, {"maximum", 105.0}}}}));
+    REQUIRE(pea.has_value());
+    CHECK(pea->temp_min_c == -40.0);
+    CHECK(pea->temp_max_c == 105.0);
+
+    auto cas = kelvin::extract_capacitor(cap({{"temperature", {{"minimum", -55.0}, {"maximum", 85.0}}}}));
+    REQUIRE(cas.has_value());
+    CHECK(cas->temp_min_c == -55.0);
+    CHECK(cas->temp_max_c == 85.0);
+
+    // both keys stating the same range: read once
+    auto both = kelvin::extract_capacitor(
+        cap({{"temperature", {{"minimum", -55.0}, {"maximum", 105.0}}},
+             {"operatingTemperature", {{"minimum", -55.0}, {"maximum", 105.0}}}}));
+    REQUIRE(both.has_value());
+    CHECK(both->temp_min_c == -55.0);
+    CHECK(both->temp_max_c == 105.0);
+
+    // contradicting ends are not silently resolved; a stated end on one key only is kept
+    auto clash = kelvin::extract_capacitor(
+        cap({{"temperature", {{"maximum", 85.0}}},
+             {"operatingTemperature", {{"minimum", -40.0}, {"maximum", 105.0}}}}));
+    REQUIRE(clash.has_value());
+    CHECK(clash->temp_min_c == -40.0);
+    CHECK(std::isnan(clash->temp_max_c));
+
+    // and the range now gates: an 85 C substitute for the 105 C original fails temp_max_C
+    json orig = {{"mpn", "EEEHC0J221XP"}, {"value_si", 220e-6}, {"voltage", 6.3},
+                 {"technology", "aluminum-electrolytic-wet"},
+                 {"temp_min_C", pea->temp_min_c}, {"temp_max_C", pea->temp_max_c}};
+    json sub = {{"mpn", "MAL202124221E3"}, {"value_si", 220e-6}, {"voltage", 6.3},
+                {"technology", "aluminum-electrolytic-wet"}, {"temp_min_C", -40.0},
+                {"temp_max_C", 85.0}};
+    kelvin::crossref::Options opt;
+    opt.check_footprint = false;
+    auto r = kelvin::crossref::cross_reference("capacitor", orig, json::array({sub}), opt);
+    const json& c = r["candidates"][0];
+    CHECK(verdict_of(c, "temp_max_C") == "fail");
+    CHECK(c["direction"] == "downgrade");
+}
+
