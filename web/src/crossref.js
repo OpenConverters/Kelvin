@@ -201,7 +201,13 @@ export const XREF = [
     // 260 records stating Qrr = 0 are sicSchottky/schottky, where zero is the measurement
     // — no minority charge to recover — and nz() would report the one class of diode
     // whose recovery IS its selling point as having no recovery data at all.
+    // A zener's Vz is matched, not floored: the ranker rejects one whose Vz lies outside
+    // the original's breakdown band (Qarlos 2026-11-08), so the pool is cut at that edge
+    // instead of at 0.9x Vrrm — otherwise 800 rows of wrong-voltage zeners fill the pool
+    // and the genuine equivalents never reach the ranker.
+    variantFor: (orig) => (orig?.technology === 'zener' ? ZENER_VARIANT : null),
     spec: (r) => ({ ...base(r), vrrm: nz(r.vrrm_rated), if_avg: nz(r.if_avg_rated), vf: nz(r.vf_typ),
+      power_dissipation: nz(r.power_dissipation),
       qrr: r.qrr ?? null, trr: r.trr ?? null, technology: r.technology ?? '',
       vz_min_V: nz(r.vz_min), vz_max_V: nz(r.vz_max),
       vz_tolerance_pct: r.vz_tolerance != null ? r.vz_tolerance * 100 : null,
@@ -220,6 +226,7 @@ export const XREF = [
       { key: 'vf', label: 'Vf', row: 'vf_typ', unit: 'V' },
       { key: 'qrr', label: 'Qrr', row: 'qrr', unit: 'C' },
       { key: 'vz_tolerance_pct', label: 'Vbr tol', row: 'vz_tolerance', unit: '%', scale: 100 },
+      { key: 'power_dissipation', label: 'Pd', row: 'power_dissipation', unit: 'W' },
       { key: 'clamping_voltage', label: 'Vc', row: 'clamping_voltage', unit: 'V' },
       { key: 'peak_pulse_power', label: 'Ppk', row: 'peak_pulse_power', unit: 'W' },
       { key: 'peak_pulse_current', label: 'Ipp', row: 'peak_pulse_current', unit: 'A' },
@@ -227,6 +234,25 @@ export const XREF = [
     ],
   },
 ]
+
+// Zener view of the diode catalogue: same comparison model, but the pool is cut at the
+// ranker's own zener-voltage reject edge (src/CrossRef.hpp, kZenerEdgeTol / kZenerPointTol):
+// the substitute's Vz (vrrm_rated: its nominal, else its band midpoint) inside the
+// original's stated band, or within 1 % of its Vz when it states no band. Nothing the
+// ranker would keep is dropped.
+const ZENER_EDGE_TOL = 1e-3
+const ZENER_POINT_TOL = 0.01
+const ZENER_VARIANT = {
+  hardMin: [],
+  rangeFilters: (orig) => {
+    const lo = nz(orig.vz_min), hi = nz(orig.vz_max), v = nz(orig.vrrm_rated)
+    if (lo != null && hi != null && hi >= lo) {
+      return { vrrm_rated: { min: lo * (1 - ZENER_EDGE_TOL), max: hi * (1 + ZENER_EDGE_TOL) } }
+    }
+    if (v != null) return { vrrm_rated: { min: v * (1 - ZENER_POINT_TOL), max: v * (1 + ZENER_POINT_TOL) } }
+    return {}
+  },
+}
 
 // Ferrite-bead view of the magnetic catalogue. Its primary axis is impedance at
 // 100 MHz — the number the whole industry quotes — but the ranker also compares
@@ -346,6 +372,7 @@ export async function runCrossRef({ family, original, manufacturers, sameType = 
     const o = nz(original[h.row])
     if (o != null) filters[h.row] = { min: o * h.factor }
   }
+  Object.assign(filters, f.rangeFilters?.(original) ?? {})
   // IDENTITY parameters constrain the pool rather than just failing later: a
   // 25 MHz crystal is not a near-match for a 48 MHz one, so ranking it and
   // rejecting it fills the table with 25 rows of "no substitute" and buries

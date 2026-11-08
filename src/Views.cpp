@@ -379,18 +379,21 @@ std::optional<DiodeRow> extract_diode(const json& env) {
     // (standoff 180 V) reached the ranker as a 221 V part and passed a 210 V original's
     // check while already conducting at 200 V (ABT #2047). Every tvs/esd record states a
     // standoff; one that does not is unreadable, not read from another field.
-    std::optional<double> vrrm =
-        protection ? resolve_field(*elec, "standoffVoltage") : get_num(*elec, "reverseVoltage");
+    //
+    // A zener's working rating is its Vz, the breakdownVoltage, and only that — the same
+    // rule. resolve_field, NOT get_num: a zener's breakdownVoltage is a
+    // dimensionWithTolerance ({minimum, nominal, maximum} — Vz is a graded range, so all
+    // of them are objects), and get_num reads none of it. Reading reverseVoltage first
+    // (72 of 13,881 zeners state one) took the reverse-LEAKAGE test voltage instead:
+    // BZX55C3.3 (Vz 3.135-3.465 V) reached the ranker as a 4.95 V part. Now that the
+    // ranker compares a zener's Vz to the original's window, that would reject the
+    // genuine equivalent and admit a wrong one (Qarlos 2026-11-08). A zener stating no
+    // breakdown voltage is unreadable, not read from another field.
+    std::optional<double> vrrm = protection       ? resolve_field(*elec, "standoffVoltage")
+                                 : sub == "zener" ? resolve_field(*elec, "breakdownVoltage")
+                                                  : get_num(*elec, "reverseVoltage");
     auto if_avg = get_num(*elec, "forwardCurrent");
     auto vf = get_num(*elec, "forwardVoltage");
-    if (!pos(vrrm) && sub == "zener") {
-        // resolve_field, NOT get_num: a zener's breakdownVoltage is a
-        // dimensionWithTolerance ({minimum, nominal, maximum} — Vz is a graded range, so
-        // all 8,274 of them are objects), and get_num reads none of it. Using it left
-        // every zener unindexed even after the subtype gate was fixed, which looked like
-        // the gate had not worked at all.
-        vrrm = resolve_field(*elec, "breakdownVoltage");
-    }
     if (!pos(vrrm)) return std::nullopt;
     if (rectifier_like && (!pos(if_avg) || !pos(vf))) return std::nullopt;
 
@@ -436,6 +439,8 @@ std::optional<DiodeRow> extract_diode(const json& env) {
         if (pos(lo) && pos(hi) && *hi >= *lo) r.vz_tolerance = (*hi - *lo) / (*hi + *lo);
     }
     r.technology = get_str(*part, "subType").value_or("");
+    // Continuous dissipation rating. Absent stays NaN; a 0 or negative is unreadable.
+    if (auto v = get_num(*elec, "powerDissipation"); pos(v)) r.power_dissipation = *v;
     // The surge / clamp / capacitance specs, each with the impulse it was stated at
     // (ABT #2036, #2040, #2041, #2048-#2051). Absent stays NaN / "", never a default.
     if (auto v = get_num(*elec, "clampingVoltage"); pos(v)) r.clamping_voltage = *v;

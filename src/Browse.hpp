@@ -89,6 +89,7 @@ inline const FieldTable<DiodeRow>& fields<DiodeRow>() {
          {"vz_min", &DiodeRow::vz_min},
          {"vz_max", &DiodeRow::vz_max},
          {"vz_tolerance", &DiodeRow::vz_tolerance},
+         {"power_dissipation", &DiodeRow::power_dissipation},
          {"rth_ja", &DiodeRow::rth_ja},
          {"rth_jc", &DiodeRow::rth_jc},
          {"tj_max", &DiodeRow::tj_max},

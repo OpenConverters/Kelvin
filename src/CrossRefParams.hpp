@@ -400,6 +400,10 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
         // candidate whose record omits the band is UNKNOWN, and the honest report of
         // an unknown is UNVERIFIED, not a penalty for the vendor's silence (ABT #488).
         {"vz_tolerance_pct", D::Lower, 2.0, std::nullopt, false, false, nullptr},
+        // Continuous power-dissipation rating (Qarlos 2026-11-08: a 0.3 W zener came back
+        // drop_in for a 0.5 W one). Equal-or-higher passes, down to 90 % warns, lower
+        // fails — the resistor power-rating rule. An absent value is UNVERIFIED.
+        {"power_dissipation", D::Higher, 0.9, std::nullopt, false, false, nullptr},
     };
     static const std::vector<ParamSpec> kResistor = {
         {"power_rating", D::Higher, 0.9, std::nullopt, false, false, nullptr},

@@ -155,6 +155,11 @@ struct DiodeRow : RowBase {
     // 1.11 % original with no mention of the grade anywhere (ABT #488). Absent stays NaN
     // — a missing bound is unknown, never a zero-width window.
     double vz_min = kNaN(), vz_max = kNaN(), vz_tolerance = kNaN();
+    // W — electrical.powerDissipation, the continuous dissipation rating. Every catalogue
+    // zener states one (13,881 of 13,881), and it was never carried, so a 0.3 W SOD-323
+    // zener came back drop_in for a 0.5 W original (Qarlos 2026-11-08). NaN when the
+    // record does not state it; never a "typical" value.
+    double power_dissipation = kNaN();
     double rth_ja = kNaN(), rth_jc = kNaN(), tj_max = kNaN();
     std::string technology;   // part.subType (schottky / fastRecovery / ...)
     // Transient-suppression specs (tvs / esd). These, not Vrrm, are what a protection diode

@@ -1,6 +1,7 @@
 // Regression tests for the Qarlos cross-reference audit of 2026-10-24
 // (ABT #2029-#2051). Each case reproduces the reported row in miniature.
 #include <cmath>
+#include <optional>
 #include <string>
 
 #include <catch2/catch_approx.hpp>
@@ -377,4 +378,165 @@ TEST_CASE("qarlos #2035: all-retracted provenance is flagged and verifies nothin
     auto r2 = kelvin::crossref::cross_reference("diode", o2, json::array({c2}));
     CHECK(r2["original_verified"] == false);
     CHECK(r2["candidates"][0]["status"] == "partial");
+}
+
+// ── Qarlos audit of 2026-11-08: diodes ──────────────────────────────────────
+namespace {
+json find_mpn(const json& r, const std::string& mpn) {
+    for (const auto& c : r.at("candidates"))
+        if (c.value("mpn", "") == mpn) return c;
+    FAIL("candidate " << mpn << " missing from the result");
+    return json();
+}
+json zener(const std::string& mpn, std::optional<double> vz, std::optional<double> lo = std::nullopt,
+           std::optional<double> hi = std::nullopt, std::optional<double> pd = std::nullopt) {
+    json z = {{"mpn", mpn}, {"technology", "zener"}, {"case_code", "SOD-323"}};
+    if (vz) z["vrrm"] = *vz;
+    if (lo) z["vz_min_V"] = *lo;
+    if (hi) z["vz_max_V"] = *hi;
+    if (pd) z["power_dissipation"] = *pd;
+    return z;
+}
+}  // namespace
+
+// Run 3 seed 20264135 / run 4 seed 20265144: Vz was never compared, so a 24 V zener was
+// drop_in/upgrade for TFZVTR22B (20.64-21.71 V) and 11-20 V zeners drop_in for a 9.1 V one.
+TEST_CASE("qarlos 2026-11-08: a zener's Vz must lie inside the original's window",
+          "[qarlos][crossref]") {
+    // TFZVTR22B states only the band; vrrm is its midpoint.
+    const json orig = zener("TFZVTR22B", 21.175, 20.64, 21.71, 0.5);
+    auto r = kelvin::crossref::cross_reference(
+        "diode", orig,
+        json::array({zener("MM3Z24VT1G", 24.0, std::nullopt, std::nullopt, 0.5),
+                     zener("SZMM3Z22VT1G", 22.0, std::nullopt, std::nullopt, 0.5),
+                     zener("INSIDE", 21.2, 20.8, 21.6, 0.5),
+                     zener("REACHES_OUT", 21.2, 20.1, 22.3, 0.5),
+                     zener("NOMINAL_ONLY", 21.2, std::nullopt, std::nullopt, 0.5)}));
+    for (const char* m : {"MM3Z24VT1G", "SZMM3Z22VT1G"}) {
+        const json c = find_mpn(r, m);
+        CHECK(c["status"] == "no_substitute");
+        CHECK(verdict_of(c, "zener_voltage") == "fail");
+        CHECK(has_note(c, "outside the original's 20.64-21.71 V"));
+    }
+    const json in = find_mpn(r, "INSIDE");
+    CHECK(verdict_of(in, "zener_voltage") == "pass");
+    CHECK(in["grade"] == "drop_in");
+    CHECK(in["direction"] != "upgrade");
+    const json out = find_mpn(r, "REACHES_OUT");
+    CHECK(verdict_of(out, "zener_voltage") == "fail");
+    CHECK(out["grade"] == "major_review");
+    CHECK(has_note(out, "reaching outside the original's"));
+    // an absent band is unknown, not a pass (and, per ABT #488, not a regression)
+    CHECK(verdict_of(find_mpn(r, "NOMINAL_ONLY"), "zener_voltage") == "unverified");
+
+    // BZT52-C9V1-Q: 9.1 V, 8.5-9.6 V.
+    const json o2 = zener("BZT52-C9V1-Q", 9.1, 8.5, 9.6);
+    auto r2 = kelvin::crossref::cross_reference(
+        "diode", o2, json::array({zener("SZMMSZ11T1G", 11.0), zener("MMSZ20T1G", 20.0),
+                                  zener("MMSZ9V1T1G", 9.1)}));
+    CHECK(find_mpn(r2, "SZMMSZ11T1G")["status"] == "no_substitute");
+    CHECK(find_mpn(r2, "MMSZ20T1G")["status"] == "no_substitute");
+    CHECK(find_mpn(r2, "MMSZ9V1T1G")["status"] != "no_substitute");
+
+    // A band-less original: the window is its Vz +/- 1 %.
+    auto r3 = kelvin::crossref::cross_reference(
+        "diode", zener("NOM", 9.1),
+        json::array({zener("SAME", 9.1, 8.5, 9.6), zener("NEXT", 10.0, 9.4, 10.6)}));
+    CHECK(verdict_of(find_mpn(r3, "SAME"), "zener_voltage") == "pass");
+    CHECK(find_mpn(r3, "NEXT")["status"] == "no_substitute");
+
+    // A substitute with no Vz at all is never passed nor left uncapped.
+    auto r4 = kelvin::crossref::cross_reference("diode", o2,
+                                                json::array({zener("NOVZ", std::nullopt)}));
+    const json nv = r4["candidates"][0];
+    CHECK(verdict_of(nv, "zener_voltage") != "pass");
+    CHECK(nv["grade"] != "drop_in");
+    CHECK(nv["grade"] != "minor_review");
+}
+
+// Run 3 seed 20264135: SZMM3Z22VT1G (0.3 W) graded drop_in for TFZVTR22B (0.5 W).
+TEST_CASE("qarlos 2026-11-08: a lower diode power dissipation is a downgrade",
+          "[qarlos][crossref][views]") {
+    json env = {{"semiconductor", {{"diode", {{"manufacturerInfo",
+        {{"name", "ROHM"}, {"reference", "TFZVTR22B"}, {"datasheetInfo",
+            {{"part", {{"partNumber", "TFZVTR22B"}, {"subType", "zener"}}},
+             {"electrical", {{"breakdownVoltage", {{"minimum", 20.64}, {"maximum", 21.71}}},
+                             {"reverseVoltage", 17.0}, {"powerDissipation", 0.5}}}}}}}}}}}};
+    auto row = kelvin::extract_diode(env);
+    REQUIRE(row.has_value());
+    CHECK(row->power_dissipation == 0.5);
+    // a zener's vrrm is its Vz (the band midpoint here), never the leakage-test reverseVoltage
+    CHECK(row->vrrm_rated == Approx(21.175));
+
+    const json orig = zener("TFZVTR22B", 21.175, 20.64, 21.71, 0.5);
+    auto r = kelvin::crossref::cross_reference(
+        "diode", orig, json::array({zener("LOW_PD", 21.2, 20.8, 21.6, 0.3),
+                                    zener("SAME_PD", 21.2, 20.8, 21.6, 0.5)}));
+    const json low = find_mpn(r, "LOW_PD");
+    CHECK(verdict_of(low, "power_dissipation") == "fail");
+    CHECK(low["grade"] == "major_review");
+    CHECK(low["direction"] == "downgrade");
+    CHECK(verdict_of(find_mpn(r, "SAME_PD"), "power_dissipation") == "pass");
+}
+
+// Run 5 seed 20266153: SMCJ58CA (bidirectional) graded polarity 'pass' for SMBJ58A-Q.
+TEST_CASE("qarlos 2026-11-08: bidirectional for unidirectional TVS fails",
+          "[qarlos][crossref]") {
+    auto r = kelvin::crossref::cross_reference(
+        "diode", tvs("SMBJ58A-Q", 58.0),
+        json::array({tvs("SMCJ58CA-M3/57T", 58.0), tvs("SMCJ58A", 58.0)}));
+    const json bi = find_mpn(r, "SMCJ58CA-M3/57T");
+    CHECK(verdict_of(bi, "polarity") == "fail");
+    CHECK(bi["grade"] == "major_review");
+    CHECK(has_note(bi, "bidirectional substitute for a unidirectional original"));
+    CHECK(verdict_of(find_mpn(r, "SMCJ58A"), "polarity") == "pass");
+}
+
+// Run 4 seed 20265144: 15KPA066C-SD-Q (66 V standoff, Vbr min 66.4 V) minor_review for
+// 15KP70 (70 V standoff).
+TEST_CASE("qarlos 2026-11-08: a TVS standoff below the original's is no minor_review",
+          "[qarlos][crossref]") {
+    json orig = tvs("15KP70", 70.0);
+    orig["vz_min_V"] = 77.8;
+    json conducts = tvs("15KPA066C-SD-Q", 66.0);
+    conducts.update({{"vz_min_V", 66.4}, {"vz_max_V", 80.0}});
+    json lower = tvs("LOWER_STANDOFF", 66.0);
+    lower.update({{"vz_min_V", 73.3}});
+    auto r = kelvin::crossref::cross_reference("diode", orig, json::array({conducts, lower}));
+    const json c = find_mpn(r, "15KPA066C-SD-Q");
+    CHECK(c["status"] == "no_substitute");
+    CHECK(has_note(c, "can conduct at the circuit's working voltage"));
+    const json l = find_mpn(r, "LOWER_STANDOFF");
+    CHECK(verdict_of(l, "standoff_band") == "fail");
+    CHECK(l["grade"] == "major_review");
+    CHECK(l["direction"] == "downgrade");
+}
+
+// Run 3 seed 20264135: 'DO-214AB' vs 'SMC (DO-214AB)' read as a different land pattern.
+TEST_CASE("qarlos 2026-11-08: diode package aliases name the same outline",
+          "[qarlos][crossref][dims]") {
+    using kelvin::crossref::canonical_diode_case;
+    CHECK(canonical_diode_case("SMC (DO-214AB)") == canonical_diode_case("DO-214AB"));
+    CHECK(canonical_diode_case("DO-214AB (SMC)") == canonical_diode_case("SMC"));
+    CHECK(canonical_diode_case("SMB (DO-214AA)") == canonical_diode_case("DO-214AA"));
+    CHECK(canonical_diode_case("SMA") == canonical_diode_case("DO-214AC (SMA)"));
+    CHECK(canonical_diode_case("DO-41 (DO-204AL)") == canonical_diode_case("DO-204AL"));
+    CHECK(canonical_diode_case("MiniMELF (SOD-80)") == canonical_diode_case("SOD-80"));
+    // different outlines stay different; unlisted variants are not guessed at
+    CHECK(canonical_diode_case("SMC") != canonical_diode_case("SMB"));
+    CHECK(canonical_diode_case("SMC-2") != canonical_diode_case("SMC"));
+    CHECK(canonical_diode_case("SMB Flat") != canonical_diode_case("SMB"));
+    CHECK(canonical_diode_case("SMC (DO-214AA)") != canonical_diode_case("SMC"));
+
+    json orig = tvs("SMLJ36CA-QH", 36.0);
+    orig["case_code"] = "DO-214AB";
+    json same = tvs("3KASMC36AHE3_B/H", 36.0);
+    same["case_code"] = "SMC (DO-214AB)";
+    json other = tvs("SMBJ36CA", 36.0);
+    other["case_code"] = "SMB (DO-214AA)";
+    auto r = kelvin::crossref::cross_reference("diode", orig, json::array({same, other}));
+    const json s = find_mpn(r, "3KASMC36AHE3_B/H");
+    CHECK(s.value("footprint", "") != "different_case");
+    CHECK_FALSE(has_note(s, "different package/case"));
+    CHECK(find_mpn(r, "SMBJ36CA").value("footprint", "") == "different_case");
 }

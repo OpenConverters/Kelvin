@@ -939,6 +939,34 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                             ") — a protection part for a higher rail; it clamps later than the "
                             "protected circuit expects");
         }
+        // Standoff BELOW the original's (Qarlos 2026-11-08): the original's standoff is the
+        // circuit's working voltage, and a part whose standoff is lower is outside its
+        // rated off-state there. The vrrm rating below only WARNED inside its 0.9-0.95
+        // band, so a 66 V 15KPA066C came back minor_review for a 70 V 15KP70. Rule
+        // (conservative, for the owner to confirm):
+        //  * substitute's breakdown MINIMUM at or below the original's standoff: it may be
+        //    in breakdown — conducting — at the circuit's working voltage. REJECTED.
+        //  * otherwise a standoff below the original's: FAIL (caps at major_review); its
+        //    leakage is unspecified at the working voltage.
+        if (const auto ov = num(original, "vrrm"), sv = num(cand, "vrrm");
+            ov && sv && *sv < *ov * (1.0 - 1e-3)) {
+            const auto s_vbr_min = num(cand, "vz_min_V");
+            params.push_back({{"name", "standoff_band"}, {"verdict", FAIL}});
+            if (s_vbr_min && *s_vbr_min <= *ov) {
+                notes.push_back("standoff " + volts(*sv) + " V and breakdown minimum " +
+                                volts(*s_vbr_min) + " V against the original's " + volts(*ov) +
+                                " V standoff — the substitute can conduct at the circuit's "
+                                "working voltage");
+                return reject("breakdown minimum at or below the original's working voltage");
+            }
+            demote();
+            penalty += opt.gate_weight * kVerdictFailPenalty;
+            ++worse;
+            notes.push_back("standoff " + volts(*sv) + " V against the original's " + volts(*ov) +
+                            " V (" + signed_pct(100.0 * (*sv / *ov - 1.0)) +
+                            ") — below the circuit's working voltage; its leakage there is not "
+                            "specified");
+        }
 
         // Polarity.
         const TvsPolarity op = tvs_polarity_from_mpn(str(original, "mpn")),
@@ -952,6 +980,23 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 notes.push_back("unidirectional substitute for a bidirectional original (decoded "
                                 "from the part numbers) — it does not clamp a negative excursion, "
                                 "it conducts it as a forward diode");
+            } else if (op == TvsPolarity::Uni && sp == TvsPolarity::Bi) {
+                // The mirror image is no silent pass either (Qarlos 2026-11-08). A
+                // unidirectional original clamps a NEGATIVE excursion as a forward diode at
+                // about -1 V; a bidirectional part lets it swing to its reverse breakdown,
+                // tens of volts for a 58 V standoff, and no longer conducts the reverse-
+                // polarity fault a uni part is often placed to blow a fuse with. A
+                // different clamping characteristic: FAIL, capping at major_review, the
+                // same weight as the opposite case (conservative; for the owner to confirm).
+                params.push_back({{"name", "polarity"}, {"verdict", FAIL}});
+                demote();
+                penalty += opt.gate_weight * kVerdictFailPenalty;
+                ++worse;
+                notes.push_back("bidirectional substitute for a unidirectional original (decoded "
+                                "from the part numbers) — a negative excursion is no longer "
+                                "clamped near -1 V by forward conduction but only at the "
+                                "substitute's reverse breakdown; confirm what the protected "
+                                "circuit tolerates below ground");
             } else if (op == TvsPolarity::Unknown || sp == TvsPolarity::Unknown) {
                 params.push_back({{"name", "polarity"}, {"verdict", UNVERIFIED}});
                 if (op == TvsPolarity::Bi)
@@ -961,6 +1006,80 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             } else {
                 params.push_back({{"name", "polarity"}, {"verdict", PASS}});
             }
+        }
+    }
+
+    // ── zener voltage (zener originals) ──────────────────────────────────────
+    // Vz IS the zener. Vrrm above only compares the marking as a HigherBetter rating, so a
+    // 24 V zener came back drop_in / upgrade for a 22 V (21.2 V) one and 11-20 V zeners
+    // drop_in / recommended for a 9.1 V one (Qarlos 2026-11-08). Rule (conservative, for
+    // the owner to confirm):
+    //  * the original's window is its stated breakdown band [vz_min, vz_max]; with no band
+    //    on record, its marked/resolved Vz (vrrm) is the only datum and the window is that
+    //    point +/- kZenerPointTol (1 %, well inside the ~8-10 % E24 step, so it separates
+    //    neighbouring voltages and absorbs a band midpoint against a marked nominal).
+    //  * the substitute's Vz (its nominal, else its band midpoint — what vrrm carries)
+    //    outside that window: a different zener voltage, REJECTED.
+    //  * inside, and the substitute's guaranteed band also inside: PASS.
+    //  * inside, but its guaranteed band reaches outside the original's: FAIL (caps at
+    //    major_review) — the part is not guaranteed to regulate where the circuit was
+    //    designed to.
+    //  * inside, substitute states no band against an original that does: UNVERIFIED. Not a
+    //    demotion: the ABT #488 decision treats an absent band as unknown, not a regression,
+    //    and its note (above) already names the window going unchecked.
+    //  * no Vz on either side: UNVERIFIED, and with no Vz on the substitute the grade is
+    //    capped as missing required data.
+    // web/src/crossref.js pre-filters the pool at exactly these edges (kZenerEdgeTol, kZenerPointTol).
+    const bool zener = cat == "diode" && o_tech == "zener";
+    if (zener) {
+        constexpr double kZenerEdgeTol = 1e-3;   // rounding slack on a stated band edge
+        constexpr double kZenerPointTol = 0.01;  // window of a band-less original
+        const auto oc = num(original, "vrrm"), olo = num(original, "vz_min_V"),
+                   ohi = num(original, "vz_max_V");
+        const auto sc = num(cand, "vrrm"), slo = num(cand, "vz_min_V"),
+                   shi = num(cand, "vz_max_V");
+        const bool o_band = olo && ohi && *ohi >= *olo;
+        const bool s_band = slo && shi && *shi >= *slo;
+        std::optional<double> wlo, whi;
+        if (o_band) {
+            wlo = *olo * (1.0 - kZenerEdgeTol);
+            whi = *ohi * (1.0 + kZenerEdgeTol);
+        } else if (oc) {
+            wlo = *oc * (1.0 - kZenerPointTol);
+            whi = *oc * (1.0 + kZenerPointTol);
+        }
+        std::optional<double> s_center = sc;
+        if (!s_center && s_band) s_center = 0.5 * (*slo + *shi);
+        auto band = [](double lo, double hi) { return volts(lo) + "-" + volts(hi) + " V"; };
+        const std::string o_window = o_band ? band(*olo, *ohi)
+                                     : oc   ? volts(*oc) + " V (no band on record)"
+                                            : std::string();
+        if (!wlo) {
+            params.push_back({{"name", "zener_voltage"}, {"verdict", UNVERIFIED}});
+        } else if (!s_center) {
+            params.push_back({{"name", "zener_voltage"}, {"verdict", UNVERIFIED}});
+            notes.push_back("substitute's record states no zener voltage — the original's is " +
+                            o_window + "; confirm it from the datasheet before this swap");
+            demote();
+            penalty += opt.gate_weight * kVerdictFailPenalty;
+            missing_required_data = true;
+        } else if (*s_center < *wlo || *s_center > *whi) {
+            params.push_back({{"name", "zener_voltage"}, {"verdict", FAIL}});
+            notes.push_back("zener voltage " + volts(*s_center) + " V is outside the original's " +
+                            o_window + " — a different zener voltage, not a substitute");
+            return reject("a different zener voltage");
+        } else if (o_band && s_band && (*slo < *wlo || *shi > *whi)) {
+            params.push_back({{"name", "zener_voltage"}, {"verdict", FAIL}});
+            demote();
+            penalty += opt.gate_weight * kVerdictFailPenalty;
+            ++worse;
+            notes.push_back("the substitute guarantees Vz " + band(*slo, *shi) +
+                            ", reaching outside the original's " + o_window +
+                            " — not guaranteed to regulate where the circuit was designed to");
+        } else if (o_band && !s_band) {
+            params.push_back({{"name", "zener_voltage"}, {"verdict", UNVERIFIED}});
+        } else {
+            params.push_back({{"name", "zener_voltage"}, {"verdict", PASS}});
         }
     }
 
@@ -982,9 +1101,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         }
         if (v.verdict == WARN || v.verdict == FAIL)
             ++worse;  // a shortfall verdict is a regression, inside the neutral band or not
-        else if (!(protection && std::string(r.key) == "vrrm"))
+        else if (!((protection || zener) && std::string(r.key) == "vrrm"))
             // A protection diode's standoff is the rail it guards, not a margin: a 12 V
             // standoff part on a 5.5 V line clamps later, which is no upgrade (ABT #2034).
+            // A zener's vrrm is its Vz, which is matched (above), never "more is better".
             note_direction(r.mode == Mode::HigherBetter ? Dir::Higher : Dir::Lower, o, s);
         if (r.hard && !o && s) {
             direction_blind = true;
@@ -1125,7 +1245,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         if (cat != "magnetic" && cat != "chipBead" && !out.contains("footprint")) {
             const std::string oc = str(original, "case_code"), sc = str(cand, "case_code");
             if (!oc.empty() && !sc.empty() &&
-                normalize_case_code(oc) != normalize_case_code(sc)) {
+                case_identity(cat, oc) != case_identity(cat, sc)) {
                 out["footprint"] = "different_case";
                 params.push_back({{"name", "footprint"}, {"verdict", WARN}});
                 demote();
@@ -1242,7 +1362,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             // "1210" is an EIA chip or a molded power inductor, so equal codes are not
             // an equal land.
             if (cat != "magnetic" && cat != "chipBead" && !oc.empty() && !sc.empty() &&
-                normalize_case_code(oc) == normalize_case_code(sc)) {
+                case_identity(cat, oc) == case_identity(cat, sc)) {
                 out["footprint"] = "fits";
                 params.push_back({{"name", "footprint"}, {"verdict", PASS}});
             } else {

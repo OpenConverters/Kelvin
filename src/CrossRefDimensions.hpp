@@ -542,6 +542,44 @@ inline std::string normalize_case_code(const std::string& s) {
     return out;
 }
 
+// Diode package identity through an EXPLICIT alias table (Qarlos 2026-11-08). The common
+// name and the JEDEC registration of one outline are the same land pattern, and the
+// catalogue writes the pair every way — 'DO-214AB', 'SMC', 'SMC (DO-214AB)',
+// 'DO-214AB (SMC)' (2,245 / 235 / 877 / 1,240 diode records) — so a 3KASMC36A came back
+// "different package/case, different land pattern" against an SMLJ36CA it shares pads
+// with. Each group below is one registered outline; a case string matches a group only
+// when its normalised form EQUALS a member, or two different members written one after
+// the other (the "NAME (REGISTRATION)" form, either order). No substring or fuzzy
+// matching: 'SMC-2', 'SMB Flat', 'MELF (DO-213AB) glass' stay themselves and still
+// compare unequal, as an unrecognised alias should ("verify package", never hidden).
+// Only registrations that ARE the named outline are listed (JEDEC DO-214AA/AB/AC,
+// DO-204AL/AC/AH, DO-213AB, DO-219AB/AC/AD, DO-220AA, DO-215AA/AB, DO-221AC/BC,
+// TO-277A, TO-263AC, SOD-80).
+inline std::string canonical_diode_case(const std::string& s) {
+    static const std::vector<std::vector<std::string>> kGroups = {
+        {"DO214AC", "SMA"},      {"DO214AA", "SMB"},     {"DO214AB", "SMC"},
+        {"DO204AL", "DO41"},     {"DO204AC", "DO15"},    {"DO204AH", "DO35"},
+        {"DO213AB", "MELF"},     {"SOD80", "MINIMELF"},  {"DO219AB", "SMF"},
+        {"DO219AC", "MICROSMF"}, {"DO219AD", "MICROSMP"}, {"DO220AA", "SMP"},
+        {"DO215AA", "SMBG"},     {"DO215AB", "SMCG"},    {"DO221AC", "SLIMSMA"},
+        {"DO221BC", "SMPA"},     {"TO277A", "SMPC"},     {"TO263AC", "SMPD"}};
+    const std::string n = normalize_case_code(s);
+    for (const auto& g : kGroups) {
+        for (const auto& a : g) {
+            if (n == a) return g.front();
+            for (const auto& b : g)
+                if (&a != &b && n == a + b) return g.front();
+        }
+    }
+    return n;
+}
+
+// The identity a case-kept gate compares: the alias-resolved form for diodes, the plain
+// normalised code everywhere else (an 'SMA' connector is an RF interface, not DO-214AC).
+inline std::string case_identity(const std::string& category, const std::string& s) {
+    return category == "diode" ? canonical_diode_case(s) : normalize_case_code(s);
+}
+
 // Categories whose land pattern is the part's BODY, so an original with no body
 // on record has no land pattern on record either. Connectors are the exception:
 // their records carry no outline at all and their land IS the contact pitch,

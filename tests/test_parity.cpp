@@ -127,6 +127,12 @@ TEST_CASE("parity: mosfet", "[parity][mosfet]") {
     }
 }
 
+// Four alternatives counts changed on 2026-11-08 (cases 2/3: 767->762, 508->503; cases 6/7:
+// 770->764, 511->505): a zener's vrrm_rated is now its Vz, not the fixture's reverseVoltage
+// (1.5x Vz on every BZX84C/BZX55C record), so the zeners whose Vz is below the case's
+// vrrm_min (BZX84C2.4-C3.3 + BZX55C3.3 under 3.525 V; BZX84C3.3-C4.3 + BZX55C3.3/C3.9 under
+// 4.65 V) no longer count. Each delta equals that zener count exactly; the chosen parts and
+// their margins are unchanged.
 TEST_CASE("parity: diode", "[parity][diode]") {
     auto golden = load_json(golden_dir() + "/kelvin_golden_diode.json");
     auto shard = build_diode_shard(fixtures_dir() + "/diodes.ndjson");
