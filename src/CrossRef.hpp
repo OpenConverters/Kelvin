@@ -534,6 +534,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // A resistor's power at the original's rating temperature is not on the substitute's
     // record (see power_at_rating_temperature): UNVERIFIED, and the grade cannot be drop_in.
     bool power_basis_unverified = false;
+    // SMD vs through-hole could not be established for this pair (compare_mount Unknown).
+    bool mount_unverified = false;
     // Direction bookkeeping: on each directional parameter we could compare,
     // did the substitute come out strictly ahead of the original, or behind?
     int better = 0, worse = 0;
@@ -1196,20 +1198,37 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             str(cand, "package").empty() ? str(cand, "case_code") : str(cand, "package");
         // Mount type: an SMD part cannot stand in for a leaded one. Skipped for
         // categories whose package strings vary too much by series to classify.
-        if (mount_gate_applies(cat) &&
-            mount_incompatible(str(original, "mount"), str(cand, "mount"), o_pkg, s_pkg)) {
+        const std::string o_mt = str(original, "mount"), s_mt = str(cand, "mount");
+        const MountMatch mount_match = mount_gate_applies(cat)
+                                           ? compare_mount(o_mt, s_mt, o_pkg, s_pkg)
+                                           : MountMatch::Same;
+        // Name what each side's class was read from — its EXPLICIT assembly type when the
+        // record states one, its package string otherwise (mount_class's order). Always
+        // quoting the packages printed a half-empty "mount type incompatible:  -> 8x8x10"
+        // for the many records that state a mount type but carry no package string.
+        auto mount_src = [](const std::string& mt, const std::string& pkg) {
+            return !normalize_mount(mt).empty() ? mt : pkg;
+        };
+        if (mount_match == MountMatch::Incompatible) {
             params.push_back({{"name", "mounting"}, {"verdict", FAIL}});
-            // Name the pair that actually decided it — the EXPLICIT assembly types
-            // when both records state one, the package strings otherwise (the same
-            // order mount_incompatible uses). Always quoting the packages printed a
-            // half-empty "mount type incompatible:  -> 8x8x10" for the many records
-            // that state a mount type but carry no package string.
-            const std::string o_mt = str(original, "mount"), s_mt = str(cand, "mount");
-            const bool by_mount =
-                !normalize_mount(o_mt).empty() && !normalize_mount(s_mt).empty();
-            notes.push_back("mount type incompatible: " + (by_mount ? o_mt : o_pkg) + " -> " +
-                            (by_mount ? s_mt : s_pkg));
+            notes.push_back("mount type incompatible: " + mount_src(o_mt, o_pkg) + " -> " +
+                            mount_src(s_mt, s_pkg));
             return reject("mount type incompatible (SMD vs leaded)");
+        }
+        const std::string o_cls = mount_class(o_mt, o_pkg), s_cls = mount_class(s_mt, s_pkg);
+        if (mount_match == MountMatch::Unknown && (!o_cls.empty() || !s_cls.empty())) {
+            // One record states its mount and the other does not: not on record is not
+            // compatible — SMD vs through-hole is a different board process. Capped like
+            // an unverified footprint. (Neither stating one leaves the axis silent, the
+            // same known-vs-absent rule the height axis follows.)
+            params.push_back({{"name", "mounting"}, {"verdict", UNVERIFIED}});
+            mount_unverified = true;
+            auto said = [](const std::string& cls) {
+                return cls.empty() ? std::string("not stated") : cls;
+            };
+            notes.push_back("mount type not established (original: " + said(o_cls) +
+                            ", substitute: " + said(s_cls) +
+                            ") — confirm SMD vs through-hole from the datasheets");
         }
         auto o_dims = dims_of(original, cat), s_dims = dims_of(cand, cat);
         // A part with NO dimensions must not be offered as a substitute for an
@@ -1818,7 +1837,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // drop_in asserts no rating regressed; a power nobody can state at the original's rating
     // temperature has not been shown not to, so it takes the same minor_review cap.
     out["grade"] = grade_for(status, tier, any_warn, any_fail,
-                             footprint_unverified || power_basis_unverified,
+                             footprint_unverified || power_basis_unverified ||
+                                 mount_unverified,
                              missing_required_data, hfit);
 
     // Direction: on the directional parameters we could actually compare, did

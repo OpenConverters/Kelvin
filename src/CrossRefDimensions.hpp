@@ -532,13 +532,43 @@ inline std::string normalize_mount(const std::string& assembly_type) {
     return "";
 }
 
-// Mount-type incompatibility using the EXPLICIT assembly types when both records
-// state one, falling back to the package strings otherwise.
+// One part's mount class, "smd" / "leaded" / "" (unknown): its EXPLICIT assembly type when
+// the record states one, else what its package/case string classifies as. Each side is
+// classified on its own, so a record that states "tht" and one that states only a "1210"
+// case code are still told apart (MF1/2CC3573F vs ERJS14F3573U, Qarlos 2026-11-08: the
+// old pairwise rule fell back to the package strings of BOTH parts, found the axial part
+// had none, and said nothing). A package string matching both token sets is unknown.
+inline std::string mount_class(const std::string& mount, const std::string& package) {
+    const std::string m = normalize_mount(mount);
+    if (!m.empty()) return m;
+    if (package.empty()) return "";
+    const bool smd = is_smd(package), leaded = is_leaded(package);
+    if (smd == leaded) return "";
+    return smd ? "smd" : "leaded";
+}
+
+// The shared mount comparison: both classes known and different -> incompatible (a board
+// process change, not a substitution); either unknown -> not established. Order of
+// evidence: both EXPLICIT assembly types; else both package strings (the pairwise rule this
+// always had); else each side's own class (mount_class), which is what catches an explicit
+// "tht" against a bare "1210".
+enum class MountMatch { Same, Incompatible, Unknown };
+inline MountMatch compare_mount(const std::string& o_mount, const std::string& s_mount,
+                                const std::string& o_pkg, const std::string& s_pkg) {
+    const std::string om = normalize_mount(o_mount), sm = normalize_mount(s_mount);
+    if (!om.empty() && !sm.empty())
+        return om == sm ? MountMatch::Same : MountMatch::Incompatible;
+    const std::string op = mount_class("", o_pkg), sp = mount_class("", s_pkg);
+    if (!op.empty() && !sp.empty())
+        return op == sp ? MountMatch::Same : MountMatch::Incompatible;
+    const std::string o = mount_class(o_mount, o_pkg), s = mount_class(s_mount, s_pkg);
+    if (o.empty() || s.empty()) return MountMatch::Unknown;
+    return o == s ? MountMatch::Same : MountMatch::Incompatible;
+}
+
 inline bool mount_incompatible(const std::string& o_mount, const std::string& s_mount,
                                const std::string& o_pkg, const std::string& s_pkg) {
-    const std::string om = normalize_mount(o_mount), sm = normalize_mount(s_mount);
-    if (!om.empty() && !sm.empty()) return om != sm;
-    return mount_type_incompatible(o_pkg, s_pkg);
+    return compare_mount(o_mount, s_mount, o_pkg, s_pkg) == MountMatch::Incompatible;
 }
 
 // Normalise a case/package code for IDENTITY comparison ("case kept?"): keep only

@@ -531,3 +531,50 @@ TEST_CASE("qarlos 2026-11-08: the resistor extractor carries the power-rating ba
     CHECK_THROWS(kelvin::extract_resistor(env({{"resistance", 500.0}, {"powerRating", 0.05}},
         {{"powerDerating", {{"temperature", {125, 70}}, {"amplitude", {1, 0}}}}})));
 }
+
+// Seed 20264135 (full family set): MF1/2CC3573F is an axial through-hole resistor
+// (assemblyType "tht", no case code); ERJS14F3573U is a 1210 chip with no assemblyType.
+// The old pairwise rule fell back to BOTH package strings, found none on the axial part
+// and graded the pair with no mount caveat.
+TEST_CASE("qarlos 2026-11-08: an explicit tht against a bare chip case code is a mount FAIL",
+          "[qarlos][crossref][dims]") {
+    using kelvin::crossref::compare_mount;
+    using kelvin::crossref::MountMatch;
+    CHECK(compare_mount("tht", "", "", "1210") == MountMatch::Incompatible);
+    CHECK(compare_mount("tht", "", "", "") == MountMatch::Unknown);
+    CHECK(compare_mount("smt", "", "", "0603") == MountMatch::Same);
+
+    json orig = {{"mpn", "MF1/2CC3573F"}, {"value_si", 357000.0}, {"power_rating", 0.5},
+                 {"tolerance_pct", 1.0}, {"mount", "tht"}, {"length_m", 9e-3},
+                 {"width_m", 3.5e-3}, {"height_m", 3.5e-3}};
+    json chip = {{"mpn", "ERJS14F3573U"}, {"value_si", 357000.0}, {"power_rating", 0.5},
+                 {"tolerance_pct", 1.0}, {"case_code", "1210"}, {"length_m", 3.2e-3},
+                 {"width_m", 2.5e-3}};
+    json silent = {{"mpn", "NO_MOUNT"}, {"value_si", 357000.0}, {"power_rating", 0.5},
+                   {"tolerance_pct", 1.0}, {"length_m", 9e-3}, {"width_m", 3.5e-3},
+                   {"height_m", 3.5e-3}};
+    json axial = silent;
+    axial["mpn"] = "AXIAL";
+    axial["mount"] = "axial";
+    kelvin::crossref::Options opt;
+    opt.max_results = 10;
+    auto r = kelvin::crossref::cross_reference("resistor", orig,
+                                               json::array({chip, silent, axial}), opt);
+    auto by = [&](const std::string& m) {
+        for (const auto& c : r["candidates"])
+            if (c["mpn"] == m) return c;
+        return json(nullptr);
+    };
+    // The chip is never offered as a substitute for the axial part (rejected, or dropped).
+    const json c = by("ERJS14F3573U");
+    CHECK((c.is_null() || c["status"] == "no_substitute"));
+    // A substitute that states no mount against a stated one: UNVERIFIED, capped.
+    const json s = by("NO_MOUNT");
+    REQUIRE(!s.is_null());
+    CHECK(verdict_of(s, "mounting") == "unverified");
+    CHECK(s["grade"] != "drop_in");
+    CHECK(has_note(s, "mount type not established"));
+    // Same mount class: no mount verdict, no cap from it.
+    REQUIRE(!by("AXIAL").is_null());
+    CHECK(verdict_of(by("AXIAL"), "mounting") == "");
+}
