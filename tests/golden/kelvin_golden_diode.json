@@ -44,7 +44,7 @@
     "vrrm_min": 3.5250000000000004
    },
    "expect": {
-    "alternatives": 767,
+    "alternatives": 762,
     "chosen": "C3D10065A",
     "margins": {
      "if_avg_margin": 377.35849056603774,
@@ -62,7 +62,7 @@
     "vrrm_min": 3.5250000000000004
    },
    "expect": {
-    "alternatives": 508,
+    "alternatives": 503,
     "chosen": "C3D10065A",
     "margins": {
      "if_avg_margin": 377.35849056603774,
@@ -116,7 +116,7 @@
     "vrrm_min": 4.65
    },
    "expect": {
-    "alternatives": 770,
+    "alternatives": 764,
     "chosen": "MBR30035CT",
     "margins": {
      "if_avg_margin": 15000.0,
@@ -134,7 +134,7 @@
     "vrrm_min": 4.65
    },
    "expect": {
-    "alternatives": 511,
+    "alternatives": 505,
     "chosen": "C3D10065A",
     "margins": {
      "if_avg_margin": 500.0,

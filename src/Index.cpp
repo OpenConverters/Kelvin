@@ -82,7 +82,10 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // v17 carries a tvs/esd diode's surge, clamp and capacitance specs with their stated
 // waveforms (ABT #2036, #2040, #2041, #2048-#2051), and on EVERY family's row whether all of
 // the record's provenance is retracted (RowBase.provenance_retracted, ABT #2035).
-constexpr uint32_t kFormatVersion = 17;
+// v18 carries a diode's continuous power-dissipation rating (DiodeRow.power_dissipation),
+// which the cross-reference compares, and reads a zener's vrrm_rated from its breakdown
+// voltage (its Vz) only, never from reverseVoltage (Qarlos 2026-11-08).
+constexpr uint32_t kFormatVersion = 18;
 
 // Identity of the code that produces rows, so a cached shard can be recognised as
 // having been built by a DIFFERENT extractor than the one running now (ABT #426).
@@ -253,6 +256,7 @@ void row_io(Ar& ar, DiodeRow& r) {
     ar.dbl(r.vz_min);
     ar.dbl(r.vz_max);
     ar.dbl(r.vz_tolerance);
+    ar.dbl(r.power_dissipation);       // v18
     ar.dbl(r.rth_ja);
     ar.dbl(r.rth_jc);
     ar.dbl(r.tj_max);
