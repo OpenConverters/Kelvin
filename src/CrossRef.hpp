@@ -1337,8 +1337,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //    dual parts and copy the vendor table's whole-device current — so if_avg is
     //    UNVERIFIED, the grade is capped as missing required data (the current rating went
     //    unweighed, exactly as an unstated surge waveform caps a TVS) and the direction is
-    //    unknown. Decision for the owner to confirm: the cap is major_review, the same as a
-    //    rating the substitute does not state at all.
+    //    unknown — UNLESS the verdict is the same under every reading of the unstated basis
+    //    (see `settled` below), in which case it is compared as stated. Decision for the
+    //    owner to confirm: the cap is major_review, the same as a rating the substitute does
+    //    not state at all.
     bool current_basis_blind = false;
     std::string current_basis_note;
     if (cat == "diode") {
@@ -1346,7 +1348,22 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                           sdc = str(cand, "die_configuration");
         auto multi = [](const std::string& c) { return !c.empty() && c != "single"; };
         const auto oi = num(original, "if_avg"), si = num(cand, "if_avg");
-        if (oi && si && ((multi(odc) && sdc.empty()) || (multi(sdc) && odc.empty()))) {
+        const bool cand_basis_unknown = multi(odc) && sdc.empty();
+        const bool orig_basis_unknown = multi(sdc) && odc.empty();
+        // An unstated basis only ever moves a figure DOWN when it is brought to per leg (a
+        // whole-device figure divides among the legs), so the stated number is the most
+        // generous per-leg reading of it. A verdict that holds under every reading is not
+        // unknown and is kept: a substitute whose figure FAILS even read as per leg (1 A
+        // against 10 A per leg) fails, and one that PASSES against the original's figure
+        // read as per leg (the strictest requirement it can mean) passes.
+        std::optional<ScoreResult> best;
+        if (oi && si && (cand_basis_unknown || orig_basis_unknown))
+            for (const auto& r : critical_ratings(cat))
+                if (std::string(r.key) == "if_avg")
+                    best = score_directional(oi, si, r.mode, r.warn_factor, r.gate_factor);
+        const bool settled = best && ((cand_basis_unknown && best->verdict == FAIL) ||
+                                      (orig_basis_unknown && best->verdict == PASS));
+        if (best && !settled) {
             auto amps = [](double v) {
                 char b[32];
                 std::snprintf(b, sizeof b, "%g A", v);

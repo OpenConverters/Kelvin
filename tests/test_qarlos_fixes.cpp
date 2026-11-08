@@ -1089,13 +1089,24 @@ TEST_CASE("qarlos 2026-11-08: a dual diode's per-leg current is compared like wi
     // Both per leg: compared as usual.
     CHECK(verdict_of(find_mpn(r, "DUAL_PER_LEG_10"), "if_avg") == "pass");
     CHECK(verdict_of(find_mpn(r, "DUAL_PER_LEG_5"), "if_avg") == "fail");
+    // Settled under every reading (same seed, PMEG6010CEJ,115): 1 A is below 10 A per leg
+    // even read as per leg, so it FAILS rather than hiding behind 'unverified'.
+    auto r1 = kelvin::crossref::cross_reference("diode", orig,
+                                                json::array({rect("PMEG6010CEJ,115", 1.0)}));
+    CHECK(verdict_of(r1["candidates"][0], "if_avg") == "fail");
+    CHECK_FALSE(has_note(r1["candidates"][0], "forward current not comparable"));
 
     // The mirror image: an original stating no configuration against a stated dual.
     auto r2 = kelvin::crossref::cross_reference(
         "diode", rect("UNSTATED", 10.0),
-        json::array({rect("DUAL_15", 15.0, "dual", "commonCathode"), rect("PLAIN_15", 15.0)}));
-    CHECK(verdict_of(find_mpn(r2, "DUAL_15"), "if_avg") == "unverified");
-    CHECK(find_mpn(r2, "DUAL_15")["direction"] == "unknown");
+        json::array({rect("DUAL_15", 15.0, "dual", "commonCathode"),
+                     rect("DUAL_8", 8.0, "dual", "commonCathode"), rect("PLAIN_8", 8.0)}));
+    // 15 A per leg meets even the strictest reading of the original's 10 A: a pass.
+    CHECK(verdict_of(find_mpn(r2, "DUAL_15"), "if_avg") == "pass");
+    // 8 A per leg against 10 A that may be per leg or the whole device: unknown.
+    CHECK(verdict_of(find_mpn(r2, "DUAL_8"), "if_avg") == "unverified");
+    CHECK(find_mpn(r2, "DUAL_8")["grade"] == "major_review");
+    CHECK(has_note(find_mpn(r2, "DUAL_8"), "the original's 10 A (its record states no die"));
     // Neither side multi-die: the schema's one-die reading, compared as stated.
-    CHECK(verdict_of(find_mpn(r2, "PLAIN_15"), "if_avg") == "pass");
+    CHECK(verdict_of(find_mpn(r2, "PLAIN_8"), "if_avg") == "warn");
 }
