@@ -534,8 +534,18 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
         {"stability_ppm", D::Lower, 2.0, std::nullopt, false, false, nullptr},
         {"aging_ppm_y", D::Lower, 2.0, std::nullopt, false, false, nullptr},
         {"esr", D::Lower, 1.5, std::nullopt, false, false, nullptr},
-        {"supply_min_V", D::Lower, 0.0, 0.3, false, false, nullptr},
-        {"supply_max_V", D::Higher, 0.9, std::nullopt, false, false, nullptr},
+        // An active oscillator runs from the board's rail, and the board's rail is
+        // whatever the ORIGINAL's stated supply range allows: Kelvin cannot see which
+        // voltage inside it the design actually uses. So the substitute's range must
+        // COVER the original's at both ends, with no tolerance band — a 3.3 V-only XO
+        // does not start on a 2.5 V rail, and a 1.8 V-only one is overstressed on it.
+        // The analog family's 0.3 V / 10 % warn bands were copied here and let a
+        // 2.7 V-minimum part pass as a warning for a 2.5 V original. A shortfall is a
+        // FAIL (a different rail is a board change); an unstated range is UNVERIFIED.
+        // Not applied to passive resonators (quartzCrystal / ceramicResonator), which
+        // have no supply — CrossRef.hpp skips both keys for them.
+        {"supply_min_V", D::Lower, 0.0, 0.0, false, false, nullptr},
+        {"supply_max_V", D::Higher, 0.0, 0.0, false, false, nullptr},
         {"current_consumption", D::Lower, 3.0, std::nullopt, false, false, nullptr},
         {"temp_min_C", D::Lower, 0.0, 15.0, false, false, nullptr},
         {"temp_max_C", D::Higher, 0.0, 15.0, false, false, nullptr},
