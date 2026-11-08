@@ -240,6 +240,15 @@ struct ResistorRow : RowBase {
     // (ABT #481).
     std::string family;
     bool is_production = false;  // not filtered on today, carried for completeness/evidence
+    // The temperature the power rating is stated AT (electrical.powerRatingTemperature, degC)
+    // and the derating curve the record states (factors.powerDerating: amplitude, as a
+    // fraction of power_rating, at each temperature). NaN / empty = not on record. A 0.05 W
+    // rating at 125 degC and a 0.1 W rating at 70 degC that derates to zero at 125 degC are
+    // not comparable as 0.05 vs 0.1, so the cross-reference compares the power each part
+    // delivers at the ORIGINAL's rating temperature (v18).
+    double power_rating_temperature = kNaN();
+    std::vector<double> derating_temperature;
+    std::vector<double> derating_amplitude;
 };
 
 struct IgbtRow : RowBase {

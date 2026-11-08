@@ -85,6 +85,9 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // v18 carries a diode's continuous power-dissipation rating (DiodeRow.power_dissipation),
 // which the cross-reference compares, and reads a zener's vrrm_rated from its breakdown
 // voltage (its Vz) only, never from reverseVoltage (Qarlos 2026-11-08).
+// v18 carries a resistor's power-rating temperature and its stated derating curve
+// (ResistorRow.power_rating_temperature / derating_temperature / derating_amplitude), so the
+// cross-reference compares power at the original's rating temperature.
 constexpr uint32_t kFormatVersion = 18;
 
 // Identity of the code that produces rows, so a cached shard can be recognised as
@@ -164,6 +167,11 @@ struct WriteAr {
         u32(n);
         for (auto& s : v) str(s);
     }
+    void dblvec(std::vector<double>& v) {  // v18
+        uint32_t n = static_cast<uint32_t>(v.size());
+        u32(n);
+        for (auto& d : v) dbl(d);
+    }
 };
 
 struct ReadAr {
@@ -206,6 +214,13 @@ struct ReadAr {
         u32(n);
         v.resize(n);
         for (auto& s : v) str(s);
+    }
+    void dblvec(std::vector<double>& v) {  // v18
+        uint32_t n;
+        u32(n);
+        need(static_cast<size_t>(n) * 8);
+        v.resize(n);
+        for (auto& d : v) dbl(d);
     }
 };
 
@@ -299,6 +314,9 @@ void row_io(Ar& ar, ResistorRow& r) {
     ar.dbl(r.power_rating);
     ar.str(r.family);
     ar.boolean(r.is_production);
+    ar.dbl(r.power_rating_temperature);  // v18
+    ar.dblvec(r.derating_temperature);   // v18
+    ar.dblvec(r.derating_amplitude);     // v18
 }
 
 template <class Ar>
