@@ -1110,3 +1110,49 @@ TEST_CASE("qarlos 2026-11-08: a dual diode's per-leg current is compared like wi
     // Neither side multi-die: the schema's one-die reading, compared as stated.
     CHECK(verdict_of(find_mpn(r2, "PLAIN_8"), "if_avg") == "warn");
 }
+
+// Round-2 follow-up: a dual common-cathode rectifier is not a common-anode one, a series
+// pair or a single diode. A stated mismatch rejects; a one-sided statement is unverified
+// and keeps the row off drop_in; silence on both sides stays silent.
+TEST_CASE("qarlos 2026-11-08: diode package topology must match where both records state it",
+          "[qarlos][crossref]") {
+    const json orig = rect("VFT2060C-M3/4W", 10.0, "dual", "commonCathode");
+    auto r = kelvin::crossref::cross_reference(
+        "diode", orig,
+        json::array({rect("SAME_TOPO", 10.0, "dual", "commonCathode"),
+                     rect("COMMON_ANODE", 10.0, "dual", "commonAnode"),
+                     rect("SERIES_PAIR", 10.0, "dual", "series"),
+                     rect("SINGLE_DIE", 10.0, "single"),
+                     rect("NO_CONNECTION", 10.0, "dual")}));
+    const json same = find_mpn(r, "SAME_TOPO");
+    CHECK(verdict_of(same, "die_configuration") == "pass");
+    CHECK(verdict_of(same, "internal_connection") == "pass");
+    CHECK(same["grade"] == "drop_in");
+
+    const json ca = find_mpn(r, "COMMON_ANODE");
+    CHECK(ca["status"] == "no_substitute");
+    CHECK(verdict_of(ca, "internal_connection") == "fail");
+    CHECK(has_note(ca, "the original is 'commonCathode', the substitute 'commonAnode'"));
+    CHECK(find_mpn(r, "SERIES_PAIR")["status"] == "no_substitute");
+
+    const json single = find_mpn(r, "SINGLE_DIE");
+    CHECK(single["status"] == "no_substitute");
+    CHECK(verdict_of(single, "die_configuration") == "fail");
+    CHECK(has_note(single, "the original is 'dual', the substitute 'single'"));
+
+    // Configuration matches, connection stated on one side only: unverified, below drop_in,
+    // but not a regression.
+    const json nc = find_mpn(r, "NO_CONNECTION");
+    CHECK(nc["status"] != "no_substitute");
+    CHECK(verdict_of(nc, "internal_connection") == "unverified");
+    CHECK(nc["grade"] == "minor_review");
+    CHECK(has_note(nc, "internal connection 'commonCathode' and the substitute's states none"));
+
+    // Neither side states either field: no topology verdict at all, drop_in stays reachable.
+    auto r2 = kelvin::crossref::cross_reference("diode", rect("PLAIN_A", 10.0),
+                                                json::array({rect("PLAIN_B", 10.0)}));
+    const json pb = r2["candidates"][0];
+    CHECK(verdict_of(pb, "die_configuration") == "");
+    CHECK(verdict_of(pb, "internal_connection") == "");
+    CHECK(pb["grade"] == "drop_in");
+}

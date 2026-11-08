@@ -1433,6 +1433,58 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         }
     }
 
+    // ── diode package topology (die configuration / internal connection) ─────
+    // How many die a package holds and how they are bonded inside it fix its pinout and the
+    // circuit it forms: a common-cathode centre-tap rectifier is not a common-anode one, a
+    // series pair (BAV99) is neither, and a single diode is not a dual. Rule (coordinator,
+    // Qarlos 2026-11-08 round 2), applied to each field separately, from the record only —
+    // never inferred from the MPN or the package:
+    //  * both sides state it and the values differ: FAIL, the candidate is rejected, and the
+    //    note names both — the topology is not interchangeable;
+    //  * one side states it and the other does not: UNVERIFIED with a note, and the grade is
+    //    capped below drop_in (minor_review). It adds no further penalty or cap where the
+    //    forward-current basis rule above has already capped the row for the same silence;
+    //  * neither side states it: silent (the overwhelming majority of the catalogue).
+    // Decision for the owner to confirm: a stated 'single' against an unstated configuration
+    // is UNVERIFIED too, although the schema reads an absent dieConfiguration as one die.
+    bool topology_unverified = false;
+    if (cat == "diode") {
+        struct Field {
+            const char* key;
+            const char* label;
+        };
+        for (const Field f : {Field{"die_configuration", "die configuration"},
+                              Field{"internal_connection", "internal connection"}}) {
+            const std::string o = str(original, f.key), s = str(cand, f.key);
+            if (o.empty() && s.empty()) continue;
+            if (!o.empty() && !s.empty()) {
+                if (o == s) {
+                    params.push_back({{"name", f.key}, {"verdict", PASS}});
+                    continue;
+                }
+                params.push_back({{"name", f.key}, {"verdict", FAIL}});
+                notes.push_back(std::string(f.label) + " differs: the original is '" + o +
+                                "', the substitute '" + s +
+                                "' — a different package topology and pinout, not a substitute");
+                return reject("a different diode package topology");
+            }
+            params.push_back({{"name", f.key}, {"verdict", UNVERIFIED}});
+            notes.push_back(o.empty()
+                                ? "the substitute's record states " + std::string(f.label) + " '" +
+                                      s + "' and the original's states none — confirm the "
+                                      "original's package topology and pinout match"
+                                : "the original's record states " + std::string(f.label) + " '" +
+                                      o + "' and the substitute's states none — confirm the "
+                                      "substitute's package topology and pinout from its "
+                                      "datasheet");
+            if (!current_basis_blind && !topology_unverified) {
+                demote();
+                penalty += opt.gate_weight * kVerdictWarnPenalty;
+            }
+            topology_unverified = true;
+        }
+    }
+
     // ── temperature grade tie-break when the original states none ───────────
     if (cat == "capacitor" && !num(original, "temp_max_C")) {
         if (const auto t = num(cand, "temp_max_C"); t && *t < 125.0)
@@ -2149,6 +2201,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // temperature has not been shown not to, so it takes the same minor_review cap.
     out["grade"] = grade_for(status, tier, any_warn, any_fail,
                              footprint_unverified || power_basis_unverified ||
+                                 topology_unverified ||
                                  mount_unverified,
                              missing_required_data, hfit);
 
