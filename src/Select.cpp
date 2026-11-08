@@ -68,7 +68,9 @@ json select_mosfet(const Shard<MosfetRow>& shard, const MosfetConstraints& c, Mo
         if (m.vds_rated < c.vds_min) { rej["vds_rated_low"]++; continue; }
         if (m.id_continuous < c.id_min) { rej["id_continuous_low"]++; continue; }
         if (m.rds_on > c.rds_on_max) { rej["rds_on_high"]++; continue; }
-        if (m.qg_total > c.qg_max) { rej["qg_total_high"]++; continue; }
+        // A row with no stated Qg (NaN) is not rejected by a Qg ceiling: the constraint is
+        // vacuous for it, and the evidence tier below ranks it as incomplete.
+        if (present(m.qg_total) && m.qg_total > c.qg_max) { rej["qg_total_high"]++; continue; }
         passing.push_back(&m);
     }
     if (passing.empty())
@@ -94,7 +96,12 @@ json select_mosfet(const Shard<MosfetRow>& shard, const MosfetConstraints& c, Mo
     auto metric = [&](const MosfetRow* m) -> double {
         switch (tb) {
             case MosfetTiebreaker::LowestRdsOn: return m->rds_on;
-            case MosfetTiebreaker::LowestQg: return m->qg_total;
+            // An absent Qg (NaN) must not reach the sort: NaN breaks the strict weak
+            // ordering std::sort needs. It sorts LAST — an unknown gate charge is not the
+            // lowest one, which is what the 0 it used to hold made it.
+            case MosfetTiebreaker::LowestQg:
+                return present(m->qg_total) ? m->qg_total
+                                            : std::numeric_limits<double>::infinity();
             case MosfetTiebreaker::HighestVdsMargin: return -m->vds_rated / c.vds_min;
             case MosfetTiebreaker::HighestIdMargin: return -m->id_continuous / c.id_min;
             case MosfetTiebreaker::LowestTotalLoss: return total_loss(m);

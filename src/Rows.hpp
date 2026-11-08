@@ -103,8 +103,17 @@ struct RowBase {
 };
 
 struct MosfetRow : RowBase {
-    double vds_rated = 0, id_continuous = 0, rds_on = 0, qg_total = 0;
-    double vgs_threshold_max = 0;
+    // Required by the extractor (a record lacking one is unreadable), so never absent.
+    double vds_rated = 0, id_continuous = 0, rds_on = 0;
+    // NaN when the record states none — NOT 0, which is what both of these used to hold for
+    // an absent field. 0 C of gate charge and a 0 V worst-case threshold are physically
+    // impossible and are the same bits a stated 0 would produce, so the browse row and every
+    // consumer reading the shard saw `vgs_threshold_max: 0` / `qg_total: 0` for a record that
+    // says nothing (2,018 MOSFETs state only a nominal or a minimum threshold: SQJ409EP,
+    // BSC020N04LS, IGO60R040D1 ...). Absence travels as NaN like coss below; browse renders
+    // it null and the ranker reports the comparison UNVERIFIED.
+    double qg_total = kNaN();
+    double vgs_threshold_max = kNaN();
     // NOT 0, for the same reason as the capacitor ESR below: most of the catalogue does
     // not publish Coss, and 0 F is both physically impossible and indistinguishable from
     // a stated value. The browse row showed "coss": 0 next to null for every other absent
@@ -126,8 +135,10 @@ struct MosfetRow : RowBase {
     std::string channel;
     bool is_production = false;
     bool datasheet_usable = false;  // !_datasheet_unusable(datasheetUrl), precomputed at index time
-    // Python evidence tier: qg_total <= 0 OR datasheet unusable.
-    bool evidence_incomplete() const { return qg_total <= 0.0 || !datasheet_usable; }
+    // Python evidence tier: no stated (positive) Qg OR datasheet unusable. Written as
+    // `!(qg_total > 0)` so an absent (NaN) Qg counts as incomplete — `qg_total <= 0` is false
+    // for NaN.
+    bool evidence_incomplete() const { return !(qg_total > 0.0) || !datasheet_usable; }
     bool no_thermal() const { return !present(rth_ja) || !present(tj_max); }
 };
 

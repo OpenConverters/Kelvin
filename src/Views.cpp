@@ -279,9 +279,11 @@ std::optional<MosfetRow> extract_mosfet(const json& env) {
     auto rds = get_num(*elec, "onResistance");
     if (!pos(vds) || !pos(id) || !pos(rds)) return std::nullopt;
 
+    // Absent stays ABSENT (NaN in the row), never 0: see MosfetRow::qg_total. The selector's
+    // Qg constraint is vacuous for a row without one, and the evidence tier counts it as
+    // incomplete, exactly as the 0 did — but the row no longer claims 0 C of gate charge.
     auto qg = get_num(*elec, "totalGateCharge");
-    double qg_total = qg.value_or(0.0);  // legacy rows: Qg constraint becomes vacuous
-    if (qg_total < 0.0) return std::nullopt;
+    if (qg && *qg < 0.0) return std::nullopt;
 
     // Leave ABSENT (NaN) when the record does not state one. `value_or(0.0)` wrote 0 F
     // output capacitance — physically impossible, and the same bits a stated 0 would
@@ -300,14 +302,14 @@ std::optional<MosfetRow> extract_mosfet(const json& env) {
     // threshold and 668 only a minimum, and each one reached the ranker as a worst-case
     // Vgs(th)max — BSC028N08NS5's typical 2.3 V was reported as its maximum and drove a
     // gate-threshold warn the record does not support (ABT #2045). With no stated bound the
-    // field stays 0, which the spec builder reads as unknown.
+    // field stays ABSENT (NaN): it used to be 0, and the row then reported a 0 V worst-case
+    // threshold for every nominal-only record (SQJ409EP, BSC020N04LS, IGO60R040D1 ...).
     std::optional<double> vgs;
     if (const json* gtv = obj_get(*elec, "gateThresholdVoltage"); gtv && gtv->is_object()) {
         auto hi = get_num(*gtv, "maximum"), lo = get_num(*gtv, "minimum");
         if (p_channel && lo && *lo < 0.0) vgs = -*lo;
         else if (pos(hi)) vgs = hi;
     }
-    double vgs_max = vgs.value_or(0.0);
 
     MosfetRow r;
     r.mpn = *mpn;
@@ -316,9 +318,9 @@ std::optional<MosfetRow> extract_mosfet(const json& env) {
     r.vds_rated = *vds;
     r.id_continuous = *id;
     r.rds_on = *rds;
-    r.qg_total = qg_total;
+    if (pos(qg)) r.qg_total = *qg;
     if (pos(coss_o)) r.coss = *coss_o;
-    r.vgs_threshold_max = vgs_max;
+    if (vgs) r.vgs_threshold_max = *vgs;
     if (auto v = rating_magnitude(get_num(*elec, "onResistanceVgs"), p_channel); pos(v))
         r.rds_on_vgs = *v;
     if (auto v = rating_magnitude(get_num(*elec, "gateSourceVoltageMax"), p_channel); pos(v))

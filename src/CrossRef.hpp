@@ -1507,16 +1507,50 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // when an engineer most needs to be told.
     // The catalogue's structured `qualification` field is authoritative where it
     // exists; the MPN decode is the fallback for parts we hold no record of.
-    auto qualified = [](const json& p) {
+    //
+    // Three answers, not two. A family whose spec CARRIES a `qualification` key (MOSFETs)
+    // is one whose records can state the grade, so a record that states none is UNKNOWN —
+    // not commercial. Reading silence as "commercial" FAILED Vishay's SQ4153EY (an SQ-line
+    // part whose TAS record has no part.qualification, like 464 of the 465 Vishay SQ*
+    // MOSFETs) against the AEC-Q101 DMP1011LFV as "substitute is commercial", a claim no
+    // record makes. Kelvin does not decode the grade from a vendor prefix here: "SQ means
+    // automotive" is a guess, and the gap belongs to the catalogue. Likewise a label that
+    // says "Automotive" without naming AEC-Q states a market, not a qualification, so it is
+    // unknown too. "-" is a placeholder, i.e. silence. Families without the field keep the
+    // MPN decode as their only evidence (Murata GRM is a stated commercial series there).
+    enum class Grade { Aec, NotAec, Unknown };
+    auto grade_of = [](const json& p) {
         const std::string q = lower_copy(str(p, "qualification"));
-        if (!q.empty()) return q.find("aec") != std::string::npos;
-        return is_automotive_grade(str(p, "mpn"));
+        if (!q.empty() && q != "-") {
+            if (q.find("aec") != std::string::npos) return Grade::Aec;
+            if (q.find("automotive") != std::string::npos &&
+                q.find("non-automotive") == std::string::npos)
+                return Grade::Unknown;
+            return Grade::NotAec;
+        }
+        if (is_automotive_grade(str(p, "mpn"))) return Grade::Aec;
+        return p.contains("qualification") ? Grade::Unknown : Grade::NotAec;
     };
-    if (qualified(original) && !qualified(cand)) {
-        params.push_back({{"name", "automotive_grade"}, {"verdict", FAIL}});
-        demote();
-        penalty += opt.gate_weight * kVerdictFailPenalty;
-        notes.push_back("original is an automotive (AEC-Q) grade part; substitute is commercial");
+    if (grade_of(original) == Grade::Aec) {
+        const Grade g = grade_of(cand);
+        if (g == Grade::NotAec) {
+            params.push_back({{"name", "automotive_grade"}, {"verdict", FAIL}});
+            demote();
+            penalty += opt.gate_weight * kVerdictFailPenalty;
+            notes.push_back("original is an automotive (AEC-Q) grade part; substitute is commercial");
+        } else if (g == Grade::Unknown) {
+            // Not a drop-in on the record's word either: an AEC-Q original cannot be
+            // replaced by a part whose qualification nobody has established, so the grade
+            // is capped the way an unverified footprint caps it, at no extra penalty.
+            params.push_back({{"name", "automotive_grade"}, {"verdict", UNVERIFIED}});
+            demote();
+            const std::string q = str(cand, "qualification");
+            notes.push_back(
+                "original is an automotive (AEC-Q) grade part; the substitute's record " +
+                (q.empty() || q == "-" ? std::string("states no qualification")
+                                       : "says \"" + q + "\" but names no AEC-Q qualification") +
+                ", so its grade is UNVERIFIED — confirm AEC-Q qualification from the datasheet");
+        }
     }
 
     // ── rated voltage decoded from the MPN, when the record lacks it ─────────

@@ -39,10 +39,12 @@ TEST_CASE("qarlos #2045: vgs_threshold_max is read only from a stated maximum",
     };
     auto nominal = kelvin::extract_mosfet(mos({{"nominal", 2.3}}));
     REQUIRE(nominal.has_value());
-    CHECK(nominal->vgs_threshold_max == 0.0);  // unknown, not 2.3
+    // Unknown, not 2.3 — and ABSENT (NaN), not the 0 V the row used to report (Qarlos
+    // 2026-11-08).
+    CHECK(std::isnan(nominal->vgs_threshold_max));
     auto minimum = kelvin::extract_mosfet(mos({{"minimum", 1.2}}));
     REQUIRE(minimum.has_value());
-    CHECK(minimum->vgs_threshold_max == 0.0);
+    CHECK(std::isnan(minimum->vgs_threshold_max));
     auto stated = kelvin::extract_mosfet(mos({{"minimum", 1.2}, {"nominal", 1.8}, {"maximum", 2.35}}));
     REQUIRE(stated.has_value());
     CHECK(stated->vgs_threshold_max == 2.35);
@@ -378,3 +380,81 @@ TEST_CASE("qarlos #2035: all-retracted provenance is flagged and verifies nothin
     CHECK(r2["original_verified"] == false);
     CHECK(r2["candidates"][0]["status"] == "partial");
 }
+
+// ── Qarlos audit of 2026-11-08 ───────────────────────────────────────────────
+
+namespace {
+json mosfet_env(const char* mpn, const char* channel, json elec) {
+    json part = {{"partNumber", mpn}, {"subType", channel}};
+    return json{{"semiconductor", {{"mosfet", {{"manufacturerInfo",
+        {{"name", "Vendor"}, {"reference", mpn}, {"status", "production"},
+         {"datasheetInfo", {{"part", part}, {"electrical", elec}}}}}}}}}};
+}
+}  // namespace
+
+// A threshold with no stated worst-case bound, and a record with no Qg, are ABSENT in the
+// row (NaN -> browse null -> ranker UNVERIFIED), never 0. Seen on SQSA82CENW (nominal 5 V
+// only), BSC020N04LS (nominal 2 V), IGO60R040D1 (GaN, nominal only) and others in 5 of 5
+// runs: the row reported vgs_threshold_max = 0 V.
+TEST_CASE("qarlos 2026-11-08: absent threshold and Qg are absent in the MOSFET row, not 0",
+          "[qarlos][views]") {
+    json base = {{"drainSourceVoltage", 100.0}, {"continuousDrainCurrent", 20.0},
+                 {"onResistance", 0.01}};
+    json nominal = base;
+    nominal["gateThresholdVoltage"] = {{"nominal", 5.0}};
+    auto r = kelvin::extract_mosfet(mosfet_env("SQSA82CENW", "nChannel", nominal));
+    REQUIRE(r.has_value());
+    CHECK(std::isnan(r->vgs_threshold_max));
+    CHECK(std::isnan(r->qg_total));           // no totalGateCharge key
+    CHECK(r->evidence_incomplete());          // an absent Qg is still incomplete evidence
+    json max_only = base;
+    max_only["gateThresholdVoltage"] = {{"maximum", 3.5}};
+    max_only["totalGateCharge"] = 4.2e-8;
+    auto m = kelvin::extract_mosfet(mosfet_env("X", "nChannel", max_only));
+    REQUIRE(m.has_value());
+    CHECK(m->vgs_threshold_max == 3.5);
+    CHECK(m->qg_total == Approx(4.2e-8));
+    // P-channel nominal-only: no stated bound either.
+    json p_nom = base;
+    p_nom["drainSourceVoltage"] = -40.0;
+    p_nom["gateThresholdVoltage"] = {{"nominal", -2.0}};
+    auto p = kelvin::extract_mosfet(mosfet_env("SQJ409EP", "pChannel", p_nom));
+    REQUIRE(p.has_value());
+    CHECK(std::isnan(p->vgs_threshold_max));
+}
+
+// DMP1011LFV (AEC-Q101) against SQ4153EY, whose TAS record states no qualification: the
+// substitute's grade is UNKNOWN, not "commercial".
+TEST_CASE("qarlos 2026-11-08: a MOSFET with no stated qualification is unknown-grade, not commercial",
+          "[qarlos][crossref]") {
+    json orig = {{"mpn", "DMP1011LFV"}, {"vds", 12.0}, {"id", 10.0}, {"rds_on", 0.01},
+                 {"technology", "Si"}, {"qualification", "Automotive (AEC-Q101)"}};
+    json silent = {{"mpn", "SQ4153EY"}, {"vds", 12.0}, {"id", 25.0}, {"rds_on", 0.008},
+                   {"technology", "Si"}, {"qualification", ""}};
+    json market = silent;
+    market["mpn"] = "MARKET1";
+    market["qualification"] = "Automotive";
+    json stated = silent;
+    stated["mpn"] = "INDUSTRIAL1";
+    stated["qualification"] = "Industrial";
+    auto r = kelvin::crossref::cross_reference("mosfet", orig,
+                                               json::array({silent, market, stated}));
+    const json* cs = nullptr; const json* cm = nullptr; const json* ci = nullptr;
+    for (const auto& c : r["candidates"]) {
+        if (c["mpn"] == "SQ4153EY") cs = &c;
+        if (c["mpn"] == "MARKET1") cm = &c;
+        if (c["mpn"] == "INDUSTRIAL1") ci = &c;
+    }
+    REQUIRE(cs); REQUIRE(cm); REQUIRE(ci);
+    CHECK(verdict_of(*cs, "automotive_grade") == "unverified");
+    CHECK_FALSE(has_note(*cs, "substitute is commercial"));
+    CHECK(has_note(*cs, "states no qualification"));
+    CHECK((*cs)["status"] == "partial");     // not a drop-in on the record's word
+    // "Automotive" names a market, not AEC-Q: unknown too, never "commercial".
+    CHECK(verdict_of(*cm, "automotive_grade") == "unverified");
+    CHECK_FALSE(has_note(*cm, "substitute is commercial"));
+    // A STATED non-automotive grade is still a fail.
+    CHECK(verdict_of(*ci, "automotive_grade") == "fail");
+    CHECK(has_note(*ci, "substitute is commercial"));
+}
+
