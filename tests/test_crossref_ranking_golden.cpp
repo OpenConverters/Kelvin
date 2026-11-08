@@ -616,5 +616,9 @@ TEST_CASE("golden: the footprint note names what is missing, not 'no dimensions'
     REQUIRE(!bare.is_null());
     CHECK(bare["footprint"] == "unknown");
     CHECK(notes_of(bare).find("mechanical dimensions unavailable") != std::string::npos);
-    CHECK(verdict_of(bare, "height") == "<absent>");
+    // The original states 0.35 mm and the substitute states no height: the clearance is
+    // UNVERIFIED on every family now, not a silently absent axis (was "<absent>" until the
+    // Qarlos 2026-11-08 height finding; same rule as the magnetic one, ABT #2029).
+    CHECK(verdict_of(bare, "height") == UNVERIFIED);
+    CHECK(bare["height_fit"] == "unknown");
 }

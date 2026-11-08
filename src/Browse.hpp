@@ -130,7 +130,8 @@ inline const FieldTable<ResistorRow>& fields<ResistorRow>() {
     static const FieldTable<ResistorRow> t{
         {{"resistance", &ResistorRow::resistance},
          {"tolerance", &ResistorRow::tolerance},
-         {"power_rating", &ResistorRow::power_rating}},
+         {"power_rating", &ResistorRow::power_rating},
+         {"power_rating_temperature", &ResistorRow::power_rating_temperature}},
         {{"family", &ResistorRow::family}},
         {{"is_production", &ResistorRow::is_production}},
         {}};
@@ -290,6 +291,21 @@ json field_names() {
                 {"string", std::move(strs)},
                 {"boolean", std::move(bools)},
                 {"list", std::move(lists)}};
+}
+
+// ---- per-family row fields that are not scalars (not filterable, not sortable) -----------------
+// Emitted with the row so the cross-reference can read them without a second fetch.
+inline void extra_row_json(const RowBase&, json&) {}
+// A resistor's stated derating curve (v18) as two parallel arrays, or null when the record
+// states none — never an empty curve, which would read as "derates to nothing".
+inline void extra_row_json(const ResistorRow& r, json& o) {
+    if (r.derating_temperature.empty()) {
+        o["derating_temperature"] = nullptr;
+        o["derating_amplitude"] = nullptr;
+    } else {
+        o["derating_temperature"] = r.derating_temperature;
+        o["derating_amplitude"] = r.derating_amplitude;
+    }
 }
 
 // ---- parsed query -----------------------------------------------------------------------------
@@ -591,6 +607,7 @@ json browse_rows(const Shard<Row>& shard, const json& query) {
         for (const auto& [name, mem] : t.strs) o[name] = r.*mem;
         for (const auto& [name, mem] : t.bools) o[name] = r.*mem;
         for (const auto& [name, mem] : t.lists) o[name] = r.*mem;
+        extra_row_json(r, o);
         rows.push_back(std::move(o));
     }
 

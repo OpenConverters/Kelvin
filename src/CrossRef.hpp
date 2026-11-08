@@ -361,10 +361,138 @@ inline std::optional<Dims> dims_of(const json& p, const std::string& category) {
     if (auto coded = resolve_dimensions(code, category)) {
         // The drawing's own height still stands where the table fixes no height —
         // a chip's height is not encoded in its case code.
-        if (!coded->height) coded->height = drawn.height;
+        //
+        // And a height the code resolver took from its outline TABLE is not the record's: it
+        // is the table's typical body for the code. Judging clearance from it graded
+        // CR0603-FX-1743ELF's height 'pass' against a 0.45 mm AC0603FR-07174KL when the
+        // Bourns record states no height at all (Qarlos 2026-11-08). Only the record's own
+        // drawing, or a code that spells its height out, answers the clearance question.
+        if (!coded->height || coded->height_from_table) {
+            coded->height = drawn.height;
+            coded->height_from_table = false;
+        }
         return coded;
     }
     return partial();
+}
+
+// ── resistor power at the original's rating temperature ─────────────────────
+// A resistor's power rating is the power it carries up to a STATED ambient, and above that
+// ambient it derates along its curve. RN50C5000FR36 is 0.05 W at 125 degC (flat to 125,
+// zero at 175); CR0603-FX-5100ELF is 0.1 W at 70 degC and zero at 125 degC. Compared as
+// 0.05 vs 0.1 the thick-film part "passed"; at the temperature the original is rated for it
+// delivers nothing. So the comparison is made at the ORIGINAL's rating temperature, from
+// what each record states — never from a typical curve:
+//   * T_ref is the original's powerRatingTemperature, else the knee of its stated curve
+//     (the end of the leading full-power run). Neither stated -> the ratings are compared
+//     as stated, exactly as before (no basis exists for any candidate, so none is skewed).
+//   * The original delivers its rating at T_ref (that is what the rating says).
+//   * The substitute: from its stated curve, linearly interpolated at T_ref (the curves are
+//     straight-line segments in the datasheets); 0 W above the curve's last temperature,
+//     where the part is not rated to operate at all. With no curve, its full rating holds
+//     when its own rating temperature is at or above T_ref (the definition of a rating
+//     temperature). Anything else — no curve and a lower or unstated rating temperature,
+//     or T_ref below the curve's first point — is NOT ON RECORD, and the verdict is
+//     UNVERIFIED, never a pass on the nominal.
+struct PowerAtTemperature {
+    bool applies = false;          // the original states a temperature basis
+    double t_ref = 0.0;            // degC
+    std::optional<double> orig;    // W the original delivers at t_ref
+    std::optional<double> subst;   // W the substitute delivers at t_ref; nullopt = not on record
+    std::string how;               // how `subst` was established, or why it could not be
+};
+
+namespace power_detail {
+// Reads a stated curve as two equal-length arrays. Absent/null -> empty. A malformed curve is
+// a caller error (the extractor validates every record), so it throws.
+inline void curve(const json& p, std::vector<double>& t, std::vector<double>& a) {
+    t.clear();
+    a.clear();
+    const auto ti = p.find("derating_temperature"), ai = p.find("derating_amplitude");
+    const bool t_has = ti != p.end() && !ti->is_null(), a_has = ai != p.end() && !ai->is_null();
+    if (!t_has && !a_has) return;
+    if (!t_has || !a_has || !ti->is_array() || !ai->is_array() || ti->size() != ai->size() ||
+        ti->size() < 2)
+        throw std::invalid_argument("cross_reference: '" + str(p, "mpn") +
+                                    "' derating_temperature/derating_amplitude must be "
+                                    "equal-length arrays of >= 2 points");
+    for (size_t i = 0; i < ti->size(); ++i) {
+        if (!(*ti)[i].is_number() || !(*ai)[i].is_number())
+            throw std::invalid_argument("cross_reference: '" + str(p, "mpn") +
+                                        "' derating curve holds a non-numeric point");
+        t.push_back((*ti)[i].get<double>());
+        a.push_back((*ai)[i].get<double>());
+        if (i > 0 && !(t[i] > t[i - 1]))
+            throw std::invalid_argument("cross_reference: '" + str(p, "mpn") +
+                                        "' derating temperatures must strictly increase");
+    }
+}
+// End of the leading full-power run: the temperature up to which the curve carries 100 %.
+inline std::optional<double> knee(const std::vector<double>& t, const std::vector<double>& a) {
+    std::optional<double> k;
+    for (size_t i = 0; i < t.size() && a[i] >= 1.0; ++i) k = t[i];
+    return k;
+}
+inline std::string celsius(double t) {
+    char b[32];
+    std::snprintf(b, sizeof b, "%g degC", t);
+    return b;
+}
+inline std::string watts(double w) {
+    char b[32];
+    std::snprintf(b, sizeof b, "%.3g W", w);
+    return b;
+}
+}  // namespace power_detail
+
+inline PowerAtTemperature power_at_rating_temperature(const json& original, const json& cand) {
+    using namespace power_detail;
+    PowerAtTemperature r;
+    const auto o_p = num(original, "power_rating"), s_p = num(cand, "power_rating");
+    std::vector<double> ot, oa, st, sa;
+    curve(original, ot, oa);
+    curve(cand, st, sa);
+    std::optional<double> t_ref = num(original, "power_rating_temperature");
+    if (!t_ref && !ot.empty()) t_ref = knee(ot, oa);
+    if (!t_ref || !o_p || !s_p) return r;  // no basis, or a rating absent: plain compare
+    r.applies = true;
+    r.t_ref = *t_ref;
+    r.orig = *o_p;
+    if (!st.empty()) {
+        if (r.t_ref < st.front()) {
+            r.how = "the substitute's derating curve starts at " + celsius(st.front()) +
+                    ", above the original's rating temperature of " + celsius(r.t_ref);
+            return r;
+        }
+        if (r.t_ref > st.back()) {
+            r.subst = 0.0;
+            r.how = "the substitute's derating curve ends at " + celsius(st.back()) +
+                    " — it is not rated to operate at the original's " + celsius(r.t_ref);
+            return r;
+        }
+        for (size_t i = 0; i + 1 < st.size(); ++i) {
+            if (r.t_ref >= st[i] && r.t_ref <= st[i + 1]) {
+                const double f = (r.t_ref - st[i]) / (st[i + 1] - st[i]);
+                r.subst = *s_p * (sa[i] + f * (sa[i + 1] - sa[i]));
+                break;
+            }
+        }
+        r.how = "from the substitute's derating curve";
+        return r;
+    }
+    if (const auto s_t = num(cand, "power_rating_temperature")) {
+        if (*s_t >= r.t_ref) {
+            r.subst = *s_p;
+            r.how = "the substitute's rating holds to " + celsius(*s_t);
+        } else {
+            r.how = "the substitute is rated at " + celsius(*s_t) +
+                    " and its record states no derating curve above that";
+        }
+        return r;
+    }
+    r.how = "the substitute's record states neither the temperature its rating applies at "
+            "nor a derating curve";
+    return r;
 }
 
 // Score one candidate against the original. Returns a per-candidate JSON verdict.
@@ -403,6 +531,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // A parameter whose absence disqualifies was absent on the substitute — an
     // unknown, not a regression, so it caps the grade rather than reading as one.
     bool missing_required_data = false;
+    // A resistor's power at the original's rating temperature is not on the substitute's
+    // record (see power_at_rating_temperature): UNVERIFIED, and the grade cannot be drop_in.
+    bool power_basis_unverified = false;
     // Direction bookkeeping: on each directional parameter we could compare,
     // did the substitute come out strictly ahead of the original, or behind?
     int better = 0, worse = 0;
@@ -655,6 +786,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // record guarantees nothing at all (ABT #488).
     bool diode_vz_band_regression = false;
     bool diode_vz_band_unverified = false;
+    // A resistor's power is compared at the original's rating temperature (see
+    // power_at_rating_temperature). Computed once, consumed by the power_rating spec below.
+    const PowerAtTemperature power_t =
+        cat == "resistor" ? power_at_rating_temperature(original, cand) : PowerAtTemperature{};
     // ── PARAM_SPECS verdicts (the shared Heaviside table) ────────────────────
     for (const ParamSpec& spec : params_for(cat)) {
         bool has_data = detail::present(original, spec.key) || detail::present(cand, spec.key);
@@ -662,7 +797,11 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             has_data = has_data || detail::present(original, "saturation_points") ||
                        detail::present(cand, "saturation_points");
         if (!has_data) continue;
-        const ParamOutcome outcome = compare_param(spec, original, cand);
+        const bool power_at_t = cat == "resistor" && spec.key == "power_rating" && power_t.applies;
+        const ParamOutcome outcome =
+            !power_at_t     ? compare_param(spec, original, cand)
+            : power_t.subst ? compare_numeric(spec, power_t.orig, power_t.subst)
+                            : ParamOutcome(UNVERIFIED);
         const std::string verdict = outcome.verdict;
         params.push_back({{"name", spec.key}, {"verdict", verdict}});
         if (cat == "connector" && verdict == FAIL) {
@@ -681,6 +820,31 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         const bool numeric = (spec.dir == Dir::Lower || spec.dir == Dir::Higher);
         auto o = numeric ? detail::jnum(original, spec.key) : std::nullopt;
         auto s = numeric ? detail::jnum(cand, spec.key) : std::nullopt;
+        if (power_at_t) {
+            using power_detail::celsius;
+            using power_detail::watts;
+            const double s_nominal = *s;
+            // Penalty and direction are about the power at T_ref too, not the nominal.
+            o = power_t.orig;
+            s = power_t.subst;
+            if (!power_t.subst) {
+                // Not on record is not a pass: the original's rating is stated at a
+                // temperature, and nothing says what the substitute delivers there. Capped
+                // the way an unverified footprint is (power_basis_unverified below).
+                demote();
+                power_basis_unverified = true;
+                notes.push_back("power rating not comparable at the original's rating "
+                                "temperature: the original is rated " + watts(*power_t.orig) +
+                                " at " + celsius(power_t.t_ref) + ", and " + power_t.how +
+                                " — confirm the substitute's derating from its datasheet");
+            } else if (*power_t.subst != s_nominal) {
+                notes.push_back("power compared at the original's rating temperature (" +
+                                celsius(power_t.t_ref) + "): the substitute's " + watts(s_nominal) +
+                                " rating delivers " + watts(*power_t.subst) + " there (" +
+                                power_t.how + ") against the original's " +
+                                watts(*power_t.orig));
+            }
+        }
         const bool hard_gate =
             is_hard_param(cat, spec.key) && (o || detail::present(original, spec.key));
 
@@ -1275,7 +1439,12 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // the axis silent, and VLS252012HBX-100M-1 came back drop_in against a 1.0 mm
         // LQH2HPH100MGR (ABT #2029). The clearance is UNVERIFIED and the grade is capped the
         // way an unverified footprint caps it.
-        if (hfit == HeightFit::Unknown && (cat == "magnetic" || cat == "chipBead") && o_dims &&
+        //
+        // The same silence is no different on any other family: a chip resistor, a capacitor
+        // or a transistor whose original states a height and whose substitute states none
+        // has an unverified clearance too, and its axis must say so rather than vanish (or,
+        // before the table height was dropped in dims_of, read 'pass' from a typical value).
+        if (hfit == HeightFit::Unknown && o_dims &&
             o_dims->height && (!s_dims || !s_dims->height) && !out.contains("height_fit")) {
             out["height_fit"] = "unknown";
             params.push_back({{"name", "height"}, {"verdict", UNVERIFIED}});
@@ -1646,7 +1815,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     }
     // An unverified clearance caps the grade exactly as an unverified footprint does.
     if (out.value("height_fit", "") == "unknown") footprint_unverified = true;
-    out["grade"] = grade_for(status, tier, any_warn, any_fail, footprint_unverified,
+    // drop_in asserts no rating regressed; a power nobody can state at the original's rating
+    // temperature has not been shown not to, so it takes the same minor_review cap.
+    out["grade"] = grade_for(status, tier, any_warn, any_fail,
+                             footprint_unverified || power_basis_unverified,
                              missing_required_data, hfit);
 
     // Direction: on the directional parameters we could actually compare, did

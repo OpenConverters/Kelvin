@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <regex>
+#include <stdexcept>
 #include <unordered_map>
 
 #include "CrossRefDimensions.hpp"  // crossref::normalize_mount (smd / leaded)
@@ -631,6 +632,37 @@ std::optional<ResistorRow> extract_resistor(const json& env) {
     if (r.family.empty()) r.family = get_str(*part, "series").value_or("");
     auto status = get_str(*mi, "status");
     r.is_production = status.has_value() && *status == "production";
+    // The temperature basis of the power rating (v18). A rating is the power the part carries
+    // up to a stated ambient; above it the part derates along its curve. Both are carried
+    // exactly as stated — absent stays NaN / empty, never a "typical" 70 degC knee.
+    if (auto t = get_num(*elec, "powerRatingTemperature")) r.power_rating_temperature = *t;
+    if (const json* factors = obj_get(*di, "factors")) {
+        if (const json* pd = obj_get(*factors, "powerDerating")) {
+            const json* ts = obj_get(*pd, "temperature");
+            const json* as = obj_get(*pd, "amplitude");
+            // A derating curve the ranker cannot read is a defect in the record, and reading
+            // half of it would put a wrong power in front of an engineer. Loud, with the part.
+            auto bad = [&](const char* why) {
+                return std::runtime_error("resistor " + *mpn + ": factors.powerDerating " + why);
+            };
+            if (!ts || !as || !ts->is_array() || !as->is_array())
+                throw bad("must carry temperature[] and amplitude[]");
+            if (ts->size() != as->size() || ts->size() < 2)
+                throw bad("temperature[] and amplitude[] must be equal-length with >= 2 points");
+            for (size_t i = 0; i < ts->size(); ++i) {
+                const json& tv = (*ts)[i];
+                const json& av = (*as)[i];
+                if (!tv.is_number() || tv.is_boolean() || !av.is_number() || av.is_boolean())
+                    throw bad("holds a non-numeric point");
+                const double ti = tv.get<double>(), ai = av.get<double>();
+                if (!r.derating_temperature.empty() && !(ti > r.derating_temperature.back()))
+                    throw bad("temperatures must strictly increase");
+                if (!(ai >= 0.0 && ai <= 1.0)) throw bad("amplitude must lie in [0, 1]");
+                r.derating_temperature.push_back(ti);
+                r.derating_amplitude.push_back(ai);
+            }
+        }
+    }
     return r;
 }
 

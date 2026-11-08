@@ -378,3 +378,156 @@ TEST_CASE("qarlos #2035: all-retracted provenance is flagged and verifies nothin
     CHECK(r2["original_verified"] == false);
     CHECK(r2["candidates"][0]["status"] == "partial");
 }
+
+// ── Qarlos audit 2026-11-08 (resistor family) ────────────────────────────────
+
+// Run3 seed 20264135 / run5 seed 20266153: a chip resistor whose record states no height
+// (Bourns CR0603-FX-1743ELF: case code only) had its height graded 'pass' from the case-code
+// table's typical 0.45 mm against an original that states 0.45 mm.
+TEST_CASE("qarlos 2026-11-08: a case-code table height is not the record's height",
+          "[qarlos][crossref][dims]") {
+    json orig = {{"mpn", "RC0603FR-07174KL"}, {"value_si", 174000.0}, {"power_rating", 0.1},
+                 {"tolerance_pct", 1.0}, {"case_code", "0603"}, {"length_m", 1.6e-3},
+                 {"width_m", 0.8e-3}, {"height_m", 0.45e-3}};
+    json table_only = {{"mpn", "CR0603-FX-1743ELF"}, {"value_si", 174000.0}, {"power_rating", 0.1},
+                       {"tolerance_pct", 1.0}, {"case_code", "0603"}};
+    // Land stated, no height (the Panasonic ERJ shape): the axis used to vanish.
+    json land_only = {{"mpn", "ERJ3EKF1743V"}, {"value_si", 174000.0}, {"power_rating", 0.1},
+                      {"tolerance_pct", 1.0}, {"case_code", "0603"}, {"length_m", 1.6e-3},
+                      {"width_m", 0.8e-3}};
+    json stated = {{"mpn", "STATED"}, {"value_si", 174000.0}, {"power_rating", 0.1},
+                   {"tolerance_pct", 1.0}, {"case_code", "0603"}, {"length_m", 1.6e-3},
+                   {"width_m", 0.8e-3}, {"height_m", 0.45e-3}};
+    kelvin::crossref::Options opt;
+    opt.max_results = 10;
+    auto r = kelvin::crossref::cross_reference("resistor", orig,
+                                               json::array({table_only, land_only, stated}), opt);
+    auto by = [&](const std::string& m) {
+        for (const auto& c : r["candidates"])
+            if (c["mpn"] == m) return c;
+        return json(nullptr);
+    };
+    for (const char* m : {"CR0603-FX-1743ELF", "ERJ3EKF1743V"}) {
+        const json c = by(m);
+        REQUIRE(!c.is_null());
+        CHECK(verdict_of(c, "height") == "unverified");
+        CHECK(c["height_fit"] == "unknown");
+        CHECK(c["grade"] != "drop_in");
+        CHECK(has_note(c, "states no height"));
+    }
+    // The footprint still follows from the case code (the code IS the land).
+    CHECK(verdict_of(by("CR0603-FX-1743ELF"), "footprint") == "pass");
+    // A record that states its height is judged and can still be a drop-in.
+    CHECK(verdict_of(by("STATED"), "height") == "pass");
+    CHECK(by("STATED")["grade"] == "drop_in");
+}
+
+// The same rule on another family through the shared code: a SOT-23 MOSFET's JEDEC table
+// height is not a record height either.
+TEST_CASE("qarlos 2026-11-08: a package table height is not judged on a mosfet",
+          "[qarlos][crossref][dims]") {
+    json orig = {{"mpn", "O"}, {"vds", 30.0}, {"id", 3.0}, {"rds_on", 0.05}, {"case_code", "SOT-23"},
+                 {"height_m", 1.0e-3}};
+    json cand = {{"mpn", "C"}, {"vds", 30.0}, {"id", 3.0}, {"rds_on", 0.05}, {"case_code", "SOT-23"}};
+    auto r = kelvin::crossref::cross_reference("mosfet", orig, json::array({cand}));
+    const json& c = r["candidates"][0];
+    CHECK(verdict_of(c, "height") == "unverified");
+    CHECK(c["grade"] != "drop_in");
+}
+
+// Run2 seed 20263126: RN50C5000FR36 is 0.05 W at 125 degC (flat to 125, zero at 175);
+// CR0603-FX-5100ELF is 0.1 W, flat to 70 degC and zero at 125 degC. Power is compared at the
+// original's rating temperature, where the thick-film part delivers nothing.
+TEST_CASE("qarlos 2026-11-08: resistor power is compared at the original's rating temperature",
+          "[qarlos][crossref]") {
+    json orig = {{"mpn", "RN50C5000FR36"}, {"value_si", 500.0}, {"power_rating", 0.05},
+                 {"tolerance_pct", 1.0}, {"power_rating_temperature", 125.0},
+                 {"derating_temperature", {-65.0, 125.0, 175.0}},
+                 {"derating_amplitude", {1.0, 1.0, 0.0}}};
+    auto cand = [](const char* mpn, json extra) {
+        json c = {{"mpn", mpn}, {"value_si", 510.0}, {"power_rating", 0.1}, {"tolerance_pct", 1.0}};
+        c.update(extra);
+        return c;
+    };
+    json cands = json::array({
+        cand("CR0603-FX-5100ELF", {{"derating_temperature", {-55.0, 70.0, 125.0}},
+                                   {"derating_amplitude", {1.0, 1.0, 0.0}}}),
+        // 0.1 W flat to 70, zero at 155: at 125 degC it delivers 0.1 * 30/85 = 0.0353 W.
+        cand("CURVE_155", {{"power_rating_temperature", 70.0},
+                           {"derating_temperature", {-55.0, 70.0, 155.0}},
+                           {"derating_amplitude", {1.0, 1.0, 0.0}}}),
+        // Its rating holds to 125 degC by its own statement: full 0.1 W there.
+        cand("RATED_125", {{"power_rating_temperature", 125.0}}),
+        // Rated at 70 degC with no curve: nothing says what it delivers at 125.
+        cand("RATED_70_NO_CURVE", {{"power_rating_temperature", 70.0}}),
+        // Nothing about temperature at all.
+        cand("NO_BASIS", json::object()),
+        // Curve reaches 175 degC: at 125 degC 0.1 * (1 - 55/105) = 0.0476 W -> warn (>= 0.9x).
+        cand("CURVE_175", {{"derating_temperature", {-55.0, 70.0, 175.0}},
+                           {"derating_amplitude", {1.0, 1.0, 0.0}}}),
+    });
+    kelvin::crossref::Options opt;
+    opt.max_results = 10;
+    auto r = kelvin::crossref::cross_reference("resistor", orig, cands, opt);
+    auto by = [&](const std::string& m) {
+        for (const auto& c : r["candidates"])
+            if (c["mpn"] == m) return c;
+        return json(nullptr);
+    };
+    const json z = by("CR0603-FX-5100ELF");
+    REQUIRE(!z.is_null());
+    CHECK(verdict_of(z, "power_rating") == "fail");
+    CHECK(has_note(z, "ends at 125 degC") == false);  // 125 is ON the curve: interpolated, 0 W
+    CHECK(has_note(z, "delivers 0 W"));
+    CHECK(z["grade"] == "major_review");
+
+    CHECK(verdict_of(by("CURVE_155"), "power_rating") == "fail");
+    CHECK(verdict_of(by("CURVE_175"), "power_rating") == "warn");
+    CHECK(verdict_of(by("RATED_125"), "power_rating") == "pass");
+    for (const char* m : {"RATED_70_NO_CURVE", "NO_BASIS"}) {
+        const json c = by(m);
+        REQUIRE(!c.is_null());
+        CHECK(verdict_of(c, "power_rating") == "unverified");
+        CHECK(c["grade"] != "drop_in");
+        CHECK(has_note(c, "not comparable at the original's rating temperature"));
+    }
+
+    // Beyond the substitute's curve: not rated to operate there at all.
+    json hot = orig;
+    hot["power_rating_temperature"] = 150.0;
+    auto r2 = kelvin::crossref::cross_reference("resistor", hot, json::array({cands[0]}), opt);
+    CHECK(verdict_of(r2["candidates"][0], "power_rating") == "fail");
+    CHECK(has_note(r2["candidates"][0], "ends at 125 degC"));
+
+    // An original with no temperature basis keeps the plain nominal compare.
+    json plain = {{"mpn", "P"}, {"value_si", 500.0}, {"power_rating", 0.05}, {"tolerance_pct", 1.0}};
+    auto r3 = kelvin::crossref::cross_reference("resistor", plain, json::array({cands[4]}), opt);
+    CHECK(verdict_of(r3["candidates"][0], "power_rating") == "pass");
+}
+
+TEST_CASE("qarlos 2026-11-08: the resistor extractor carries the power-rating basis",
+          "[qarlos][views]") {
+    auto env = [](json elec, json factors) {
+        json di = {{"part", json::object()}, {"electrical", elec}};
+        if (!factors.is_null()) di["factors"] = factors;
+        return json{{"resistor", {{"manufacturerInfo",
+            {{"name", "Vishay"}, {"reference", "RN50C5000FR36"}, {"datasheetInfo", di}}}}}};
+    };
+    auto r = kelvin::extract_resistor(env(
+        {{"resistance", {{"nominal", 500.0}}}, {"powerRating", 0.05}, {"powerRatingTemperature", 125}},
+        {{"powerDerating", {{"temperature", {-65, 125, 175}}, {"amplitude", {1, 1, 0}}}}}));
+    REQUIRE(r.has_value());
+    CHECK(r->power_rating_temperature == Approx(125.0));
+    REQUIRE(r->derating_temperature.size() == 3);
+    CHECK(r->derating_temperature[2] == Approx(175.0));
+    CHECK(r->derating_amplitude[2] == Approx(0.0));
+
+    auto bare = kelvin::extract_resistor(env({{"resistance", 500.0}, {"powerRating", 0.05}}, nullptr));
+    REQUIRE(bare.has_value());
+    CHECK(std::isnan(bare->power_rating_temperature));
+    CHECK(bare->derating_temperature.empty());
+
+    // A curve the ranker cannot read is loud, never half-read.
+    CHECK_THROWS(kelvin::extract_resistor(env({{"resistance", 500.0}, {"powerRating", 0.05}},
+        {{"powerDerating", {{"temperature", {125, 70}}, {"amplitude", {1, 0}}}}})));
+}

@@ -38,6 +38,11 @@ struct Dims {
     std::optional<double> length;
     std::optional<double> width;
     std::optional<double> height;
+    // The height is the TABLE's outline value for the code (chip EIA, JEDEC package, tantalum
+    // letter), not one the code itself spells out ("8x8x11.7", "10x20", "3528-21"). A code
+    // fixes a land; it does not fix how tall one vendor's body is (a "0603" chip resistor
+    // ships 0.35 to 0.55 mm), so the ranker never judges clearance from such a height.
+    bool height_from_table = false;
 };
 
 namespace dims_detail {
@@ -183,13 +188,19 @@ inline std::optional<Dims> resolve_dimensions(const std::string& case_code,
     std::string cat = category;
     for (auto& c : cat) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 
+    auto from_table = [](const LWH& v) {
+        Dims d = to_metres(v);
+        d.height_from_table = d.height.has_value();
+        return d;
+    };
+
     // 1) Named packages (SOT/SOD/TO/DPAK/SOIC/...) and their aliases.
-    if (auto pkg = resolve_package(raw)) return to_metres(*pkg);
+    if (auto pkg = resolve_package(raw)) return from_table(*pkg);
 
     // 2) Molded tantalum EIA letter (single A-D), capacitors only.
     if (cat == "capacitor") {
         auto it = tantalum_letter().find(upper(raw));
-        if (it != tantalum_letter().end()) return to_metres(it->second);
+        if (it != tantalum_letter().end()) return from_table(it->second);
     }
 
     // 3) Aluminium electrolytic / any "DxL" can code -> diameter x diameter x length.
@@ -232,7 +243,7 @@ inline std::optional<Dims> resolve_dimensions(const std::string& case_code,
             LWH v = imp->second;
             // MLCC height varies with value/dielectric -> drop it; resistors keep it.
             if (cat != "resistor") v.h = -1;
-            return to_metres(v);
+            return from_table(v);
         }
         // 4b) Molded power inductor: NNMM = square footprint (NN) x height (MM),
         //     both in tenths of a mm. "4020" -> 4.0 x 4.0 x 2.0 mm.

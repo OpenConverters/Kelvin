@@ -82,7 +82,14 @@ export const XREF = [
     // YAGEO YC/TC) is N isolated elements on 2N pads inside an ordinary chip
     // outline, so without it the ranker judged a 4-element array by body size
     // alone and called discrete 1206 chips drop-ins for it (ABT #481).
-    spec: (r) => ({ ...base(r), value_si: nz(r.resistance), power_rating: nz(r.power_rating), tolerance_pct: r.tolerance != null && r.tolerance > 0 ? r.tolerance * 100 : null, family: r.family ?? '' }),
+    // The power rating's temperature basis travels with it: a rating is stated AT an ambient
+    // and derates along the record's curve above it, so the ranker compares the power each
+    // part delivers at the ORIGINAL's rating temperature. Raw, NOT through nz(): 0 degC would
+    // be a real temperature. Absent -> null, and the ranker reports the power UNVERIFIED
+    // wherever the comparison needs the missing basis.
+    spec: (r) => ({ ...base(r), value_si: nz(r.resistance), power_rating: nz(r.power_rating), tolerance_pct: r.tolerance != null && r.tolerance > 0 ? r.tolerance * 100 : null, family: r.family ?? '',
+      power_rating_temperature: r.power_rating_temperature ?? null,
+      derating_temperature: r.derating_temperature ?? null, derating_amplitude: r.derating_amplitude ?? null }),
     params: [
       { key: 'value', label: 'R', row: 'resistance', unit: 'Ω' },
       { key: 'power_rating', label: 'P', row: 'power_rating', unit: 'W' },
