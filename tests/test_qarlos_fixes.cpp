@@ -1269,3 +1269,35 @@ TEST_CASE("qarlos 2026-11-08: the lead pitch is read from dimensions.pitch or a 
     CHECK(std::isnan(c->lead_pitch_m));
 }
 
+
+// Owner's rule (2026-11-09): a connector's board attach is an identity of the part and is
+// compared even when the caller switches the footprint check off — one verdict, one note.
+TEST_CASE("qarlos 2026-11-08: connector mount is compared with check_footprint off",
+          "[qarlos][crossref]") {
+    json orig = fpc("SMT", "rightAngle");
+    json pf = fpc("PF", "rightAngle");
+    pf["mount"] = "pressFit";
+    pf["mounting"] = "pressFit";
+    kelvin::crossref::Options opt;
+    opt.max_results = 10;
+    opt.check_footprint = false;
+    auto r = kelvin::crossref::cross_reference("connector", orig,
+                                               json::array({pf, fpc("SAME", "rightAngle")}), opt);
+    const json* c = cand_by_mpn(r, "PF");
+    REQUIRE(c);
+    CHECK(count_params(*c, "mounting") == 1);
+    CHECK(verdict_of(*c, "mounting") == "fail");
+    CHECK((*c)["status"] == "no_substitute");
+    CHECK(count_notes(*c, "mount") == 1);
+    CHECK(has_note(*c, "board mount differs: smt -> pressFit"));
+    const json* same = cand_by_mpn(r, "SAME");
+    REQUIRE(same);
+    CHECK(count_params(*same, "mounting") == 1);
+    CHECK(verdict_of(*same, "mounting") == "pass");
+    // Other families keep the mount inside the footprint gate: off means not compared.
+    json rorig = {{"mpn", "O"}, {"value_si", 1e-7}, {"voltage", 50.0}, {"mount", "THT"}};
+    json rsmd = {{"mpn", "S"}, {"value_si", 1e-7}, {"voltage", 50.0}, {"mount", "SMT"}};
+    auto rc = kelvin::crossref::cross_reference("capacitor", rorig, json::array({rsmd}), opt);
+    CHECK(verdict_of(rc["candidates"][0], "mounting") == "");
+}
+

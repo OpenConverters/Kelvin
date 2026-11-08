@@ -1426,34 +1426,37 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         penalty += opt.overdim_weight * over_dimensioning_penalty(need, s, 1.0);
     }
 
-    // ── physical fit ─────────────────────────────────────────────────────────
-    if (opt.check_footprint) {
-        const std::string o_pkg = str(original, "package").empty() ? str(original, "case_code")
-                                                                   : str(original, "package");
-        const std::string s_pkg =
-            str(cand, "package").empty() ? str(cand, "case_code") : str(cand, "package");
-        // Mount type: an SMD part cannot stand in for a leaded one. Skipped for
-        // categories whose package strings vary too much by series to classify.
-        // This is the ONE mount comparison for every family, connectors included. A
-        // connector's board attach is CONAS mechanical.mountingStyle (smt / tht / pressFit /
-        // skedd / panel / cable), which its spec carries under `mounting`; every other
-        // family's explicit assembly type travels as `mount`. compare_mount classifies the
-        // connector classes too (normalize_mount), so a press-fit part against an SMT one is
-        // Incompatible here rather than in a parallel connector-only key that pushed a second
-        // 'mounting' verdict and a second note for the same pair.
-        const bool connector = cat == "connector";
-        const char* mount_key = connector ? "mounting" : "mount";
-        const std::string o_mt = str(original, mount_key), s_mt = str(cand, mount_key);
+    // ── mount type ───────────────────────────────────────────────────────────
+    const std::string o_pkg = str(original, "package").empty() ? str(original, "case_code")
+                                                               : str(original, "package");
+    const std::string s_pkg =
+        str(cand, "package").empty() ? str(cand, "case_code") : str(cand, "package");
+    // Mount type: an SMD part cannot stand in for a leaded one. Skipped for
+    // categories whose package strings vary too much by series to classify.
+    // This is the ONE mount comparison for every family, connectors included. A
+    // connector's board attach is CONAS mechanical.mountingStyle (smt / tht / pressFit /
+    // skedd / panel / cable), which its spec carries under `mounting`; every other
+    // family's explicit assembly type travels as `mount`. compare_mount classifies the
+    // connector classes too (normalize_mount), so a press-fit part against an SMT one is
+    // Incompatible here rather than in a parallel connector-only key that pushed a second
+    // 'mounting' verdict and a second note for the same pair.
+    const bool connector = cat == "connector";
+    const char* mount_key = connector ? "mounting" : "mount";
+    const std::string o_mt = str(original, mount_key), s_mt = str(cand, mount_key);
+    // Name what each side's class was read from — its EXPLICIT assembly type when the
+    // record states one, its package string otherwise (mount_class's order). Always
+    // quoting the packages printed a half-empty "mount type incompatible:  -> 8x8x10"
+    // for the many records that state a mount type but carry no package string.
+    auto mount_src = [](const std::string& mt, const std::string& pkg) {
+        return !normalize_mount(mt).empty() ? mt : pkg;
+    };
+    // For every other family the mount is part of the physical fit and goes with
+    // check_footprint. A connector's board attach is an IDENTITY of the part (owner's rule,
+    // 2026-11-09): it is compared even when the caller switches the footprint check off.
+    if (connector || opt.check_footprint) {
         const MountMatch mount_match = mount_gate_applies(cat)
                                            ? compare_mount(o_mt, s_mt, o_pkg, s_pkg)
                                            : MountMatch::Same;
-        // Name what each side's class was read from — its EXPLICIT assembly type when the
-        // record states one, its package string otherwise (mount_class's order). Always
-        // quoting the packages printed a half-empty "mount type incompatible:  -> 8x8x10"
-        // for the many records that state a mount type but carry no package string.
-        auto mount_src = [](const std::string& mt, const std::string& pkg) {
-            return !normalize_mount(mt).empty() ? mt : pkg;
-        };
         if (mount_match == MountMatch::Incompatible) {
             params.push_back({{"name", "mounting"}, {"verdict", FAIL}});
             if (connector) {
@@ -1502,6 +1505,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                             ", substitute: " + said(s_cls) +
                             ") — confirm SMD vs through-hole from the datasheets");
         }
+    }
+
+    // ── physical fit ─────────────────────────────────────────────────────────
+    if (opt.check_footprint) {
         auto o_dims = dims_of(original, cat), s_dims = dims_of(cand, cat);
         // A part with NO dimensions must not be offered as a substitute for an
         // original whose footprint we DO know: its fit can never be verified. For
