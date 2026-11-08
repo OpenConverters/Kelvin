@@ -1033,3 +1033,239 @@ TEST_CASE("qarlos 2026-11-08: an explicit tht against a bare chip case code is a
     REQUIRE(!by("AXIAL").is_null());
     CHECK(verdict_of(by("AXIAL"), "mounting") == "");
 }
+
+// ── Qarlos audit of 2026-11-08, round 2: connectors and capacitors ─────────
+namespace {
+size_t count_params(const json& c, const std::string& name) {
+    size_t n = 0;
+    for (const auto& p : c.at("params"))
+        if (p.value("name", "") == name) ++n;
+    return n;
+}
+size_t count_notes(const json& c, const std::string& needle) {
+    size_t n = 0;
+    if (!c.contains("notes")) return 0;
+    for (const auto& s : c["notes"])
+        if (s.get<std::string>().find(needle) != std::string::npos) ++n;
+    return n;
+}
+json fpc(const std::string& mpn, const char* orientation) {
+    // The shape web/src/crossref.js sends: base()'s `mount` AND the connector's `mounting`.
+    json o = {{"mpn", mpn},      {"family", "fpcFfc"},     {"positions", 24.0},
+              {"pitch_mm", 0.5}, {"rated_current_A", 0.5}, {"mount", "smt"},
+              {"mounting", "smt"}};
+    o["orientation"] = orientation ? json(orientation) : json(nullptr);
+    return o;
+}
+}  // namespace
+
+// F32Q-1A7H1-11024 (Amphenol, right-angle ZIF FPC) took 2-2492142-4 and other VERTICAL FPC
+// connectors with no orientation verdict or note (seed 20269028).
+TEST_CASE("qarlos 2026-11-08: connector orientation is compared; a change rejects",
+          "[qarlos][crossref]") {
+    const json orig = fpc("F32Q-1A7H1-11024", "rightAngle");
+    kelvin::crossref::Options opt;
+    opt.max_results = 10;
+    auto r = kelvin::crossref::cross_reference(
+        "connector", orig,
+        json::array({fpc("VERT", "vertical"), fpc("RA", "rightAngle"),
+                     fpc("2-2492142-4", nullptr), fpc("HORIZ", "horizontal")}),
+        opt);
+    const json* vert = cand_by_mpn(r, "VERT");
+    REQUIRE(vert);
+    CHECK(verdict_of(*vert, "orientation") == "fail");
+    CHECK((*vert)["status"] == "no_substitute");
+    CHECK(has_note(*vert, "orientation differs: rightAngle -> vertical"));
+
+    const json* ra = cand_by_mpn(r, "RA");
+    REQUIRE(ra);
+    CHECK(verdict_of(*ra, "orientation") == "pass");
+    CHECK((*ra)["grade"] == "drop_in");
+
+    // The real candidate states no orientation in its record: unverified, noted, capped.
+    const json* un = cand_by_mpn(r, "2-2492142-4");
+    REQUIRE(un);
+    CHECK(verdict_of(*un, "orientation") == "unverified");
+    CHECK(un->value("status", "") != "no_substitute");
+    CHECK((*un)["grade"] != "drop_in");
+    CHECK(has_note(*un,
+                   "orientation not established (original: rightAngle, substitute: not stated)"));
+
+    // horizontal vs rightAngle: not asserted either way (decision recorded in CrossRef.hpp).
+    const json* hz = cand_by_mpn(r, "HORIZ");
+    REQUIRE(hz);
+    CHECK(verdict_of(*hz, "orientation") == "unverified");
+    CHECK((*hz)["grade"] != "drop_in");
+    CHECK(has_note(*hz, "confirm from the drawings"));
+
+    // Neither record states one: the axis stays silent.
+    auto r2 = kelvin::crossref::cross_reference("connector", fpc("A", nullptr),
+                                                json::array({fpc("B", nullptr)}));
+    CHECK(verdict_of(r2["candidates"][0], "orientation") == "");
+}
+
+TEST_CASE("qarlos 2026-11-08: the connector extractor carries mechanical.orientation",
+          "[qarlos][views]") {
+    auto env = [](json mech) {
+        return json{{"connector",
+                     {{"manufacturerInfo",
+                       {{"name", "Amphenol CS"},
+                        {"reference", "F32Q-1A7H1-11024"},
+                        {"status", "production"},
+                        {"datasheetInfo",
+                         {{"part", {{"partNumber", "F32Q-1A7H1-11024"}}},
+                          {"mechanical", mech}}}}}}}};
+    };
+    auto a = kelvin::extract_connector(env({{"positions", 24},
+                                            {"pitch", 0.0005},
+                                            {"orientation", "rightAngle"},
+                                            {"mountingStyle", "smt"}}));
+    REQUIRE(a.has_value());
+    CHECK(a->orientation == "rightAngle");
+    CHECK(a->mount == "smt");
+    auto b = kelvin::extract_connector(env({{"positions", 24}, {"pitch", 0.0005}}));
+    REQUIRE(b.has_value());
+    CHECK(b->orientation.empty());
+    // The contact pitch is the connector's own axis, never a lead pitch.
+    CHECK(std::isnan(b->lead_pitch_m));
+}
+
+// Round-1 merge left connectors with TWO mount checks (a PARAM_SPECS 'mounting' key and the
+// shared compare_mount gate): a connector whose substitute states no board attach came back
+// with two 'mounting' verdicts and two notes. One gate now decides it.
+TEST_CASE("qarlos 2026-11-08: a connector gets exactly one mount verdict and one note",
+          "[qarlos][crossref]") {
+    json orig = fpc("ORIG", "rightAngle");
+    json none = fpc("NONE", "rightAngle");
+    none.erase("mount");
+    none["mounting"] = nullptr;
+    json pf = fpc("PF", "rightAngle");
+    pf["mount"] = "pressFit";
+    pf["mounting"] = "pressFit";
+    json tht = fpc("THT", "rightAngle");
+    tht["mount"] = "tht";
+    tht["mounting"] = "tht";
+    kelvin::crossref::Options opt;
+    opt.max_results = 10;
+    auto r = kelvin::crossref::cross_reference(
+        "connector", orig, json::array({none, pf, tht, fpc("SAME", "rightAngle")}), opt);
+    const json* n = cand_by_mpn(r, "NONE");
+    REQUIRE(n);
+    CHECK(count_params(*n, "mounting") == 1);
+    CHECK(verdict_of(*n, "mounting") == "unverified");
+    CHECK(count_notes(*n, "mount") == 1);
+    CHECK((*n)["grade"] == "minor_review");
+    for (const char* m : {"PF", "THT"}) {
+        const json* c = cand_by_mpn(r, m);
+        REQUIRE(c);
+        CHECK(count_params(*c, "mounting") == 1);
+        CHECK(verdict_of(*c, "mounting") == "fail");
+        CHECK((*c)["status"] == "no_substitute");
+        CHECK(count_notes(*c, "mount") == 1);
+        CHECK(has_note(*c, "board mount differs: smt -> "));
+    }
+    const json* same = cand_by_mpn(r, "SAME");
+    REQUIRE(same);
+    CHECK(count_params(*same, "mounting") == 1);
+    CHECK(verdict_of(*same, "mounting") == "pass");
+    // The connector board-attach classes are classes of the shared comparison itself.
+    using kelvin::crossref::compare_mount;
+    using kelvin::crossref::MountMatch;
+    CHECK(compare_mount("smt", "pressFit", "", "") == MountMatch::Incompatible);
+    CHECK(compare_mount("tht", "pressFit", "", "") == MountMatch::Incompatible);
+    CHECK(compare_mount("panel", "cable", "", "") == MountMatch::Incompatible);
+    CHECK(compare_mount("pressFit", "pressFit", "", "") == MountMatch::Same);
+    CHECK(compare_mount("skedd", "", "", "") == MountMatch::Unknown);
+}
+
+// MKP4D034704D00MSSD (WIMA, PCM 15, two-hole land) took R60II34705030K (KEMET R60, no lead
+// pitch, no land pattern on record) graded footprint 'pass' / 'fits' on the box size alone
+// (seed 20276947). A leaded body's land is its lead pitch.
+TEST_CASE("qarlos 2026-11-08: a leaded part's footprint is not a pass without its lead pitch",
+          "[qarlos][crossref]") {
+    auto film = [](const std::string& mpn, std::optional<double> pitch, double w) {
+        json c = {{"mpn", mpn},        {"value_si", 4.7e-7}, {"voltage", 250.0},
+                  {"mount", "THT"},    {"length_m", 18e-3},  {"width_m", w},
+                  {"height_m", 12e-3}, {"technology", "film-polypropylene"}};
+        c["lead_pitch_m"] = pitch ? json(*pitch) : json(nullptr);
+        return c;
+    };
+    const json orig = film("MKP4D034704D00MSSD", 15e-3, 7e-3);
+    kelvin::crossref::Options opt;
+    opt.max_results = 10;
+    auto r = kelvin::crossref::cross_reference(
+        "capacitor", orig,
+        json::array({film("R60II34705030K", std::nullopt, 6e-3), film("PCM15", 15e-3, 6e-3),
+                     film("PCM10", 10e-3, 6e-3)}),
+        opt);
+    const json* un = cand_by_mpn(r, "R60II34705030K");
+    REQUIRE(un);
+    CHECK(verdict_of(*un, "footprint") == "unverified");
+    CHECK((*un)["footprint"] == "unknown");
+    CHECK((*un)["grade"] != "drop_in");
+    CHECK(has_note(*un, "lead pitch"));
+    CHECK(has_note(*un, "substitute: not stated"));
+
+    const json* same = cand_by_mpn(r, "PCM15");
+    REQUIRE(same);
+    CHECK(verdict_of(*same, "footprint") == "pass");
+
+    const json* other = cand_by_mpn(r, "PCM10");
+    REQUIRE(other);
+    CHECK(verdict_of(*other, "footprint") == "fail");
+    CHECK((*other)["footprint"] == "different_land_pattern");
+    CHECK(has_note(*other, "lead pitch differs"));
+
+    // Two equal case codes name the hole pattern: established without a pitch.
+    json a = film("A", std::nullopt, 7e-3), b = film("B", std::nullopt, 7e-3);
+    a["case_code"] = "PCM 15";
+    b["case_code"] = "PCM 15";
+    auto rc = kelvin::crossref::cross_reference("capacitor", a, json::array({b}));
+    CHECK(verdict_of(rc["candidates"][0], "footprint") == "pass");
+
+    // An SMD pair is untouched: its land is its body.
+    json s1 = film("S1", std::nullopt, 7e-3), s2 = film("S2", std::nullopt, 7e-3);
+    s1["mount"] = "SMT";
+    s2["mount"] = "SMT";
+    auto rs = kelvin::crossref::cross_reference("capacitor", s1, json::array({s2}));
+    CHECK(verdict_of(rs["candidates"][0], "footprint") == "pass");
+}
+
+TEST_CASE("qarlos 2026-11-08: the lead pitch is read from dimensions.pitch or a two-hole land",
+          "[qarlos][views]") {
+    auto cap = [](json mech) {
+        return json{
+            {"capacitor",
+             {{"manufacturerInfo",
+               {{"name", "WIMA"},
+                {"reference", "MKP4D034704D00MSSD"},
+                {"status", "production"},
+                {"datasheetInfo",
+                 {{"part",
+                   {{"partNumber", "MKP4D034704D00MSSD"}, {"technology", "film-polypropylene"}}},
+                  {"electrical",
+                   {{"capacitance", {{"nominal", 4.7e-7}}}, {"ratedVoltage", 100.0}}},
+                  {"mechanical", mech}}}}}}}};
+    };
+    const json shape = {{"assembly", "THT"}};
+    auto a = kelvin::extract_capacitor(
+        cap({{"shape", shape},
+             {"dimensions", {{"length", {{"nominal", 0.018}}}, {"pitch", {{"nominal", 0.015}}}}}}));
+    REQUIRE(a.has_value());
+    CHECK(a->lead_pitch_m == Approx(0.015));
+    const json drilled = json::array({{{"id", "1"}, {"x", -0.0075}, {"y", 0.0}, {"drill", 0.0011}},
+                                      {{"id", "2"}, {"x", 0.0075}, {"y", 0.0}, {"drill", 0.0011}}});
+    auto b = kelvin::extract_capacitor(cap({{"shape", shape},
+                                            {"dimensions", {{"length", {{"nominal", 0.018}}}}},
+                                            {"landPattern", {{"pads", drilled}}}}));
+    REQUIRE(b.has_value());
+    CHECK(b->lead_pitch_m == Approx(0.015));
+    // Undrilled (SMD) pads are not a lead pitch; nothing stated stays NaN.
+    const json flat = json::array({{{"x", -0.0075}, {"y", 0.0}}, {{"x", 0.0075}, {"y", 0.0}}});
+    auto c = kelvin::extract_capacitor(cap({{"shape", shape},
+                                            {"dimensions", {{"length", {{"nominal", 0.018}}}}},
+                                            {"landPattern", {{"pads", flat}}}}));
+    REQUIRE(c.has_value());
+    CHECK(std::isnan(c->lead_pitch_m));
+}
+

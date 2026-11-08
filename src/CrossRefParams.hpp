@@ -493,7 +493,9 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
         {"polarity", D::ExactMatch, 0.0, std::nullopt, false, false, nullptr},
         {"pitch_mm", D::ExactMatch, 0.02, std::nullopt, false, false, nullptr},
         {"interface_standard", D::ExactMatch, 0.0, std::nullopt, false, false, nullptr},
-        {"mounting", D::ExactMatch, 0.0, std::nullopt, false, false, nullptr},
+        // No "mounting" key: the board attach is decided by the shared mount gate
+        // (compare_mount in CrossRefDimensions.hpp), the one mount comparison every
+        // family goes through — a second copy here pushed two verdicts and two notes.
         {"rated_current_A", D::Higher, 0.9, std::nullopt, false, true, nullptr},
         {"rated_voltage_V", D::Higher, 0.9, std::nullopt, false, false, nullptr},
         {"temp_min_C", D::Lower, 0.0, 15.0, false, false, nullptr},

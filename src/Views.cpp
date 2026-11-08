@@ -139,6 +139,25 @@ void fill_dimensions(RowBase& r, const json& di, const json& part, bool lies_fla
         if (auto v = resolve_field(src, "width"); pos(v)) r.width_m = *v;
         if (auto v = resolve_field(src, "height"); pos(v)) r.height_m = *v;
         std::optional<double> dia = resolve_field(src, "diameter");
+        // Lead pitch of a leaded body: CAS states it as mechanical.dimensions.pitch (only
+        // in the nested drawing — a connector's mechanical.pitch is its CONTACT pitch, its
+        // own axis). Else the record's own drilled two-hole landPattern states it as the
+        // distance between the two hole centres. Neither -> NaN, never a typical value.
+        if (nested)
+            if (auto v = resolve_field(*nested, "pitch"); pos(v)) r.lead_pitch_m = *v;
+        if (!present(r.lead_pitch_m))
+            if (const json* lp = obj_get(*mech, "landPattern"))
+                if (const json* pads = obj_get(*lp, "pads"); pads && pads->is_array() &&
+                                                             pads->size() == 2) {
+                    const json& a = (*pads)[0];
+                    const json& b = (*pads)[1];
+                    auto ax = get_num(a, "x"), ay = get_num(a, "y"), bx = get_num(b, "x"),
+                         by = get_num(b, "y");
+                    if (a.contains("drill") && b.contains("drill") && ax && ay && bx && by) {
+                        const double d = std::hypot(*bx - *ax, *by - *ay);
+                        if (d > 0) r.lead_pitch_m = d;
+                    }
+                }
         if (nested) {  // a nested block may still leave siblings on `mechanical`
             if (!present(r.length_m))
                 if (auto v = resolve_field(*mech, "length"); pos(v)) r.length_m = *v;
@@ -1185,6 +1204,9 @@ std::optional<ConnectorRow> extract_connector(const json& env) {
         set_if_pos(r.positions, get_num(*mech, "positions"));
         set_if_pos(r.pitch, get_num(*mech, "pitch"));
         set_if_pos(r.mating_cycles, get_num(*mech, "matingCycles"));
+        // Mating-axis orientation (vertical / rightAngle / horizontal / mezzanine / edge /
+        // cable). Empty when unstated: the ranker then reports it unverified, never a match.
+        if (auto o = get_str(*mech, "orientation")) r.orientation = *o;
     }
     // Operating temperature range: a substitute must cover the original's, at both
     // ends. Read straight out of the object — NOT through set_if_pos, because a cold

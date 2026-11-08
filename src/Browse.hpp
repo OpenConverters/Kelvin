@@ -265,7 +265,8 @@ inline const FieldTable<ConnectorRow>& fields<ConnectorRow>() {
          {"polarity", &ConnectorRow::polarity},
          {"series", &ConnectorRow::series},
          {"contact_plating", &ConnectorRow::contact_plating},
-         {"termination", &ConnectorRow::termination}},
+         {"termination", &ConnectorRow::termination},
+         {"orientation", &ConnectorRow::orientation}},
         {{"is_production", &ConnectorRow::is_production}},
         {}};
     return t;
@@ -599,6 +600,8 @@ json browse_rows(const Shard<Row>& shard, const json& query) {
         o["heightM"] = std::isnan(r.height_m) ? json(nullptr) : json(r.height_m);
         if (!r.case_code.empty()) o["caseCode"] = r.case_code;
         if (!r.mount.empty()) o["mount"] = r.mount;
+        // A leaded body's lead pitch (m), its land datum; absent when unstated (v19).
+        if (!std::isnan(r.lead_pitch_m)) o["leadPitchM"] = r.lead_pitch_m;
         if (r.provenance_retracted) o["provenanceRetracted"] = true;  // ABT #2035
         for (const auto& [name, mem] : t.nums) {
             double v = r.*mem;

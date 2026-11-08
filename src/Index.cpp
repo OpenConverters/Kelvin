@@ -88,7 +88,10 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // v18 carries a resistor's power-rating temperature and its stated derating curve
 // (ResistorRow.power_rating_temperature / derating_temperature / derating_amplitude), so the
 // cross-reference compares power at the original's rating temperature.
-constexpr uint32_t kFormatVersion = 18;
+// v19 carries a connector's mating-axis orientation (ConnectorRow.orientation) and, on EVERY
+// family's row, the lead pitch of a leaded part (RowBase.lead_pitch_m) — the land datum of a
+// through-hole body, which the cross-reference footprint check compares (Qarlos 2026-11-08).
+constexpr uint32_t kFormatVersion = 19;
 
 // Identity of the code that produces rows, so a cached shard can be recognised as
 // having been built by a DIFFERENT extractor than the one running now (ABT #426).
@@ -237,6 +240,7 @@ void io_base(Ar& ar, RowBase& r) {
     ar.str(r.case_code);
     ar.str(r.mount);
     ar.boolean(r.provenance_retracted);  // v17
+    ar.dbl(r.lead_pitch_m);              // v19
 }
 
 template <class Ar>
@@ -431,6 +435,7 @@ void row_io(Ar& ar, ConnectorRow& r) {
     ar.str(r.series);
     ar.str(r.contact_plating);
     ar.str(r.termination);
+    ar.str(r.orientation);  // v19
     ar.boolean(r.is_production);
 }
 

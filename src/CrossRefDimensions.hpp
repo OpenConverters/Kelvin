@@ -522,6 +522,12 @@ inline bool mount_type_incompatible(const std::string& original, const std::stri
 // The catalogue states this directly for many parts, which beats inferring it
 // from a package string — the only signal Heaviside had. "chassis" is left
 // unclassified rather than forced into one of the two buckets.
+// A connector's board attach (CONAS mechanical.mountingStyle) adds four classes of its own,
+// each a different board process from SMD, soldered through-hole and one another: "pressfit"
+// (a compliant pin pressed into a plated hole, no solder), "skedd" (a solderless direct
+// plug-in into plated holes), "panel" (fastened to a panel, not to the board) and "cable"
+// (a free-hanging cable-side part with no board attach at all). No PEAS assemblyType uses
+// these words, so the other families classify exactly as before.
 inline std::string normalize_mount(const std::string& assembly_type) {
     std::string a = assembly_type;
     for (auto& c : a) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -529,6 +535,10 @@ inline std::string normalize_mount(const std::string& assembly_type) {
     if (a == "tht" || a == "th" || a == "throughhole" || a == "through_hole" || a == "radial" ||
         a == "axial")
         return "leaded";
+    if (a == "pressfit" || a == "press_fit" || a == "press-fit") return "pressfit";
+    if (a == "skedd") return "skedd";
+    if (a == "panel") return "panel";
+    if (a == "cable") return "cable";
     return "";
 }
 

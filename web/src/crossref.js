@@ -193,11 +193,14 @@ export const XREF = [
       temp_min_C: r.temp_min_c, temp_max_C: r.temp_max_c,
       contact_plating: r.contact_plating || null, termination: r.termination || null,
       // The board attach (mechanical.mountingStyle: smt / tht / pressFit / skedd / panel /
-      // cable), under the key the ranker's hard 'mounting' identity spec reads. It reached
-      // the ranker only as base()'s `mount`, which the generic SMD-vs-leaded gate cannot
-      // classify for press-fit, panel or cable, so an SMT Samtec original took a press-fit
-      // TE part with no mount verdict at all. null when unstated: unverified, not refused.
+      // cable), under the key the ranker's shared mount gate reads for a connector
+      // (compare_mount, which classifies press-fit, skedd, panel and cable as board
+      // processes of their own). null when unstated: unverified, not refused.
       mounting: r.mount || null,
+      // The mating-axis orientation (vertical / rightAngle / horizontal / mezzanine / edge /
+      // cable): a vertical FPC connector for a right-angle original is a different
+      // mechanical design. null when unstated: unverified with a note, never a match.
+      orientation: r.orientation || null,
       mating_cycles: nz(r.mating_cycles) }),
     params: [
       { key: 'positions', label: 'pos', row: 'positions', unit: '' },
@@ -207,6 +210,7 @@ export const XREF = [
       { key: 'temp_max_C', label: 'T max', row: 'temp_max_c', unit: '°C' },
       { key: 'contact_plating', label: 'plating', row: 'contact_plating', str: true },
       { key: 'mounting', label: 'mount', row: 'mount', str: true },
+      { key: 'orientation', label: 'orientation', row: 'orientation', str: true },
     ],
   },
   {
@@ -319,6 +323,9 @@ export function base(r) {
     height_m: nz(r.heightM),
     case_code: r.caseCode ?? '',
     mount: r.mount ?? '',
+    // A leaded body's lead pitch (m): its land pattern, which the body outline is not.
+    // null when unstated — the footprint check then cannot pass a leaded part on its box.
+    lead_pitch_m: nz(r.leadPitchM),
     is_production: r.is_production,
     // Every provenance entry of the record is retracted: the ranker treats its data as
     // unverified (ABT #2035).

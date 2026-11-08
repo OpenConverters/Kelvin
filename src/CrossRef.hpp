@@ -210,14 +210,16 @@ inline std::vector<Rating> critical_ratings(const std::string& cat) {
 // op-amp is not a quad). Everything else demotes to 'partial'.
 inline bool is_hard_param(const std::string& cat, const std::string& key) {
     static const std::set<std::string> magnetic{"saturation_current", "rated_current"};
-    // A connector is half of a mated pair: the other gender, another interface
-    // standard or mounting style does not plug into what is on the board. Only a
-    // MISMATCH rejects — a record that omits one is unverified, not refused
-    // (none of these excludes a missing substitute). Pitch is deliberately NOT
-    // here: a different pitch is reported as a land-pattern change (partial,
-    // redesign), ranked below every part that keeps the pads.
+    // A connector is half of a mated pair: the other gender or another interface
+    // standard does not plug into what is on the board. Only a MISMATCH rejects — a
+    // record that omits one is unverified, not refused (none of these excludes a
+    // missing substitute). Pitch is deliberately NOT here: a different pitch is
+    // reported as a land-pattern change (partial, redesign), ranked below every part
+    // that keeps the pads. The board attach (smt / tht / pressFit ...) and the
+    // mating-axis orientation are identities too, but each is decided by its own
+    // gate (the shared mount gate, the connector orientation block), not here.
     static const std::set<std::string> connector{"family", "positions", "polarity",
-                                                 "interface_standard", "mounting"};
+                                                 "interface_standard"};
     static const std::set<std::string> analog{"subtype", "channels"};
     // mode: a 3rd-overtone crystal cannot cross with a fundamental one in either
     // direction — an overtone circuit's LC tank is inductive at the fundamental,
@@ -806,7 +808,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // minor_review / upgrade for a 2.5 V EPSON original.
     bool timebase_supply_fail = false;
     bool timebase_supply_unverified = false;
-    bool connector_mount_unverified = false;
+    // A connector orientation that could not be established (see the orientation block
+    // after the PARAM_SPECS loop): not a drop-in.
+    bool connector_orientation_unverified = false;
     // A passive resonator (quartz crystal, ceramic resonator) has no supply: it is driven
     // by the MCU's oscillator stage. The supply keys mean nothing there and are not
     // compared even if a record happened to carry one.
@@ -837,28 +841,6 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             if (spec.key == "pitch_mm") connector_pitch_conflict = true;
             if (spec.key == "contact_plating") connector_plating_conflict = true;
             if (spec.key == "termination") connector_termination_conflict = true;
-            // The board attach (smt / tht / pressFit / skedd / panel / cable) is a
-            // different board process, not a parameter: a press-fit part needs a press
-            // and plated holes sized for it, an SMT one a reflow pass on pads. A hard
-            // identity key, so this FAIL rejects. Say which pair decided it: the generic
-            // SMD-vs-leaded gate cannot classify press-fit, panel or cable, and an SMT
-            // original used to take a press-fit substitute with no mount verdict at all.
-            if (spec.key == "mounting")
-                notes.push_back("board mount differs: " + str(original, "mounting") + " -> " +
-                                str(cand, "mounting") +
-                                " — a different board-attach process, not a drop-in");
-        }
-        // The original states its board attach and the substitute's record does not:
-        // whether it goes on the same board process is unknown, so the swap cannot be
-        // called a drop-in. Capped like an unverified footprint (minor_review), with a
-        // note — WT16PRD8CD (no mountingStyle, no pitch) came back drop_in for an SMT
-        // Samtec original.
-        if (cat == "connector" && spec.key == "mounting" && verdict == UNVERIFIED &&
-            detail::present(original, spec.key)) {
-            connector_mount_unverified = true;
-            notes.push_back("the original is " + str(original, "mounting") +
-                            "-mounted; the substitute's record states no board mount — "
-                            "confirm it uses the same board-attach process");
         }
         if (cat == "timeBase" && supply_key) {
             if (verdict == FAIL) timebase_supply_fail = true;
@@ -986,6 +968,54 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         if (numeric && is_hard_param(cat, spec.key) && !o && s && !isat_vs_rating) {
             direction_blind = true;
             blind_axes.push_back(param_label(spec.key));
+        }
+    }
+
+    // ── connector mating-axis orientation (CONAS mechanical.orientation) ─────
+    // vertical / rightAngle / horizontal / mezzanine / edge / cable is the direction the
+    // counterpart (cable, FPC, daughter board) arrives from: a vertical FPC connector
+    // for a right-angle one is a different mechanical design — the flex leaves the board
+    // the other way — not a substitution (F32Q-1A7H1-11024 vs 2-2492142-4, Qarlos
+    // 2026-11-08 seed 20269028). Rule:
+    //   both stated and equal                -> pass;
+    //   both stated, different               -> fail, rejected like any connector identity;
+    //   horizontal against rightAngle        -> unverified with a note (DECISION for the
+    //     owner: both describe a mating axis parallel to the board and vendors use the two
+    //     words for the same body, but the schema keeps them apart, so neither "same" nor
+    //     "different" can be asserted from the record);
+    //   stated on one side only              -> unverified with a note, capped like an
+    //     unverified footprint (never a drop-in on an orientation nobody checked);
+    //   stated on neither side               -> not compared (silent, as every axis is).
+    if (cat == "connector") {
+        const std::string oo = str(original, "orientation"), so = str(cand, "orientation");
+        if (!oo.empty() || !so.empty()) {
+            const auto said = [](const std::string& v) {
+                return v.empty() ? std::string("not stated") : v;
+            };
+            const bool parallel_pair = (oo == "horizontal" && so == "rightAngle") ||
+                                       (oo == "rightAngle" && so == "horizontal");
+            if (!oo.empty() && !so.empty() && oo == so) {
+                params.push_back({{"name", "orientation"}, {"verdict", PASS}});
+            } else if (!oo.empty() && !so.empty() && !parallel_pair) {
+                params.push_back({{"name", "orientation"}, {"verdict", FAIL}});
+                notes.push_back("orientation differs: " + oo + " -> " + so +
+                                " — the counterpart mates along a different axis; a different "
+                                "mechanical design, not a drop-in");
+                return reject("connector orientation differs (a different mating axis)");
+            } else {
+                params.push_back({{"name", "orientation"}, {"verdict", UNVERIFIED}});
+                connector_orientation_unverified = true;
+                if (parallel_pair)
+                    notes.push_back("orientation: the original is " + oo +
+                                    " and the substitute " + so +
+                                    " — vendors use both words for a mating axis parallel to the "
+                                    "board; confirm from the drawings that the counterpart "
+                                    "arrives the same way");
+                else
+                    notes.push_back("orientation not established (original: " + said(oo) +
+                                    ", substitute: " + said(so) +
+                                    ") — confirm vertical / right-angle from the datasheets");
+            }
         }
     }
 
@@ -1404,7 +1434,16 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             str(cand, "package").empty() ? str(cand, "case_code") : str(cand, "package");
         // Mount type: an SMD part cannot stand in for a leaded one. Skipped for
         // categories whose package strings vary too much by series to classify.
-        const std::string o_mt = str(original, "mount"), s_mt = str(cand, "mount");
+        // This is the ONE mount comparison for every family, connectors included. A
+        // connector's board attach is CONAS mechanical.mountingStyle (smt / tht / pressFit /
+        // skedd / panel / cable), which its spec carries under `mounting`; every other
+        // family's explicit assembly type travels as `mount`. compare_mount classifies the
+        // connector classes too (normalize_mount), so a press-fit part against an SMT one is
+        // Incompatible here rather than in a parallel connector-only key that pushed a second
+        // 'mounting' verdict and a second note for the same pair.
+        const bool connector = cat == "connector";
+        const char* mount_key = connector ? "mounting" : "mount";
+        const std::string o_mt = str(original, mount_key), s_mt = str(cand, mount_key);
         const MountMatch mount_match = mount_gate_applies(cat)
                                            ? compare_mount(o_mt, s_mt, o_pkg, s_pkg)
                                            : MountMatch::Same;
@@ -1417,12 +1456,39 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         };
         if (mount_match == MountMatch::Incompatible) {
             params.push_back({{"name", "mounting"}, {"verdict", FAIL}});
+            if (connector) {
+                // A press-fit part needs a press and plated holes sized for it, an SMT one a
+                // reflow pass on pads: a different board process, not a parameter.
+                notes.push_back("board mount differs: " + mount_src(o_mt, o_pkg) + " -> " +
+                                mount_src(s_mt, s_pkg) +
+                                " — a different board-attach process, not a drop-in");
+                return reject("board mount differs (a different board-attach process)");
+            }
             notes.push_back("mount type incompatible: " + mount_src(o_mt, o_pkg) + " -> " +
                             mount_src(s_mt, s_pkg));
             return reject("mount type incompatible (SMD vs leaded)");
         }
         const std::string o_cls = mount_class(o_mt, o_pkg), s_cls = mount_class(s_mt, s_pkg);
-        if (mount_match == MountMatch::Unknown && (!o_cls.empty() || !s_cls.empty())) {
+        // A connector's board attach is one of its identity rows in the verdict table, so a
+        // match is reported, not left blank (the other families keep a silent match).
+        if (connector && mount_match == MountMatch::Same && !o_cls.empty() && !s_cls.empty())
+            params.push_back({{"name", "mounting"}, {"verdict", PASS}});
+        if (connector && mount_match == MountMatch::Unknown &&
+            (!o_cls.empty() || !s_cls.empty())) {
+            // One record states its board attach and the other does not: whether it goes on
+            // the same board process is unknown, so the swap cannot be called a drop-in —
+            // WT16PRD8CD (no mountingStyle, no pitch) came back drop_in for an SMT Samtec
+            // original. Capped like an unverified footprint (minor_review).
+            params.push_back({{"name", "mounting"}, {"verdict", UNVERIFIED}});
+            mount_unverified = true;
+            notes.push_back(!o_cls.empty()
+                                ? "the original is " + mount_src(o_mt, o_pkg) +
+                                      "-mounted; the substitute's record states no board mount — "
+                                      "confirm it uses the same board-attach process"
+                                : "the original's record states no board mount; the substitute "
+                                  "is " + mount_src(s_mt, s_pkg) + "-mounted — confirm it uses the same "
+                                  "board-attach process");
+        } else if (mount_match == MountMatch::Unknown && (!o_cls.empty() || !s_cls.empty())) {
             // One record states its mount and the other does not: not on record is not
             // compatible — SMD vs through-hole is a different board process. Capped like
             // an unverified footprint. (Neither stating one leaves the axis silent, the
@@ -1524,6 +1590,49 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 notes.push_back("different package/case (" + oc + " -> " + sc +
                                 ") — different land pattern; a substitute to re-lay-out, not a "
                                 "drop-in (verify pads/pinout)");
+            }
+        }
+        // ── lead pitch: the land of a LEADED body ───────────────────────────
+        // A through-hole part lands on its holes, and where they sit is the lead pitch,
+        // not the body outline: a radial film capacitor's PCM 15 IS its land pattern, its
+        // 18 x 7 mm box only the keep-out. The body compare below therefore cannot call a
+        // leaded part's land kept on its own — it graded R60II34705030K (no pitch on
+        // record) 'fits' against MKP4D034704D00MSSD (PCM 15, two-hole land) on the box
+        // size alone (Qarlos 2026-11-08, seed 20276947). Rule, for every family except
+        // connectors (whose pitch is their own axis above), whenever either side is leaded:
+        //   both lead pitches stated, more than kLeadPitchTolM apart -> a different land
+        //     pattern (FAIL, a re-layout), exactly like the connector pitch;
+        //   both stated and equal                                -> the holes are kept;
+        //     the body compare still decides clearance and keep-out;
+        //   either one unstated -> the land is established only by two equal case codes
+        //     (a registered outline such as DO-41 or TO-220 names its hole pattern); with
+        //     no such case match a body 'fits' becomes UNVERIFIED, never a pass.
+        // DECISIONS for the owner: kLeadPitchTolM = 0.1 mm treats 2.50 / 2.54 and
+        // 5.00 / 5.08 mm as one hole pattern (the usual metric/inch cross-use); and an
+        // axial part with no pitch on record is held to the same rule, although its lead
+        // bend is chosen by the layout rather than by the part.
+        constexpr double kLeadPitchTolM = 0.1e-3;
+        const std::string o_mcls = mount_class(o_mt, o_pkg), s_mcls = mount_class(s_mt, s_pkg);
+        const bool leaded_pair = cat != "connector" && (o_mcls == "leaded" || s_mcls == "leaded");
+        const auto o_lp = num(original, "lead_pitch_m"), s_lp = num(cand, "lead_pitch_m");
+        bool lead_land_unverified = false;
+        if (leaded_pair && !out.contains("footprint")) {
+            if (o_lp && s_lp) {
+                if (std::fabs(*o_lp - *s_lp) > kLeadPitchTolM) {
+                    out["footprint"] = "different_land_pattern";
+                    params.push_back({{"name", "footprint"}, {"verdict", FAIL}});
+                    demote();
+                    penalty += opt.footprint_weight * kVerdictFailPenalty;
+                    notes.push_back("lead pitch differs: " + mm(*o_lp) + " -> " + mm(*s_lp) +
+                                    " mm — the holes are in different places; a different land "
+                                    "pattern, not a drop-in");
+                }
+            } else {
+                const std::string oc = str(original, "case_code"), sc = str(cand, "case_code");
+                const bool same_case = cat != "magnetic" && cat != "chipBead" && !oc.empty() &&
+                                       !sc.empty() &&
+                                       case_identity(cat, oc) == case_identity(cat, sc);
+                lead_land_unverified = !same_case;
             }
         }
         FootprintTier tier = footprint_tier(o_dims, s_dims, strict_case);
@@ -1650,6 +1759,24 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                         "could not be established — this substitute is " + what +
                         "; footprint fit is UNVERIFIED, confirm the pads before substituting");
             }
+        }
+        // The lead-pitch rule's last case (see above): a leaded body that 'fits' with the
+        // hole pattern on record for neither or only one side has not had its land
+        // compared at all — UNVERIFIED, capped like any unverified footprint.
+        if (lead_land_unverified && out.value("footprint", "") == "fits") {
+            out["footprint"] = "unknown";
+            for (auto& p : params)
+                if (p.value("name", "") == "footprint") p["verdict"] = UNVERIFIED;
+            demote();
+            penalty += opt.footprint_weight * kUnknownDimPenalty;
+            auto pitch_said = [](const std::optional<double>& lp) {
+                return lp ? mm(*lp) + " mm" : std::string("not stated");
+            };
+            notes.push_back("the body fits, but the lead pitch — the land pattern of a leaded "
+                            "part — is not on record for both (original: " + pitch_said(o_lp) +
+                            ", substitute: " + pitch_said(s_lp) +
+                            "); footprint fit is UNVERIFIED, confirm the hole pattern from the "
+                            "datasheet");
         }
         // ── height / clearance, its own axis ─────────────────────────────────
         // Not part of the land pattern, so it is judged and reported separately
@@ -2074,8 +2201,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     }
     // An unverified clearance caps the grade exactly as an unverified footprint does.
     if (out.value("height_fit", "") == "unknown") footprint_unverified = true;
-    // So does an unknown board attach against a connector original that states one.
-    if (connector_mount_unverified) footprint_unverified = true;
+    // So does a connector orientation that could not be established.
+    if (connector_orientation_unverified) footprint_unverified = true;
     // drop_in asserts no rating regressed; a power nobody can state at the original's rating
     // temperature has not been shown not to, so it takes the same minor_review cap.
     out["grade"] = grade_for(status, tier, any_warn, any_fail,

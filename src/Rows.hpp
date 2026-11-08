@@ -94,6 +94,11 @@ struct RowBase {
     // more reliable than inferring it from a package string, which is all
     // Heaviside had. Empty when the record does not state it.
     std::string mount;
+    // m — the lead (pin-row) pitch of a leaded body, mechanical.dimensions.pitch: a radial
+    // capacitor's PCM 15 is its land pattern, the body outline only its keep-out. NaN when
+    // the record states none — the footprint check then cannot call a leaded part's land
+    // kept from its body alone (Qarlos 2026-11-08, MKP4D034704D00MSSD vs R60II34705030K).
+    double lead_pitch_m = kNaN();
     // Every datasheetInfo.provenance entry of the record is retracted: whatever the row says
     // rests on a source that has been withdrawn (VLIN1626-02G's one citation is a category
     // browse page naming no order code), so none of it can verify a pass or a fit. False when
@@ -400,6 +405,11 @@ struct ConnectorRow : RowBase {
     // pushIn / insulationDisplacement / barrier), 11,627 rows, and lands here too: the two are
     // one property under two schema spellings, never both present on one record (ABT #505).
     std::string termination;
+    // mechanical.orientation (vertical / rightAngle / horizontal / mezzanine / edge / cable):
+    // the axis the counterpart mates along. A vertical FPC connector was recommended for a
+    // right-angle original with no orientation verdict at all (Qarlos 2026-11-08). Empty
+    // when unstated.
+    std::string orientation;
     bool is_production = false;
 };
 
