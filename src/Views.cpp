@@ -1,5 +1,6 @@
 #include "Views.hpp"
 
+#include <cctype>
 #include <cmath>
 #include <regex>
 #include <stdexcept>
@@ -683,7 +684,55 @@ std::optional<ResistorRow> extract_resistor(const json& env) {
             }
         }
     }
+    // v19: the resistive element, its TCR, its operating range and its stated function — the
+    // properties a parametric match (R, P, tolerance) cannot see and the cross-reference now
+    // compares (Qarlos 2026-11-08). Survey of resistors.ndjson (578,915 records, 2026-11-08):
+    // part.technology on every record, temperatureCoefficient on 520,842, thermal.
+    // operatingTemperature on 465,147 (its only temperature key in RAS).
+    r.technology = get_str(*part, "technology").value_or("");
+    if (auto t = get_num(*elec, "temperatureCoefficient")) r.tcr = *t;
+    if (const json* th = obj_get(*di, "thermal")) {
+        if (const json* t = obj_get(*th, "operatingTemperature")) {
+            // Straight from the object: a cold limit is negative and 0 degC is a real rating.
+            if (auto v = get_num(*t, "minimum")) r.temp_min_c = *v;
+            if (auto v = get_num(*t, "maximum")) r.temp_max_c = *v;
+        }
+    }
+    std::vector<std::string> class_texts;
+    for (auto s : {get_str(*mi, "family"), get_str(*part, "series"), get_str(*part, "description")})
+        if (s) class_texts.push_back(*s);
+    const ResistorFunction fn = resistor_function_class(r.technology, class_texts);
+    r.current_sense = fn.current_sense;
+    r.pulse_withstanding = fn.pulse_withstanding;
     return r;
+}
+
+// Survey of resistors.ndjson (2026-11-08) for the class text the vendors write: current
+// sensing is stated as technology currentSenseShunt (10,016 records) or "Current Sensing
+// Resistor(s)" in family/series/description (Panasonic ERJ-xBQ/ERJ-xDQ series, TE CGS RL73);
+// pulse capability as "Anti-Surge ..." (Panasonic ERJ-P/ERJ-PA/ERJ-T, 13,063), "Anti-Pulse
+// ..." (581) and "Anti Pulse Chip Resistors" (KOA SG73, 2,627 descriptions). Matching is on
+// those phrases only, case- and hyphen-insensitive; a word like "surge" on its own is not
+// taken as a claim.
+ResistorFunction resistor_function_class(const std::string& technology,
+                                         const std::vector<std::string>& class_texts) {
+    ResistorFunction f;
+    if (technology == "currentSenseShunt") f.current_sense = true;
+    static const char* kSense[] = {"current sensing", "current sense"};
+    static const char* kPulse[] = {"anti surge",      "antisurge",       "anti pulse",
+                                   "antipulse",       "pulse withstand", "surge withstand",
+                                   "pulse resistant", "surge resistant", "pulse proof"};
+    for (const std::string& raw : class_texts) {
+        std::string t;
+        t.reserve(raw.size());
+        for (unsigned char c : raw)
+            t += (c == '-' || c == '_') ? ' ' : static_cast<char>(std::tolower(c));
+        for (const char* k : kSense)
+            if (t.find(k) != std::string::npos) f.current_sense = true;
+        for (const char* k : kPulse)
+            if (t.find(k) != std::string::npos) f.pulse_withstanding = true;
+    }
+    return f;
 }
 
 std::optional<ControllerRow> extract_controller(const json& env) {

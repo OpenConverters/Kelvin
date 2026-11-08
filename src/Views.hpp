@@ -7,6 +7,7 @@
 #pragma once
 #include <optional>
 #include <string>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
@@ -26,6 +27,16 @@ std::string normalize_ctas_topology(const std::string& name);
 // True when the record states provenance and EVERY entry is retracted (ABT #2035).
 // Family-agnostic; the index builder stamps it on every row.
 bool all_provenance_retracted(const json& env);
+
+// The function a resistor record STATES for itself (ResistorRow.current_sense /
+// pulse_withstanding). Read from the RAS technology enum and the record's own class text
+// (manufacturerInfo.family, part.series, part.description) — never from the MPN.
+struct ResistorFunction {
+    bool current_sense = false;
+    bool pulse_withstanding = false;
+};
+ResistorFunction resistor_function_class(const std::string& technology,
+                                         const std::vector<std::string>& class_texts);
 
 // Extractors. Locator fields (lineno/src_offset/src_length) are left default; the caller sets them.
 std::optional<MosfetRow> extract_mosfet(const json& env);

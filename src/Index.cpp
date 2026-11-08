@@ -88,7 +88,12 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // v18 carries a resistor's power-rating temperature and its stated derating curve
 // (ResistorRow.power_rating_temperature / derating_temperature / derating_amplitude), so the
 // cross-reference compares power at the original's rating temperature.
-constexpr uint32_t kFormatVersion = 18;
+// v19 carries a resistor's resistive-element technology, TCR, operating-temperature range
+// and stated function (ResistorRow.technology / tcr / temp_min_c / temp_max_c /
+// current_sense / pulse_withstanding), which the cross-reference compares (Qarlos
+// 2026-11-08: a 175 C metal film took 155 C parts as pass, a current-sense chip took
+// general-purpose thick film as drop_in, a 4x worse TCR went unmentioned).
+constexpr uint32_t kFormatVersion = 19;
 
 // Identity of the code that produces rows, so a cached shard can be recognised as
 // having been built by a DIFFERENT extractor than the one running now (ABT #426).
@@ -317,6 +322,12 @@ void row_io(Ar& ar, ResistorRow& r) {
     ar.dbl(r.power_rating_temperature);  // v18
     ar.dblvec(r.derating_temperature);   // v18
     ar.dblvec(r.derating_amplitude);     // v18
+    ar.str(r.technology);                // v19
+    ar.dbl(r.tcr);                       // v19
+    ar.dbl(r.temp_min_c);                // v19
+    ar.dbl(r.temp_max_c);                // v19
+    ar.boolean(r.current_sense);         // v19
+    ar.boolean(r.pulse_withstanding);    // v19
 }
 
 template <class Ar>

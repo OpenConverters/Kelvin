@@ -621,6 +621,36 @@ inline std::string case_identity(const std::string& category, const std::string&
     return category == "diode" ? canonical_diode_case(s) : normalize_case_code(s);
 }
 
+// Wide-terminal ("reverse geometry", long-side termination) chip codes: the EIA imperial
+// code read LLWW has its FIRST pair smaller than its second, because the terminations run
+// along the long sides — 1225 is the 2512 outline turned 90 degrees, 0612 the 1206, 0508 the
+// 0805, 1020 the 2010, 1218 the 1812, 0306 the 0603, 0406 the 0604. The body outline is the
+// same box, so a rotation-agnostic size compare calls it a fit, but the pads are not: the
+// land is two long strips instead of two short ones. The codes listed are the ones the
+// resistor catalogue states (survey 2026-11-08: 1218 2,518; 0612 2,082; 1225 1,484; 1020
+// 1,076; 0406 831; 0508 273; 0306 16). MELF size codes such as 0204/0207 are NOT chips and
+// are deliberately absent.
+inline bool wide_terminal_chip_code(const std::string& code) {
+    static const char* kCodes[] = {"0306", "0406", "0508", "0612", "1020", "1218", "1225"};
+    const std::string n = normalize_case_code(code);
+    for (const char* c : kCodes)
+        if (n == c) return true;
+    return false;
+}
+
+// A standard EIA chip code both records state ("0603" and "0603") fixes ONE land pattern.
+// The vendors' nominal drawings of that code still differ by a few percent (Vishay CRCW0603
+// draws 1.55 x 0.85 mm, YAGEO AT0603 1.6 x 0.8 mm; the CRCW drawing's own tolerance runs to
+// 1.65 mm), which the 2 % slack of the size compare read as "one case size larger" (Qarlos
+// 2026-11-08). One EIA size step is 25 % or more in length, so a same-code body within this
+// spread of the original's is the same land, not a larger one.
+inline constexpr double kSameChipCodeBodySpread = 0.10;
+inline bool same_standard_chip_code(const std::string& a, const std::string& b) {
+    const std::string na = normalize_case_code(a), nb = normalize_case_code(b);
+    if (na.empty() || na != nb) return false;
+    return dims_detail::chip_imperial().count(na) > 0;
+}
+
 // Categories whose land pattern is the part's BODY, so an original with no body
 // on record has no land pattern on record either. Connectors are the exception:
 // their records carry no outline at all and their land IS the contact pitch,
