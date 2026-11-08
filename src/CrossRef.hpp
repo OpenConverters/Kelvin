@@ -1087,6 +1087,19 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     for (const auto& r : critical_ratings(cat)) {
         auto o = num(original, r.key), s = num(cand, r.key);
         if (!o && !s) continue;
+        if (zener && std::string(r.key) == "vrrm") {
+            // A zener's vrrm is its Vz, and a Vz is matched, not "more is better": as a
+            // HigherBetter rating any Vz a hair below the original's (21.0 V inside a
+            // 20.64-21.71 V window) WARNED. The zener rule above has already rejected every
+            // Vz outside the original's window, so a stated pair here is a marking inside
+            // it. No over-dimensioning penalty and no direction either way.
+            params.push_back({{"name", r.key}, {"verdict", (o && s) ? PASS : UNVERIFIED}});
+            if (r.hard && !o && s) {
+                direction_blind = true;
+                blind_axes.push_back(param_label(r.key));
+            }
+            continue;
+        }
         auto v = score_directional(o, s, r.mode, r.warn_factor, r.gate_factor);
         params.push_back({{"name", r.key}, {"verdict", v.verdict}});
         if (v.verdict == FAIL) {
@@ -1101,10 +1114,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         }
         if (v.verdict == WARN || v.verdict == FAIL)
             ++worse;  // a shortfall verdict is a regression, inside the neutral band or not
-        else if (!((protection || zener) && std::string(r.key) == "vrrm"))
+        else if (!(protection && std::string(r.key) == "vrrm"))
             // A protection diode's standoff is the rail it guards, not a margin: a 12 V
             // standoff part on a 5.5 V line clamps later, which is no upgrade (ABT #2034).
-            // A zener's vrrm is its Vz, which is matched (above), never "more is better".
             note_direction(r.mode == Mode::HigherBetter ? Dir::Higher : Dir::Lower, o, s);
         if (r.hard && !o && s) {
             direction_blind = true;

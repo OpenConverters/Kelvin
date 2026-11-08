@@ -428,6 +428,15 @@ TEST_CASE("qarlos 2026-11-08: a zener's Vz must lie inside the original's window
     CHECK(has_note(out, "reaching outside the original's"));
     // an absent band is unknown, not a pass (and, per ABT #488, not a regression)
     CHECK(verdict_of(find_mpn(r, "NOMINAL_ONLY"), "zener_voltage") == "unverified");
+    // A Vz a little BELOW the original's marking but inside its window is a match, not a
+    // shortfall: vrrm is no HigherBetter rating on a zener (SZMMSZ5251ET1G, 21.0 V, warned).
+    auto rl = kelvin::crossref::cross_reference(
+        "diode", orig, json::array({zener("LOWER_INSIDE", 20.9, 20.7, 21.1, 0.5)}));
+    const json li = rl["candidates"][0];
+    CHECK(verdict_of(li, "vrrm") == "pass");
+    CHECK(verdict_of(li, "zener_voltage") == "pass");
+    CHECK(li["grade"] == "drop_in");
+    CHECK(li["direction"] == "equivalent");
 
     // BZT52-C9V1-Q: 9.1 V, 8.5-9.6 V.
     const json o2 = zener("BZT52-C9V1-Q", 9.1, 8.5, 9.6);
