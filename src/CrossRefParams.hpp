@@ -327,6 +327,43 @@ inline Verdict compare(const std::vector<Point>& op, const std::vector<Point>& s
 }
 }  // namespace isat
 
+// The original states no saturation current, only its rated (thermal) current. The two
+// are different quantities and are NOT compared as equals: nothing here says what the
+// original's Isat is. But they are both datasheet limits in amperes, and one ordering is
+// still decidable. A circuit that runs the original at its rating draws at least that
+// current at its peak (peak >= RMS), so a substitute that saturates BELOW the original's
+// rated current is saturated at a current the original is specified to carry
+// (PL8132NLT rated 2.7 A vs VLCF4020T-270MR48 saturating at 0.48 A was graded
+// minor_review, Qarlos 2026-11-08). The reverse inference does not hold — an Isat at or
+// above the rated current says nothing about the original's own Isat — so that stays
+// UNVERIFIED, and so does the mirror case (substitute rated current vs original Isat:
+// RMS may sit far below peak). The substitute is read at the MOST lenient criterion it
+// states (its highest stated Isat), so a FAIL never rests on a strict 10 %-drop figure.
+// Same tolerance as a like-for-like Isat compare: below rated x tol_factor fails, the band
+// up to the rating warns. A comparison of two stated values; no saturation physics.
+inline std::optional<double> isat_highest_stated(const std::vector<isat::Point>& pts) {
+    std::optional<double> best;
+    for (const auto& p : pts)
+        if (!best || p.current > *best) best = p.current;
+    return best;
+}
+inline ParamOutcome isat_against_original_rating(const ParamSpec& spec, const nlohmann::json& orig,
+                                                 const std::vector<isat::Point>& sp) {
+    const auto o_rated = detail::jnum(orig, "rated_current");
+    const auto s_isat = isat_highest_stated(sp);
+    if (!o_rated || !(*o_rated > 0) || !s_isat) return UNVERIFIED;
+    if (*s_isat >= *o_rated) return UNVERIFIED;
+    return (*s_isat >= spec.tol_factor * *o_rated) ? WARN : FAIL;
+}
+// True when the saturation_current verdict for this pair came from the rule above
+// (original has no Isat, substitute's Isat sits below the original's rated current).
+inline bool isat_below_original_rating(const nlohmann::json& orig, const nlohmann::json& sub) {
+    if (!isat::resolve_points(orig).empty()) return false;
+    const auto o_rated = detail::jnum(orig, "rated_current");
+    const auto s_isat = isat_highest_stated(isat::resolve_points(sub));
+    return o_rated && *o_rated > 0 && s_isat && *s_isat < *o_rated;
+}
+
 // saturation_current gate: %-drop-normalized when either side states a real
 // inductance-drop basis; otherwise the raw HIGHER_BETTER numeric compare (legacy
 // basis-unknown scalars — preserves existing pass/warn/fail granularity).
@@ -336,7 +373,7 @@ inline ParamOutcome compare_saturation_current(const ParamSpec& spec, const nloh
     bool o_has = !op.empty(), s_has = !sp.empty();
     if (!o_has && !s_has) return UNVERIFIED;
     if (!s_has) return {UNVERIFIED, spec.exclude_missing_sub};
-    if (!o_has) return UNVERIFIED;
+    if (!o_has) return isat_against_original_rating(spec, orig, sp);
     if (!isat::has_basis(op) && !isat::has_basis(sp))
         return compare_numeric(spec, detail::jnum(orig, spec.key), detail::jnum(sub, spec.key));
     switch (isat::compare(op, sp, spec.tol_factor)) {
