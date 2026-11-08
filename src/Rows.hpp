@@ -263,6 +263,22 @@ struct ResistorRow : RowBase {
     double power_rating_temperature = kNaN();
     std::vector<double> derating_temperature;
     std::vector<double> derating_amplitude;
+    // v19 (Qarlos 2026-11-08, seeds 20269028-20300704). All carried exactly as the record
+    // states them; absent = "" / NaN, never a typical value.
+    //   technology: part.technology, the RAS resistive-element enum (thinFilm, thickFilm,
+    //     metalFilm, wirewound, metalFoil, currentSenseShunt, ...). Required by the schema.
+    //   tcr: electrical.temperatureCoefficient, ppm/K as stated (signed).
+    //   temp_min_c / temp_max_c: thermal.operatingTemperature, degC.
+    //   current_sense / pulse_withstanding: the FUNCTION the record states, from its
+    //     technology (currentSenseShunt) or its own class text (manufacturerInfo.family,
+    //     part.series, part.description): "Current Sensing Resistors ...", "Anti-Surge ...",
+    //     "Anti Pulse Chip Resistors". Never from the MPN. See resistor_function_class.
+    std::string technology;
+    double tcr = kNaN();
+    double temp_min_c = kNaN();
+    double temp_max_c = kNaN();
+    bool current_sense = false;
+    bool pulse_withstanding = false;
 };
 
 struct IgbtRow : RowBase {

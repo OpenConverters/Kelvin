@@ -446,6 +446,12 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
         {"power_rating", D::Higher, 0.9, std::nullopt, false, false, nullptr},
         {"tolerance_pct", D::Lower, 2.0, std::nullopt, false, false, nullptr},
         {"tcr", D::Lower, 2.0, std::nullopt, true, false, nullptr},
+        // Operating range (Qarlos 2026-11-08: RNC55K1472FSB14, rated to 175 degC, took
+        // 155 degC metal films as a clean pass). The substitute must cover the original's
+        // range at both ends with NO warn band (abs_tol 0): a resistor that stops at 155 degC
+        // is not rated at 160 degC however close the numbers look. Absent -> UNVERIFIED.
+        {"temp_min_C", D::Lower, 0.0, 0.0, false, false, nullptr},
+        {"temp_max_C", D::Higher, 0.0, 0.0, false, false, nullptr},
     };
     static const std::vector<ParamSpec> kMagnetic = {
         {"saturation_current", D::Higher, 0.9, std::nullopt, false, true, nullptr},

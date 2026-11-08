@@ -134,9 +134,14 @@ inline const FieldTable<ResistorRow>& fields<ResistorRow>() {
         {{"resistance", &ResistorRow::resistance},
          {"tolerance", &ResistorRow::tolerance},
          {"power_rating", &ResistorRow::power_rating},
-         {"power_rating_temperature", &ResistorRow::power_rating_temperature}},
-        {{"family", &ResistorRow::family}},
-        {{"is_production", &ResistorRow::is_production}},
+         {"power_rating_temperature", &ResistorRow::power_rating_temperature},
+         {"tcr", &ResistorRow::tcr},
+         {"temp_min_c", &ResistorRow::temp_min_c},
+         {"temp_max_c", &ResistorRow::temp_max_c}},
+        {{"family", &ResistorRow::family}, {"technology", &ResistorRow::technology}},
+        {{"is_production", &ResistorRow::is_production},
+         {"current_sense", &ResistorRow::current_sense},
+         {"pulse_withstanding", &ResistorRow::pulse_withstanding}},
         {}};
     return t;
 }

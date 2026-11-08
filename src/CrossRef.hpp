@@ -407,12 +407,27 @@ inline std::optional<Dims> dims_of(const json& p, const std::string& category) {
 //     temperature). Anything else — no curve and a lower or unstated rating temperature,
 //     or T_ref below the curve's first point — is NOT ON RECORD, and the verdict is
 //     UNVERIFIED, never a pass on the nominal.
+//
+// Above the knee (Qarlos 2026-11-08, seed 20276947): RN55E90R9BRE6 is 0.125 W at 70 degC and
+// still 0.1 W at 125 degC (curve 70/125/175 -> 100/80/0 %); MFP-25BRD52-91R is 0.25 W at 70
+// degC but derates to zero at 155 degC, so at 125 degC it carries 0.088 W. Compared at T_ref
+// alone it read "pass / upgrade". The rule is: the substitute must deliver at least the
+// original's power at EVERY temperature where both records state a curve — the overlap of the
+// two curves' spans. Both curves are straight-line segments, so the worst ratio s(T)/o(T) is
+// found at a breakpoint of one curve or the other; every breakpoint in the overlap is checked
+// (points where the original delivers nothing are skipped: nothing is required there). The
+// verdict, penalty and direction are taken at the WORST such temperature. Outside the overlap
+// nothing is compared from the curves (the operating-range rule answers that).
 struct PowerAtTemperature {
     bool applies = false;          // the original states a temperature basis
-    double t_ref = 0.0;            // degC
+    double t_ref = 0.0;            // degC, where the comparison is made (see `at_knee`)
     std::optional<double> orig;    // W the original delivers at t_ref
     std::optional<double> subst;   // W the substitute delivers at t_ref; nullopt = not on record
     std::string how;               // how `subst` was established, or why it could not be
+    // True when t_ref is the original's rating temperature; false when the curve scan found a
+    // worse temperature above it and t_ref was moved there.
+    bool at_rating_temperature = true;
+    double rating_temperature = 0.0;  // degC, the original's rating temperature
 };
 
 namespace power_detail {
@@ -456,6 +471,17 @@ inline std::string watts(double w) {
     std::snprintf(b, sizeof b, "%.3g W", w);
     return b;
 }
+// Amplitude of a stated curve at temperature x, linearly interpolated. The caller keeps x
+// inside [t.front(), t.back()].
+inline double amplitude_at(const std::vector<double>& t, const std::vector<double>& a, double x) {
+    for (size_t i = 0; i + 1 < t.size(); ++i) {
+        if (x >= t[i] && x <= t[i + 1]) {
+            const double f = (x - t[i]) / (t[i + 1] - t[i]);
+            return a[i] + f * (a[i + 1] - a[i]);
+        }
+    }
+    throw std::logic_error("power_detail::amplitude_at: temperature outside the curve");
+}
 }  // namespace power_detail
 
 inline PowerAtTemperature power_at_rating_temperature(const json& original, const json& cand) {
@@ -470,6 +496,7 @@ inline PowerAtTemperature power_at_rating_temperature(const json& original, cons
     if (!t_ref || !o_p || !s_p) return r;  // no basis, or a rating absent: plain compare
     r.applies = true;
     r.t_ref = *t_ref;
+    r.rating_temperature = *t_ref;
     r.orig = *o_p;
     if (!st.empty()) {
         if (r.t_ref < st.front()) {
@@ -483,14 +510,36 @@ inline PowerAtTemperature power_at_rating_temperature(const json& original, cons
                     " — it is not rated to operate at the original's " + celsius(r.t_ref);
             return r;
         }
-        for (size_t i = 0; i + 1 < st.size(); ++i) {
-            if (r.t_ref >= st[i] && r.t_ref <= st[i + 1]) {
-                const double f = (r.t_ref - st[i]) / (st[i + 1] - st[i]);
-                r.subst = *s_p * (sa[i] + f * (sa[i + 1] - sa[i]));
-                break;
+        r.subst = *s_p * amplitude_at(st, sa, r.t_ref);
+        r.how = "from the substitute's derating curve";
+        // Above the knee: both curves stated -> every breakpoint of either curve inside
+        // their common span (see the struct comment). The worst ratio wins, and only a
+        // strictly worse one moves the comparison off the rating temperature.
+        if (!ot.empty() && *r.orig > 0.0) {
+            const double lo = std::max(ot.front(), st.front());
+            const double hi = std::min(ot.back(), st.back());
+            if (lo <= hi) {
+                std::vector<double> probe{lo, hi};
+                for (double x : ot)
+                    if (x >= lo && x <= hi) probe.push_back(x);
+                for (double x : st)
+                    if (x >= lo && x <= hi) probe.push_back(x);
+                double worst_ratio = *r.subst / *r.orig;
+                for (double x : probe) {
+                    const double o_w = *o_p * amplitude_at(ot, oa, x);
+                    if (!(o_w > 0.0)) continue;  // the original carries nothing here
+                    const double s_w = *s_p * amplitude_at(st, sa, x);
+                    if (s_w / o_w < worst_ratio - 1e-12) {
+                        worst_ratio = s_w / o_w;
+                        r.t_ref = x;
+                        r.orig = o_w;
+                        r.subst = s_w;
+                        r.at_rating_temperature = false;
+                    }
+                }
+                if (!r.at_rating_temperature) r.how = "from both records' derating curves";
             }
         }
-        r.how = "from the substitute's derating curve";
         return r;
     }
     if (const auto s_t = num(cand, "power_rating_temperature")) {
@@ -750,6 +799,62 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             notes.push_back(sulfur_resistance_conflict(str(cand, "family")));
         }
     }
+    // ── resistive element and stated function (Qarlos 2026-11-08) ────────────
+    // R, P and tolerance are the same columns on a thin film, a thick film, a metal film and
+    // a wirewound, and on a current-sense shunt or an anti-surge chip and the general-purpose
+    // chip beside it — so silence about the class read as agreement: ERJ6DQJ1R5V (current
+    // sensing) took SR0805JR-471R5L as drop_in, SG731JTTD4R7M (anti pulse) took AA0603 chips
+    // as drop_in. Only what the RECORDS state is used (RAS part.technology; the function the
+    // extractor read from technology/family/series/description), never the MPN.
+    //   * Technology class differs (both stated): WARN + note — a different TCR, noise,
+    //     stability and pulse behaviour, never a drop-in; not counted as a direction (thick ->
+    //     thin is better on most axes and worse on pulse load, so neither word is honest).
+    //     Two exceptions, both because the enum value does not name an element: melf is a
+    //     package, so it is not compared; and currentSenseShunt against a record whose
+    //     function is ALSO current sensing (ERJ6DQ "Current Sensing Resistors Thick Film
+    //     Type" against a thickFilm record whose series says current sensing) is the same
+    //     class written two ways, so the function check below decides it alone.
+    //   * The original states a function the substitute's record does not: FAIL + note,
+    //     like the anti-sulfuration class above (major_review). A sense resistor's value is a
+    //     measurement and a surge resistor's rating is its reason to exist; a substitute that
+    //     does not claim either has not been shown to do the job, and a general-purpose chip
+    //     under the original's surge fails open.
+    if (cat == "resistor") {
+        const std::string o_tech = str(original, "technology"), s_tech = str(cand, "technology");
+        const bool both_sense = flag(original, "current_sense") && flag(cand, "current_sense");
+        const bool comparable = !o_tech.empty() && !s_tech.empty() && o_tech != "melf" &&
+                                s_tech != "melf" &&
+                                !(both_sense && (o_tech == "currentSenseShunt" ||
+                                                 s_tech == "currentSenseShunt"));
+        if (comparable && o_tech != s_tech) {
+            params.push_back({{"name", "technology"}, {"verdict", WARN}});
+            demote();
+            penalty += opt.gate_weight * kVerdictWarnPenalty;
+            notes.push_back("resistor technology differs: " + o_tech + " -> " + s_tech +
+                            " — a different construction class, with different TCR, noise, "
+                            "long-term stability and pulse behaviour; not a drop-in where the "
+                            "original's construction was chosen for them");
+        }
+        struct Function {
+            const char* key;
+            const char* what;
+        };
+        for (const Function& f : {Function{"current_sense", "a current-sense resistor"},
+                                  Function{"pulse_withstanding", "a pulse/surge-withstanding "
+                                                                 "(anti-surge) resistor"}}) {
+            if (!flag(original, f.key)) continue;
+            const bool kept = flag(cand, f.key);
+            params.push_back({{"name", f.key}, {"verdict", kept ? PASS : FAIL}});
+            if (kept) continue;
+            demote();
+            penalty += opt.gate_weight * kVerdictFailPenalty;
+            ++worse;  // a lost function is a regression, whatever the numbers say
+            notes.push_back(std::string("the original is ") + f.what +
+                            " by its record; the substitute's record states no such class (" +
+                            (s_tech.empty() ? std::string("technology unstated") : s_tech) +
+                            ") — confirm it from the datasheet before using it in that role");
+        }
+    }
     // A single-phase bridge rectifier is not a discrete diode: four dies on four
     // terminals (AC, AC, +, -), a Vf quoted per element against a path that runs
     // through two of them, and an If(AV) that is the bridge's OUTPUT current. It
@@ -875,6 +980,15 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                 "temperature: the original is rated " + watts(*power_t.orig) +
                                 " at " + celsius(power_t.t_ref) + ", and " + power_t.how +
                                 " — confirm the substitute's derating from its datasheet");
+            } else if (!power_t.at_rating_temperature) {
+                // The derating curves cross above the knee: name the temperature, both
+                // powers there, and the rating temperature they were level or ahead at.
+                notes.push_back("power compared along both derating curves: at " +
+                                celsius(power_t.t_ref) + " the substitute delivers " +
+                                watts(*power_t.subst) + " against the original's " +
+                                watts(*power_t.orig) + " (rated " + watts(*num(original, "power_rating")) +
+                                " at " + celsius(power_t.rating_temperature) +
+                                ") — it derates more steeply above the original's knee");
             } else if (*power_t.subst != s_nominal) {
                 notes.push_back("power compared at the original's rating temperature (" +
                                 celsius(power_t.t_ref) + "): the substitute's " + watts(s_nominal) +
@@ -1017,6 +1131,43 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                     ") — confirm vertical / right-angle from the datasheets");
             }
         }
+    }
+    // ── resistor TCR and operating range: say it, and do not call an unknown a drop-in ──
+    // TNPW0805680RDETA (25 ppm/K thin film) took ERJS06D6800V (100 ppm/K) with nothing said
+    // (Qarlos 2026-11-08): the TCR verdict alone does not tell the engineer how far apart the
+    // two are. And an operating range the original states but the substitute's record does
+    // not is UNVERIFIED — drop_in asserts no rating regressed, which nobody has shown, so it
+    // takes the same minor_review cap as an unverified footprint.
+    bool temp_unverified = false;
+    if (cat == "resistor") {
+        auto verdict_of = [&](const char* name) -> std::string {
+            for (const auto& p : params)
+                if (p.value("name", "") == name) return p.value("verdict", "");
+            return "";
+        };
+        const std::string tv = verdict_of("tcr");
+        const auto o_tcr = num(original, "tcr"), s_tcr = num(cand, "tcr");
+        if ((tv == WARN || tv == FAIL) && o_tcr && s_tcr) {
+            char b[160];
+            std::snprintf(b, sizeof b,
+                          "TCR +/-%g ppm/K vs the original's +/-%g ppm/K (%.3gx worse)",
+                          std::fabs(*s_tcr), std::fabs(*o_tcr),
+                          std::fabs(*o_tcr) > 0 ? std::fabs(*s_tcr) / std::fabs(*o_tcr) : 0.0);
+            notes.push_back(std::string(b) +
+                            " — the resistance drifts that much more over temperature; verify "
+                            "anywhere the value sets a ratio, a reference or a gain");
+        }
+        for (const char* k : {"temp_min_C", "temp_max_C"}) {
+            if (verdict_of(k) == UNVERIFIED && num(original, k) && !num(cand, k)) {
+                temp_unverified = true;
+                notes.push_back(std::string("the original states its operating range to ") +
+                                degc(*num(original, k)) +
+                                " degC; the substitute's record states no " +
+                                (std::string(k) == "temp_min_C" ? "minimum" : "maximum") +
+                                " operating temperature — confirm it from the datasheet");
+            }
+        }
+        if (temp_unverified) demote();
     }
 
     // Say WHAT changed about the mating interface, not just that something did. The
@@ -1763,14 +1914,50 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 lead_land_unverified = !same_case;
             }
         }
+        // A wide-terminal chip (1225, 0612, ...) against a record that states no case code:
+        // the outline compare below would turn the 3.2 x 6.4 mm 1225 and call it a fit for a
+        // 6.6 x 3.2 mm drawing, but its pads run along the long sides and nothing in the
+        // other record says its land does (M55342H09B10D0PWS vs AC1225FK-0710RL, Qarlos
+        // 2026-11-08). When BOTH state codes and they differ, the case gate above has
+        // already ruled. So the fit is UNVERIFIED — capped like any unverified land.
+        if (cat == "resistor" && !out.contains("footprint")) {
+            const std::string oc = str(original, "case_code"), sc = str(cand, "case_code");
+            const bool ow = wide_terminal_chip_code(oc), sw = wide_terminal_chip_code(sc);
+            if (ow != sw && (ow ? sc : oc).empty()) {
+                out["footprint"] = "unknown";
+                params.push_back({{"name", "footprint"}, {"verdict", UNVERIFIED}});
+                demote();
+                penalty += opt.footprint_weight * kUnknownDimPenalty;
+                notes.push_back(std::string("the ") + (sw ? "substitute" : "original") +
+                                " is a wide-terminal " + (sw ? sc : oc) +
+                                " chip (terminations along the long sides) and the " +
+                                (sw ? "original's" : "substitute's") +
+                                " record states no case code — the outlines match only when "
+                                "turned, the pads do not; verify the land pattern");
+            }
+        }
         FootprintTier tier = footprint_tier(o_dims, s_dims, strict_case);
+        // Same standard chip code on both records: a drawing a few percent off the original's
+        // is the same land, not a larger case (see kSameChipCodeBodySpread).
+        bool same_code_spread = false;
+        if (cat == "resistor" && tier == FootprintTier::OneSizeLarger && o_dims && s_dims &&
+            same_standard_chip_code(str(original, "case_code"), str(cand, "case_code")) &&
+            compare_land(*o_dims, *s_dims).overflow <= kSameChipCodeBodySpread) {
+            tier = FootprintTier::Fits;
+            same_code_spread = true;
+        }
         // A LAND to fit to is what this branch needs, not merely a drawing. An
         // original whose record states only a height has no pads to compare
         // against, so it belongs to the "original states no package dimensions"
         // branch below — which is where it went before a land-less drawing could
         // reach here at all.
         if (o_dims && has_any_land(*o_dims) && !out.contains("footprint")) {
-            double fit_penalty = footprint_penalty(o_dims, s_dims, strict_case);
+            // A same-code spread scores as the fit it is: the strict_case Fits term (0 at the
+            // same size, rising only for an undersize body), not the one-size-larger rung.
+            double fit_penalty =
+                same_code_spread
+                    ? kUndersizeWeight * std::max(0.0, 1.0 - compare_land(*o_dims, *s_dims).lin)
+                    : footprint_penalty(o_dims, s_dims, strict_case);
             // Same ladder rule as the case-code gate above: a body the compare has
             // ESTABLISHED not to match the pads (smaller than them, or overhanging
             // them) is a worse answer than one nobody could verify, so it is
@@ -2336,7 +2523,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     out["grade"] = grade_for(status, tier, any_warn, any_fail,
                              footprint_unverified || power_basis_unverified ||
                                  topology_unverified ||
-                                 mount_unverified,
+                                 mount_unverified || temp_unverified,
                              missing_required_data, hfit);
 
     // Direction: on the directional parameters we could actually compare, did

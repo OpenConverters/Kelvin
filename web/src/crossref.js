@@ -89,11 +89,21 @@ export const XREF = [
     // wherever the comparison needs the missing basis.
     spec: (r) => ({ ...base(r), value_si: nz(r.resistance), power_rating: nz(r.power_rating), tolerance_pct: r.tolerance != null && r.tolerance > 0 ? r.tolerance * 100 : null, family: r.family ?? '',
       power_rating_temperature: r.power_rating_temperature ?? null,
-      derating_temperature: r.derating_temperature ?? null, derating_amplitude: r.derating_amplitude ?? null }),
+      derating_temperature: r.derating_temperature ?? null, derating_amplitude: r.derating_amplitude ?? null,
+      // v19 (Qarlos 2026-11-08): the resistive element and the function the record states
+      // (current sensing, pulse/surge withstanding) — a swap across either is not a drop-in;
+      // the TCR, compared as a magnitude; and the operating range, which the substitute must
+      // cover. Temperatures and TCR raw, NOT through nz(): 0 degC and a negative TCR are
+      // stated values. Absent -> null -> UNVERIFIED in the ranker.
+      technology: r.technology ?? '', tcr: r.tcr ?? null,
+      temp_min_C: r.temp_min_c ?? null, temp_max_C: r.temp_max_c ?? null,
+      current_sense: r.current_sense === true, pulse_withstanding: r.pulse_withstanding === true }),
     params: [
       { key: 'value', label: 'R', row: 'resistance', unit: 'Ω' },
       { key: 'power_rating', label: 'P', row: 'power_rating', unit: 'W' },
       { key: 'tolerance_pct', label: 'tol', row: 'tolerance', unit: '%', scale: 100 },
+      { key: 'tcr', label: 'TCR', row: 'tcr', unit: 'ppm/K' },
+      { key: 'temp_max_C', label: 'T max', row: 'temp_max_c', unit: '°C' },
     ],
   },
   {

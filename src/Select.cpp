@@ -437,6 +437,9 @@ json select_resistor(const Shard<ResistorRow>& shard, const ResistorConstraints&
     rej["unreadable_row"] = shard.meta.unreadable_row_count;
     std::vector<const ResistorRow*> passing;
     for (const auto& r : shard.rows) {
+        // A row whose record states no tolerance (NaN) cannot be shown to meet the limit,
+        // so it is rejected under its own reason, never passed as if it were tight.
+        if (std::isnan(r.tolerance)) { rej["tolerance_unknown"]++; continue; }
         if (r.tolerance > c.max_tolerance) { rej["tolerance_loose"]++; continue; }
         double dev = std::fabs(r.resistance - c.target_ohms) / c.target_ohms;
         if (dev > c.max_value_deviation) { rej["value_far"]++; continue; }

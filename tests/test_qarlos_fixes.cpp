@@ -9,6 +9,7 @@
 #include <nlohmann/json.hpp>
 
 #include "CrossRef.hpp"
+#include "Select.hpp"
 #include "Views.hpp"
 
 using nlohmann::json;
@@ -1423,3 +1424,300 @@ TEST_CASE("qarlos 2026-11-08: diode package topology must match where both recor
     CHECK(verdict_of(pb, "internal_connection") == "");
     CHECK(pb["grade"] == "drop_in");
 }
+// ── Resistors, Qarlos audit of 2026-11-08 (round 2; seeds 20269028, 20276947, 20284866,
+// 20292785, 20300704). Each spec below is what web/src/crossref.js builds from the v19 row of
+// the named TAS record (values copied from resistors.ndjson).
+namespace {
+json res_spec(const std::string& mpn, double r_ohm, double p_w, double tol_pct, json extra) {
+    json o = {{"mpn", mpn}, {"value_si", r_ohm}, {"power_rating", p_w}, {"tolerance_pct", tol_pct}};
+    o.update(extra);
+    return o;
+}
+json res_by(const json& r, const std::string& mpn) {
+    for (const auto& c : r["candidates"])
+        if (c["mpn"] == mpn) return c;
+    return json(nullptr);
+}
+kelvin::crossref::Options res_opt() {
+    kelvin::crossref::Options opt;
+    opt.max_results = 10;
+    opt.check_footprint = false;  // the footprint cases below turn it back on
+    return opt;
+}
+}  // namespace
+
+TEST_CASE("qarlos 2026-11-08 r2: the resistor extractor carries technology, TCR, range, function",
+          "[qarlos][views]") {
+    auto env = [](json part, json mi_extra, json thermal) {
+        json di = {{"part", part},
+                   {"electrical", {{"resistance", {{"nominal", 4.7}}}, {"tolerance", 0.2},
+                                   {"powerRating", 0.1}, {"temperatureCoefficient", 400}}}};
+        if (!thermal.is_null()) di["thermal"] = thermal;
+        json mi = {{"name", "KOA Speer"}, {"reference", "SG731JTTD4R7M"}, {"datasheetInfo", di}};
+        mi.update(mi_extra);
+        return json{{"resistor", {{"manufacturerInfo", mi}}}};
+    };
+    // SG731JTTD4R7M: the anti-pulse class is stated only in part.description.
+    auto sg = kelvin::extract_resistor(
+        env({{"partNumber", "SG731JTTD4R7M"}, {"series", "SG731JTTD"}, {"technology", "thickFilm"},
+             {"case", "0603"}, {"description", "Anti Pulse Chip Resistors"}},
+            json::object(), {{"operatingTemperature", {{"minimum", -55}, {"maximum", 155}}}}));
+    REQUIRE(sg.has_value());
+    CHECK(sg->technology == "thickFilm");
+    CHECK(sg->tcr == Approx(400.0));
+    CHECK(sg->temp_min_c == Approx(-55.0));
+    CHECK(sg->temp_max_c == Approx(155.0));
+    CHECK(sg->pulse_withstanding);
+    CHECK_FALSE(sg->current_sense);
+    // ERJ6DQJ1R5V: current sensing from the technology enum.
+    auto erj = kelvin::extract_resistor(
+        env({{"partNumber", "ERJ6DQJ1R5V"}, {"technology", "currentSenseShunt"}},
+            {{"family", "Current Sensing Resistors Thick Film Type"}}, nullptr));
+    REQUIRE(erj.has_value());
+    CHECK(erj->current_sense);
+    CHECK(std::isnan(erj->temp_max_c));
+    // Panasonic ERJ-P: "Anti-Surge" in the family string, hyphenated.
+    CHECK(kelvin::resistor_function_class("thickFilm",
+                                          {"Anti-Surge High Power Thick Film Chip Resistors"})
+              .pulse_withstanding);
+    // A general-purpose chip states neither; the MPN is never read.
+    auto aa = kelvin::resistor_function_class("thickFilm", {"AA"});
+    CHECK_FALSE(aa.pulse_withstanding);
+    CHECK_FALSE(aa.current_sense);
+}
+
+// Run2 RNC55K1472FSB14 (-65..175 degC) took MF0204FTE52-14K7 (-55..155 degC) as a clean
+// pass; run5 M55342H12B20E0PT5 (150 degC) took RN73H1JTTD2002B05 (125 degC) as minor_review.
+TEST_CASE("qarlos 2026-11-08 r2: a resistor's operating range must cover the original's",
+          "[qarlos][crossref]") {
+    json orig = res_spec("RNC55K1472FSB14", 14700.0, 0.125, 1.0,
+                         {{"technology", "metalFilm"}, {"temp_min_C", -65.0}, {"temp_max_C", 175.0}});
+    json mf0 = res_spec("MF0204FTE52-14K7", 14700.0, 0.4, 1.0,
+                        {{"technology", "metalFilm"}, {"temp_min_C", -65.0}, {"temp_max_C", 155.0}});
+    json silent = res_spec("NO_RANGE", 14700.0, 0.4, 1.0, {{"technology", "metalFilm"}});
+    json same = res_spec("SAME_RANGE", 14700.0, 0.125, 1.0,
+                         {{"technology", "metalFilm"}, {"temp_min_C", -65.0}, {"temp_max_C", 175.0}});
+    auto r = kelvin::crossref::cross_reference("resistor", orig, json::array({mf0, silent, same}),
+                                               res_opt());
+    const json m = res_by(r, "MF0204FTE52-14K7");
+    REQUIRE(!m.is_null());
+    CHECK(verdict_of(m, "temp_max_C") == "fail");
+    CHECK(m["grade"] == "major_review");
+    CHECK(m["direction"] != "upgrade");
+    CHECK(has_note(m, "rated only to +155"));
+    // Unknown is UNVERIFIED, and not a drop-in.
+    const json s = res_by(r, "NO_RANGE");
+    REQUIRE(!s.is_null());
+    CHECK(verdict_of(s, "temp_max_C") == "unverified");
+    CHECK(s["grade"] == "minor_review");
+    CHECK(has_note(s, "states no maximum operating temperature"));
+    // The same range: no cap from it.
+    CHECK(res_by(r, "SAME_RANGE")["grade"] == "drop_in");
+    // A warmer minimum is the same rule at the other end.
+    json warm = mf0;
+    warm["mpn"] = "WARM_MIN";
+    warm["temp_min_C"] = -55.0;
+    warm["temp_max_C"] = 175.0;
+    auto r2 = kelvin::crossref::cross_reference("resistor", orig, json::array({warm}), res_opt());
+    CHECK(verdict_of(r2["candidates"][0], "temp_min_C") == "fail");
+}
+
+// Run2 RN55E90R9BRE6: 0.125 W at 70 degC, curve 70/125/175 -> 100/80/0 %. MFP-25BRD52-91R
+// (0.25 W, 70/155 -> 100/0 %) and RT0805BRD0790R9L (0.125 W, same curve) were graded
+// power_rating pass / upgrade / equivalent: at 125 degC they carry 0.088 W and 0.044 W
+// against the original's 0.1 W.
+TEST_CASE("qarlos 2026-11-08 r2: resistor power must hold along the original's derating curve",
+          "[qarlos][crossref]") {
+    json orig = res_spec("RN55E90R9BRE6", 90.9, 0.125, 0.1,
+                         {{"power_rating_temperature", 70.0},
+                          {"derating_temperature", {-65.0, 70.0, 125.0, 175.0}},
+                          {"derating_amplitude", {1.0, 1.0, 0.8, 0.0}}});
+    auto curve155 = [](const char* mpn, double p) {
+        return res_spec(mpn, 90.9, p, 0.1,
+                        {{"derating_temperature", {-55.0, 70.0, 155.0}},
+                         {"derating_amplitude", {1.0, 1.0, 0.0}}});
+    };
+    // Same curve shape as the original, twice the power: ahead everywhere.
+    json strong = res_spec("STRONG", 90.9, 0.25, 0.1,
+                           {{"derating_temperature", {-65.0, 70.0, 125.0, 175.0}},
+                            {"derating_amplitude", {1.0, 1.0, 0.8, 0.0}}});
+    auto r = kelvin::crossref::cross_reference(
+        "resistor", orig,
+        json::array({curve155("MFP-25BRD52-91R", 0.25), curve155("RT0805BRD0790R9L", 0.125), strong}),
+        res_opt());
+    for (const char* m : {"MFP-25BRD52-91R", "RT0805BRD0790R9L"}) {
+        const json c = res_by(r, m);
+        REQUIRE(!c.is_null());
+        CHECK(verdict_of(c, "power_rating") == "fail");
+        CHECK(c["direction"] != "upgrade");
+        CHECK(c["direction"] != "equivalent");
+        CHECK(c["grade"] == "major_review");
+        CHECK(has_note(c, "power compared along both derating curves"));
+    }
+    CHECK(verdict_of(res_by(r, "STRONG"), "power_rating") == "pass");
+    CHECK(res_by(r, "STRONG")["direction"] == "upgrade");
+}
+
+// Run1 ERJ6DQJ1R5V (currentSenseShunt) took SR0805JR-471R5L (thickFilm) as drop_in; run3
+// SG731JTTD4R7M (anti pulse) took AA0603JR-074R7L as drop_in; run4 M55342H09B10D0PWS
+// (thinFilm) took ERJA1AF100U (currentSenseShunt) as equivalent with no caveat.
+TEST_CASE("qarlos 2026-11-08 r2: a resistor technology or function change is not a drop-in",
+          "[qarlos][crossref]") {
+    json erj = res_spec("ERJ6DQJ1R5V", 1.5, 0.5, 5.0,
+                        {{"technology", "currentSenseShunt"}, {"current_sense", true},
+                         {"tcr", 100.0}});
+    json sr = res_spec("SR0805JR-471R5L", 1.5, 0.5, 5.0,
+                       {{"technology", "thickFilm"}, {"current_sense", false}});
+    // A thick-film record whose series says current sensing: the same class written two ways.
+    json rl73 = res_spec("RL73_SENSE", 1.5, 0.5, 5.0,
+                         {{"technology", "thickFilm"}, {"current_sense", true}, {"tcr", 100.0}});
+    auto r = kelvin::crossref::cross_reference("resistor", erj, json::array({sr, rl73}), res_opt());
+    const json s = res_by(r, "SR0805JR-471R5L");
+    REQUIRE(!s.is_null());
+    CHECK(verdict_of(s, "current_sense") == "fail");
+    CHECK(s["grade"] == "major_review");
+    CHECK(s["direction"] == "downgrade");
+    CHECK(has_note(s, "current-sense resistor by its record"));
+    const json k = res_by(r, "RL73_SENSE");
+    CHECK(verdict_of(k, "current_sense") == "pass");
+    CHECK(verdict_of(k, "technology") == "");
+    CHECK(k["grade"] == "drop_in");
+
+    json sg = res_spec("SG731JTTD4R7M", 4.7, 0.1, 20.0,
+                       {{"technology", "thickFilm"}, {"pulse_withstanding", true}});
+    json aa = res_spec("AA0603JR-074R7L", 4.7, 0.1, 5.0, {{"technology", "thickFilm"}});
+    auto r2 = kelvin::crossref::cross_reference("resistor", sg, json::array({aa}), res_opt());
+    const json a = r2["candidates"][0];
+    CHECK(verdict_of(a, "pulse_withstanding") == "fail");
+    CHECK(a["grade"] == "major_review");
+    CHECK(has_note(a, "pulse/surge-withstanding"));
+
+    json m55 = res_spec("M55342H09B10D0PWS", 10.0, 1.0, 1.0, {{"technology", "thinFilm"}});
+    json erja = res_spec("ERJA1AF100U", 10.0, 1.33, 1.0,
+                         {{"technology", "currentSenseShunt"}, {"current_sense", true}});
+    auto r3 = kelvin::crossref::cross_reference("resistor", m55, json::array({erja}), res_opt());
+    const json e = r3["candidates"][0];
+    CHECK(verdict_of(e, "technology") == "warn");
+    CHECK(e["grade"] != "drop_in");
+    CHECK(has_note(e, "thinFilm -> currentSenseShunt"));
+}
+
+// Run3 TNPW0805680RDETA (thin film, 25 ppm/K) took ERJS06D6800V (thick film, 100 ppm/K)
+// with nothing said about either.
+TEST_CASE("qarlos 2026-11-08 r2: a worse resistor TCR is flagged with both values",
+          "[qarlos][crossref]") {
+    json tnpw = res_spec("TNPW0805680RDETA", 680.0, 0.125, 0.5,
+                         {{"technology", "thinFilm"}, {"tcr", 25.0}});
+    json erjs = res_spec("ERJS06D6800V", 680.0, 0.125, 0.5,
+                         {{"technology", "thickFilm"}, {"tcr", 100.0}});
+    auto r = kelvin::crossref::cross_reference("resistor", tnpw, json::array({erjs}), res_opt());
+    const json c = r["candidates"][0];
+    const std::string tv = verdict_of(c, "tcr");
+    CHECK((tv == "warn" || tv == "fail"));
+    CHECK(has_note(c, "TCR +/-100 ppm/K vs the original's +/-25 ppm/K"));
+    CHECK(verdict_of(c, "technology") == "warn");
+    CHECK(c["grade"] != "drop_in");
+}
+
+// Run4 M55342H09B10D0PWS (drawn 6.58 x 3.15 mm, no case code) took AC1225FK-0710RL (1225,
+// 3.2 x 6.4 mm, terminations on the long sides) as footprint "fits".
+TEST_CASE("qarlos 2026-11-08 r2: a wide-terminal 1225 does not fit a conventional land",
+          "[qarlos][crossref][dims]") {
+    using kelvin::crossref::wide_terminal_chip_code;
+    CHECK(wide_terminal_chip_code("1225"));
+    CHECK(wide_terminal_chip_code("0612"));
+    CHECK_FALSE(wide_terminal_chip_code("2512"));
+    CHECK_FALSE(wide_terminal_chip_code("0204"));  // MELF size code, not a chip
+    json m55 = res_spec("M55342H09B10D0PWS", 10.0, 1.0, 1.0,
+                        {{"length_m", 6.5786e-3}, {"width_m", 3.1496e-3}});
+    json ac = res_spec("AC1225FK-0710RL", 10.0, 2.0, 1.0,
+                       {{"case_code", "1225"}, {"length_m", 3.2e-3}, {"width_m", 6.4e-3},
+                        {"height_m", 0.55e-3}});
+    kelvin::crossref::Options opt;
+    opt.max_results = 10;
+    auto r = kelvin::crossref::cross_reference("resistor", m55, json::array({ac}), opt);
+    const json c = r["candidates"][0];
+    CHECK(c["footprint"] == "unknown");
+    CHECK(verdict_of(c, "footprint") == "unverified");
+    CHECK(c["grade"] != "drop_in");
+    CHECK(has_note(c, "wide-terminal 1225"));
+    // 1225 against 1225 is the same land.
+    json ac2 = ac;
+    ac2["mpn"] = "ERJA1AF100U";
+    auto r2 = kelvin::crossref::cross_reference("resistor", ac, json::array({ac2}), opt);
+    CHECK(r2["candidates"][0]["footprint"] == "fits");
+}
+
+// Run4 CRCW060333K2DHECP (0603, drawn 1.55 x 0.85 mm) took AT0603DRD0733K2L (0603, drawn
+// 1.6 x 0.8 mm) flagged "about one case size larger".
+TEST_CASE("qarlos 2026-11-08 r2: two 0603 drawings a few percent apart are the same land",
+          "[qarlos][crossref][dims]") {
+    json crcw = res_spec("CRCW060333K2DHECP", 33200.0, 0.1, 0.5,
+                         {{"case_code", "0603"}, {"length_m", 1.55e-3}, {"width_m", 0.85e-3},
+                          {"height_m", 0.45e-3}});
+    json at = res_spec("AT0603DRD0733K2L", 33200.0, 0.1, 0.5,
+                       {{"case_code", "0603"}, {"length_m", 1.6e-3}, {"width_m", 0.8e-3},
+                        {"height_m", 0.45e-3}});
+    // A record that writes 0603 but draws a body 20 % longer is still flagged.
+    json odd = at;
+    odd["mpn"] = "ODD_0603";
+    odd["length_m"] = 1.86e-3;
+    kelvin::crossref::Options opt;
+    opt.max_results = 10;
+    auto r = kelvin::crossref::cross_reference("resistor", crcw, json::array({at, odd}), opt);
+    const json a = res_by(r, "AT0603DRD0733K2L");
+    REQUIRE(!a.is_null());
+    CHECK(a["footprint"] == "fits");
+    CHECK(verdict_of(a, "footprint") == "pass");
+    CHECK_FALSE(has_note(a, "one case size larger"));
+    CHECK(res_by(r, "ODD_0603")["footprint"] == "one_size_larger");
+}
+
+// The resistor extractor used to put a "typical" +/-5 % on every record whose
+// electrical.tolerance was absent or 0, so an unstated part was compared — and selected — as a
+// 5 % one. Absent stays absent: NaN in the row, null tolerance_pct in the spec (crossref.js),
+// UNVERIFIED in the ranker, and rejected as tolerance_unknown by the selector.
+TEST_CASE("qarlos 2026-11-08 r2: an unstated resistor tolerance stays unverified",
+          "[qarlos][views][crossref]") {
+    auto env = [](json elec) {
+        json di = {{"part", {{"partNumber", "NO_TOL"}, {"technology", "thickFilm"}}},
+                   {"electrical", elec}};
+        return json{{"resistor",
+                     {{"manufacturerInfo",
+                       {{"name", "X"}, {"reference", "NO_TOL"}, {"datasheetInfo", di}}}}}};
+    };
+    auto absent = kelvin::extract_resistor(env({{"resistance", {{"nominal", 100.0}}}}));
+    REQUIRE(absent.has_value());
+    CHECK(std::isnan(absent->tolerance));
+    auto zero = kelvin::extract_resistor(
+        env({{"resistance", {{"nominal", 100.0}}}, {"tolerance", 0.0}}));
+    REQUIRE(zero.has_value());
+    CHECK(std::isnan(zero->tolerance));
+    auto stated = kelvin::extract_resistor(
+        env({{"resistance", {{"nominal", 100.0}}}, {"tolerance", 0.01}}));
+    REQUIRE(stated.has_value());
+    CHECK(stated->tolerance == Approx(0.01));
+
+    // The ranker: a candidate with no tolerance on record is UNVERIFIED on tolerance.
+    json orig = res_spec("ORIG", 100.0, 0.1, 1.0, json::object());
+    json cand = {{"mpn", "NO_TOL"}, {"value_si", 100.0}, {"power_rating", 0.1},
+                 {"tolerance_pct", nullptr}};
+    auto r = kelvin::crossref::cross_reference("resistor", orig, json::array({cand}), res_opt());
+    REQUIRE(r["candidates"].size() == 1);
+    CHECK(verdict_of(r["candidates"][0], "tolerance_pct") == "unverified");
+
+    // The selector: the unstated row is not passed as a tight one.
+    kelvin::Shard<kelvin::ResistorRow> shard;
+    shard.rows.push_back(*absent);
+    shard.meta.source_line_count = 1;
+    kelvin::ResistorConstraints rc;
+    rc.target_ohms = 100.0;
+    rc.max_tolerance = 0.05;
+    try {
+        kelvin::select_resistor(shard, rc);
+        FAIL("an unstated tolerance passed a 5 % limit");
+    } catch (const kelvin::NoCandidates& e) {
+        CHECK(e.rejections.value("tolerance_unknown", 0) == 1);
+    }
+}
+
