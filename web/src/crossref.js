@@ -119,7 +119,17 @@ export const XREF = [
       device_type: r.device_type ?? '', frequency: nz(r.frequency),
       load_capacitance: nz(r.load_capacitance),
       load_capacitance_pF: r.load_capacitance != null ? r.load_capacitance * 1e12 : null,
-      esr: nz(r.esr), output_type: r.output_type ?? '', mode: r.mode ?? '',
+      // output_type and mode are hard identity keys in the ranker. Blank falls back to
+      // null, NOT '': the ranker's ExactMatch counts '' as a stated value whenever the
+      // other side states one, so an oscillator record with no outputType was REJECTED
+      // as "an identity parameter differs" against an LVDS original — an unknown
+      // reported as a mismatch, the same trap as the connector strings (ABT #505).
+      esr: nz(r.esr), output_type: r.output_type || null, mode: r.mode || null,
+      // The supply range of an active oscillator: the substitute's must cover the
+      // original's (the ranker FAILs a shortfall at either end and skips the keys for a
+      // passive crystal or resonator, which has no supply). Neither was passed, so a
+      // 3.3 V-only and a 1.8 V-only XO ranked minor_review / upgrade for a 2.5 V original.
+      supply_min_V: nz(r.vsupply_min), supply_max_V: nz(r.vsupply_max),
       tolerance_ppm: r.frequency_tolerance != null ? r.frequency_tolerance * 1e6 : null,
       stability_ppm: r.frequency_stability != null ? r.frequency_stability * 1e6 : null,
       // Raw, NOT through nz(): a cold limit is negative and 0 degC is a real rating. The
@@ -130,6 +140,9 @@ export const XREF = [
       { key: 'load_capacitance_pF', label: 'CL', row: 'load_capacitance', unit: 'F' },
       { key: 'esr', label: 'ESR', row: 'esr', unit: 'Ω' },
       { key: 'tolerance_ppm', label: 'tol', row: 'frequency_tolerance', unit: 'ppm', scale: 1e6 },
+      { key: 'supply_min_V', label: 'Vdd min', row: 'vsupply_min', unit: 'V' },
+      { key: 'supply_max_V', label: 'Vdd max', row: 'vsupply_max', unit: 'V' },
+      { key: 'output_type', label: 'output', row: 'output_type', str: true },
       { key: 'temp_min_C', label: 'T min', row: 'temp_min_c', unit: '°C' },
       { key: 'temp_max_C', label: 'T max', row: 'temp_max_c', unit: '°C' },
     ],
@@ -156,7 +169,7 @@ export const XREF = [
     // What remains genuinely unchecked is the COUNTERPART, not the catalogue: 193,951
     // records name the series they mate with, but those lists are written per vendor and
     // no second source ever appears in one, so they cannot settle a cross-vendor swap.
-    caveat: 'Contact pitch, plating, termination and mating-cycle rating are compared where both records state one; the counterpart itself is NOT checked — no candidate is verified against the mating half already on your board. Confirm the pair mates before substituting.',
+    caveat: 'Board mount, contact pitch, plating, termination and mating-cycle rating are compared where both records state one; the counterpart itself is NOT checked — no candidate is verified against the mating half already on your board. Confirm the pair mates before substituting.',
     // pitch_mm, not metres: the ranker's ParamSpec is keyed on it and an engineer
     // reads a connector pitch in millimetres. The shard stores SI metres. The
     // temperatures pass through raw, NOT through nz(): a cold limit is negative and
@@ -172,6 +185,12 @@ export const XREF = [
       rated_current_A: nz(r.rated_current), rated_voltage_V: nz(r.rated_voltage),
       temp_min_C: r.temp_min_c, temp_max_C: r.temp_max_c,
       contact_plating: r.contact_plating || null, termination: r.termination || null,
+      // The board attach (mechanical.mountingStyle: smt / tht / pressFit / skedd / panel /
+      // cable), under the key the ranker's hard 'mounting' identity spec reads. It reached
+      // the ranker only as base()'s `mount`, which the generic SMD-vs-leaded gate cannot
+      // classify for press-fit, panel or cable, so an SMT Samtec original took a press-fit
+      // TE part with no mount verdict at all. null when unstated: unverified, not refused.
+      mounting: r.mount || null,
       mating_cycles: nz(r.mating_cycles) }),
     params: [
       { key: 'positions', label: 'pos', row: 'positions', unit: '' },
@@ -180,6 +199,7 @@ export const XREF = [
       { key: 'rated_voltage_V', label: 'V rated', row: 'rated_voltage', unit: 'V' },
       { key: 'temp_max_C', label: 'T max', row: 'temp_max_c', unit: '°C' },
       { key: 'contact_plating', label: 'plating', row: 'contact_plating', str: true },
+      { key: 'mounting', label: 'mount', row: 'mount', str: true },
     ],
   },
   {

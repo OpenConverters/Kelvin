@@ -135,6 +135,17 @@ inline std::string vz_band(const json& p) {
     return s;
 }
 
+// The supply range an oscillator record states, for a note: "2.5 V" for a fixed-rail
+// part, "1.71-3.63 V" for a wide-range one, and says so when one end is not stated
+// rather than inventing it.
+inline std::string supply_range(const json& p) {
+    auto lo = num(p, "supply_min_V"), hi = num(p, "supply_max_V");
+    if (lo && hi) return *lo == *hi ? volts(*lo) + " V" : volts(*lo) + "-" + volts(*hi) + " V";
+    if (lo) return "at least " + volts(*lo) + " V (no maximum stated)";
+    if (hi) return "at most " + volts(*hi) + " V (no minimum stated)";
+    return "an unstated supply";
+}
+
 // The land a footprint note is talking about, longest axis first — the same way
 // round the fit test compares them, so two parts read comparably. A record that
 // states only one land axis says which axis it is and that the other is absent,
@@ -655,8 +666,24 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // record guarantees nothing at all (ABT #488).
     bool diode_vz_band_regression = false;
     bool diode_vz_band_unverified = false;
+    // An active oscillator's supply range, captured from the PARAM_SPECS verdicts below so
+    // the note can state both ranges in volts: a bare "supply_min_V: fail" does not say that
+    // a 3.3 V-only part was offered for a 2.5 V rail. It was never compared at all (the
+    // spec builder did not pass the range), so a 3.3 V and a 1.8 V XO were graded
+    // minor_review / upgrade for a 2.5 V EPSON original.
+    bool timebase_supply_fail = false;
+    bool timebase_supply_unverified = false;
+    bool connector_mount_unverified = false;
+    // A passive resonator (quartz crystal, ceramic resonator) has no supply: it is driven
+    // by the MCU's oscillator stage. The supply keys mean nothing there and are not
+    // compared even if a record happened to carry one.
+    const bool timebase_passive =
+        cat == "timeBase" && (str(original, "technology") == "quartzCrystal" ||
+                              str(original, "technology") == "ceramicResonator");
     // ── PARAM_SPECS verdicts (the shared Heaviside table) ────────────────────
     for (const ParamSpec& spec : params_for(cat)) {
+        const bool supply_key = spec.key == "supply_min_V" || spec.key == "supply_max_V";
+        if (cat == "timeBase" && supply_key && timebase_passive) continue;
         bool has_data = detail::present(original, spec.key) || detail::present(cand, spec.key);
         if (spec.key == "saturation_current")
             has_data = has_data || detail::present(original, "saturation_points") ||
@@ -669,6 +696,33 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             if (spec.key == "pitch_mm") connector_pitch_conflict = true;
             if (spec.key == "contact_plating") connector_plating_conflict = true;
             if (spec.key == "termination") connector_termination_conflict = true;
+            // The board attach (smt / tht / pressFit / skedd / panel / cable) is a
+            // different board process, not a parameter: a press-fit part needs a press
+            // and plated holes sized for it, an SMT one a reflow pass on pads. A hard
+            // identity key, so this FAIL rejects. Say which pair decided it: the generic
+            // SMD-vs-leaded gate cannot classify press-fit, panel or cable, and an SMT
+            // original used to take a press-fit substitute with no mount verdict at all.
+            if (spec.key == "mounting")
+                notes.push_back("board mount differs: " + str(original, "mounting") + " -> " +
+                                str(cand, "mounting") +
+                                " — a different board-attach process, not a drop-in");
+        }
+        // The original states its board attach and the substitute's record does not:
+        // whether it goes on the same board process is unknown, so the swap cannot be
+        // called a drop-in. Capped like an unverified footprint (minor_review), with a
+        // note — WT16PRD8CD (no mountingStyle, no pitch) came back drop_in for an SMT
+        // Samtec original.
+        if (cat == "connector" && spec.key == "mounting" && verdict == UNVERIFIED &&
+            detail::present(original, spec.key)) {
+            connector_mount_unverified = true;
+            notes.push_back("the original is " + str(original, "mounting") +
+                            "-mounted; the substitute's record states no board mount — "
+                            "confirm it uses the same board-attach process");
+        }
+        if (cat == "timeBase" && supply_key) {
+            if (verdict == FAIL) timebase_supply_fail = true;
+            if (verdict == UNVERIFIED && detail::present(original, spec.key))
+                timebase_supply_unverified = true;
         }
         if (cat == "diode" && spec.key == "vz_tolerance_pct") {
             if (verdict == WARN || verdict == FAIL) diode_vz_band_regression = true;
@@ -770,6 +824,15 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         notes.push_back("wire termination differs: " + str(original, "termination") + " -> " +
                         str(cand, "termination") +
                         " — a different wire-attach method, not a drop-in for a built harness");
+
+    if (timebase_supply_fail)
+        notes.push_back("supply range does not cover the original's: the original runs from " +
+                        supply_range(original) + ", the substitute from " + supply_range(cand) +
+                        " — it will not run correctly from the original's rail");
+    else if (timebase_supply_unverified)
+        notes.push_back("the original runs from " + supply_range(original) +
+                        "; the substitute's record states no supply range, so the rail could "
+                        "not be checked — confirm it from the datasheet");
 
     // Say WHAT the two parts guarantee, in volts. The Vrrm verdict above compares the
     // MARKED voltage, which two grades of the same zener share; the window is what the
@@ -1646,6 +1709,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     }
     // An unverified clearance caps the grade exactly as an unverified footprint does.
     if (out.value("height_fit", "") == "unknown") footprint_unverified = true;
+    // So does an unknown board attach against a connector original that states one.
+    if (connector_mount_unverified) footprint_unverified = true;
     out["grade"] = grade_for(status, tier, any_warn, any_fail, footprint_unverified,
                              missing_required_data, hfit);
 

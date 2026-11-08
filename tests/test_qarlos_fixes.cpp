@@ -1,6 +1,7 @@
 // Regression tests for the Qarlos cross-reference audit of 2026-10-24
 // (ABT #2029-#2051). Each case reproduces the reported row in miniature.
 #include <cmath>
+#include <optional>
 #include <string>
 
 #include <catch2/catch_approx.hpp>
@@ -377,4 +378,109 @@ TEST_CASE("qarlos #2035: all-retracted provenance is flagged and verifies nothin
     auto r2 = kelvin::crossref::cross_reference("diode", o2, json::array({c2}));
     CHECK(r2["original_verified"] == false);
     CHECK(r2["candidates"][0]["status"] == "partial");
+}
+
+// ── Qarlos audit of 2026-11-08 ───────────────────────────────────────────────
+namespace {
+json xo(const std::string& mpn, std::optional<double> vmin, std::optional<double> vmax) {
+    // The spec web/src/crossref.js builds for a timing row (supply_min_V / supply_max_V
+    // from vsupply_min / vsupply_max, null when unstated).
+    json o = {{"mpn", mpn}, {"subtype", "oscillator"}, {"technology", "crystalOscillator"},
+              {"frequency", 644531250.0}, {"output_type", "lvds"}};
+    o["supply_min_V"] = vmin ? json(*vmin) : json(nullptr);
+    o["supply_max_V"] = vmax ? json(*vmax) : json(nullptr);
+    return o;
+}
+const json* cand_by_mpn(const json& r, const std::string& mpn) {
+    for (const auto& c : r["candidates"])
+        if (c.value("mpn", "") == mpn) return &c;
+    return nullptr;
+}
+}  // namespace
+
+// EG-2121CA 644.53125M-LGPAL3 (EPSON, fixed 2.5 V) took 3.3 V and 1.8 V XOs as
+// minor_review / upgrade (seed 20264135). The substitute's supply range must COVER the
+// original's, with no warn band; unknown is unverified.
+TEST_CASE("qarlos 2026-11-08: oscillator supply range must cover the original's",
+          "[qarlos][crossref]") {
+    const json orig = xo("EG-2121CA 644.53125M-LGPAL3", 2.5, 2.5);
+    json cands = json::array({xo("ASG2-D-V-A-644.53125MHZ", 3.3, 3.3), xo("XO-18", 1.8, 1.8),
+                              xo("XO-27", 2.7, 2.7), xo("XO-24", 2.4, 2.4),
+                              xo("XO-WIDE", 2.25, 2.75),
+                              xo("XO-NOSUPPLY", std::nullopt, std::nullopt)});
+    auto r = kelvin::crossref::cross_reference("timeBase", orig, cands);
+
+    const json* c33 = cand_by_mpn(r, "ASG2-D-V-A-644.53125MHZ");
+    REQUIRE(c33);
+    CHECK(verdict_of(*c33, "supply_min_V") == "fail");
+    CHECK((*c33)["grade"] == "major_review");
+    CHECK(has_note(*c33, "the original runs from 2.5 V, the substitute from 3.3 V"));
+
+    const json* c18 = cand_by_mpn(r, "XO-18");
+    REQUIRE(c18);
+    CHECK(verdict_of(*c18, "supply_max_V") == "fail");
+    CHECK((*c18)["grade"] == "major_review");
+
+    // Inside the analog family's old 0.3 V / 10 % warn bands: still a different rail.
+    const json* c27 = cand_by_mpn(r, "XO-27");
+    REQUIRE(c27);
+    CHECK(verdict_of(*c27, "supply_min_V") == "fail");
+    const json* c24 = cand_by_mpn(r, "XO-24");
+    REQUIRE(c24);
+    CHECK(verdict_of(*c24, "supply_max_V") == "fail");
+
+    const json* wide = cand_by_mpn(r, "XO-WIDE");
+    REQUIRE(wide);
+    CHECK(verdict_of(*wide, "supply_min_V") == "pass");
+    CHECK(verdict_of(*wide, "supply_max_V") == "pass");
+    CHECK_FALSE(has_note(*wide, "supply range"));
+
+    const json* none = cand_by_mpn(r, "XO-NOSUPPLY");
+    REQUIRE(none);
+    CHECK(verdict_of(*none, "supply_min_V") == "unverified");
+    CHECK(none->value("status", "") != "no_substitute");
+    CHECK(has_note(*none, "states no supply range"));
+
+    // A passive crystal has no supply: the keys are not compared even if present.
+    json xtal = {{"mpn", "XTAL"}, {"subtype", "oscillator"}, {"technology", "quartzCrystal"},
+                 {"frequency", 25e6}, {"supply_min_V", 2.5}, {"supply_max_V", 2.5}};
+    json xtal2 = xtal;
+    xtal2["mpn"] = "XTAL2";
+    xtal2["supply_min_V"] = 3.3;
+    xtal2["supply_max_V"] = 3.3;
+    auto rx = kelvin::crossref::cross_reference("timeBase", xtal, json::array({xtal2}));
+    CHECK(verdict_of(rx["candidates"][0], "supply_min_V") == "");
+    CHECK(verdict_of(rx["candidates"][0], "supply_max_V") == "");
+}
+
+// FTMH-108-02-F-DH (Samtec, SMT) took 1-6450840-0 (TE, press-fit) with no mount verdict
+// (seed 20262117). The board attach is a hard identity key; unknown is unverified.
+TEST_CASE("qarlos 2026-11-08: connector board mount is compared and a change rejects",
+          "[qarlos][crossref]") {
+    auto con = [](const std::string& mpn, const char* mounting) {
+        json o = {{"mpn", mpn}, {"family", "boardToBoard"}, {"positions", 16.0},
+                  {"rated_current_A", 3.0}};
+        o["mounting"] = mounting ? json(mounting) : json(nullptr);
+        return o;
+    };
+    const json orig = con("FTMH-108-02-F-DH", "smt");
+    auto r = kelvin::crossref::cross_reference(
+        "connector", orig,
+        json::array({con("1-6450840-0", "pressFit"), con("SAME", "smt"), con("UNSTATED", nullptr)}));
+    const json* pf = cand_by_mpn(r, "1-6450840-0");
+    REQUIRE(pf);
+    CHECK(verdict_of(*pf, "mounting") == "fail");
+    CHECK((*pf)["status"] == "no_substitute");
+    CHECK(has_note(*pf, "board mount differs: smt -> pressFit"));
+    const json* same = cand_by_mpn(r, "SAME");
+    REQUIRE(same);
+    CHECK(verdict_of(*same, "mounting") == "pass");
+    const json* un = cand_by_mpn(r, "UNSTATED");
+    REQUIRE(un);
+    CHECK(verdict_of(*un, "mounting") == "unverified");
+    CHECK(un->value("status", "") != "no_substitute");
+    // Unknown board attach against a stated one is not a drop-in (WT16PRD8CD, same seed).
+    CHECK((*same)["grade"] == "drop_in");
+    CHECK((*un)["grade"] == "minor_review");
+    CHECK(has_note(*un, "states no board mount"));
 }
