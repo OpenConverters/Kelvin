@@ -88,7 +88,10 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // v18 carries a resistor's power-rating temperature and its stated derating curve
 // (ResistorRow.power_rating_temperature / derating_temperature / derating_amplitude), so the
 // cross-reference compares power at the original's rating temperature.
-constexpr uint32_t kFormatVersion = 18;
+// v19 carries a diode's stated die configuration and internal connection
+// (DiodeRow.die_configuration / internal_connection), the basis of its forward current: a
+// dual package's forwardCurrent is per leg (Qarlos 2026-11-08).
+constexpr uint32_t kFormatVersion = 19;
 
 // Identity of the code that produces rows, so a cached shard can be recognised as
 // having been built by a DIFFERENT extractor than the one running now (ABT #426).
@@ -276,6 +279,8 @@ void row_io(Ar& ar, DiodeRow& r) {
     ar.dbl(r.rth_jc);
     ar.dbl(r.tj_max);
     ar.str(r.technology);
+    ar.str(r.die_configuration);       // v19
+    ar.str(r.internal_connection);     // v19
     ar.dbl(r.clamping_voltage);        // v17
     ar.dbl(r.clamping_current);        // v17
     ar.dbl(r.peak_pulse_power);        // v17

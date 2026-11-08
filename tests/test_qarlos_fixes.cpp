@@ -1033,3 +1033,69 @@ TEST_CASE("qarlos 2026-11-08: an explicit tht against a bare chip case code is a
     REQUIRE(!by("AXIAL").is_null());
     CHECK(verdict_of(by("AXIAL"), "mounting") == "");
 }
+
+// ── Qarlos audit of 2026-11-08 round 2: dual-diode current basis ─────────────
+namespace {
+json rect(const std::string& mpn, double if_avg, const std::string& dc = "",
+          const std::string& ic = "") {
+    json d = {{"mpn", mpn}, {"technology", "schottky"}, {"case_code", "ITO-220AB"},
+              {"vrrm", 60.0}, {"if_avg", if_avg}, {"vf", 0.65}};
+    d["die_configuration"] = dc.empty() ? json() : json(dc);
+    d["internal_connection"] = ic.empty() ? json() : json(ic);
+    return d;
+}
+}  // namespace
+
+// Run 4 seed 20292785: VFT2060C-M3/4W (dual common-cathode, forwardCurrent 10 A per leg)
+// against MBRF1560CT (record states no die configuration; 15 A is the vendor table's
+// whole-device figure). if_avg was graded 'pass' on per-leg vs whole-device numbers.
+TEST_CASE("qarlos 2026-11-08: a dual diode's per-leg current is compared like with like",
+          "[qarlos][crossref][views]") {
+    // Extraction carries the stated basis verbatim; absent stays empty.
+    json env = {{"semiconductor", {{"diode", {{"manufacturerInfo",
+        {{"name", "Vishay"}, {"reference", "VFT2060C-M3/4W"}, {"datasheetInfo",
+            {{"part", {{"partNumber", "VFT2060C-M3/4W"}, {"subType", "schottky"},
+                       {"dieConfiguration", "dual"}, {"internalConnection", "commonCathode"}}},
+             {"electrical", {{"reverseVoltage", 60.0}, {"forwardCurrent", 10.0},
+                             {"forwardVoltage", 0.65}}}}}}}}}}}};
+    auto row = kelvin::extract_diode(env);
+    REQUIRE(row.has_value());
+    CHECK(row->die_configuration == "dual");
+    CHECK(row->internal_connection == "commonCathode");
+    CHECK(row->if_avg_rated == 10.0);
+    json& part = env["semiconductor"]["diode"]["manufacturerInfo"]["datasheetInfo"]["part"];
+    part.erase("dieConfiguration");
+    part.erase("internalConnection");
+    auto bare = kelvin::extract_diode(env);
+    REQUIRE(bare.has_value());
+    CHECK(bare->die_configuration.empty());
+    CHECK(bare->internal_connection.empty());
+
+    const json orig = rect("VFT2060C-M3/4W", 10.0, "dual", "commonCathode");
+    auto r = kelvin::crossref::cross_reference(
+        "diode", orig,
+        json::array({rect("MBRF1560CT", 15.0),
+                     rect("DUAL_PER_LEG_10", 10.0, "dual", "commonCathode"),
+                     rect("DUAL_PER_LEG_5", 5.0, "dual", "commonCathode")}));
+    // Unknown basis on the substitute: never a pass, the grade is capped, no reassuring
+    // direction, and the note says why.
+    const json mb = find_mpn(r, "MBRF1560CT");
+    CHECK(verdict_of(mb, "if_avg") == "unverified");
+    CHECK(mb["grade"] == "major_review");
+    CHECK(mb["direction"] == "unknown");
+    CHECK(mb["status"] != "no_substitute");
+    CHECK(has_note(mb, "forward current not comparable"));
+    CHECK(has_note(mb, "states no die configuration"));
+    // Both per leg: compared as usual.
+    CHECK(verdict_of(find_mpn(r, "DUAL_PER_LEG_10"), "if_avg") == "pass");
+    CHECK(verdict_of(find_mpn(r, "DUAL_PER_LEG_5"), "if_avg") == "fail");
+
+    // The mirror image: an original stating no configuration against a stated dual.
+    auto r2 = kelvin::crossref::cross_reference(
+        "diode", rect("UNSTATED", 10.0),
+        json::array({rect("DUAL_15", 15.0, "dual", "commonCathode"), rect("PLAIN_15", 15.0)}));
+    CHECK(verdict_of(find_mpn(r2, "DUAL_15"), "if_avg") == "unverified");
+    CHECK(find_mpn(r2, "DUAL_15")["direction"] == "unknown");
+    // Neither side multi-die: the schema's one-die reading, compared as stated.
+    CHECK(verdict_of(find_mpn(r2, "PLAIN_15"), "if_avg") == "pass");
+}

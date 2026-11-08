@@ -236,6 +236,12 @@ export const XREF = [
     spec: (r) => ({ ...base(r), vrrm: nz(r.vrrm_rated), if_avg: nz(r.if_avg_rated), vf: nz(r.vf_typ),
       power_dissipation: nz(r.power_dissipation),
       qrr: r.qrr ?? null, trr: r.trr ?? null, technology: r.technology ?? '',
+      // The stated die configuration fixes the basis of if_avg (a 'dual' package's
+      // forwardCurrent is per leg): the ranker compares it only like with like and leaves
+      // it UNVERIFIED when one side is multi-die and the other states no configuration.
+      // null when unstated, never guessed from the MPN.
+      die_configuration: r.die_configuration || null,
+      internal_connection: r.internal_connection || null,
       vz_min_V: nz(r.vz_min), vz_max_V: nz(r.vz_max),
       vz_tolerance_pct: r.vz_tolerance != null ? r.vz_tolerance * 100 : null,
       // tvs / esd protection specs, each with the impulse it is stated at: the ranker

@@ -442,6 +442,10 @@ std::optional<DiodeRow> extract_diode(const json& env) {
         if (pos(lo) && pos(hi) && *hi >= *lo) r.vz_tolerance = (*hi - *lo) / (*hi + *lo);
     }
     r.technology = get_str(*part, "subType").value_or("");
+    // The die configuration the record STATES, verbatim; absent stays "" (unknown to the
+    // ranker), never filled from the part number or the package.
+    if (auto v = get_str(*part, "dieConfiguration")) r.die_configuration = *v;
+    if (auto v = get_str(*part, "internalConnection")) r.internal_connection = *v;
     // Continuous dissipation rating. Absent stays NaN; a 0 or negative is unreadable.
     if (auto v = get_num(*elec, "powerDissipation"); pos(v)) r.power_dissipation = *v;
     // The surge / clamp / capacitance specs, each with the impulse it was stated at

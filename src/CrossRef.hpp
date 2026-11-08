@@ -1323,10 +1323,62 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         }
     }
 
+    // ── forward-current basis (multi-die diode packages) ─────────────────────
+    // SAS diode.json: for a package declared part.dieConfiguration 'dual', every electrical
+    // value is PER DIODE (per leg), never the package total; a record that declares no
+    // configuration is, by the schema, one die. A rating is only comparable on the same
+    // basis, and the record is the only admissible witness of the basis — never the MPN.
+    // Rule (Qarlos 2026-11-08, run 4 seed 20292785: MBRF1560CT, 15 A whole-device, graded
+    // if_avg 'pass' against VFT2060C's 10 A per leg):
+    //  * both sides state their configuration, or neither does: compared as stated (both
+    //    per diode by the schema's definition);
+    //  * one side states a MULTI-die package and the other states none: the other side's
+    //    figure cannot be shown to be per leg — catalogue imports routinely omit the field on
+    //    dual parts and copy the vendor table's whole-device current — so if_avg is
+    //    UNVERIFIED, the grade is capped as missing required data (the current rating went
+    //    unweighed, exactly as an unstated surge waveform caps a TVS) and the direction is
+    //    unknown. Decision for the owner to confirm: the cap is major_review, the same as a
+    //    rating the substitute does not state at all.
+    bool current_basis_blind = false;
+    std::string current_basis_note;
+    if (cat == "diode") {
+        const std::string odc = str(original, "die_configuration"),
+                          sdc = str(cand, "die_configuration");
+        auto multi = [](const std::string& c) { return !c.empty() && c != "single"; };
+        const auto oi = num(original, "if_avg"), si = num(cand, "if_avg");
+        if (oi && si && ((multi(odc) && sdc.empty()) || (multi(sdc) && odc.empty()))) {
+            auto amps = [](double v) {
+                char b[32];
+                std::snprintf(b, sizeof b, "%g A", v);
+                return std::string(b);
+            };
+            auto side = [&](const std::string& who, const std::string& dc, double a) {
+                return dc.empty() ? who + "'s " + amps(a) + " (its record states no die "
+                                                            "configuration, so per leg or "
+                                                            "whole device is unknown)"
+                                  : who + "'s " + amps(a) + " per diode (a '" + dc +
+                                        "' package)";
+            };
+            current_basis_note =
+                "forward current not comparable: the " + side("original", odc, *oi) +
+                " against the " + side("substitute", sdc, *si) +
+                " — confirm the per-leg I_F(AV) of both from their datasheets before this swap";
+        }
+    }
+
     // ── critical ratings (Vds / Vrrm / rated voltage / Id / If) ──────────────
     for (const auto& r : critical_ratings(cat)) {
         auto o = num(original, r.key), s = num(cand, r.key);
         if (!o && !s) continue;
+        if (!current_basis_note.empty() && std::string(r.key) == "if_avg") {
+            params.push_back({{"name", r.key}, {"verdict", UNVERIFIED}});
+            notes.push_back(current_basis_note);
+            demote();
+            penalty += opt.gate_weight * kVerdictFailPenalty;
+            missing_required_data = true;
+            current_basis_blind = true;
+            continue;
+        }
         if (zener && std::string(r.key) == "vrrm") {
             // A zener's vrrm is its Vz, and a Vz is matched, not "more is better": as a
             // HigherBetter rating any Vz a hair below the original's (21.0 V inside a
@@ -2098,7 +2150,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // on evidence that never covered the parameter the match turns on. A measured regression
     // stands — blindness elsewhere cannot make a regression we did see disappear — and so does
     // "mixed", which already carries one.
-    out["direction"] = (cand_retracted || ((direction_blind || isat_basis_blind || surge_blind) &&
+    out["direction"] = (cand_retracted || ((direction_blind || isat_basis_blind || surge_blind ||
+                                            current_basis_blind) &&
                                            (dir == "upgrade" || dir == "equivalent")))
                            ? "unknown"
                            : dir;
