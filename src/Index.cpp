@@ -91,6 +91,9 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // v19 carries a connector's mating-axis orientation (ConnectorRow.orientation) and, on EVERY
 // family's row, the lead pitch of a leaded part (RowBase.lead_pitch_m) — the land datum of a
 // through-hole body, which the cross-reference footprint check compares (Qarlos 2026-11-08).
+// v19 carries a diode's stated die configuration and internal connection
+// (DiodeRow.die_configuration / internal_connection), the basis of its forward current: a
+// dual package's forwardCurrent is per leg (Qarlos 2026-11-08).
 constexpr uint32_t kFormatVersion = 19;
 
 // Identity of the code that produces rows, so a cached shard can be recognised as
@@ -280,6 +283,8 @@ void row_io(Ar& ar, DiodeRow& r) {
     ar.dbl(r.rth_jc);
     ar.dbl(r.tj_max);
     ar.str(r.technology);
+    ar.str(r.die_configuration);       // v19
+    ar.str(r.internal_connection);     // v19
     ar.dbl(r.clamping_voltage);        // v17
     ar.dbl(r.clamping_current);        // v17
     ar.dbl(r.peak_pulse_power);        // v17

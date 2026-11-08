@@ -1301,3 +1301,125 @@ TEST_CASE("qarlos 2026-11-08: connector mount is compared with check_footprint o
     CHECK(verdict_of(rc["candidates"][0], "mounting") == "");
 }
 
+// ── Qarlos audit of 2026-11-08 round 2: dual-diode current basis ─────────────
+namespace {
+json rect(const std::string& mpn, double if_avg, const std::string& dc = "",
+          const std::string& ic = "") {
+    json d = {{"mpn", mpn}, {"technology", "schottky"}, {"case_code", "ITO-220AB"},
+              {"vrrm", 60.0}, {"if_avg", if_avg}, {"vf", 0.65}};
+    d["die_configuration"] = dc.empty() ? json() : json(dc);
+    d["internal_connection"] = ic.empty() ? json() : json(ic);
+    return d;
+}
+}  // namespace
+
+// Run 4 seed 20292785: VFT2060C-M3/4W (dual common-cathode, forwardCurrent 10 A per leg)
+// against MBRF1560CT (record states no die configuration; 15 A is the vendor table's
+// whole-device figure). if_avg was graded 'pass' on per-leg vs whole-device numbers.
+TEST_CASE("qarlos 2026-11-08: a dual diode's per-leg current is compared like with like",
+          "[qarlos][crossref][views]") {
+    // Extraction carries the stated basis verbatim; absent stays empty.
+    json env = {{"semiconductor", {{"diode", {{"manufacturerInfo",
+        {{"name", "Vishay"}, {"reference", "VFT2060C-M3/4W"}, {"datasheetInfo",
+            {{"part", {{"partNumber", "VFT2060C-M3/4W"}, {"subType", "schottky"},
+                       {"dieConfiguration", "dual"}, {"internalConnection", "commonCathode"}}},
+             {"electrical", {{"reverseVoltage", 60.0}, {"forwardCurrent", 10.0},
+                             {"forwardVoltage", 0.65}}}}}}}}}}}};
+    auto row = kelvin::extract_diode(env);
+    REQUIRE(row.has_value());
+    CHECK(row->die_configuration == "dual");
+    CHECK(row->internal_connection == "commonCathode");
+    CHECK(row->if_avg_rated == 10.0);
+    json& part = env["semiconductor"]["diode"]["manufacturerInfo"]["datasheetInfo"]["part"];
+    part.erase("dieConfiguration");
+    part.erase("internalConnection");
+    auto bare = kelvin::extract_diode(env);
+    REQUIRE(bare.has_value());
+    CHECK(bare->die_configuration.empty());
+    CHECK(bare->internal_connection.empty());
+
+    const json orig = rect("VFT2060C-M3/4W", 10.0, "dual", "commonCathode");
+    auto r = kelvin::crossref::cross_reference(
+        "diode", orig,
+        json::array({rect("MBRF1560CT", 15.0),
+                     rect("DUAL_PER_LEG_10", 10.0, "dual", "commonCathode"),
+                     rect("DUAL_PER_LEG_5", 5.0, "dual", "commonCathode")}));
+    // Unknown basis on the substitute: never a pass, the grade is capped, no reassuring
+    // direction, and the note says why.
+    const json mb = find_mpn(r, "MBRF1560CT");
+    CHECK(verdict_of(mb, "if_avg") == "unverified");
+    CHECK(mb["grade"] == "major_review");
+    CHECK(mb["direction"] == "unknown");
+    CHECK(mb["status"] != "no_substitute");
+    CHECK(has_note(mb, "forward current not comparable"));
+    CHECK(has_note(mb, "states no die configuration"));
+    // Both per leg: compared as usual.
+    CHECK(verdict_of(find_mpn(r, "DUAL_PER_LEG_10"), "if_avg") == "pass");
+    CHECK(verdict_of(find_mpn(r, "DUAL_PER_LEG_5"), "if_avg") == "fail");
+    // Settled under every reading (same seed, PMEG6010CEJ,115): 1 A is below 10 A per leg
+    // even read as per leg, so it FAILS rather than hiding behind 'unverified'.
+    auto r1 = kelvin::crossref::cross_reference("diode", orig,
+                                                json::array({rect("PMEG6010CEJ,115", 1.0)}));
+    CHECK(verdict_of(r1["candidates"][0], "if_avg") == "fail");
+    CHECK_FALSE(has_note(r1["candidates"][0], "forward current not comparable"));
+
+    // The mirror image: an original stating no configuration against a stated dual.
+    auto r2 = kelvin::crossref::cross_reference(
+        "diode", rect("UNSTATED", 10.0),
+        json::array({rect("DUAL_15", 15.0, "dual", "commonCathode"),
+                     rect("DUAL_8", 8.0, "dual", "commonCathode"), rect("PLAIN_8", 8.0)}));
+    // 15 A per leg meets even the strictest reading of the original's 10 A: a pass.
+    CHECK(verdict_of(find_mpn(r2, "DUAL_15"), "if_avg") == "pass");
+    // 8 A per leg against 10 A that may be per leg or the whole device: unknown.
+    CHECK(verdict_of(find_mpn(r2, "DUAL_8"), "if_avg") == "unverified");
+    CHECK(find_mpn(r2, "DUAL_8")["grade"] == "major_review");
+    CHECK(has_note(find_mpn(r2, "DUAL_8"), "the original's 10 A (its record states no die"));
+    // Neither side multi-die: the schema's one-die reading, compared as stated.
+    CHECK(verdict_of(find_mpn(r2, "PLAIN_8"), "if_avg") == "warn");
+}
+
+// Round-2 follow-up: a dual common-cathode rectifier is not a common-anode one, a series
+// pair or a single diode. A stated mismatch rejects; a one-sided statement is unverified
+// and keeps the row off drop_in; silence on both sides stays silent.
+TEST_CASE("qarlos 2026-11-08: diode package topology must match where both records state it",
+          "[qarlos][crossref]") {
+    const json orig = rect("VFT2060C-M3/4W", 10.0, "dual", "commonCathode");
+    auto r = kelvin::crossref::cross_reference(
+        "diode", orig,
+        json::array({rect("SAME_TOPO", 10.0, "dual", "commonCathode"),
+                     rect("COMMON_ANODE", 10.0, "dual", "commonAnode"),
+                     rect("SERIES_PAIR", 10.0, "dual", "series"),
+                     rect("SINGLE_DIE", 10.0, "single"),
+                     rect("NO_CONNECTION", 10.0, "dual")}));
+    const json same = find_mpn(r, "SAME_TOPO");
+    CHECK(verdict_of(same, "die_configuration") == "pass");
+    CHECK(verdict_of(same, "internal_connection") == "pass");
+    CHECK(same["grade"] == "drop_in");
+
+    const json ca = find_mpn(r, "COMMON_ANODE");
+    CHECK(ca["status"] == "no_substitute");
+    CHECK(verdict_of(ca, "internal_connection") == "fail");
+    CHECK(has_note(ca, "the original is 'commonCathode', the substitute 'commonAnode'"));
+    CHECK(find_mpn(r, "SERIES_PAIR")["status"] == "no_substitute");
+
+    const json single = find_mpn(r, "SINGLE_DIE");
+    CHECK(single["status"] == "no_substitute");
+    CHECK(verdict_of(single, "die_configuration") == "fail");
+    CHECK(has_note(single, "the original is 'dual', the substitute 'single'"));
+
+    // Configuration matches, connection stated on one side only: unverified, below drop_in,
+    // but not a regression.
+    const json nc = find_mpn(r, "NO_CONNECTION");
+    CHECK(nc["status"] != "no_substitute");
+    CHECK(verdict_of(nc, "internal_connection") == "unverified");
+    CHECK(nc["grade"] == "minor_review");
+    CHECK(has_note(nc, "internal connection 'commonCathode' and the substitute's states none"));
+
+    // Neither side states either field: no topology verdict at all, drop_in stays reachable.
+    auto r2 = kelvin::crossref::cross_reference("diode", rect("PLAIN_A", 10.0),
+                                                json::array({rect("PLAIN_B", 10.0)}));
+    const json pb = r2["candidates"][0];
+    CHECK(verdict_of(pb, "die_configuration") == "");
+    CHECK(verdict_of(pb, "internal_connection") == "");
+    CHECK(pb["grade"] == "drop_in");
+}

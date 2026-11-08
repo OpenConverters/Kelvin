@@ -99,6 +99,8 @@ inline const FieldTable<DiodeRow>& fields<DiodeRow>() {
          {"peak_pulse_current", &DiodeRow::peak_pulse_current},
          {"junction_capacitance", &DiodeRow::junction_capacitance}},
         {{"technology", &DiodeRow::technology},
+         {"die_configuration", &DiodeRow::die_configuration},
+         {"internal_connection", &DiodeRow::internal_connection},
          {"clamping_waveform", &DiodeRow::clamping_waveform},
          {"peak_pulse_power_waveform", &DiodeRow::peak_pulse_power_waveform},
          {"peak_pulse_current_waveform", &DiodeRow::peak_pulse_current_waveform}},

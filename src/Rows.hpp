@@ -178,6 +178,15 @@ struct DiodeRow : RowBase {
     double power_dissipation = kNaN();
     double rth_ja = kNaN(), rth_jc = kNaN(), tj_max = kNaN();
     std::string technology;   // part.subType (schottky / fastRecovery / ...)
+    // part.dieConfiguration ('single' / 'dual' / 'array') and part.internalConnection
+    // ('commonCathode' / 'commonAnode' / 'series' / 'independent'), verbatim; empty = the
+    // record does not state it. They fix the BASIS of every electrical value: SAS
+    // diode.json defines electrical.* of a 'dual' package as PER DIODE (per leg), never the
+    // package total. Not carried, a 2 x 10 A VFT2060C (forwardCurrent 10, per leg) was held
+    // against MBRF1560CT's 15 A — a record stating no die configuration, whose 15 A is the
+    // vendor table's whole-device figure (7.5 A per leg) — and graded if_avg 'pass'
+    // (Qarlos 2026-11-08, run 4 seed 20292785). Never inferred from the MPN.
+    std::string die_configuration, internal_connection;
     // Transient-suppression specs (tvs / esd). These, not Vrrm, are what a protection diode
     // IS: the surge it absorbs, the level it clamps to, the capacitance it loads the line
     // with. None was carried, so a 400 W SMAJ came back an 'upgrade' for a 15 kW 15KP and a

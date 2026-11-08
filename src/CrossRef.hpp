@@ -1353,10 +1353,79 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         }
     }
 
+    // ── forward-current basis (multi-die diode packages) ─────────────────────
+    // SAS diode.json: for a package declared part.dieConfiguration 'dual', every electrical
+    // value is PER DIODE (per leg), never the package total; a record that declares no
+    // configuration is, by the schema, one die. A rating is only comparable on the same
+    // basis, and the record is the only admissible witness of the basis — never the MPN.
+    // Rule (Qarlos 2026-11-08, run 4 seed 20292785: MBRF1560CT, 15 A whole-device, graded
+    // if_avg 'pass' against VFT2060C's 10 A per leg):
+    //  * both sides state their configuration, or neither does: compared as stated (both
+    //    per diode by the schema's definition);
+    //  * one side states a MULTI-die package and the other states none: the other side's
+    //    figure cannot be shown to be per leg — catalogue imports routinely omit the field on
+    //    dual parts and copy the vendor table's whole-device current — so if_avg is
+    //    UNVERIFIED, the grade is capped as missing required data (the current rating went
+    //    unweighed, exactly as an unstated surge waveform caps a TVS) and the direction is
+    //    unknown — UNLESS the verdict is the same under every reading of the unstated basis
+    //    (see `settled` below), in which case it is compared as stated. Decision for the
+    //    owner to confirm: the cap is major_review, the same as a rating the substitute does
+    //    not state at all.
+    bool current_basis_blind = false;
+    std::string current_basis_note;
+    if (cat == "diode") {
+        const std::string odc = str(original, "die_configuration"),
+                          sdc = str(cand, "die_configuration");
+        auto multi = [](const std::string& c) { return !c.empty() && c != "single"; };
+        const auto oi = num(original, "if_avg"), si = num(cand, "if_avg");
+        const bool cand_basis_unknown = multi(odc) && sdc.empty();
+        const bool orig_basis_unknown = multi(sdc) && odc.empty();
+        // An unstated basis only ever moves a figure DOWN when it is brought to per leg (a
+        // whole-device figure divides among the legs), so the stated number is the most
+        // generous per-leg reading of it. A verdict that holds under every reading is not
+        // unknown and is kept: a substitute whose figure FAILS even read as per leg (1 A
+        // against 10 A per leg) fails, and one that PASSES against the original's figure
+        // read as per leg (the strictest requirement it can mean) passes.
+        std::optional<ScoreResult> best;
+        if (oi && si && (cand_basis_unknown || orig_basis_unknown))
+            for (const auto& r : critical_ratings(cat))
+                if (std::string(r.key) == "if_avg")
+                    best = score_directional(oi, si, r.mode, r.warn_factor, r.gate_factor);
+        const bool settled = best && ((cand_basis_unknown && best->verdict == FAIL) ||
+                                      (orig_basis_unknown && best->verdict == PASS));
+        if (best && !settled) {
+            auto amps = [](double v) {
+                char b[32];
+                std::snprintf(b, sizeof b, "%g A", v);
+                return std::string(b);
+            };
+            auto side = [&](const std::string& who, const std::string& dc, double a) {
+                return dc.empty() ? who + "'s " + amps(a) + " (its record states no die "
+                                                            "configuration, so per leg or "
+                                                            "whole device is unknown)"
+                                  : who + "'s " + amps(a) + " per diode (a '" + dc +
+                                        "' package)";
+            };
+            current_basis_note =
+                "forward current not comparable: the " + side("original", odc, *oi) +
+                " against the " + side("substitute", sdc, *si) +
+                " — confirm the per-leg I_F(AV) of both from their datasheets before this swap";
+        }
+    }
+
     // ── critical ratings (Vds / Vrrm / rated voltage / Id / If) ──────────────
     for (const auto& r : critical_ratings(cat)) {
         auto o = num(original, r.key), s = num(cand, r.key);
         if (!o && !s) continue;
+        if (!current_basis_note.empty() && std::string(r.key) == "if_avg") {
+            params.push_back({{"name", r.key}, {"verdict", UNVERIFIED}});
+            notes.push_back(current_basis_note);
+            demote();
+            penalty += opt.gate_weight * kVerdictFailPenalty;
+            missing_required_data = true;
+            current_basis_blind = true;
+            continue;
+        }
         if (zener && std::string(r.key) == "vrrm") {
             // A zener's vrrm is its Vz, and a Vz is matched, not "more is better": as a
             // HigherBetter rating any Vz a hair below the original's (21.0 V inside a
@@ -1391,6 +1460,58 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         if (r.hard && !o && s) {
             direction_blind = true;
             blind_axes.push_back(param_label(r.key));
+        }
+    }
+
+    // ── diode package topology (die configuration / internal connection) ─────
+    // How many die a package holds and how they are bonded inside it fix its pinout and the
+    // circuit it forms: a common-cathode centre-tap rectifier is not a common-anode one, a
+    // series pair (BAV99) is neither, and a single diode is not a dual. Rule (coordinator,
+    // Qarlos 2026-11-08 round 2), applied to each field separately, from the record only —
+    // never inferred from the MPN or the package:
+    //  * both sides state it and the values differ: FAIL, the candidate is rejected, and the
+    //    note names both — the topology is not interchangeable;
+    //  * one side states it and the other does not: UNVERIFIED with a note, and the grade is
+    //    capped below drop_in (minor_review). It adds no further penalty or cap where the
+    //    forward-current basis rule above has already capped the row for the same silence;
+    //  * neither side states it: silent (the overwhelming majority of the catalogue).
+    // Decision for the owner to confirm: a stated 'single' against an unstated configuration
+    // is UNVERIFIED too, although the schema reads an absent dieConfiguration as one die.
+    bool topology_unverified = false;
+    if (cat == "diode") {
+        struct Field {
+            const char* key;
+            const char* label;
+        };
+        for (const Field f : {Field{"die_configuration", "die configuration"},
+                              Field{"internal_connection", "internal connection"}}) {
+            const std::string o = str(original, f.key), s = str(cand, f.key);
+            if (o.empty() && s.empty()) continue;
+            if (!o.empty() && !s.empty()) {
+                if (o == s) {
+                    params.push_back({{"name", f.key}, {"verdict", PASS}});
+                    continue;
+                }
+                params.push_back({{"name", f.key}, {"verdict", FAIL}});
+                notes.push_back(std::string(f.label) + " differs: the original is '" + o +
+                                "', the substitute '" + s +
+                                "' — a different package topology and pinout, not a substitute");
+                return reject("a different diode package topology");
+            }
+            params.push_back({{"name", f.key}, {"verdict", UNVERIFIED}});
+            notes.push_back(o.empty()
+                                ? "the substitute's record states " + std::string(f.label) + " '" +
+                                      s + "' and the original's states none — confirm the "
+                                      "original's package topology and pinout match"
+                                : "the original's record states " + std::string(f.label) + " '" +
+                                      o + "' and the substitute's states none — confirm the "
+                                      "substitute's package topology and pinout from its "
+                                      "datasheet");
+            if (!current_basis_blind && !topology_unverified) {
+                demote();
+                penalty += opt.gate_weight * kVerdictWarnPenalty;
+            }
+            topology_unverified = true;
         }
     }
 
@@ -2214,6 +2335,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // temperature has not been shown not to, so it takes the same minor_review cap.
     out["grade"] = grade_for(status, tier, any_warn, any_fail,
                              footprint_unverified || power_basis_unverified ||
+                                 topology_unverified ||
                                  mount_unverified,
                              missing_required_data, hfit);
 
@@ -2232,7 +2354,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // on evidence that never covered the parameter the match turns on. A measured regression
     // stands — blindness elsewhere cannot make a regression we did see disappear — and so does
     // "mixed", which already carries one.
-    out["direction"] = (cand_retracted || ((direction_blind || isat_basis_blind || surge_blind) &&
+    out["direction"] = (cand_retracted || ((direction_blind || isat_basis_blind || surge_blind ||
+                                            current_basis_blind) &&
                                            (dir == "upgrade" || dir == "equivalent")))
                            ? "unknown"
                            : dir;
