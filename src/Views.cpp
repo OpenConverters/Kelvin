@@ -633,8 +633,12 @@ std::optional<ResistorRow> extract_resistor(const json& env) {
     auto r_nom = resolve_field(*elec, "resistance");
     if (!r_nom || *r_nom < 0) return std::nullopt;
 
+    // Tolerance exactly as stated. Absent (or a non-positive number, which is no tolerance
+    // band at all) stays NaN = not on record: the cross-reference grades it UNVERIFIED and
+    // the selector cannot show it meets a tolerance limit. It used to become a "typical"
+    // +/-5 %, which let an unstated part pass as a 5 % one (Qarlos 2026-11-08 follow-up).
     auto tol_o = get_num(*elec, "tolerance");
-    double tol = (tol_o && *tol_o > 0) ? *tol_o : 0.05;
+    double tol = (tol_o && *tol_o > 0) ? *tol_o : kNaN();
     auto pw_o = get_num(*elec, "powerRating");
     double pw = (pw_o && *pw_o > 0) ? *pw_o : 0.0;
 

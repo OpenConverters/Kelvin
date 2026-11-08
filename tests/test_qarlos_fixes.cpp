@@ -9,6 +9,7 @@
 #include <nlohmann/json.hpp>
 
 #include "CrossRef.hpp"
+#include "Select.hpp"
 #include "Views.hpp"
 
 using nlohmann::json;
@@ -1281,5 +1282,53 @@ TEST_CASE("qarlos 2026-11-08 r2: two 0603 drawings a few percent apart are the s
     CHECK(verdict_of(a, "footprint") == "pass");
     CHECK_FALSE(has_note(a, "one case size larger"));
     CHECK(res_by(r, "ODD_0603")["footprint"] == "one_size_larger");
+}
+
+// The resistor extractor used to put a "typical" +/-5 % on every record whose
+// electrical.tolerance was absent or 0, so an unstated part was compared — and selected — as a
+// 5 % one. Absent stays absent: NaN in the row, null tolerance_pct in the spec (crossref.js),
+// UNVERIFIED in the ranker, and rejected as tolerance_unknown by the selector.
+TEST_CASE("qarlos 2026-11-08 r2: an unstated resistor tolerance stays unverified",
+          "[qarlos][views][crossref]") {
+    auto env = [](json elec) {
+        json di = {{"part", {{"partNumber", "NO_TOL"}, {"technology", "thickFilm"}}},
+                   {"electrical", elec}};
+        return json{{"resistor",
+                     {{"manufacturerInfo",
+                       {{"name", "X"}, {"reference", "NO_TOL"}, {"datasheetInfo", di}}}}}};
+    };
+    auto absent = kelvin::extract_resistor(env({{"resistance", {{"nominal", 100.0}}}}));
+    REQUIRE(absent.has_value());
+    CHECK(std::isnan(absent->tolerance));
+    auto zero = kelvin::extract_resistor(
+        env({{"resistance", {{"nominal", 100.0}}}, {"tolerance", 0.0}}));
+    REQUIRE(zero.has_value());
+    CHECK(std::isnan(zero->tolerance));
+    auto stated = kelvin::extract_resistor(
+        env({{"resistance", {{"nominal", 100.0}}}, {"tolerance", 0.01}}));
+    REQUIRE(stated.has_value());
+    CHECK(stated->tolerance == Approx(0.01));
+
+    // The ranker: a candidate with no tolerance on record is UNVERIFIED on tolerance.
+    json orig = res_spec("ORIG", 100.0, 0.1, 1.0, json::object());
+    json cand = {{"mpn", "NO_TOL"}, {"value_si", 100.0}, {"power_rating", 0.1},
+                 {"tolerance_pct", nullptr}};
+    auto r = kelvin::crossref::cross_reference("resistor", orig, json::array({cand}), res_opt());
+    REQUIRE(r["candidates"].size() == 1);
+    CHECK(verdict_of(r["candidates"][0], "tolerance_pct") == "unverified");
+
+    // The selector: the unstated row is not passed as a tight one.
+    kelvin::Shard<kelvin::ResistorRow> shard;
+    shard.rows.push_back(*absent);
+    shard.meta.source_line_count = 1;
+    kelvin::ResistorConstraints rc;
+    rc.target_ohms = 100.0;
+    rc.max_tolerance = 0.05;
+    try {
+        kelvin::select_resistor(shard, rc);
+        FAIL("an unstated tolerance passed a 5 % limit");
+    } catch (const kelvin::NoCandidates& e) {
+        CHECK(e.rejections.value("tolerance_unknown", 0) == 1);
+    }
 }
 
