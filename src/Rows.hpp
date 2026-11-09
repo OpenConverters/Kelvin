@@ -396,6 +396,10 @@ struct TimingRow : RowBase {
     std::string technology;               // quartzCrystal / mems / crystalOscillator / tcxo / …
     std::string output_type;
     std::string mode;
+    // electrical.enableFunction (v20) — the control pin's function: none / outputEnable /
+    // standby / triState. Stated by 10,792 of the 22,418 records; "" when unstated. The
+    // cross-reference compares it as pinout identity (Qarlos 2026-11-09).
+    std::string enable_function;
     // degC — thermal.operatingTemperature, stated by 22,366 of the 22,418 records. It was not
     // extracted, so a -10..+70 degC crystal ranked first as an 'upgrade' for a -40..+125 degC
     // original with no temperature verdict at all (ABT #2033, #2046). Negative and zero are

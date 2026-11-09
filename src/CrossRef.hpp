@@ -229,8 +229,10 @@ inline bool is_hard_param(const std::string& cat, const std::string& key) {
     // networks, not a parameter — swapping one for another is a board respin.
     // Both are self-selecting: mode is absent on oscillators and output_type on
     // bare crystals, and an absent parameter is simply not compared.
+    // enable_function: pin 1's function (output enable / standby / none) is wired by the
+    // board, so a different one is a different pinout (CrossRefParams.hpp kTimeBase).
     static const std::set<std::string> timebase{"subtype", "technology", "frequency", "mode",
-                                                "output_type"};
+                                                "output_type", "enable_function"};
     if (cat == "magnetic" || cat == "chipBead") return magnetic.count(key) > 0;
     if (cat == "mosfet") return key == "channel";
     if (cat == "connector") return connector.count(key) > 0;
@@ -1075,6 +1077,11 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // minor_review / upgrade for a 2.5 V EPSON original.
     bool timebase_supply_fail = false;
     bool timebase_supply_unverified = false;
+    // A timing part's control-pin function, or its frequency tolerance / stability, stated
+    // by the original and not by the substitute (or the pin function by the substitute
+    // only): UNVERIFIED, noted, and the grade capped below drop_in — drop_in asserts the
+    // same pinout and no accuracy regression, which nobody has shown (Qarlos 2026-11-09).
+    bool timebase_unverified = false;
     // A connector orientation that could not be established (see the orientation block
     // after the PARAM_SPECS loop): not a drop-in.
     bool connector_orientation_unverified = false;
@@ -1176,6 +1183,62 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             if (verdict == FAIL) timebase_supply_fail = true;
             if (verdict == UNVERIFIED && detail::present(original, spec.key))
                 timebase_supply_unverified = true;
+        }
+        if (cat == "timeBase" && spec.key == "frequency" && verdict == FAIL) {
+            // Say how far off it is: the reject reason alone ("an identity parameter
+            // differs") does not tell the engineer that 25.00125 MHz was offered for 25 MHz.
+            const auto o_f = detail::jnum(original, "frequency"), s_f = detail::jnum(cand, "frequency");
+            if (o_f && s_f && *o_f > 0) {
+                char buf[256];
+                std::snprintf(buf, sizeof buf,
+                              "nominal frequency differs: the original is %.10g Hz, the "
+                              "substitute %.10g Hz (%+.1f ppm)",
+                              *o_f, *s_f, (*s_f / *o_f - 1.0) * 1e6);
+                notes.push_back(std::string(buf) +
+                                " — a timing part's frequency is its identity; a different "
+                                "nominal is not a substitute, whatever its stability");
+            }
+        }
+        if (cat == "timeBase" && spec.key == "enable_function") {
+            const std::string o_en = str(original, "enable_function"),
+                              s_en = str(cand, "enable_function");
+            if (verdict == FAIL) {
+                notes.push_back("control-pin function differs: the original's is '" + o_en +
+                                "', the substitute's '" + s_en +
+                                "' — pin 1 is wired for the original's function, so this is a "
+                                "different pinout, not a drop-in");
+            } else if (verdict == UNVERIFIED && (!o_en.empty() || !s_en.empty())) {
+                timebase_unverified = true;
+                notes.push_back(
+                    !o_en.empty()
+                        ? "the original's control pin is '" + o_en +
+                              "'; the substitute's record states no control-pin function — "
+                              "confirm its pin 1 from the datasheet"
+                        : "the substitute's control pin is '" + s_en +
+                              "'; the original's record states no control-pin function — "
+                              "confirm both pin 1 functions match from the datasheets");
+            }
+        }
+        if (cat == "timeBase" && (spec.key == "tolerance_ppm" || spec.key == "stability_ppm")) {
+            const char* what = spec.key == "tolerance_ppm" ? "frequency tolerance"
+                                                           : "frequency stability";
+            const auto o_p = detail::jnum(original, spec.key), s_p = detail::jnum(cand, spec.key);
+            char buf[256];
+            if (verdict == FAIL && o_p && s_p) {
+                std::snprintf(buf, sizeof buf,
+                              "looser %s: the substitute is +/-%g ppm against the original's "
+                              "+/-%g ppm",
+                              what, *s_p, *o_p);
+                notes.push_back(std::string(buf) +
+                                " — the design's timing budget was built on the original's");
+            } else if (verdict == UNVERIFIED && o_p && !s_p) {
+                timebase_unverified = true;
+                std::snprintf(buf, sizeof buf,
+                              "the original's %s is +/-%g ppm; the substitute's record states "
+                              "none",
+                              what, *o_p);
+                notes.push_back(std::string(buf) + " — confirm it from the datasheet");
+            }
         }
         if (cat == "diode" && spec.key == "vz_tolerance_pct") {
             if (verdict == WARN || verdict == FAIL) diode_vz_band_regression = true;
@@ -1477,6 +1540,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                         str(cand, "termination") +
                         " — a different wire-attach method, not a drop-in for a built harness");
 
+    if (timebase_unverified) demote();
     if (timebase_supply_fail)
         notes.push_back("supply range does not cover the original's: the original runs from " +
                         supply_range(original) + ", the substitute from " + supply_range(cand) +
@@ -2900,7 +2964,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                              footprint_unverified || power_basis_unverified ||
                                  ripple_basis_unverified ||
                                  topology_unverified ||
-                                 mount_unverified || temp_unverified,
+                                 mount_unverified || temp_unverified || timebase_unverified,
                              missing_required_data, hfit);
 
     // Direction: on the directional parameters we could actually compare, did

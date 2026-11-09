@@ -1237,6 +1237,7 @@ std::optional<TimingRow> extract_timing(const json& env) {
         r.technology = get_str(*elec, "technology").value_or("");
         r.output_type = get_str(*elec, "outputType").value_or("");
         r.mode = get_str(*elec, "mode").value_or("");
+        r.enable_function = get_str(*elec, "enableFunction").value_or("");
     }
     // Read straight from the object, not through set_if_pos: a cold limit is negative.
     if (const json* th = obj_get(*di, "thermal")) {

@@ -255,7 +255,8 @@ inline const FieldTable<TimingRow>& fields<TimingRow>() {
         {{"device_type", &TimingRow::device_type},
          {"technology", &TimingRow::technology},
          {"output_type", &TimingRow::output_type},
-         {"mode", &TimingRow::mode}},
+         {"mode", &TimingRow::mode},
+         {"enable_function", &TimingRow::enable_function}},
         {{"is_production", &TimingRow::is_production}},
         {}};
     return t;
