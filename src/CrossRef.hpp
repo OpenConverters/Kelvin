@@ -1104,8 +1104,13 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // 2026-11-09, seed 20365838). Rule — compare like with like, the treatment the resistor
     // power basis gets (power_at_rating_temperature):
     //   * both records state the frequency and it is the same -> compared as stated;
-    //   * both state it and it DIFFERS (any difference: 100 Hz vs 120 Hz is a different
-    //     basis too) -> UNVERIFIED, with a note giving both values and both frequencies;
+    //   * both state it and it DIFFERS -> UNVERIFIED, with a note giving both values and both
+    //     frequencies — with ONE exception, the owner's rule (2026-11-09): 100 Hz and 120 Hz
+    //     are the same basis, the low-frequency ripple rating quoted at twice the 50 Hz or the
+    //     60 Hz mains frequency (the region a datasheet names, not a property of the part), so
+    //     a 100 Hz and a 120 Hz rating are compared directly. Rubycon VXH 1.63 A @ 120 Hz
+    //     against Vishay 1.75 A @ 100 Hz was left unverified (Qarlos round 4). Every other
+    //     difference, however small, stays UNVERIFIED;
     //   * the original states it, the substitute does not -> UNVERIFIED, noted;
     //   * the original states none -> compared as stated, exactly as before (no basis exists
     //     for any candidate, so none is skewed against another).
@@ -1121,7 +1126,13 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                    s_f = num(cand, "ripple_current_frequency");
         if (o_ir && s_ir && o_f) {
             char buf[256];
-            if (s_f && std::fabs(*o_f - *s_f) > 1e-9 * std::max(*o_f, *s_f)) {
+            auto same_f = [](double a, double b) {
+                return std::fabs(a - b) <= 1e-9 * std::max(a, b);
+            };
+            auto mains_ripple_basis = [&](double f) { return same_f(f, 100.0) || same_f(f, 120.0); };
+            const bool same_basis =
+                s_f && (same_f(*o_f, *s_f) || (mains_ripple_basis(*o_f) && mains_ripple_basis(*s_f)));
+            if (s_f && !same_basis) {
                 ripple_basis_unverified = true;
                 std::snprintf(buf, sizeof buf,
                               "ripple current quoted at different frequencies (original %g A at "
@@ -1525,6 +1536,25 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             }
         }
         if (temp_unverified) demote();
+    }
+    // A magnetic's SRF short of the original's (srf spec, CrossRefParams.hpp): name both
+    // frequencies, so the engineer can set the gap against the circuit's working frequency.
+    if (cat == "magnetic") {
+        for (const auto& p : params) {
+            if (p.value("name", "") != "srf") continue;
+            const std::string v = p.value("verdict", "");
+            const auto o_srf = num(original, "srf"), s_srf = num(cand, "srf");
+            if ((v == WARN || v == FAIL) && o_srf && s_srf) {
+                char b[200];
+                std::snprintf(b, sizeof b,
+                              "self-resonant frequency %g MHz vs the original's %g MHz (%.3gx "
+                              "lower)",
+                              *s_srf / 1e6, *o_srf / 1e6, *o_srf / *s_srf);
+                notes.push_back(std::string(b) +
+                                " — it stops behaving as the same inductor at a lower "
+                                "frequency; verify against the circuit's working frequency");
+            }
+        }
     }
 
     // Say WHAT changed about the mating interface, not just that something did. The
@@ -2099,7 +2129,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             }
             notes.push_back("mount type incompatible: " + mount_src(o_mt, o_pkg) + " -> " +
                             mount_src(s_mt, s_pkg));
-            return reject("mount type incompatible (SMD vs leaded)");
+            return reject("mount type incompatible (a different board-mount process)");
         }
         const std::string o_cls = mount_class(o_mt, o_pkg), s_cls = mount_class(s_mt, s_pkg);
         // A connector's board attach is one of its identity rows in the verdict table, so a
@@ -2587,14 +2617,40 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // X7R -> X5R keeps the code "shape" but drops the upper temperature 125 ->
     // 85 degC; X7R -> X7S keeps the temperature and widens tolerance 15 -> 22%.
     // Both are real regressions that comparing code strings cannot articulate.
+    // A regression here is a regression on the dielectric axis, so it counts against the
+    // direction exactly as a WARN/FAIL on a numeric axis does (ABT #2039): a C0G original
+    // with an N750 substitute came back an 'upgrade' on its higher voltage (seed 21517857).
+    bool dielectric_unverified = false;
     if (cat == "capacitor") {
         const std::string reg = dielectric_regression(str(original, "dielectric_code"),
                                                       str(cand, "dielectric_code"));
         if (!reg.empty()) {
             params.push_back({{"name", "dielectric_envelope"}, {"verdict", FAIL}});
+            ++worse;
             demote();
             penalty += opt.gate_weight * kVerdictFailPenalty;
             notes.push_back(reg);
+        } else {
+            // Two DIFFERENT stated codes whose equivalence nothing above could decide (an
+            // undecodable code such as SL, BX or a vendor's own, or two class-1 codes of one
+            // coefficient where one states no tolerance): never silent, never a drop-in. The
+            // dielectric_code verdict is UNVERIFIED; say so and cap the grade like any
+            // unverified fit (Qarlos 2026-11-09: a C0G original's dielectric axis must not be
+            // passed over without a word).
+            const std::string ok = dielectric_key(str(original, "dielectric_code")),
+                              sk = dielectric_key(str(cand, "dielectric_code"));
+            bool unverified = false;
+            for (const auto& p : params)
+                if (p.value("name", "") == "dielectric_code" &&
+                    p.value("verdict", "") == std::string(UNVERIFIED))
+                    unverified = true;
+            if (!ok.empty() && !sk.empty() && ok != sk && unverified) {
+                dielectric_unverified = true;
+                demote();
+                notes.push_back("dielectric codes differ (" + ok + " -> " + sk +
+                                ") and their temperature characteristics could not be compared "
+                                "— confirm the substitute's dielectric from its datasheet");
+            }
         }
     }
 
@@ -2964,7 +3020,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                              footprint_unverified || power_basis_unverified ||
                                  ripple_basis_unverified ||
                                  topology_unverified ||
-                                 mount_unverified || temp_unverified || timebase_unverified,
+                                 mount_unverified || temp_unverified || timebase_unverified ||
+                                 dielectric_unverified,
                              missing_required_data, hfit);
 
     // Direction: on the directional parameters we could actually compare, did

@@ -33,14 +33,18 @@ export const XREF = [
     // CURVE. Ranking it against the inductor config would ask for a primary
     // value that does not exist, so the family adapts to the chosen original.
     variantFor: (orig) => (orig?.device_type === 'chipBead' ? BEAD_VARIANT : null),
-    // saturation_points carries the inductance-drop criterion the Isat is quoted at, when the
-    // record states one: 10 % / 20 % / 30 % ratings are different numbers, and the ranker
-    // compares them only at a common criterion (ABT #2042). Absent basis -> no points, and
-    // the scalar is compared as a basis-unknown legacy value.
+    // saturation_points is the record's WHOLE saturation table (v20 row field, built by the
+    // engine's browse as [{current, percent_drop, temperature}], null criterion = not stated):
+    // 10 % / 20 % / 30 % ratings are different numbers, the ranker compares them only at a
+    // common criterion (ABT #2042), and an unknown-criterion Isat is held against the other
+    // side's 10-30 % span — which needs every point, not the one nearest 20 % (Qarlos
+    // 2026-11-08, BWVS00606045150T00 vs MSS6132T-123MLC). No table -> null, and the scalar is
+    // compared as a basis-unknown value.
+    // srf: the self-resonant frequency, compared like the bead's (Qarlos 2026-11-09).
     spec: (r) => ({ ...base(r), value_si: nz(r.inductance), saturation_current: nz(r.saturation_current),
-      saturation_points: nz(r.saturation_current) != null && r.saturation_percent_drop != null
-        ? [{ percent_drop: r.saturation_percent_drop, current: r.saturation_current }] : null,
-      rated_current: nz(r.rated_current), dcr: nz(r.dcr),
+      saturation_points: Array.isArray(r.saturation_points) && r.saturation_points.length
+        ? r.saturation_points : null,
+      rated_current: nz(r.rated_current), dcr: nz(r.dcr), srf: nz(r.srf),
       // v20 (Qarlos 2026-11-09): the operating range, which the substitute must cover at both
       // ends. Raw, NOT through nz(): a cold limit is negative and 0 degC is a real rating.
       // Absent -> null -> UNVERIFIED in the ranker.
@@ -50,6 +54,7 @@ export const XREF = [
       { key: 'saturation_current', label: 'Isat', row: 'saturation_current', unit: 'A' },
       { key: 'rated_current', label: 'I rated', row: 'rated_current', unit: 'A' },
       { key: 'dcr', label: 'DCR', row: 'dcr', unit: 'Ω' },
+      { key: 'srf', label: 'SRF', row: 'srf', unit: 'Hz' },
       { key: 'temp_max_C', label: 'T max', row: 'temp_max_c', unit: '°C' },
     ],
   },

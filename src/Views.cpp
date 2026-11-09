@@ -207,7 +207,25 @@ void fill_dimensions(RowBase& r, const json& di, const json& part, bool lies_fla
                 if (mount == "smd") {
                     if (!present(r.height_m)) r.height_m = *thk;
                 } else if (mount == "leaded") {
-                    if (!present(r.width_m)) r.width_m = *thk;
+                    if (!present(r.width_m)) {
+                        r.width_m = *thk;
+                    } else if (present(r.length_m) && !present(r.height_m)) {
+                        // A leaded box drawn L x W x T with no H (TDK FA/FG/FK radial
+                        // MLCCs: 4,620 records; KEMET 28, Murata 12, survey 2026-11-09).
+                        // T is still the body depth, a footprint axis (the rule above);
+                        // L and W then span the face the leads leave from, so one of
+                        // them is the height. Dropping T kept that FACE as the
+                        // footprint: FG26C0G2A223JNT06 (L 5.5, W 6.0, T 3.5 mm) reached
+                        // the ranker as a 5.5 x 6.0 mm land with no height, while its
+                        // L x T x H candidates were boxed on their real land (Qarlos
+                        // 2026-11-09, seed 21936773). DECISION for the owner to confirm:
+                        // W is the across-the-leads width and L the length along the
+                        // leads (the height above the seating plane), TDK's radial
+                        // drawing convention, so the land is W x T and the height L.
+                        r.height_m = r.length_m;
+                        r.length_m = r.width_m;
+                        r.width_m = *thk;
+                    }
                 }
             }
         }
@@ -556,7 +574,24 @@ std::optional<CapacitorRow> extract_capacitor(const json& env) {
     CapacitorRow r;
     r.mpn = *mpn;
     r.manufacturer = *manuf;
-    fill_dimensions(r, *di, *part);
+    // An AXIAL body lies on the board with its axis parallel to it: CAS states its body as
+    // dimensions.length (the axis, lead exit to lead exit) and dimensions.diameter, so the
+    // diameter is its width and its height and the length stays the length — the resistor rule
+    // (ABT #2032). Read as an upright can, A50IQ4150AA60K (28 mm long, 10 mm diameter) became
+    // a 10 x 10 mm footprint standing 28 mm tall and C114K222K1X5CA lost its 4.06 mm length
+    // (Qarlos 2026-11-09, seeds 21413128 / 21622586). CAS has no axial flag; the record says
+    // it in mechanical.shape.shapeType ("Axial", "Axial Leaded", "Axial Hermetic", "Axial
+    // Cylindrical", "Axial-lead", ...), so a shapeType naming "axial" is the evidence. Any
+    // other shape keeps the upright-can fold.
+    bool axial = false;
+    if (const json* mech = obj_get(*di, "mechanical"))
+        if (const json* shape = obj_get(*mech, "shape"))
+            if (auto st = get_str(*shape, "shapeType")) {
+                std::string l = *st;
+                for (auto& c : l) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                axial = l.find("axial") != std::string::npos;
+            }
+    fill_dimensions(r, *di, *part, /*lies_flat=*/axial);
     r.capacitance = *cap_nom;
     if (pos(v_rated)) r.v_rated = *v_rated;
     if (pos(v_rated_ac)) r.v_rated_ac = *v_rated_ac;
@@ -984,6 +1019,38 @@ double magnetic_saturation_current(const json& elec, double& percent_drop) {
     }
     return kNaN();
 }
+
+// The record's whole saturation table (MagneticRow.sat_table_*, v20): every saturationCurrents
+// entry with a positive current, in record order, carrying its criterion and its temperature
+// when stated (NaN otherwise); then the saturationCurrentPeak scalar as a criterion-unknown
+// point when no entry states that same current (MAS: the scalar is the datasheet's single
+// unqualified Isat). Nothing is interpolated, merged or dropped for being "redundant": the
+// ranker decides what is comparable.
+void magnetic_saturation_table(const json& elec, MagneticRow& r) {
+    const json* tbl = obj_get(elec, "saturationCurrents");
+    if (tbl && tbl->is_array())
+        for (const auto& p : *tbl) {
+            if (!p.is_object()) continue;
+            auto cur = get_num(p, "current");
+            if (!cur || !(*cur > 0)) continue;
+            auto pd = get_num(p, "percentInductanceDrop");
+            auto t = get_num(p, "temperature");
+            r.sat_table_current.push_back(*cur);
+            r.sat_table_percent_drop.push_back(pd && *pd >= 0 ? *pd : kNaN());
+            r.sat_table_temperature.push_back(t ? *t : kNaN());
+        }
+    auto peak = get_num(elec, "saturationCurrentPeak");
+    if (peak && *peak > 0) {
+        bool listed = false;
+        for (double c : r.sat_table_current)
+            if (std::fabs(c - *peak) <= 1e-9 * *peak) listed = true;
+        if (!listed) {
+            r.sat_table_current.push_back(*peak);
+            r.sat_table_percent_drop.push_back(kNaN());
+            r.sat_table_temperature.push_back(kNaN());
+        }
+    }
+}
 }  // namespace
 
 std::optional<MagneticRow> extract_magnetic(const json& env) {
@@ -1016,6 +1083,7 @@ std::optional<MagneticRow> extract_magnetic(const json& env) {
         auto L = resolve_field(elec, "inductance");
         if (L && *L > 0) r.inductance = *L;
         r.saturation_current = magnetic_saturation_current(elec, r.saturation_percent_drop);
+        magnetic_saturation_table(elec, r);
         const json* rc = obj_get(elec, "ratedCurrents");
         if (rc && rc->is_array()) {
             double best = kNaN();

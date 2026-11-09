@@ -112,6 +112,9 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // v20 carries a timing device's control-pin function (TimingRow.enable_function, TDAS
 // electrical.enableFunction), which the cross-reference compares as pinout identity (Qarlos
 // 2026-11-09: an output-enable XO took standby parts as drop_in).
+// v20 carries a magnetic's whole saturation table (MagneticRow.sat_table_current /
+// sat_table_percent_drop / sat_table_temperature), not only the point nearest 20 %, so an
+// unknown-criterion Isat is held against the substitute's 10-30 % curve (Qarlos 2026-11-08).
 constexpr uint32_t kFormatVersion = 20;
 
 // Identity of the code that produces rows, so a cached shard can be recognised as
@@ -409,6 +412,9 @@ void row_io(Ar& ar, MagneticRow& r) {
     ar.str(r.family);
     ar.dbl(r.temp_min_c);  // v20
     ar.dbl(r.temp_max_c);  // v20
+    ar.dblvec(r.sat_table_current);       // v20
+    ar.dblvec(r.sat_table_percent_drop);  // v20
+    ar.dblvec(r.sat_table_temperature);   // v20
     ar.boolean(r.is_production);
 }
 

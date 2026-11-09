@@ -491,8 +491,9 @@ inline const std::vector<std::string>& smd_tokens() {
 inline const std::vector<std::string>& leaded_tokens() {
     static const std::vector<std::string> t{
         "DIP", "PDIP", "TO-220", "TO-247", "TO-218", "TO-3P", "TO-126", "TO-92",
-        "SIP", "RADIAL", "AXIAL", "THRU-HOLE", "THROUGH", "THT", "SNAP-IN",
-        "SCREW-TERMINAL"};
+        "SIP", "RADIAL", "AXIAL", "THRU-HOLE", "THROUGH", "THT", "SNAP-IN"};
+    // "SCREW-TERMINAL" is not here: a screw-terminal can is its own mount class ("screw",
+    // normalize_mount / mount_class), not a soldered leaded part.
     return t;
 }
 
@@ -536,11 +537,21 @@ inline std::string normalize_mount(const std::string& assembly_type) {
     // Chassis Mount): a snap-in can's pins go through plated holes and are wave-soldered, so it
     // is a through-hole board process — the same class leaded_tokens() already gives the
     // "SNAP-IN" package string. Unclassified, a stated Snap-In mount was reported as "not
-    // stated" (Qarlos 2026-11-09, 380LX151M450K022 / 475VXH330MEFCSN35X35). Screw Type and
-    // Chassis Mount stay unclassified, like "chassis": neither is a board process.
+    // stated" (Qarlos 2026-11-09, 380LX151M450K022 / 475VXH330MEFCSN35X35).
+    // "Screw Type" (CAS's enum value) is its own class, "screw": the part is fastened by
+    // screw terminals — bolted to bus bars or tagged leads, the can clamped — which is neither
+    // reflow on pads nor a soldered through-hole lead, so a screw-terminal part against a
+    // radial-leaded or SMT one is an ESTABLISHED mount mismatch, not an unknown. KEMET
+    // C315C300JDG5TA7303 (radial THT) was offered Vishay RA012020BB30036BF1 RF power tubes
+    // (Screw Type), and Nichicon LNY2W472MSEH (Screw Type) radial cans, with the mount left
+    // "not established" (Qarlos 2026-11-09, seeds 21098941 / 22146231). The CAS enum names
+    // it outright, so nothing is inferred. "Chassis Mount" stays unclassified, like "chassis".
     if (a == "tht" || a == "th" || a == "throughhole" || a == "through_hole" || a == "radial" ||
         a == "axial" || a == "snap-in" || a == "snapin" || a == "snap_in")
         return "leaded";
+    if (a == "screw type" || a == "screw-type" || a == "screw_type" || a == "screw" ||
+        a == "screw terminal" || a == "screw-terminal")
+        return "screw";
     if (a == "pressfit" || a == "press_fit" || a == "press-fit") return "pressfit";
     if (a == "skedd") return "skedd";
     if (a == "panel") return "panel";
@@ -558,6 +569,7 @@ inline std::string mount_class(const std::string& mount, const std::string& pack
     const std::string m = normalize_mount(mount);
     if (!m.empty()) return m;
     if (package.empty()) return "";
+    if (dims_detail::upper(package).find("SCREW") != std::string::npos) return "screw";
     const bool smd = is_smd(package), leaded = is_leaded(package);
     if (smd == leaded) return "";
     return smd ? "smd" : "leaded";
@@ -631,10 +643,57 @@ inline std::string canonical_diode_case(const std::string& s) {
     return n;
 }
 
-// The identity a case-kept gate compares: the alias-resolved form for diodes, the plain
-// normalised code everywhere else (an 'SMA' connector is an RF interface, not DO-214AC).
+// Chip-passive case identity with EXPLICITLY marked metric codes resolved to their imperial
+// equivalent (Qarlos 2026-11-09, seed 21936773: CDR37BR331AJUMAC "0402" against Murata
+// GRM155R71H331KA01 "1005M/0402" was called a different land pattern). The catalogue marks a
+// metric code with an "M" suffix, alone ("1005M") or beside its imperial name ("1005M/0402",
+// the Murata form: 0603M/0201 4,754 records, 1005M/0402 3,533, 1608M/0603 2,475, ...). Rule:
+//   - "<metric>M/<imperial>" (either order) -> the imperial half, which the record states
+//     outright; when the metric half is in the table below and maps to a DIFFERENT imperial
+//     code the string contradicts itself and is left as written (never silently resolved);
+//   - a lone "<metric>M" listed below -> its imperial equivalent;
+//   - anything else, including every UNMARKED 4-digit code, is the plain normalised code: a
+//     bare "0603" could be imperial 0603 or metric 0603 (imperial 0201), and which one it is
+//     is never guessed.
+// The table is the IEC 60062 / EIA-198 metric<->imperial chip-size pairs.
+inline std::string canonical_chip_case(const std::string& s) {
+    static const std::map<std::string, std::string> kMetricToImperial = {
+        {"0201", "008004"}, {"0402", "01005"}, {"0603", "0201"}, {"1005", "0402"},
+        {"1608", "0603"},   {"2012", "0805"},  {"3216", "1206"}, {"3225", "1210"},
+        {"4516", "1806"},   {"4520", "1808"},  {"4532", "1812"}, {"5025", "2010"},
+        {"5750", "2220"},   {"6332", "2512"},  {"2828", "1111"}, {"5728", "2211"},
+        {"3212", "1205"},   {"0510", "0204"}};
+    static const std::regex pair_mi(R"(^\s*(\d{4,5})M\s*/\s*(\d{4,6})\s*$)",
+                                    std::regex::icase);
+    static const std::regex pair_im(R"(^\s*(\d{4,6})\s*/\s*(\d{4,5})M\s*$)",
+                                    std::regex::icase);
+    static const std::regex lone_m(R"(^\s*(\d{4,5})M\s*$)", std::regex::icase);
+    std::smatch m;
+    std::string metric, imperial;
+    if (std::regex_match(s, m, pair_mi)) {
+        metric = m[1].str();
+        imperial = m[2].str();
+    } else if (std::regex_match(s, m, pair_im)) {
+        imperial = m[1].str();
+        metric = m[2].str();
+    } else if (std::regex_match(s, m, lone_m)) {
+        auto it = kMetricToImperial.find(m[1].str());
+        return it != kMetricToImperial.end() ? it->second : normalize_case_code(s);
+    } else {
+        return normalize_case_code(s);
+    }
+    auto it = kMetricToImperial.find(metric);
+    if (it != kMetricToImperial.end() && it->second != imperial) return normalize_case_code(s);
+    return imperial;
+}
+
+// The identity a case-kept gate compares: the alias-resolved form for diodes, the metric-
+// resolved chip code for chip passives (capacitors, resistors), the plain normalised code
+// everywhere else (an 'SMA' connector is an RF interface, not DO-214AC).
 inline std::string case_identity(const std::string& category, const std::string& s) {
-    return category == "diode" ? canonical_diode_case(s) : normalize_case_code(s);
+    if (category == "diode") return canonical_diode_case(s);
+    if (category == "capacitor" || category == "resistor") return canonical_chip_case(s);
+    return normalize_case_code(s);
 }
 
 // Wide-terminal ("reverse geometry", long-side termination) chip codes: the EIA imperial
