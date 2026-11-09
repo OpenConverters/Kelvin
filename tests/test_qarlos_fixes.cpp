@@ -9,6 +9,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 
+#include "Browse.hpp"
 #include "CrossRef.hpp"
 #include "Select.hpp"
 #include "Views.hpp"
@@ -2081,7 +2082,10 @@ TEST_CASE("qarlos 2026-11-09: a stated Snap-In mount is classified and never 'no
           "[qarlos][crossref][dims]") {
     using kelvin::crossref::normalize_mount;
     CHECK(normalize_mount("Snap-In") == "leaded");
-    CHECK(normalize_mount("Screw Type").empty());
+    // Screw Type is classified since the round-5..7 fix (its own class, "screw"; see the
+    // screw-terminal test below). Chassis Mount is the CAS value that stays unclassified.
+    CHECK(normalize_mount("Screw Type") == "screw");
+    CHECK(normalize_mount("Chassis Mount").empty());
     json orig = {{"mpn", "380LX151M450K022"}, {"value_si", 150e-6}, {"voltage", 450.0},
                  {"technology", "aluminum-electrolytic-wet"}, {"mount", "Snap-In"}};
     json tht = {{"mpn", "THT_CAN"}, {"value_si", 150e-6}, {"voltage", 450.0},
@@ -2112,11 +2116,18 @@ TEST_CASE("qarlos 2026-11-09: a stated Snap-In mount is classified and never 'no
         }
     }
     CHECK(seen == 3);
-    // a stated mount Kelvin cannot classify is quoted, not called absent
+    // A stated mount Kelvin cannot classify is quoted, not called absent. This used "Screw
+    // Type", which is now classified (a screw-terminal original against a THT can is an
+    // established mismatch, asserted here); the unclassifiable case is CAS "Chassis Mount".
     json screw = orig;
     screw["mount"] = "Screw Type";
     auto r2 = kelvin::crossref::cross_reference("capacitor", screw, json::array({tht}));
-    CHECK(has_note(r2["candidates"][0], "original: \"Screw Type\""));
+    CHECK(r2["candidates"][0]["status"] == "no_substitute");
+    CHECK(has_note(r2["candidates"][0], "mount type incompatible: Screw Type -> THT"));
+    json chassis = orig;
+    chassis["mount"] = "Chassis Mount";
+    auto r3 = kelvin::crossref::cross_reference("capacitor", chassis, json::array({tht}));
+    CHECK(has_note(r3["candidates"][0], "original: \"Chassis Mount\""));
 }
 
 // F339MX252231KIM2T0 states part.safetyClass x2 at 310 VAC and no series name, so the
@@ -2249,3 +2260,273 @@ TEST_CASE("qarlos 2026-11-09: a magnetic's operating range is extracted and must
         "magnetic", orig, json::array({ind("ONE_SHORT", -55.0, 199.0)}), opt);
     CHECK(verdict_of(r2["candidates"][0], "temp_max_C") == "fail");
 }
+
+
+// ── Qarlos rounds 5-7 (2026-11-09), magnetic + capacitor ─────────────────────
+namespace {
+json mag_env(const char* mfr, const char* mpn, json elec) {
+    return json{{"magnetic", {{"manufacturerInfo", {{"name", mfr}, {"reference", mpn},
+        {"datasheetInfo", {{"electrical", json::array({elec})}}}}}}}};
+}
+json cap_env(const char* mfr, const char* mpn, json part, json mech, json elec) {
+    part["partNumber"] = mpn;
+    return json{{"capacitor", {{"manufacturerInfo", {{"name", mfr}, {"reference", mpn},
+        {"datasheetInfo", {{"part", part}, {"mechanical", mech}, {"electrical", elec}}}}}}}};
+}
+// The magnetic spec block exactly as web/src/crossref.js builds it from the browse row.
+json mag_spec(const kelvin::MagneticRow& r) {
+    json row;
+    kelvin::browse::extra_row_json(r, row);
+    auto nz = [](double v) { return std::isnan(v) || !(v > 0) ? json(nullptr) : json(v); };
+    return json{{"mpn", r.mpn}, {"value_si", nz(r.inductance)},
+                {"saturation_current", nz(r.saturation_current)},
+                {"saturation_points", row["saturation_points"]},
+                {"rated_current", nz(r.rated_current)}, {"dcr", nz(r.dcr)}, {"srf", nz(r.srf)}};
+}
+}  // namespace
+
+// Owner decision A: the v20 row carries the whole saturationCurrents table, and the real pair
+// BWVS00606045150T00 (Pulse, 3.06 A, no criterion) vs MSS6132T-123MLC (Coilcraft 1.3 / 1.5 /
+// 1.7 A at 10 / 20 / 30 %, TAS record values) is decided by isat::compare as a reject.
+TEST_CASE("qarlos r5-7: the magnetic row carries the whole Isat table; the real pair rejects",
+          "[qarlos][views][crossref][isat]") {
+    auto mss = kelvin::extract_magnetic(mag_env("Coilcraft", "MSS6132T-123MLC",
+        {{"subtype", "inductor"}, {"inductance", {{"nominal", 1.2e-05}}},
+         {"dcResistance", {{"nominal", 0.079}}},
+         {"saturationCurrents", json::array({{{"percentInductanceDrop", 10.0}, {"current", 1.3}},
+                                             {{"percentInductanceDrop", 20.0}, {"current", 1.5}},
+                                             {{"percentInductanceDrop", 30.0}, {"current", 1.7}}})}}));
+    auto bwvs = kelvin::extract_magnetic(mag_env("Pulse Electronics", "BWVS00606045150T00",
+        {{"subtype", "inductor"},
+         {"inductance", {{"nominal", 1.5e-05}, {"minimum", 1.05e-05}, {"maximum", 1.95e-05}}},
+         {"dcResistance", {{"nominal", 0.08}}}, {"ratedCurrents", {1.98}},
+         {"saturationCurrentPeak", 3.06}}));
+    REQUIRE(mss.has_value());
+    REQUIRE(bwvs.has_value());
+    REQUIRE(mss->sat_table_current.size() == 3);
+    CHECK(mss->sat_table_current[2] == 1.7);
+    CHECK(mss->sat_table_percent_drop[2] == 30.0);
+    CHECK(std::isnan(mss->sat_table_temperature[0]));
+    REQUIRE(bwvs->sat_table_current.size() == 1);  // the unqualified scalar, criterion unknown
+    CHECK(std::isnan(bwvs->sat_table_percent_drop[0]));
+
+    const json o = mag_spec(*bwvs), c = mag_spec(*mss);
+    CHECK(c["saturation_points"].size() == 3);
+    kelvin::crossref::Options opt;
+    opt.check_footprint = false;
+    auto r = kelvin::crossref::cross_reference("magnetic", o, json::array({c}), opt);
+    CHECK(verdict_of(r["candidates"][0], "saturation_current") == "fail");
+    CHECK(r["candidates"][0]["status"] == "no_substitute");
+}
+
+// Finding r5.3 (seed 21098941): AIML-0402HP-R20K-T (SRF 200 MHz) graded drop_in for TDK
+// MHQ1005PR20GTD25 (SRF 900 MHz): the magnetic table had no SRF entry and crossref.js passed none.
+TEST_CASE("qarlos r5-7: a magnetic SRF well below the original's fails",
+          "[qarlos][views][crossref]") {
+    auto mhq = kelvin::extract_magnetic(mag_env("TDK", "MHQ1005PR20GTD25",
+        {{"subtype", "inductor"},
+         {"inductance", {{"nominal", 2e-07}, {"minimum", 1.96e-07}, {"maximum", 2.04e-07}}},
+         {"dcResistance", {{"maximum", 6.2}, {"nominal", 5.06}}},
+         {"selfResonantFrequency", 900000000.0}, {"ratedCurrents", {0.08}}}));
+    auto aiml = kelvin::extract_magnetic(mag_env("Abracon", "AIML-0402HP-R20K-T",
+        {{"subtype", "inductor"}, {"inductance", {{"nominal", 2e-07}}},
+         {"dcResistance", {{"maximum", 0.58}}}, {"ratedCurrents", {0.4}},
+         {"saturationCurrentPeak", 0.48}, {"selfResonantFrequency", 200000000.0}}));
+    REQUIRE(mhq.has_value());
+    REQUIRE(aiml.has_value());
+    kelvin::crossref::Options opt;
+    opt.check_footprint = false;
+    auto r = kelvin::crossref::cross_reference("magnetic", mag_spec(*mhq),
+                                               json::array({mag_spec(*aiml)}), opt);
+    const json& c = r["candidates"][0];
+    CHECK(verdict_of(c, "srf") == "fail");
+    CHECK(c["grade"] != "drop_in");
+    CHECK(c["direction"] != "upgrade");
+    CHECK(has_note(c, "self-resonant frequency 200 MHz vs the original's 900 MHz"));
+    // inside the 0.8x band warns; at or above the original passes
+    json near = mag_spec(*aiml);
+    near["srf"] = 8.0e8;
+    auto rn = kelvin::crossref::cross_reference("magnetic", mag_spec(*mhq), json::array({near}), opt);
+    CHECK(verdict_of(rn["candidates"][0], "srf") == "warn");
+    near["srf"] = 1.0e9;
+    auto rp = kelvin::crossref::cross_reference("magnetic", mag_spec(*mhq), json::array({near}), opt);
+    CHECK(verdict_of(rp["candidates"][0], "srf") == "pass");
+}
+
+// Owner decision B: 100 Hz and 120 Hz ripple ratings are one basis. Rubycon
+// 475VXH330MEFCSN35X35 (1.63 A @ 120 Hz) vs Vishay MAL226939331E3 (1.75 A @ 100 Hz), TAS values.
+TEST_CASE("qarlos r5-7: a 100 Hz and a 120 Hz ripple rating are compared directly",
+          "[qarlos][crossref]") {
+    auto cap = [](const char* mpn, double v, double ir, double f) {
+        return json{{"mpn", mpn}, {"value_si", 3.3e-4}, {"voltage", v},
+                    {"technology", "aluminum-electrolytic-wet"}, {"ripple_current", ir},
+                    {"ripple_current_frequency", f}};
+    };
+    kelvin::crossref::Options opt;
+    opt.check_footprint = false;
+    auto r = kelvin::crossref::cross_reference(
+        "capacitor", cap("475VXH330MEFCSN35X35", 475.0, 1.63, 120.0),
+        json::array({cap("MAL226939331E3", 500.0, 1.75, 100.0)}), opt);
+    const json& c = r["candidates"][0];
+    CHECK(verdict_of(c, "ripple_current") == "pass");
+    CHECK_FALSE(has_note(c, "different frequencies"));
+    // reversed: a 120 Hz substitute below a 100 Hz original is a real shortfall
+    auto r2 = kelvin::crossref::cross_reference(
+        "capacitor", cap("MAL226939331E3", 500.0, 1.75, 100.0),
+        json::array({cap("LOW", 500.0, 1.2, 120.0)}), opt);
+    CHECK(verdict_of(r2["candidates"][0], "ripple_current") == "fail");
+    // every other difference stays unverified
+    auto r3 = kelvin::crossref::cross_reference(
+        "capacitor", cap("475VXH330MEFCSN35X35", 475.0, 1.63, 120.0),
+        json::array({cap("KHZ", 500.0, 1.75, 1000.0)}), opt);
+    CHECK(verdict_of(r3["candidates"][0], "ripple_current") == "unverified");
+}
+
+// Findings r6.1 / r6.3: an axial body's length is its length and its diameter its width and
+// height (A50IQ4150AA60K, C114K222K1X5CA; TAS values).
+TEST_CASE("qarlos r5-7: an axial capacitor lies flat", "[qarlos][views]") {
+    auto a50 = kelvin::extract_capacitor(cap_env("KEMET", "A50IQ4150AA60K",
+        {{"technology", "film-polypropylene"}},
+        {{"shape", {{"assembly", "THT"}, {"shapeType", "Axial"}}},
+         {"dimensions", {{"length", {{"nominal", 0.028}}}, {"diameter", {{"nominal", 0.01}}}}}},
+        {{"capacitance", {{"nominal", 1.5e-06}}}, {"ratedVoltage", 250.0}}));
+    REQUIRE(a50.has_value());
+    CHECK(a50->length_m == Approx(0.028));
+    CHECK(a50->width_m == Approx(0.01));
+    CHECK(a50->height_m == Approx(0.01));
+    auto c114 = kelvin::extract_capacitor(cap_env("KEMET", "C114K222K1X5CA",
+        {{"technology", "ceramic-class-2"}},
+        {{"shape", {{"assembly", "THT"}, {"shapeType", "Axial"}}},
+         {"dimensions", {{"length", {{"nominal", 0.00406}}}, {"diameter", {{"nominal", 0.00229}}}}}},
+        {{"capacitance", {{"nominal", 2.2e-09}}}, {"ratedVoltage", 100.0}}));
+    REQUIRE(c114.has_value());
+    CHECK(c114->length_m == Approx(0.00406));
+    CHECK(c114->height_m == Approx(0.00229));
+    // an upright radial can keeps the can fold (diameter x diameter, standing its length)
+    auto can = kelvin::extract_capacitor(cap_env("Rubycon", "475VXH330MEFCSN35X35",
+        {{"technology", "aluminum-electrolytic-wet"}},
+        {{"shape", {{"assembly", "Snap-In"}, {"shapeType", "Radial Cylindrical"}}},
+         {"dimensions", {{"length", {{"nominal", 0.04}}}, {"diameter", {{"nominal", 0.035}}}}}},
+        {{"capacitance", {{"nominal", 3.3e-4}}}, {"ratedVoltage", 475.0}}));
+    REQUIRE(can.has_value());
+    CHECK(can->height_m == Approx(0.04));
+    CHECK(can->length_m == Approx(0.035));
+}
+
+// Finding r6.2 (seed 21517857): KEMET C322C270JAG5TA (C0G) took Vishay WKO330KCPQE0KR (N750)
+// as a minor_review upgrade with the dielectric verdict 'unverified'.
+TEST_CASE("qarlos r5-7: a different class-1 temperature coefficient fails",
+          "[qarlos][crossref]") {
+    auto cap = [](const char* mpn, const char* code, double v) {
+        return json{{"mpn", mpn}, {"value_si", 2.7e-11}, {"voltage", v},
+                    {"technology", "ceramic-class-1"}, {"dielectric_code", code}};
+    };
+    kelvin::crossref::Options opt;
+    opt.check_footprint = false;
+    auto run = [&](const char* o, const char* s) {
+        return kelvin::crossref::cross_reference("capacitor", cap("ORIG", o, 250.0),
+                                                 json::array({cap("SUB", s, 440.0)}), opt)
+            ["candidates"][0];
+    };
+    {
+        json c = run("C0G", "N750");
+        CHECK(verdict_of(c, "dielectric_code") == "fail");
+        CHECK(c["grade"] == "major_review");
+        CHECK(c["direction"] != "upgrade");
+        CHECK(has_note(c, "class-1 temperature coefficient differs: N750 (-750 ppm/K) for C0G"));
+    }
+    CHECK(verdict_of(run("C0G", "P100"), "dielectric_code") == "fail");
+    CHECK(verdict_of(run("C0G", "U2J"), "dielectric_code") == "fail");
+    CHECK(verdict_of(run("C0G", "C0H"), "dielectric_code") == "fail");  // wider tolerance
+    CHECK(verdict_of(run("C0G", "NP0"), "dielectric_code") == "pass");
+    CHECK(verdict_of(run("C0G", "BP"), "dielectric_code") == "pass");   // MIL 0 +/-30
+    CHECK(verdict_of(run("C0H", "C0G"), "dielectric_code") == "pass");  // tighter
+    CHECK(verdict_of(run("X7R", "Y5V"), "dielectric_code") == "fail");
+    // same coefficient, a tolerance one code does not state: undecided, noted and capped
+    {
+        json c = run("U2J", "N750");
+        CHECK(verdict_of(c, "dielectric_code") == "unverified");
+        CHECK(c["grade"] == "minor_review");
+        CHECK(has_note(c, "dielectric codes differ (U2J -> N750)"));
+    }
+    // an undecodable code against a stated one is never silent
+    CHECK(has_note(run("C0G", "SL"), "dielectric codes differ (C0G -> SL)"));
+}
+
+// Finding r7.1 (seed 21936773): CDR37BR331AJUMAC "0402" against Murata "1005M/0402" was a
+// "different package/case".
+TEST_CASE("qarlos r5-7: an explicitly metric chip code is its imperial equivalent",
+          "[qarlos][crossref][dims]") {
+    using kelvin::crossref::case_identity;
+    CHECK(case_identity("capacitor", "1005M/0402") == case_identity("capacitor", "0402"));
+    CHECK(case_identity("capacitor", "1005M") == "0402");
+    CHECK(case_identity("capacitor", "0603M/0201") == "0201");
+    CHECK(case_identity("resistor", "1608M/0603") == "0603");
+    CHECK(case_identity("capacitor", "1005") != "0402");             // unmarked: never guessed
+    CHECK(case_identity("capacitor", "0603") == "0603");             // bare 0603 stays itself
+    CHECK(case_identity("capacitor", "1005M/0603") == "1005M0603");  // contradicts itself
+    auto cap = [](const char* mpn, const char* cs, double l, double w) {
+        return json{{"mpn", mpn}, {"value_si", 3.3e-10}, {"voltage", 50.0},
+                    {"technology", "ceramic-class-2"}, {"dielectric_code", "X7R"},
+                    {"case_code", cs}, {"mount", "SMT"}, {"length_m", l}, {"width_m", w}};
+    };
+    auto r = kelvin::crossref::cross_reference(
+        "capacitor", cap("CDR37BR331AJUMAC", "0402", 0.00102, 0.00051),
+        json::array({cap("GRM155R71H331KA01", "1005M/0402", 0.001, 0.0005)}));
+    const json& c = r["candidates"][0];
+    CHECK_FALSE(has_note(c, "different package/case"));
+    CHECK(c.value("footprint", "") != "different_case");
+}
+
+// Finding r7.1 (seed 21936773): FG26C0G2A223JNT06 states L 5.5, W 6.0, T 3.5 mm (THT disc);
+// T was dropped and the L x W face became the land, while L x T x H candidates were boxed on
+// their real land.
+TEST_CASE("qarlos r5-7: a leaded L x W x T box with no height keeps its thickness",
+          "[qarlos][views]") {
+    auto fg = kelvin::extract_capacitor(cap_env("TDK", "FG26C0G2A223JNT06",
+        {{"series", "FG"}, {"technology", "ceramic-class-1"}, {"case", ""}, {"dielectricCode", "C0G"}},
+        {{"dimensions", {{"length", {{"maximum", 0.0055}}}, {"pitch", {{"nominal", 0.005}}},
+                         {"thickness", {{"maximum", 0.0035}}}, {"width", {{"maximum", 0.006}}}}},
+         {"shape", {{"assembly", "THT"}, {"shapeType", "Disc"}}}},
+        {{"capacitance", {{"nominal", 2.2e-08}}}, {"ratedVoltage", 100.0}}));
+    REQUIRE(fg.has_value());
+    CHECK(fg->length_m == Approx(0.006));
+    CHECK(fg->width_m == Approx(0.0035));
+    CHECK(fg->height_m == Approx(0.0055));
+    // KEMET C322C270JAG5TA states L x T x H: unchanged (land L x T, height H)
+    auto c322 = kelvin::extract_capacitor(cap_env("KEMET", "C322C270JAG5TA",
+        {{"technology", "ceramic-class-1"}, {"case", "C322"}, {"dielectricCode", "C0G"}},
+        {{"shape", {{"assembly", "THT"}, {"shapeType", "Radial"}}},
+         {"dimensions", {{"length", {{"maximum", 0.00508}}}, {"thickness", {{"maximum", 0.00318}}},
+                         {"height", {{"maximum", 0.0066}}}, {"pitch", {{"nominal", 0.00508}}}}}},
+        {{"capacitance", {{"nominal", 2.7e-11}}}, {"ratedVoltage", 250.0}}));
+    REQUIRE(c322.has_value());
+    CHECK(c322->length_m == Approx(0.00508));
+    CHECK(c322->width_m == Approx(0.00318));
+    CHECK(c322->height_m == Approx(0.0066));
+}
+
+// Findings r5.3 / r7.3 (seeds 21098941 / 22146231): a Screw Type part (CAS shape.assembly)
+// against a radial-leaded one is an established mount mismatch, and the note names the stated
+// mount, never "not stated".
+TEST_CASE("qarlos r5-7: screw-terminal against radial-leaded is a mount mismatch",
+          "[qarlos][crossref][dims]") {
+    auto cap = [](const char* mpn, const char* mount) {
+        return json{{"mpn", mpn}, {"value_si", 3e-11}, {"voltage", 2000.0},
+                    {"technology", "ceramic-class-1"}, {"mount", mount}};
+    };
+    auto r = kelvin::crossref::cross_reference("capacitor", cap("C315C300JDG5TA7303", "THT"),
+                                               json::array({cap("RA012020BB30036BF1", "Screw Type")}));
+    const json& c = r["candidates"][0];
+    CHECK(c["status"] == "no_substitute");
+    CHECK(verdict_of(c, "mounting") == "fail");
+    CHECK(has_note(c, "mount type incompatible: THT -> Screw Type"));
+    CHECK_FALSE(has_note(c, "not stated"));
+    // LNY2W472MSEH (Screw Type) against a screw-terminal can: same class
+    auto r2 = kelvin::crossref::cross_reference("capacitor", cap("LNY2W472MSEH", "Screw Type"),
+                                                json::array({cap("SCREWCAN", "Screw Type")}));
+    CHECK(verdict_of(r2["candidates"][0], "mounting") != "fail");
+    // a record with no mount but a "Screw-Terminal" package string is a screw part, not leaded
+    CHECK(kelvin::crossref::mount_class("", "Screw-Terminal") == "screw");
+}
+

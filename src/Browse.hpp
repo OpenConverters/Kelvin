@@ -322,6 +322,24 @@ inline void extra_row_json(const ResistorRow& r, json& o) {
         o["derating_amplitude"] = r.derating_amplitude;
     }
 }
+// A magnetic's whole saturation table (v20) as the ranker's saturation_points shape:
+// [{current, percent_drop, temperature}], a criterion or temperature the record does not state
+// is null. null when the record states no Isat at all — never an empty table.
+inline void extra_row_json(const MagneticRow& r, json& o) {
+    if (r.sat_table_current.empty()) {
+        o["saturation_points"] = nullptr;
+        return;
+    }
+    json pts = json::array();
+    for (size_t i = 0; i < r.sat_table_current.size(); ++i) {
+        json p = {{"current", r.sat_table_current[i]}};
+        const double pd = r.sat_table_percent_drop.at(i), t = r.sat_table_temperature.at(i);
+        p["percent_drop"] = std::isnan(pd) ? json(nullptr) : json(pd);
+        p["temperature"] = std::isnan(t) ? json(nullptr) : json(t);
+        pts.push_back(std::move(p));
+    }
+    o["saturation_points"] = std::move(pts);
+}
 
 // ---- parsed query -----------------------------------------------------------------------------
 namespace detail {

@@ -331,6 +331,17 @@ struct MagneticRow : RowBase {
     // upgrade on a 0.5 A @10 % original (ABT #2042). The ranker compares only at a common
     // criterion.
     double saturation_percent_drop = kNaN();
+    // v20: the record's WHOLE saturation table, as three parallel arrays (one entry per stated
+    // point): current (A), the inductance-drop criterion it is quoted at (%, NaN = not stated)
+    // and the measurement temperature (degC, NaN = not stated). The saturationCurrents entries
+    // in record order, plus the saturationCurrentPeak scalar as a criterion-unknown point when
+    // no table entry states that same current. Empty when the record states no Isat at all.
+    // The scalar above kept only the point nearest 20 %, so a Coilcraft 1.3/1.5/1.7 A at
+    // 10/20/30 % curve reached the ranker as 1.5 A @ 20 % alone and its 30 % figure — the one
+    // that bounds an unknown-criterion original — was lost (Qarlos 2026-11-08, seed 20300704).
+    std::vector<double> sat_table_current;
+    std::vector<double> sat_table_percent_drop;
+    std::vector<double> sat_table_temperature;
     double rated_current = kNaN();        // A  — max(ratedCurrents[])
     double dcr = kNaN();                  // Ω  — dcResistance (worst-case / maximum), else dcResistances[0]
     double srf = kNaN();                  // Hz — selfResonantFrequency

@@ -16,6 +16,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "CrossRefClasses.hpp"  // dielectric code decoding
 #include "CrossRefScore.hpp"  // PASS/WARN/FAIL/UNVERIFIED
 
 namespace kelvin::crossref {
@@ -424,9 +425,33 @@ inline ParamOutcome compare_saturation_current(const ParamSpec& spec, const nloh
     return WARN;  // unreachable
 }
 
+// dielectric_code: when both codes DECODE, the verdict is the decoded comparison — the class-1
+// coefficient (class1_tc_regression) or the EIA RS-198 envelope (dielectric_regression), the
+// same rules that write the note in CrossRef.hpp, so the verdict and the note cannot disagree.
+// The substring rank map could not see N750 at all and left C0G -> N750 'unverified'
+// (Qarlos 2026-11-09, seed 21517857), and it passed X7R -> X7S on an equal rank while the
+// envelope note called it a regression. Undecodable codes keep the rank compare.
+inline ParamOutcome compare_dielectric_code(const ParamSpec& spec, const std::string& o_raw,
+                                            const std::string& s_raw) {
+    const std::string o = dielectric_key(o_raw), s = dielectric_key(s_raw);
+    if (!o.empty() && !s.empty()) {
+        if (class1_tc(o) && class1_tc(s)) {
+            const auto r = class1_tc_regression(o, s);
+            if (!r) return UNVERIFIED;
+            return r->empty() ? PASS : FAIL;
+        }
+        if (dielectric_envelope(o) && dielectric_envelope(s))
+            return dielectric_regression(o, s).empty() ? PASS : FAIL;
+    }
+    return compare_class(spec, o_raw, s_raw);
+}
+
 inline ParamOutcome compare_param(const ParamSpec& spec, const nlohmann::json& orig,
                                   const nlohmann::json& sub) {
     if (spec.key == "saturation_current") return compare_saturation_current(spec, orig, sub);
+    if (spec.key == "dielectric_code")
+        return compare_dielectric_code(spec, detail::jstr(orig, spec.key),
+                                       detail::jstr(sub, spec.key));
     if (spec.dir == Dir::ClassMatch)
         return compare_class(spec, detail::jstr(orig, spec.key), detail::jstr(sub, spec.key));
     if (spec.dir == Dir::ExactMatch) return compare_exact(spec, orig, sub);
@@ -504,6 +529,16 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
         // at minor_review when it is the original that states the end.
         {"temp_min_C", D::Lower, 0.0, 0.0, false, false, nullptr},
         {"temp_max_C", D::Higher, 0.0, 0.0, false, false, nullptr},
+        // Self-resonant frequency (Qarlos 2026-11-09, seed 21098941: AIML-0402HP-R20K-T, SRF
+        // 200 MHz, graded drop_in for a 900 MHz MHQ1005PR20GTD25 — the magnetic table had no
+        // SRF entry, so the 4.5x drop was never compared). Above its SRF the part is a
+        // capacitor, and well below it the inductance already departs from its nominal, so a
+        // substitute resonating well below the original is a downgrade at the working
+        // frequency. Band: the chip bead's existing SRF spec (below), the one SRF rule Kelvin
+        // already had — at or above the original's passes, down to 0.8x warns, below 0.8x
+        // FAILs (DECISION for the owner to confirm). A higher SRF is never a regression.
+        // One side unstated -> UNVERIFIED, uncapped: most power-inductor records state none.
+        {"srf", D::Higher, 0.8, std::nullopt, false, false, nullptr},
     };
     static const std::vector<ParamSpec> kChipBead = {
         // exclude_missing_sub: impedance IS what a bead is. A candidate with no

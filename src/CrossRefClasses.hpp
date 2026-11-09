@@ -15,6 +15,8 @@
 #pragma once
 #include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <cstdio>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -156,17 +158,138 @@ struct DielectricEnvelope {
     bool class1 = false;     // C0G/NP0: ppm-stable, no bias derating, no ageing
 };
 
-inline std::optional<DielectricEnvelope> dielectric_envelope(const std::string& code_raw) {
+inline std::string dielectric_key(const std::string& code_raw) {
     std::string c;
     for (char ch : code_raw)
         if (!std::isspace(static_cast<unsigned char>(ch)))
             c += static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+    return c;
+}
+
+// ── Class-1 temperature characteristic (EIA-198 / IEC 60384-8 / JIS C 5101) ──
+// A class-1 dielectric is specified by a linear temperature COEFFICIENT and its tolerance, in
+// ppm/K, and the coefficient is a design choice, not a quality grade: C0G (0 +/-30) is chosen
+// for stability, N750 / U2J (-750) or P100 (+100) to compensate a resonator's drift on
+// purpose. A substitute with another coefficient detunes the circuit either way, so two
+// class-1 codes are equivalent only when the coefficient is the same and the substitute's
+// tolerance is no wider. KEMET C322C270JAG5TA (C0G) took Vishay WKO330KCPQE0KR (N750) as a
+// minor_review upgrade, its dielectric verdict 'unverified' because nothing decoded N750
+// (Qarlos 2026-11-09, seed 21517857). Decoded spellings, all published code systems:
+//   - C0G / NP0 / NPO / COG and the MIL-PRF-55681 "BP": 0 +/-30 ppm/K;
+//   - X8G (Murata, TDK): 0 +/-30 ppm/K, rated to 150 degC;
+//   - EIA-198 three symbols <significant figure><multiplier><tolerance>: C0G, C0H, U2J, P2H,
+//     S3N, ... (significant C 0, B 0.3, L 0.8, A 0.9, M 1.0, P 1.5, R 2.2, S 3.3, T 4.7,
+//     V 5.6, U 7.5; multiplier 0..4 = -1/-10/-100/-1000/-10000, 5..9 = +1/+10/+100/+1000/
+//     +10000; tolerance G 30, H 60, J 120, K 250, L 500, M 1000, N 2500 ppm/K);
+//   - JIS two letters <coefficient><tolerance>: C 0, P -150, R -220, S -330, T -470,
+//     U -750 with G/H/J/K as above (CG, CH, UJ, ...);
+//   - the IEC "N750" / "P100" form: the coefficient only, tolerance not stated.
+// Anything else (SL, the MIL class-2 BX/BR, vendor codes such as R7 or R85) is NOT decoded —
+// it is never mapped to its nearest neighbour.
+struct Class1Tc {
+    double nominal_ppm = 0;
+    std::optional<double> tol_ppm;  // nullopt: the code states no tolerance
+    double temp_max_c = 125;
+};
+inline std::optional<Class1Tc> class1_tc(const std::string& code_raw) {
+    const std::string c = dielectric_key(code_raw);
+    if (c.empty()) return std::nullopt;
+    if (c == "C0G" || c == "NP0" || c == "NPO" || c == "COG" || c == "BP")
+        return Class1Tc{0.0, 30.0, 125};
+    if (c == "X8G") return Class1Tc{0.0, 30.0, 150};
+    auto tol_of = [](char t) -> std::optional<double> {
+        switch (t) {
+            case 'G': return 30.0;
+            case 'H': return 60.0;
+            case 'J': return 120.0;
+            case 'K': return 250.0;
+            case 'L': return 500.0;
+            case 'M': return 1000.0;
+            case 'N': return 2500.0;
+            default: return std::nullopt;
+        }
+    };
+    if (c.size() == 3 && std::isdigit(static_cast<unsigned char>(c[1]))) {
+        static const struct { char k; double v; } kSig[] = {
+            {'C', 0.0}, {'B', 0.3}, {'L', 0.8}, {'A', 0.9}, {'M', 1.0}, {'P', 1.5},
+            {'R', 2.2}, {'S', 3.3}, {'T', 4.7}, {'V', 5.6}, {'U', 7.5}};
+        static const double kMult[] = {-1, -10, -100, -1000, -10000, 1, 10, 100, 1000, 10000};
+        std::optional<double> sig;
+        for (const auto& x : kSig)
+            if (x.k == c[0]) sig = x.v;
+        const auto tol = tol_of(c[2]);
+        if (sig && tol) return Class1Tc{*sig * kMult[c[1] - '0'], tol, 125};
+        return std::nullopt;
+    }
+    if (c.size() == 2) {
+        static const struct { char k; double v; } kJis[] = {
+            {'C', 0.0}, {'P', -150.0}, {'R', -220.0}, {'S', -330.0}, {'T', -470.0}, {'U', -750.0}};
+        const auto tol = (c[1] == 'G' || c[1] == 'H' || c[1] == 'J' || c[1] == 'K')
+                             ? tol_of(c[1])
+                             : std::nullopt;
+        for (const auto& x : kJis)
+            if (x.k == c[0] && tol) return Class1Tc{x.v, tol, 125};
+        return std::nullopt;
+    }
+    if (c.size() >= 2 && c.size() <= 5 && (c[0] == 'N' || c[0] == 'P')) {
+        for (size_t i = 1; i < c.size(); ++i)
+            if (!std::isdigit(static_cast<unsigned char>(c[i]))) return std::nullopt;
+        const double mag = std::stod(c.substr(1));
+        return Class1Tc{c[0] == 'N' ? -mag : mag, std::nullopt, 125};
+    }
+    return std::nullopt;
+}
+
+// Two decodable class-1 codes compared: "" when the substitute is equivalent; the regression
+// otherwise; nullopt when equivalence cannot be decided (same coefficient, but a tolerance one
+// code does not state). Both arguments must decode (class1_tc).
+inline std::optional<std::string> class1_tc_regression(const std::string& o_code,
+                                                       const std::string& s_code) {
+    const auto o = class1_tc(o_code), s = class1_tc(s_code);
+    if (!o || !s) return std::nullopt;
+    auto ppm = [](double v) {
+        char b[32];
+        std::snprintf(b, sizeof b, "%+g", v);
+        return std::string(v == 0.0 ? "0" : b);
+    };
+    std::vector<std::string> issues;
+    if (std::fabs(o->nominal_ppm - s->nominal_ppm) > 1e-9)
+        issues.push_back("class-1 temperature coefficient differs: " + dielectric_key(s_code) +
+                         " (" + ppm(s->nominal_ppm) + " ppm/K) for " + dielectric_key(o_code) +
+                         " (" + ppm(o->nominal_ppm) +
+                         " ppm/K) — a class-1 coefficient is chosen for the circuit (stability "
+                         "or deliberate drift compensation), not interchangeable");
+    else if (o->tol_ppm && s->tol_ppm && *s->tol_ppm > *o->tol_ppm)
+        issues.push_back("temperature-coefficient tolerance +/-" + ppm(*s->tol_ppm).substr(1) +
+                         " ppm/K vs the original's +/-" + ppm(*o->tol_ppm).substr(1) + " ppm/K");
+    if (s->temp_max_c < o->temp_max_c)
+        issues.push_back("upper temperature " + std::to_string(static_cast<int>(s->temp_max_c)) +
+                         " degC vs " + std::to_string(static_cast<int>(o->temp_max_c)));
+    if (!issues.empty()) {
+        std::string out = "dielectric regression: " + issues[0];
+        for (size_t i = 1; i < issues.size(); ++i) out += "; " + issues[i];
+        return out;
+    }
+    if (std::fabs(o->nominal_ppm - s->nominal_ppm) <= 1e-9 && (!o->tol_ppm || !s->tol_ppm) &&
+        dielectric_key(o_code) != dielectric_key(s_code))
+        return std::nullopt;  // same coefficient, a tolerance not stated: undecided
+    return std::string();
+}
+
+inline std::optional<DielectricEnvelope> dielectric_envelope(const std::string& code_raw) {
+    const std::string c = dielectric_key(code_raw);
     if (c.empty()) return std::nullopt;
 
     // Class 1: C0G / NP0 are the same material system (±30 ppm/degC).
     if (c == "C0G" || c == "NP0" || c == "NPO") return DielectricEnvelope{-55, 125, 0.3, true};
     if (c == "U2J") return DielectricEnvelope{-55, 125, 0.75, true};
     if (c == "CH" || c == "CG") return DielectricEnvelope{-55, 125, 0.6, true};
+    // Every other decodable class-1 code (class1_tc): its total change over the 100 K from
+    // 25 degC to either end of the class-1 range, (|coefficient| + tolerance) x 100 K.
+    if (auto tc = class1_tc(c))
+        return DielectricEnvelope{-55, tc->temp_max_c,
+                                  (std::fabs(tc->nominal_ppm) + tc->tol_ppm.value_or(0.0)) * 0.01,
+                                  true};
 
     // Class 2: <low temp><high temp><max change>.
     static const struct { char k; double v; } kLow[] = {
@@ -197,6 +320,10 @@ inline std::string dielectric_regression(const std::string& original, const std:
     auto o = dielectric_envelope(original);
     auto s = dielectric_envelope(substitute);
     if (!o || !s) return "";
+    // Two class-1 codes: judged on the coefficient itself (class1_tc_regression), not on the
+    // total-change envelope, which would let N750 stand in for C0G at any spread.
+    if (o->class1 && s->class1 && class1_tc(original) && class1_tc(substitute))
+        return class1_tc_regression(original, substitute).value_or("");
     std::vector<std::string> issues;
     if (s->temp_max_c < o->temp_max_c)
         issues.push_back("upper temperature " + std::to_string(static_cast<int>(s->temp_max_c)) +

@@ -109,6 +109,9 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // (MagneticRow.temp_min_c / temp_max_c), all of which the cross-reference compares (Qarlos
 // 2026-11-09: an X2 original took non-safety parts, a 100 Hz ripple rating was failed against a
 // 20 kHz one, a 200 degC inductor took 125 degC parts with no caveat).
+// v20 carries a magnetic's whole saturation table (MagneticRow.sat_table_current /
+// sat_table_percent_drop / sat_table_temperature), not only the point nearest 20 %, so an
+// unknown-criterion Isat is held against the substitute's 10-30 % curve (Qarlos 2026-11-08).
 constexpr uint32_t kFormatVersion = 20;
 
 // Identity of the code that produces rows, so a cached shard can be recognised as
@@ -406,6 +409,9 @@ void row_io(Ar& ar, MagneticRow& r) {
     ar.str(r.family);
     ar.dbl(r.temp_min_c);  // v20
     ar.dbl(r.temp_max_c);  // v20
+    ar.dblvec(r.sat_table_current);       // v20
+    ar.dblvec(r.sat_table_percent_drop);  // v20
+    ar.dblvec(r.sat_table_temperature);   // v20
     ar.boolean(r.is_production);
 }
 
