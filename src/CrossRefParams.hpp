@@ -194,6 +194,9 @@ inline ParamOutcome compare_exact(const ParamSpec& spec, const nlohmann::json& o
 namespace isat {
 constexpr double kCanonicalPercentDrop = 20.0;  // most common industry convention
 constexpr double kBasisUncertaintyBand = 1.9;   // ratio a criterion diff could explain
+// The span of drop criteria vendors quote Isat at (Würth 10 % / 30 %, Coilcraft/Vishay 20 %).
+constexpr double kStrictestQuotedPercentDrop = 10.0;
+constexpr double kLoosestQuotedPercentDrop = 30.0;
 
 struct Point {
     std::optional<double> percent_drop;  // |ΔL/L| %, or nullopt if basis unknown
@@ -318,6 +321,43 @@ inline Verdict compare(const std::vector<Point>& op, const std::vector<Point>& s
     if (auto t = common_percent_drop(op, sp)) {
         const double o_at = *isat_at_percent_drop(op, *t), s_at = *isat_at_percent_drop(sp, *t);
         return (s_at >= margin * o_at) ? Verdict::Adequate : Verdict::Shortfall;
+    }
+    // One side's rating has no stated criterion, the other states a curve spanning the
+    // criteria vendors quote (10 % to 30 % drop, see above). Isat rises with the drop
+    // criterion, so wherever inside that span the unknown criterion lies, the based side's
+    // Isat there is bracketed by its own stated points. DECISION (owner to confirm): an
+    // unknown-basis rating is taken to sit inside the 10-30 % span; a criterion looser than
+    // 30 % or stricter than 10 % is not assumed. Then:
+    //  - unknown original vs based substitute: the substitute delivers at most its 30 % (or
+    //    looser) figure; below margin x the original's figure is a shortfall
+    //    (BWVS00606045150T00 3.06 A vs MSS6132T-123MLC 1.3/1.5/1.7 A at 10/20/30 % was
+    //    warned through the 1.9x band, Qarlos 2026-11-08 seed 20300704);
+    //  - based original vs unknown substitute: the original delivers at least its 10 % (or
+    //    stricter) figure; a substitute rating below margin x that is a shortfall.
+    // Everything else keeps the band below.
+    auto highest_at_or_beyond = [](const std::vector<Point>& pts, double pct) {
+        std::optional<double> best;
+        for (const auto& p : pts)
+            if (p.percent_drop && *p.percent_drop >= pct && (!best || p.current > *best))
+                best = p.current;
+        return best;
+    };
+    auto lowest_at_or_below = [](const std::vector<Point>& pts, double pct) {
+        std::optional<double> best;
+        for (const auto& p : pts)
+            if (p.percent_drop && *p.percent_drop <= pct && (!best || p.current < *best))
+                best = p.current;
+        return best;
+    };
+    if (!has_basis(op) && has_basis(sp)) {
+        const auto s_loosest = highest_at_or_beyond(sp, kLoosestQuotedPercentDrop);
+        const auto o_raw = headline(op);
+        if (s_loosest && o_raw && *s_loosest < margin * *o_raw) return Verdict::Shortfall;
+    }
+    if (has_basis(op) && !has_basis(sp)) {
+        const auto o_strictest = lowest_at_or_below(op, kStrictestQuotedPercentDrop);
+        const auto s_raw = headline(sp);
+        if (o_strictest && s_raw && *s_raw < margin * *o_strictest) return Verdict::Shortfall;
     }
     auto o_raw = headline(op), s_raw = headline(sp);
     if (!o_raw || !s_raw) return Verdict::Uncertain;

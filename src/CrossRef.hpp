@@ -936,10 +936,16 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                        detail::present(cand, "saturation_points");
         if (!has_data) continue;
         const bool power_at_t = cat == "resistor" && spec.key == "power_rating" && power_t.applies;
+        // With no basis for the substitute's power at T_ref, a nominal rating below the
+        // original's is a FAIL, not merely unverified: whatever its derating, the substitute
+        // delivers at most its nominal there, and that is already less than the original's.
+        const bool power_nominal_short =
+            power_at_t && !power_t.subst && *detail::jnum(cand, spec.key) < *power_t.orig;
         const ParamOutcome outcome =
-            !power_at_t     ? compare_param(spec, original, cand)
-            : power_t.subst ? compare_numeric(spec, power_t.orig, power_t.subst)
-                            : ParamOutcome(UNVERIFIED);
+            !power_at_t           ? compare_param(spec, original, cand)
+            : power_t.subst       ? compare_numeric(spec, power_t.orig, power_t.subst)
+            : power_nominal_short ? ParamOutcome(FAIL)
+                                  : ParamOutcome(UNVERIFIED);
         const std::string verdict = outcome.verdict;
         params.push_back({{"name", spec.key}, {"verdict", verdict}});
         if (cat == "connector" && verdict == FAIL) {
@@ -970,7 +976,15 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             // Penalty and direction are about the power at T_ref too, not the nominal.
             o = power_t.orig;
             s = power_t.subst;
-            if (!power_t.subst) {
+            if (power_nominal_short) {
+                // The nominal is the most the substitute can deliver at T_ref, so the
+                // downgrade is counted on it (the FAIL above does the demotion).
+                s = s_nominal;
+                notes.push_back("power rating below the original's: the substitute is rated " +
+                                watts(s_nominal) + " against the original's " +
+                                watts(*power_t.orig) + " at " + celsius(power_t.t_ref) +
+                                ", and " + power_t.how);
+            } else if (!power_t.subst) {
                 // Not on record is not a pass: the original's rating is stated at a
                 // temperature, and nothing says what the substitute delivers there. Capped
                 // the way an unverified footprint is (power_basis_unverified below).
@@ -1946,6 +1960,15 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             tier = FootprintTier::Fits;
             same_code_spread = true;
         }
+        // "One case size larger" describes a body that grew. One that overhangs the original
+        // on one axis but is materially SHORTER on the other (below kUndersizeBand, the same
+        // "materially smaller" line footprint_tier draws) did not grow: it is a different land.
+        // RNC55K1472FSB14 (6.35 x 2.39 mm axial) took ERJS14F1472U (3.2 x 2.5 mm chip) as
+        // "about one case size larger" (Qarlos 2026-11-08 seed 20276947). The overhang still
+        // costs what it did — same penalty rung, same WARN, same minor_review cap — only the
+        // tier name and the note change.
+        const bool crossed_land = tier == FootprintTier::OneSizeLarger && o_dims && s_dims &&
+                                  compare_land(*o_dims, *s_dims).lin < kUndersizeBand;
         // A LAND to fit to is what this branch needs, not merely a drawing. An
         // original whose record states only a height has no pads to compare
         // against, so it belongs to the "original states no package dimensions"
@@ -1969,7 +1992,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             if (tier != FootprintTier::Fits && tier != FootprintTier::Unknown)
                 fit_penalty = std::max(fit_penalty, kEstablishedFootprintMismatchPenalty);
             penalty += opt.footprint_weight * fit_penalty;
-            out["footprint"] = footprint_tier_name(tier);
+            // "different_case" is the existing name for a land the pads cannot match (the
+            // case-code gate above); the grade reads it as a WARN, exactly as one_size_larger.
+            out["footprint"] = crossed_land ? "different_case" : footprint_tier_name(tier);
             const char* verdict = tier == FootprintTier::Fits            ? PASS
                                   : tier == FootprintTier::Smaller       ? WARN
                                   : tier == FootprintTier::OneSizeLarger ? WARN
@@ -1983,7 +2008,14 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             // different outcomes used to carry the same sentence, so an engineer
             // could not tell a part that overhangs the pads from one that no longer
             // covers them (ABT #513).
-            if (tier == FootprintTier::OneSizeLarger) {
+            if (crossed_land) {
+                demote();
+                notes.push_back("different land, not a larger case (" + land_mm(*s_dims) +
+                                " vs " + land_mm(*o_dims) +
+                                ") — longer on one axis and much shorter on the other, so the "
+                                "pads do not match; it needs a new land pattern, verify the pads "
+                                "before substituting");
+            } else if (tier == FootprintTier::OneSizeLarger) {
                 demote();
                 notes.push_back("about one case size larger (" + land_mm(*s_dims) + " vs " +
                                 land_mm(*o_dims) + ") — verify board fit");

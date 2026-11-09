@@ -507,6 +507,49 @@ TEST_CASE("qarlos 2026-11-08: Isat below the original's rated current fails the 
     CHECK(verdict_of(rp["candidates"][0], "saturation_current") == "unverified");
 }
 
+// Run5 seed 20300704: BWVS00606045150T00 states Isat 3.06 A with no drop criterion;
+// MSS6132T-123MLC states 1.3 / 1.5 / 1.7 A at 10 / 20 / 30 %. The 1.9x criterion band
+// excused the 1.5 A headline, so the part was warned and graded minor_review. Wherever in
+// the 10-30 % span the original's criterion lies, the substitute delivers at most 1.7 A.
+TEST_CASE("qarlos 2026-11-08 r3: an unknown-basis Isat is held against the substitute's whole curve",
+          "[qarlos][crossref][isat]") {
+    json orig = {{"mpn", "BWVS00606045150T00"}, {"value_si", 1.5e-5}, {"saturation_current", 3.06},
+                 {"rated_current", 1.98}, {"dcr", 0.08}};
+    json mss = {{"mpn", "MSS6132T-123MLC"}, {"value_si", 1.2e-5}, {"saturation_current", 1.5},
+                {"saturation_points", json::array({{{"percent_drop", 10.0}, {"current", 1.3}},
+                                                   {{"percent_drop", 20.0}, {"current", 1.5}},
+                                                   {{"percent_drop", 30.0}, {"current", 1.7}}})},
+                {"rated_current", 1.98}, {"dcr", 0.079}};
+    kelvin::crossref::Options opt;
+    opt.check_footprint = false;
+    auto r = kelvin::crossref::cross_reference("magnetic", orig, json::array({mss}), opt);
+    const json& c = r["candidates"][0];
+    CHECK(verdict_of(c, "saturation_current") == "fail");
+    CHECK(c["grade"] == "no_substitute");  // Isat is a hard gate for magnetics
+
+    // A substitute whose 30 % figure clears the original keeps the band: still uncertain.
+    json close = mss;
+    close["mpn"] = "CLOSE";
+    close["saturation_points"][2]["current"] = 2.9;
+    auto rc = kelvin::crossref::cross_reference("magnetic", orig, json::array({close}), opt);
+    CHECK(verdict_of(rc["candidates"][0], "saturation_current") == "warn");
+
+    // A curve that stops short of 30 % does not bound the original's criterion: band rules.
+    json short_curve = mss;
+    short_curve["mpn"] = "SHORT";
+    short_curve["saturation_points"] = json::array({{{"percent_drop", 10.0}, {"current", 1.7}}});
+    auto rs = kelvin::crossref::cross_reference("magnetic", orig, json::array({short_curve}), opt);
+    CHECK(verdict_of(rs["candidates"][0], "saturation_current") == "warn");
+
+    // Mirror: a based original (10 % figure 3.06 A) against an unknown-basis 1.5 A substitute.
+    json based = orig;
+    based["saturation_points"] = json::array({{{"percent_drop", 10.0}, {"current", 3.06}}});
+    json bare = {{"mpn", "BARE"}, {"value_si", 1.5e-5}, {"saturation_current", 1.5},
+                 {"rated_current", 1.98}, {"dcr", 0.08}};
+    auto rm = kelvin::crossref::cross_reference("magnetic", based, json::array({bare}), opt);
+    CHECK(verdict_of(rm["candidates"][0], "saturation_current") == "fail");
+}
+
 // EEEHC0J221XP (Panasonic) states its range as thermal.operatingTemperature, the PEAS key;
 // the extractor read only CAS's thermal.temperature, so the -40..105 C range was dropped and
 // 85 C substitutes got no temperature verdict (run3 seed 20264135).
@@ -954,6 +997,20 @@ TEST_CASE("qarlos 2026-11-08: resistor power is compared at the original's ratin
     auto r2 = kelvin::crossref::cross_reference("resistor", hot, json::array({cands[0]}), opt);
     CHECK(verdict_of(r2["candidates"][0], "power_rating") == "fail");
     CHECK(has_note(r2["candidates"][0], "ends at 125 degC"));
+
+    // No basis for the substitute, and a nominal below the original's: at most 0.04 W at
+    // 125 degC whatever its derating, so it is a FAIL and the downgrade counts.
+    for (json low : {cand("NO_BASIS_LOW", json::object()),
+                     cand("RATED_70_LOW", {{"power_rating_temperature", 70.0}})}) {
+        low["power_rating"] = 0.04;
+        auto rl = kelvin::crossref::cross_reference("resistor", orig, json::array({low}), opt);
+        const json c = rl["candidates"][0];
+        CHECK(verdict_of(c, "power_rating") == "fail");
+        CHECK(c["grade"] == "major_review");
+        CHECK(c["direction"] != "equivalent");
+        CHECK(c["direction"] != "upgrade");
+        CHECK(has_note(c, "power rating below the original's"));
+    }
 
     // An original with no temperature basis keeps the plain nominal compare.
     json plain = {{"mpn", "P"}, {"value_si", 500.0}, {"power_rating", 0.05}, {"tolerance_pct", 1.0}};
@@ -1671,6 +1728,48 @@ TEST_CASE("qarlos 2026-11-08 r2: two 0603 drawings a few percent apart are the s
     CHECK(verdict_of(a, "footprint") == "pass");
     CHECK_FALSE(has_note(a, "one case size larger"));
     CHECK(res_by(r, "ODD_0603")["footprint"] == "one_size_larger");
+}
+
+// Run2 seed 20276947: RNC55K1472FSB14 (6.35 x 2.39 mm) took ERJS14F1472U (3.2 x 2.5 mm) and
+// ERJS12F1472U (4.5 x 3.2 mm) as "about one case size larger". Half as long and 5 % wider
+// is a different land, not a larger case; ERJS1TF1472U (6.4 x 3.2 mm) really is larger.
+TEST_CASE("qarlos 2026-11-08 r3: a body longer on one axis and shorter on the other is a different land",
+          "[qarlos][crossref][dims]") {
+    json rnc = res_spec("RNC55K1472FSB14", 14700.0, 0.1, 1.0,
+                        {{"length_m", 6.35e-3}, {"width_m", 2.39e-3}});
+    json s14 = res_spec("ERJS14F1472U", 14700.0, 0.5, 1.0,
+                        {{"length_m", 3.2e-3}, {"width_m", 2.5e-3}});
+    json s12 = res_spec("ERJS12F1472U", 14700.0, 0.75, 1.0,
+                        {{"length_m", 4.5e-3}, {"width_m", 3.2e-3}});
+    json s1t = res_spec("ERJS1TF1472U", 14700.0, 1.0, 1.0,
+                        {{"length_m", 6.4e-3}, {"width_m", 3.2e-3}});
+    kelvin::crossref::Options opt;
+    opt.max_results = 10;
+    auto r = kelvin::crossref::cross_reference("resistor", rnc, json::array({s14, s12, s1t}), opt);
+    for (const char* m : {"ERJS14F1472U", "ERJS12F1472U"}) {
+        const json c = res_by(r, m);
+        REQUIRE(!c.is_null());
+        CHECK(c["footprint"] == "different_case");
+        CHECK(verdict_of(c, "footprint") == "warn");
+        CHECK(c["grade"] == "minor_review");
+        CHECK_FALSE(has_note(c, "one case size larger"));
+        CHECK(has_note(c, "different land, not a larger case"));
+    }
+    CHECK(has_note(res_by(r, "ERJS14F1472U"), "3.2 x 2.5 mm vs 6.35 x 2.39 mm"));
+    const json t = res_by(r, "ERJS1TF1472U");
+    CHECK(t["footprint"] == "one_size_larger");
+    CHECK(has_note(t, "about one case size larger"));
+
+    // Chip against chip with crossed axes, on a capacitor (no resistor same-code rule):
+    // a 2.0 x 2.0 mm body for a 3.2 x 1.6 mm one is 25 % wider and 37 % shorter.
+    json cap_o = {{"mpn", "CAP_O"}, {"value_si", 1e-6}, {"voltage", 50.0},
+                  {"length_m", 3.2e-3}, {"width_m", 1.6e-3}};
+    json cap_s = {{"mpn", "CAP_S"}, {"value_si", 1e-6}, {"voltage", 50.0},
+                  {"length_m", 2.0e-3}, {"width_m", 2.0e-3}};
+    auto rc = kelvin::crossref::cross_reference("capacitor", cap_o, json::array({cap_s}), opt);
+    const json cs = rc["candidates"][0];
+    CHECK(cs["footprint"] == "different_case");
+    CHECK(has_note(cs, "different land, not a larger case (2 x 2 mm vs 3.2 x 1.6 mm)"));
 }
 
 // The resistor extractor used to put a "typical" +/-5 % on every record whose
