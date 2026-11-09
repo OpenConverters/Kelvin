@@ -218,8 +218,13 @@ inline bool is_hard_param(const std::string& cat, const std::string& key) {
     // that keeps the pads. The board attach (smt / tht / pressFit ...) and the
     // mating-axis orientation are identities too, but each is decided by its own
     // gate (the shared mount gate, the connector orientation block), not here.
+    // termination (familyDetails.termination: crimp / idc / poke-in / solderCup / screw ...)
+    // is the wire-side attach — an IDC socket for a crimp housing changes the harness, not a
+    // parameter of the part — so a STATED difference rejects like the other identities
+    // (Qarlos 2026-11-09, HIF3B-10D-2.54R(63)). One side only: unverified and capped below
+    // drop_in (the one-sided identity block after the PARAM_SPECS loop).
     static const std::set<std::string> connector{"family", "positions", "polarity",
-                                                 "interface_standard"};
+                                                 "interface_standard", "termination"};
     static const std::set<std::string> analog{"subtype", "channels"};
     // mode: a 3rd-overtone crystal cannot cross with a fundamental one in either
     // direction — an overtone circuit's LC tank is inductive at the fundamental,
@@ -1063,7 +1068,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // Captured the same way, for the same reason — a bare "contact_plating: fail" does not
     // tell the engineer that gold is about to be mated to tin.
     bool connector_plating_conflict = false;
-    bool connector_termination_conflict = false;
+    // A connector identity (gender, wire termination, contact pitch, row count) stated by
+    // one record and not the other (the one-sided identity block after the PARAM_SPECS
+    // loop): unverified, and never a drop-in.
+    bool connector_identity_unverified = false;
     // A zener's breakdown WINDOW, captured from the PARAM_SPECS verdict below for the
     // same reason: a bare "vz_tolerance_pct: unverified" beside "vrrm: pass" leaves the
     // engineer with no idea that the original guarantees 3.56-3.64 V and the substitute's
@@ -1188,7 +1196,19 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         if (cat == "connector" && verdict == FAIL) {
             if (spec.key == "pitch_mm") connector_pitch_conflict = true;
             if (spec.key == "contact_plating") connector_plating_conflict = true;
-            if (spec.key == "termination") connector_termination_conflict = true;
+            // Gender and wire termination are identities that reject (is_hard_param), so
+            // their note is written HERE, before the reject below returns — a bare "an
+            // identity parameter differs" does not say a plug was offered for a socket.
+            if (spec.key == "termination")
+                notes.push_back("wire termination differs: " + str(original, "termination") +
+                                " -> " + str(cand, "termination") +
+                                " — a different wire-attach method, not a drop-in for a built "
+                                "harness");
+            if (spec.key == "polarity")
+                notes.push_back("mating gender differs: " + str(original, "polarity") + " -> " +
+                                str(cand, "polarity") +
+                                " — it does not mate with the counterpart the original mates "
+                                "with");
         }
         if (cat == "timeBase" && supply_key) {
             if (verdict == FAIL) timebase_supply_fail = true;
@@ -1393,6 +1413,64 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         }
     }
 
+    // ── connector identities stated on one side only ─────────────────────────
+    // Gender (part.matingPolarity), wire termination (familyDetails.termination / clampType),
+    // contact pitch (mechanical.pitch, the land pattern) and row count (mechanical.rows) are
+    // identities of a connector, judged by the rule the orientation and pluggable axes use
+    // (Qarlos 2026-11-09):
+    //   both stated, different -> reject (gender, termination: is_hard_param) or a different
+    //                             land pattern (pitch, rows: connector_pitch_fit);
+    //   stated on ONE side     -> unverified with a note naming both sides, capped below
+    //                             drop_in like an unverified footprint — drop_in asserts the
+    //                             part mates, attaches and lands like the original, and nobody
+    //                             has shown that. HIF3B-10D-2.54R(63) (IDC) took card-edge
+    //                             parts with no termination as drop_in; 713492023 (no pitch on
+    //                             record) took a TE header stating 2.54 mm as a clean drop_in
+    //                             while better-documented parts were capped; 54202-G0804-B02LF
+    //                             (2 rows) never compared rows against candidates stating none;
+    //   stated on neither side -> silent (nothing to compare, the same for every candidate).
+    // The PARAM_SPECS loop above has already pushed the gender / termination / pitch verdict
+    // (UNVERIFIED for one side); this block adds the note, the cap, and the rows verdict.
+    // A pitch that only appears in a description ("6.35mm Pitch") is NOT read here: Kelvin
+    // compares structured fields, and the description gap is the catalogue's (TAS #2337).
+    if (cat == "connector") {
+        const auto stated = [](const json& rec, const char* k) {
+            auto it = rec.find(k);
+            if (it == rec.end() || it->is_null()) return false;
+            if (it->is_string()) return !it->get<std::string>().empty();
+            return true;
+        };
+        const auto said = [&](const json& rec, const char* k) -> std::string {
+            if (!stated(rec, k)) return "not stated";
+            const json& v = rec.at(k);
+            if (v.is_string()) return v.get<std::string>();
+            if (!v.is_number())
+                throw std::invalid_argument(std::string("cross_reference: connector '") + k +
+                                            "' must be a string or a number");
+            const double x = v.get<double>();
+            if (std::string(k) == "pitch_mm") return mm(x * 1e-3) + " mm";
+            return std::to_string(static_cast<long>(std::lround(x)));
+        };
+        struct Axis { const char* key; const char* what; const char* confirm; };
+        static const Axis kAxes[] = {
+            {"polarity", "mating gender", "confirm it mates with the original's counterpart"},
+            {"termination", "wire termination", "confirm the same wire-attach method"},
+            {"pitch_mm", "contact pitch", "confirm the pin field lines up"},
+            {"rows", "contact rows", "confirm the pin field lines up"},
+        };
+        for (const Axis& a : kAxes) {
+            const bool os = stated(original, a.key), ss = stated(cand, a.key);
+            if (os == ss) continue;
+            // rows is not a PARAM_SPECS key, so its verdict is pushed here.
+            if (std::string(a.key) == "rows")
+                params.push_back({{"name", "rows"}, {"verdict", UNVERIFIED}});
+            connector_identity_unverified = true;
+            notes.push_back(std::string(a.what) + " not established (original: " +
+                            said(original, a.key) + ", substitute: " + said(cand, a.key) +
+                            ") — " + a.confirm + " from the datasheets");
+        }
+    }
+
     // ── connector mating-axis orientation (CONAS mechanical.orientation) ─────
     // vertical / rightAngle / horizontal / mezzanine / edge / cable is the direction the
     // counterpart (cable, FPC, daughter board) arrives from: a vertical FPC connector
@@ -1565,10 +1643,6 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                         str(cand, "contact_plating") +
                         " — the substitute meets your existing counterpart on a different mating "
                         "surface; dissimilar finishes fret and corrode at a separable joint");
-    if (connector_termination_conflict)
-        notes.push_back("wire termination differs: " + str(original, "termination") + " -> " +
-                        str(cand, "termination") +
-                        " — a different wire-attach method, not a drop-in for a built harness");
 
     if (timebase_unverified) demote();
     if (timebase_supply_fail)
@@ -3014,6 +3088,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     if (connector_pitch_unverified) footprint_unverified = true;
     // And a pluggable / fixed form stated on one side only.
     if (connector_pluggable_unverified) footprint_unverified = true;
+    // And a gender, wire termination, contact pitch or row count stated on one side only.
+    if (connector_identity_unverified) footprint_unverified = true;
     // drop_in asserts no rating regressed; a power nobody can state at the original's rating
     // temperature has not been shown not to, so it takes the same minor_review cap.
     out["grade"] = grade_for(status, tier, any_warn, any_fail,

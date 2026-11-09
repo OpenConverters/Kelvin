@@ -1271,7 +1271,8 @@ TEST_CASE("qarlos 2026-11-08: a connector pitch difference is judged at the end 
 }
 
 // Both records state mechanical.rows and they differ: a different pin field, whatever the
-// pitch. One side only, or neither: rows alone give no verdict.
+// pitch. One side only: rows UNVERIFIED with a note, capped below drop_in (Qarlos
+// 2026-11-09, 54202-G0804-B02LF; the same rule as orientation and pluggable). Neither: silent.
 TEST_CASE("qarlos 2026-11-08: a connector with a different row count is a different pin field",
           "[qarlos][crossref]") {
     auto hdr = [](const std::string& mpn, json pitch_mm, json rows) {
@@ -1309,6 +1310,22 @@ TEST_CASE("qarlos 2026-11-08: a connector with a different row count is a differ
     CHECK(verdict_of(*un, "pitch_mm") == "pass");
     CHECK_FALSE(un->contains("footprint"));
     CHECK(count_notes(*un, "contact rows differ") == 0);
+    // Added 2026-11-09: rows stated by the original only is unverified, noted, and capped.
+    CHECK(verdict_of(*un, "rows") == "unverified");
+    CHECK(has_note(*un, "contact rows not established (original: 1, substitute: not stated)"));
+    CHECK((*un)["grade"] == "minor_review");
+    // The like-for-like part reports no rows note and stays a drop-in.
+    CHECK(count_notes(*one, "contact rows") == 0);
+    CHECK((*one)["grade"] == "drop_in");
+    // Neither record states rows: silent, and nothing caps the grade.
+    auto r2 = kelvin::crossref::cross_reference("connector", hdr("ORIG_NO_ROWS", 2.54, nullptr),
+                                                json::array({hdr("CAND_NO_ROWS", 2.54, nullptr)}),
+                                                opt);
+    const json* neither = cand_by_mpn(r2, "CAND_NO_ROWS");
+    REQUIRE(neither);
+    CHECK(verdict_of(*neither, "rows") == "");
+    CHECK(count_notes(*neither, "contact rows") == 0);
+    CHECK((*neither)["grade"] == "drop_in");
 }
 
 // 395337424 (Molex Eurostyle pluggable plug) took WAGO 739-124 fixed PCB strips with no
@@ -2879,3 +2896,174 @@ TEST_CASE("qarlos r5-7: screw-terminal against radial-leaded is a mount mismatch
     CHECK(kelvin::crossref::mount_class("", "Screw-Terminal") == "screw");
 }
 
+
+// ── Qarlos v20 re-test 2026-11-09 (connector identities stated on one side) ──
+// Spec blocks exactly as web/src/crossref.js builds them from the shard rows of the named
+// TAS records (connectors.ndjson): every unstated optional identity is null, never "".
+namespace {
+json conn_spec(const std::string& mpn, json fields) {
+    json o = {{"mpn", mpn},           {"length_m", nullptr},       {"width_m", nullptr},
+              {"height_m", nullptr},  {"case_code", ""},           {"mount", ""},
+              {"lead_pitch_m", nullptr}, {"family", ""},           {"positions", nullptr},
+              {"polarity", nullptr},  {"interface_standard", nullptr}, {"pitch_mm", nullptr},
+              {"rows", nullptr},      {"rated_current_A", nullptr}, {"rated_voltage_V", nullptr},
+              {"temp_min_C", nullptr}, {"temp_max_C", nullptr},    {"contact_plating", nullptr},
+              {"termination", nullptr}, {"mounting", nullptr},     {"orientation", nullptr},
+              {"pluggable", nullptr}, {"mating_cycles", nullptr}};
+    o.update(fields);
+    if (o["mounting"].is_string()) o["mount"] = o["mounting"];
+    return o;
+}
+json conn_one(const json& orig, const json& cand) {
+    kelvin::crossref::Options opt;
+    opt.max_results = 10;
+    auto r = kelvin::crossref::cross_reference("connector", orig, json::array({cand}), opt);
+    REQUIRE(r["candidates"].size() == 1);
+    return r["candidates"][0];
+}
+// HIF3B-10D-2.54R(63) (Hirose): an IDC socket, termination stated.
+json kHIF3B() {
+    return conn_spec("HIF3B-10D-2.54R(63)",
+                     {{"family", "wireToBoard"}, {"positions", 10.0}, {"polarity", "female"},
+                      {"pitch_mm", 2.54}, {"rows", 2.0}, {"rated_current_A", 1.0},
+                      {"rated_voltage_V", 200.0}, {"temp_min_C", -55.0}, {"temp_max_C", 85.0},
+                      {"termination", "idc"}, {"mating_cycles", 500.0}});
+}
+// 66925-005LF (Amphenol CS): the same arrangement, no termination on record.
+json k66925() {
+    return conn_spec("66925-005LF",
+                     {{"family", "wireToBoard"}, {"positions", 10.0}, {"polarity", "female"},
+                      {"pitch_mm", 2.54}, {"rows", 2.0}, {"rated_current_A", 3.0}});
+}
+}  // namespace
+
+// Seed 20575296: HIF3B-10D-2.54R(63) (IDC) took 66925-005LF, which states no termination,
+// as a clean drop_in with termination 'unverified'. An unverified termination never
+// coexists with drop_in; a stated different one rejects.
+TEST_CASE("qarlos v20: a connector termination stated on one side caps below drop_in",
+          "[qarlos][crossref]") {
+    const json c = conn_one(kHIF3B(), k66925());
+    CHECK(verdict_of(c, "termination") == "unverified");
+    CHECK(has_note(c, "wire termination not established (original: idc, substitute: not stated)"));
+    CHECK(c["grade"] == "minor_review");
+    // Stated on both sides and different: rejected, and the note says what changed.
+    json crimp = k66925();
+    crimp["termination"] = "crimp";
+    const json x = conn_one(kHIF3B(), crimp);
+    CHECK(x["status"] == "no_substitute");
+    CHECK(verdict_of(x, "termination") == "fail");
+    CHECK(has_note(x, "wire termination differs: idc -> crimp"));
+    // Same termination on both: passes and stays a drop-in.
+    json idc = k66925();
+    idc["termination"] = "idc";
+    const json same = conn_one(kHIF3B(), idc);
+    CHECK(verdict_of(same, "termination") == "pass");
+    CHECK(same["grade"] == "drop_in");
+}
+
+// Seed 20365838: D38999/20MG11BN (female, panel-mount receptacle) took YDIV46E21-11SNC009,
+// a record stating neither gender nor mount ('Wire-to-Wire ... Plug' only in its description).
+TEST_CASE("qarlos v20: a connector gender stated on one side is noted and capped",
+          "[qarlos][crossref]") {
+    const json orig = conn_spec("D38999/20MG11BN",
+                                {{"family", "circular"}, {"positions", 11.0},
+                                 {"polarity", "female"}, {"rated_current_A", 23.0},
+                                 {"rated_voltage_V", 600.0}, {"mounting", "panel"}});
+    const json cand = conn_spec("YDIV46E21-11SNC009",
+                                {{"family", "circular"}, {"positions", 11.0},
+                                 {"rated_current_A", 23.0}, {"temp_min_C", -65.0},
+                                 {"temp_max_C", 200.0}});
+    const json c = conn_one(orig, cand);
+    CHECK(verdict_of(c, "polarity") == "unverified");
+    CHECK(has_note(c, "mating gender not established (original: female, substitute: not stated)"));
+    CHECK(verdict_of(c, "mounting") == "unverified");
+    CHECK(has_note(c, "the original is panel-mounted"));
+    CHECK(c["grade"] == "minor_review");
+    // Gender stated and different: rejected with a note naming both.
+    json male = cand;
+    male["polarity"] = "male";
+    const json m = conn_one(orig, male);
+    CHECK(m["status"] == "no_substitute");
+    CHECK(has_note(m, "mating gender differs: female -> male"));
+    // A board-mounted part for the panel-mount original: a different attach, rejected.
+    json board = cand;
+    board["mounting"] = "tht";
+    board["mount"] = "tht";
+    const json b = conn_one(orig, board);
+    CHECK(b["status"] == "no_substitute");
+    CHECK(verdict_of(b, "mounting") == "fail");
+}
+
+// Seed 21413128: 713492023 (Molex C-Grid, no pitch / orientation / mount on record —
+// 'Vertical, Surface Mount' is description text only) took the right-angle TE header
+// 7-102570-2 (pitch 2.54 mm stated, no orientation / mount) as a clean drop_in, while the
+// Sullins parts that state an orientation and mount were capped. Both sides are silent on
+// orientation and mount, so those stay silent; the pitch is stated by the substitute only.
+TEST_CASE("qarlos v20: a contact pitch stated on one side is noted and capped",
+          "[qarlos][crossref]") {
+    const json orig = conn_spec("713492023",
+                                {{"family", "pinHeaderSocket"}, {"positions", 50.0},
+                                 {"polarity", "male"}, {"rated_current_A", 3.0},
+                                 {"rated_voltage_V", 250.0}, {"temp_min_C", -40.0},
+                                 {"temp_max_C", 105.0}});
+    const json cand = conn_spec("7-102570-2",
+                                {{"family", "pinHeaderSocket"}, {"positions", 50.0},
+                                 {"polarity", "male"}, {"pitch_mm", 2.54},
+                                 {"rated_current_A", 3.0}, {"temp_min_C", -65.0},
+                                 {"temp_max_C", 105.0}});
+    const json c = conn_one(orig, cand);
+    CHECK(verdict_of(c, "pitch_mm") == "unverified");
+    CHECK(has_note(c, "contact pitch not established (original: not stated, substitute: 2.54 mm)"));
+    CHECK(verdict_of(c, "orientation") == "");  // neither states it: silent
+    CHECK(c["grade"] == "minor_review");
+}
+
+// Seeds 21622586 / 21727315 / 21832044: a pitch that differs on the RECORDS fails; a pitch
+// that appears only in a candidate's description ('6.35mm Pitch') is not on record, so the
+// pitch is unverified — now with a note and the drop_in cap (the description is TAS #2337).
+TEST_CASE("qarlos v20: a stated pitch difference fails, a description-only pitch is unverified",
+          "[qarlos][crossref]") {
+    // 734-232/105-604 (WAGO MCS MINI): 3.81 mm, 2 positions.
+    const json orig = conn_spec("734-232/105-604",
+                                {{"family", "pinHeaderSocket"}, {"positions", 2.0},
+                                 {"pitch_mm", 3.81}, {"polarity", "male"},
+                                 {"rated_current_A", 10.0}});
+    // 367590021 (Molex MLX): its record states no pitch.
+    const json mlx = conn_spec("367590021",
+                               {{"family", "pinHeaderSocket"}, {"positions", 2.0},
+                                {"polarity", "male"}, {"rated_current_A", 12.0},
+                                {"rated_voltage_V", 600.0}, {"temp_min_C", -55.0},
+                                {"temp_max_C", 105.0}});
+    const json c = conn_one(orig, mlx);
+    CHECK(verdict_of(c, "pitch_mm") == "unverified");
+    CHECK(has_note(c, "contact pitch not established (original: 3.81 mm, substitute: not stated)"));
+    CHECK(c["grade"] != "drop_in");
+    // Had the record stated 6.35 mm: over 0.1 mm on two contacts, a different land pattern.
+    json stated = mlx;
+    stated["pitch_mm"] = 6.35;
+    const json s = conn_one(orig, stated);
+    CHECK(verdict_of(s, "pitch_mm") == "fail");
+    CHECK(s["footprint"] == "different_land_pattern");
+    CHECK(s["grade"] != "drop_in");
+    CHECK(s["grade"] != "minor_review");
+}
+
+// Seed 22355689: 54202-G0804-B02LF (2 rows) against 87220-7 (rows not on record).
+TEST_CASE("qarlos v20: a connector row count stated on one side is compared",
+          "[qarlos][crossref]") {
+    const json orig = conn_spec("54202-G0804-B02LF",
+                                {{"family", "boardToBoard"}, {"positions", 7.0},
+                                 {"polarity", "male"}, {"pitch_mm", 2.54}, {"rows", 2.0},
+                                 {"rated_current_A", 3.0}, {"rated_voltage_V", 1500.0},
+                                 {"temp_min_C", -65.0}, {"temp_max_C", 125.0},
+                                 {"mounting", "smt"}, {"orientation", "vertical"}});
+    const json cand = conn_spec("87220-7",
+                                {{"family", "boardToBoard"}, {"positions", 7.0},
+                                 {"polarity", "male"}, {"pitch_mm", 2.54},
+                                 {"rated_current_A", 3.0}, {"temp_min_C", -55.0},
+                                 {"temp_max_C", 125.0}});
+    const json c = conn_one(orig, cand);
+    CHECK(verdict_of(c, "rows") == "unverified");
+    CHECK(has_note(c, "contact rows not established (original: 2, substitute: not stated)"));
+    CHECK(c["grade"] != "drop_in");
+}
