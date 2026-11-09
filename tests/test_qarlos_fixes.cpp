@@ -2249,3 +2249,167 @@ TEST_CASE("qarlos 2026-11-09: a magnetic's operating range is extracted and must
         "magnetic", orig, json::array({ind("ONE_SHORT", -55.0, 199.0)}), opt);
     CHECK(verdict_of(r2["candidates"][0], "temp_max_C") == "fail");
 }
+
+// ── Resistors, Qarlos audit rounds 5-7 (2026-11-09). Every record below is the REAL TAS record
+// from resistors.ndjson (provenance dropped), run through extract_resistor and turned into the
+// ranker spec exactly as web/src/crossref.js builds it (base() + the resistor spec()).
+namespace {
+json res_record_spec(const char* raw) {
+    const auto row = kelvin::extract_resistor(json::parse(raw));
+    REQUIRE(row.has_value());
+    auto num_or_null = [](double v) { return std::isnan(v) ? json(nullptr) : json(v); };
+    auto pos_or_null = [](double v) { return (!std::isnan(v) && v > 0) ? json(v) : json(nullptr); };
+    json s = {{"mpn", row->mpn},
+              {"length_m", pos_or_null(row->length_m)},
+              {"width_m", pos_or_null(row->width_m)},
+              {"height_m", pos_or_null(row->height_m)},
+              {"case_code", row->case_code},
+              {"mount", row->mount},
+              {"lead_pitch_m", pos_or_null(row->lead_pitch_m)},
+              {"is_production", row->is_production},
+              {"provenance_retracted", row->provenance_retracted},
+              {"value_si", pos_or_null(row->resistance)},
+              {"power_rating", pos_or_null(row->power_rating)},
+              {"tolerance_pct", (!std::isnan(row->tolerance) && row->tolerance > 0)
+                                    ? json(row->tolerance * 100)
+                                    : json(nullptr)},
+              {"family", row->family},
+              {"power_rating_temperature", num_or_null(row->power_rating_temperature)},
+              {"technology", row->technology},
+              {"tcr", num_or_null(row->tcr)},
+              {"temp_min_C", num_or_null(row->temp_min_c)},
+              {"temp_max_C", num_or_null(row->temp_max_c)},
+              {"current_sense", row->current_sense},
+              {"pulse_withstanding", row->pulse_withstanding}};
+    s["derating_temperature"] =
+        row->derating_temperature.empty() ? json(nullptr) : json(row->derating_temperature);
+    s["derating_amplitude"] =
+        row->derating_amplitude.empty() ? json(nullptr) : json(row->derating_amplitude);
+    return s;
+}
+json res_find(const json& r, const std::string& mpn) {
+    for (const auto& c : r["candidates"])
+        if (c["mpn"] == mpn) return c;
+    return json(nullptr);
+}
+
+// Originals.
+const char* kRWR80S28R0FSRSL = R"J({"resistor":{"manufacturerInfo":{"name":"Vishay","reference":"RWR80S28R0FSRSL","datasheetInfo":{"part":{"partNumber":"RWR80S28R0FSRSL","technology":"wirewound","series":"RWR80"},"electrical":{"resistance":{"nominal":28.0},"tolerance":0.01,"powerRating":2,"temperatureCoefficient":20,"powerRatingTemperature":25},"thermal":{"operatingTemperature":{"minimum":-55,"maximum":250}},"factors":{"powerDerating":{"temperature":[-60,25,250],"amplitude":[1,1,0]}},"mechanical":{"length":{"nominal":0.01031,"minimum":0.009523,"maximum":0.011097},"diameter":{"nominal":0.00239,"minimum":0.001603,"maximum":0.003177}}}}}})J";
+const char* kRLR32C2701GRRSL = R"J({"resistor":{"manufacturerInfo":{"name":"Vishay","reference":"RLR32C2701GRRSL","datasheetInfo":{"part":{"partNumber":"RLR32C2701GRRSL","technology":"metalFilm","series":"RLR32"},"electrical":{"resistance":{"nominal":2700.0},"tolerance":0.02,"powerRating":1.0,"temperatureCoefficient":100,"powerRatingTemperature":70,"maxVoltage":500},"thermal":{"operatingTemperature":{"minimum":-65,"maximum":150}},"factors":{"powerDerating":{"temperature":[-65,70,150],"amplitude":[1,1,0]}},"mechanical":{"length":{"nominal":0.01427,"minimum":0.01348,"maximum":0.01506},"diameter":{"nominal":0.00483,"minimum":0.00445,"maximum":0.00521}}}}}})J";
+const char* kERJB2CJR024V = R"J({"resistor":{"manufacturerInfo":{"name":"Panasonic","reference":"ERJB2CJR024V","status":"production","family":"High Power Current Sensing Resistors, Wide Terminal Type","datasheetInfo":{"part":{"partNumber":"ERJB2CJR024V","technology":"currentSenseShunt","series":"High Power Current Sensing Resistors, Wide Terminal Type","case":"0612"},"electrical":{"resistance":{"nominal":0.024},"tolerance":0.05,"powerRating":1.5},"mechanical":{"length":{"nominal":0.0016},"width":{"nominal":0.0032},"landPattern":{"pattern":"singleRow","originDatum":"padCentroid","pads":[{"id":"1","x":-0.00075,"y":0.0,"shape":"rectangle","width":0.001,"height":0.0034},{"id":"2","x":0.00075,"y":0.0,"shape":"rectangle","width":0.001,"height":0.0034}]}}}}}})J";
+const char* kCMF5586R600DHEA = R"J({"resistor":{"manufacturerInfo":{"name":"Vishay","reference":"CMF5586R600DHEA","datasheetInfo":{"part":{"partNumber":"CMF5586R600DHEA","technology":"metalFilm","series":"CMF55"},"electrical":{"resistance":{"nominal":86.6},"tolerance":0.005,"powerRating":0.6,"temperatureCoefficient":50,"powerRatingTemperature":70,"maxVoltage":350},"thermal":{"operatingTemperature":{"minimum":-55,"maximum":155}},"factors":{"powerDerating":{"temperature":[-55,70,155],"amplitude":[1,1,0]}},"mechanical":{"length":{"maximum":0.0065},"diameter":{"maximum":0.0025}}}}}})J";
+const char* kRK73H2AATTE3324F = R"J({"resistor":{"manufacturerInfo":{"name":"KOA Speer","reference":"RK73H2AATTE3324F","datasheetInfo":{"part":{"partNumber":"RK73H2AATTE3324F","series":"RK73H2AATTE","technology":"thickFilm","case":"0805","description":"Flat Chip Resistors(Precision Grade)"},"electrical":{"resistance":{"nominal":3320000},"tolerance":0.01,"temperatureCoefficient":400,"powerRating":0.25,"powerRatingTemperature":70,"maxVoltage":150,"maxOverloadVoltage":200},"thermal":{"operatingTemperature":{"minimum":-55,"maximum":155}},"mechanical":{"length":{"nominal":0.002,"minimum":0.0018,"maximum":0.0022},"width":{"nominal":0.00125,"minimum":0.00115,"maximum":0.00135},"height":{"nominal":0.00055,"minimum":0.00045,"maximum":0.00065},"assemblyType":"smt"}}}}})J";
+const char* kSR732ATTDR412F = R"J({"resistor":{"manufacturerInfo":{"name":"KOA Speer","reference":"SR732ATTDR412F","datasheetInfo":{"part":{"partNumber":"SR732ATTDR412F","series":"SR732ATTD","technology":"thickFilm","case":"0805","description":"Low Resistance Flat Chip Resistors"},"electrical":{"resistance":{"nominal":0.412},"tolerance":0.01,"temperatureCoefficient":100,"powerRating":0.5,"powerRatingTemperature":70},"thermal":{"operatingTemperature":{"minimum":-55,"maximum":150}},"mechanical":{"length":{"nominal":0.002,"minimum":0.0018,"maximum":0.0022},"width":{"nominal":0.00125,"minimum":0.00115,"maximum":0.00135},"height":{"nominal":0.0005,"minimum":0.0004,"maximum":0.0006},"assemblyType":"smt"}}}}})J";
+const char* kMFR25FTE52422K = R"J({"resistor":{"manufacturerInfo":{"name":"YAGEO","reference":"MFR-25FTE52-422K","datasheetInfo":{"part":{"partNumber":"MFR-25FTE52-422K","technology":"thinFilm","series":"MFR"},"electrical":{"resistance":{"nominal":422000.0},"tolerance":0.01,"powerRating":0.25,"powerRatingTemperature":70,"temperatureCoefficient":50.0},"thermal":{"operatingTemperature":{"minimum":-55.0,"maximum":155.0}},"factors":{"powerDerating":{"temperature":[-55,70,155],"amplitude":[1,1,0]}}}}}})J";
+const char* kCRCW080530R0JNTA = R"J({"resistor":{"manufacturerInfo":{"name":"Vishay","reference":"CRCW080530R0JNTA","datasheetInfo":{"part":{"partNumber":"CRCW080530R0JNTA","technology":"thickFilm","series":"CRCW0805","case":"0805"},"electrical":{"resistance":{"nominal":30.0},"tolerance":0.05,"powerRating":0.125,"temperatureCoefficient":200,"powerRatingTemperature":70,"maxVoltage":150},"thermal":{"operatingTemperature":{"minimum":-55,"maximum":155}},"factors":{"powerDerating":{"temperature":[-55,70,155],"amplitude":[1,1,0]}},"mechanical":{"length":{"nominal":0.002,"minimum":0.0019,"maximum":0.0022},"width":{"nominal":0.00125,"minimum":0.0011,"maximum":0.0014},"height":{"nominal":0.0005,"minimum":0.0004,"maximum":0.0006}}}}}})J";
+
+// Candidates.
+const char* kAC0612FR0727RL = R"J({"resistor":{"manufacturerInfo":{"name":"YAGEO","reference":"AC0612FR-0727RL","status":"production","family":"AC Wide Terminal","datasheetInfo":{"part":{"partNumber":"AC0612FR-0727RL","technology":"thickFilm","case":"0612"},"electrical":{"resistance":{"nominal":27.0},"tolerance":0.01,"powerRating":1.0},"mechanical":{"length":{"nominal":0.0016},"height":{"nominal":0.00055},"width":{"nominal":0.0032,"minimum":0.003,"maximum":0.0034}},"thermal":{"operatingTemperature":{"minimum":-55.0,"maximum":155.0}}}}}})J";
+const char* kERJA1AF272U = R"J({"resistor":{"manufacturerInfo":{"name":"Panasonic","reference":"ERJA1AF272U","status":"production","family":"High Power Current Sensing Resistors, Wide Terminal Type","datasheetInfo":{"part":{"partNumber":"ERJA1AF272U","technology":"currentSenseShunt","series":"High Power Current Sensing Resistors, Wide Terminal Type","case":"1225"},"electrical":{"resistance":{"nominal":2700.0},"tolerance":0.01,"powerRating":1.33,"temperatureCoefficient":100.0},"mechanical":{"length":{"nominal":0.0032},"width":{"nominal":0.0064}}}}}})J";
+const char* kERJB2AF272V = R"J({"resistor":{"manufacturerInfo":{"name":"Panasonic","reference":"ERJB2AF272V","status":"production","family":"High Power Current Sensing Resistors, Wide Terminal Type","datasheetInfo":{"part":{"partNumber":"ERJB2AF272V","technology":"currentSenseShunt","series":"High Power Current Sensing Resistors, Wide Terminal Type","case":"0612"},"electrical":{"resistance":{"nominal":2700.0},"tolerance":0.01,"powerRating":0.75,"temperatureCoefficient":100.0},"mechanical":{"length":{"nominal":0.0016},"width":{"nominal":0.0032}}}}}})J";
+const char* kLVR03R0250FE70 = R"J({"resistor":{"manufacturerInfo":{"name":"Vishay","reference":"LVR03R0250FE70","datasheetInfo":{"part":{"partNumber":"LVR03R0250FE70","technology":"currentSenseShunt","series":"LVR03"},"electrical":{"resistance":{"nominal":0.025},"tolerance":0.01,"powerRating":3.0,"powerRatingTemperature":25}}}}})J";
+const char* k4_1879645_6 = R"J({"resistor":{"manufacturerInfo":{"name":"TE Connectivity","reference":"4-1879645-6","datasheetInfo":{"part":{"partNumber":"4-1879645-6","description":"86.6 ohm, Thin Film, Precision Resistor, .5 %, .25 W, ±50 ppm/°C, Axial-Leaded, Copper Termination, 7.2 x 2.5 mm, Bandoliered, Holsworthy Holco","technology":"thinFilm","series":"Holsworthy"},"electrical":{"resistance":{"nominal":86.6},"tolerance":0.005,"powerRating":0.25,"temperatureCoefficient":50.0}}}}})J";
+const char* kMF1_2CC86R6D = R"J({"resistor":{"manufacturerInfo":{"name":"KOA Speer","reference":"MF1/2CC86R6D","datasheetInfo":{"part":{"partNumber":"MF1/2CC86R6D","series":"MF1/2","technology":"metalFilm","description":"Coat-Insulated Fixed Metal Film Resistors"},"electrical":{"resistance":{"nominal":86.6},"tolerance":0.005,"powerRating":0.5,"powerRatingTemperature":70,"maxVoltage":350,"maxOverloadVoltage":700,"temperatureCoefficient":50},"thermal":{"operatingTemperature":{"minimum":-55,"maximum":155}},"mechanical":{"length":{"nominal":0.009,"minimum":0.008,"maximum":0.01},"diameter":{"nominal":0.0035,"minimum":0.0031,"maximum":0.0039},"assemblyType":"tht"}}}}})J";
+const char* k1623220_1 = R"J({"resistor":{"manufacturerInfo":{"name":"TE Connectivity","reference":"1623220-1","datasheetInfo":{"part":{"partNumber":"1623220-1","description":"3.3M ohm, Thick Film, General Purpose Resistor, 1 %, 0805, .125 W, ±100 ppm/°C, Solder, 2 Terminations, .55 mm [.022 in] Height, NEOHM CRG","technology":"thickFilm","series":"Neohm","case":"0805"},"electrical":{"resistance":{"nominal":3300000.0},"tolerance":0.01,"powerRating":0.125,"temperatureCoefficient":100.0}}}}})J";
+const char* kERJU6QFR43V = R"J({"resistor":{"manufacturerInfo":{"name":"Panasonic","reference":"ERJU6QFR43V","family":"Anti-Sulfurated Thick Film Chip Resistors","datasheetInfo":{"part":{"partNumber":"ERJU6QFR43V","technology":"thickFilm","series":"Anti-Sulfurated Thick Film Chip Resistors","case":"0805"},"electrical":{"resistance":{"nominal":0.43},"tolerance":0.01,"powerRating":0.25},"mechanical":{"length":{"nominal":0.002},"width":{"nominal":0.00125}}}}}})J";
+const char* kERJ6BQFR43V = R"J({"resistor":{"manufacturerInfo":{"name":"Panasonic","reference":"ERJ6BQFR43V","family":"Current Sensing Resistors Thick Film Type","datasheetInfo":{"part":{"partNumber":"ERJ6BQFR43V","technology":"currentSenseShunt","series":"Current Sensing Resistors Thick Film Type","case":"0805"},"electrical":{"resistance":{"nominal":0.43},"tolerance":0.01,"powerRating":0.33},"mechanical":{"length":{"nominal":0.002},"width":{"nominal":0.00125}}}}}})J";
+const char* kERA6AED4223V = R"J({"resistor":{"manufacturerInfo":{"name":"Panasonic","reference":"ERA6AED4223V","family":"Thin film chip resistors (High reliability type)","datasheetInfo":{"part":{"partNumber":"ERA6AED4223V","technology":"thinFilm","series":"Thin film chip resistors (High reliability type)","case":"0805"},"electrical":{"resistance":{"nominal":422000.0},"tolerance":0.005,"powerRating":0.125,"temperatureCoefficient":25.0},"mechanical":{"length":{"nominal":0.002},"width":{"nominal":0.00125}}}}}})J";
+const char* kAC0805JR0730RL = R"J({"resistor":{"manufacturerInfo":{"name":"YAGEO","reference":"AC0805JR-0730RL","status":"production","family":"AC","datasheetInfo":{"part":{"partNumber":"AC0805JR-0730RL","technology":"thickFilm","case":"0805"},"electrical":{"resistance":{"nominal":30.0},"tolerance":0.05,"powerRating":0.125},"mechanical":{"length":{"nominal":0.002},"height":{"nominal":0.0005},"width":{"nominal":0.00125,"minimum":0.00115,"maximum":0.00135}},"thermal":{"operatingTemperature":{"minimum":-55.0,"maximum":155.0}},"factors":{"powerDerating":{"temperature":[-55,70,155],"amplitude":[1,1,0]}}}}}})J";
+}  // namespace
+
+// r5.2 RWR80S28R0FSRSL -> AC0612FR-0727RL, r5.3 RLR32C2701GRRSL -> ERJA1AF272U, r6.5
+// ERJB2CJR024V -> LVR03R0250FE70: the wide-terminal note said the outlines "match when
+// turned" for a 10 mm axial body, a 14 mm axial body and a part with no dimensions at all.
+TEST_CASE("qarlos 2026-11-09 r5-7: the wide-terminal note claims only the outline it compared",
+          "[qarlos][crossref][dims]") {
+    kelvin::crossref::Options opt;
+    opt.max_results = 10;
+    auto one = [&](const char* o, const char* c) {
+        auto r = kelvin::crossref::cross_reference("resistor", res_record_spec(o),
+                                                   json::array({res_record_spec(c)}), opt);
+        REQUIRE(r["candidates"].size() == 1);
+        return r["candidates"][0];
+    };
+    struct Wide { const char* orig; const char* cand; const char* wide; const char* plain; };
+    for (const Wide& w : {Wide{kRWR80S28R0FSRSL, kAC0612FR0727RL, "substitute 1.6 x 3.2 mm",
+                               "original 10.31 x 2.39 mm"},
+                          Wide{kRLR32C2701GRRSL, kERJA1AF272U, "substitute 3.2 x 6.4 mm",
+                               "original 14.27 x 4.83 mm"}}) {
+        INFO(w.wide);
+        const json k = one(w.orig, w.cand);
+        CHECK(verdict_of(k, "footprint") == "unverified");
+        CHECK(has_note(k, "wide-terminal"));
+        CHECK_FALSE(has_note(k, "match only when turned"));
+        CHECK(has_note(k, "the outlines differ as well"));
+        CHECK(has_note(k, w.wide));
+        CHECK(has_note(k, w.plain));
+        CHECK(k["grade"] != "drop_in");
+    }
+    // The LVR candidate states neither a case code nor any dimension.
+    const json lvr = one(kERJB2CJR024V, kLVR03R0250FE70);
+    CHECK(verdict_of(lvr, "footprint") == "unverified");
+    CHECK(lvr["grade"] != "drop_in");
+    CHECK(has_note(lvr, "wide-terminal 0612"));
+    CHECK_FALSE(has_note(lvr, "match only when turned"));
+    CHECK(has_note(lvr, "the substitute's record states no complete outline dimensions"));
+    // The established case: M55342H09B10D0PWS's 6.58 x 3.15 mm drawing is the 1225 box turned.
+    json m55 = {{"mpn", "M55342H09B10D0PWS"}, {"value_si", 2700.0}, {"power_rating", 1.0},
+                {"tolerance_pct", 1.0}, {"length_m", 6.5786e-3}, {"width_m", 3.1496e-3}};
+    auto r = kelvin::crossref::cross_reference("resistor", m55,
+                                               json::array({res_record_spec(kERJA1AF272U)}), opt);
+    REQUIRE(r["candidates"].size() == 1);
+    CHECK(has_note(r["candidates"][0], "the outlines match only when turned"));
+}
+
+// r5.3, r5.4, r7.1, r7.2, r7.4: a lower nominal power against an original whose rating is
+// stated at a temperature. e537384 made the no-basis shortfall a FAIL; these are the audited
+// pairs from their real records, plus a substitute WITH a stated basis (KOA MF1/2CC86R6D,
+// 0.5 W at 70 degC) against CMF55's 0.6 W at 70 degC.
+TEST_CASE("qarlos 2026-11-09 r5-7: a lower resistor power is never graded upgrade or equivalent",
+          "[qarlos][crossref]") {
+    auto opt = res_opt();
+    struct Pair { const char* orig; const char* cand; const char* mpn; };
+    for (const Pair& p : {Pair{kRLR32C2701GRRSL, kERJB2AF272V, "ERJB2AF272V"},
+                          Pair{kCMF5586R600DHEA, k4_1879645_6, "4-1879645-6"},
+                          Pair{kCMF5586R600DHEA, kMF1_2CC86R6D, "MF1/2CC86R6D"},
+                          Pair{kRK73H2AATTE3324F, k1623220_1, "1623220-1"},
+                          Pair{kSR732ATTDR412F, kERJU6QFR43V, "ERJU6QFR43V"},
+                          Pair{kSR732ATTDR412F, kERJ6BQFR43V, "ERJ6BQFR43V"},
+                          Pair{kMFR25FTE52422K, kERA6AED4223V, "ERA6AED4223V"}}) {
+        INFO(p.mpn);
+        auto r = kelvin::crossref::cross_reference("resistor", res_record_spec(p.orig),
+                                                   json::array({res_record_spec(p.cand)}), opt);
+        const json c = res_find(r, p.mpn);
+        REQUIRE(!c.is_null());
+        CHECK(verdict_of(c, "power_rating") == "fail");
+        CHECK(c["direction"] != "upgrade");
+        CHECK(c["direction"] != "equivalent");
+        CHECK(c["grade"] != "drop_in");
+        CHECK(c["grade"] != "minor_review");
+    }
+}
+
+// r7.3 CRCW080530R0JNTA (200 ppm/K) took three YAGEO AC0805 parts, whose records state no TCR,
+// as drop_in with no note.
+TEST_CASE("qarlos 2026-11-09 r5-7: a TCR the substitute does not state is unverified and noted",
+          "[qarlos][crossref]") {
+    auto opt = res_opt();
+    auto r = kelvin::crossref::cross_reference("resistor", res_record_spec(kCRCW080530R0JNTA),
+                                               json::array({res_record_spec(kAC0805JR0730RL)}),
+                                               opt);
+    const json c = res_find(r, "AC0805JR-0730RL");
+    REQUIRE(!c.is_null());
+    CHECK(verdict_of(c, "tcr") == "unverified");
+    CHECK(c["grade"] == "minor_review");
+    CHECK(has_note(c, "the original states a TCR of +/-200 ppm/K"));
+    CHECK(has_note(c, "substitute's record states none"));
+    // Neither side states a TCR: the gap is common to every candidate, nothing is said.
+    json o = res_record_spec(kCRCW080530R0JNTA);
+    o["tcr"] = nullptr;
+    auto r2 = kelvin::crossref::cross_reference("resistor", o,
+                                                json::array({res_record_spec(kAC0805JR0730RL)}),
+                                                opt);
+    REQUIRE(r2["candidates"].size() == 1);
+    CHECK_FALSE(has_note(r2["candidates"][0], "states a TCR"));
+    CHECK(r2["candidates"][0]["grade"] == "drop_in");
+}

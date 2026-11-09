@@ -1415,6 +1415,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // The same operating-range rule holds for a magnetic (Qarlos 2026-11-09, seed 20680025):
     // its PARAM_SPECS carry temp_min_C / temp_max_C with no warn band, and an end the
     // original states but the substitute's record does not takes the same cap here.
+    // Set by an operating-range end or (resistor) a TCR the original states and the
+    // substitute's record does not: both are temperature behaviour nobody has shown kept.
     bool temp_unverified = false;
     if (cat == "resistor" || cat == "magnetic") {
         auto verdict_of = [&](const char* name) -> std::string {
@@ -1433,6 +1435,21 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             notes.push_back(std::string(b) +
                             " — the resistance drifts that much more over temperature; verify "
                             "anywhere the value sets a ratio, a reference or a gain");
+        }
+        // A TCR the original states and the substitute's record does not is UNVERIFIED, noted,
+        // and capped at minor_review — the operating-range rule below, for the same reason:
+        // drop_in asserts nothing regressed, and nobody has shown the drift did not.
+        // CRCW080530R0JNTA (200 ppm/K) took three YAGEO AC0805 parts, whose records state no
+        // TCR, as drop_in with no note (Qarlos 2026-11-09, seed 22146231). When NEITHER record
+        // states one, the gap is the same for every candidate and nothing is said.
+        if (cat == "resistor" && tv == UNVERIFIED && o_tcr && !s_tcr) {
+            temp_unverified = true;
+            char b[96];
+            std::snprintf(b, sizeof b, "the original states a TCR of +/-%g ppm/K",
+                          std::fabs(*o_tcr));
+            notes.push_back(std::string(b) +
+                            "; the substitute's record states none — its drift over temperature "
+                            "is unknown; confirm it from the datasheet");
         }
         for (const char* k : {"temp_min_C", "temp_max_C"}) {
             if (verdict_of(k) == UNVERIFIED && num(original, k) && !num(cand, k)) {
@@ -2231,12 +2248,46 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 params.push_back({{"name", "footprint"}, {"verdict", UNVERIFIED}});
                 demote();
                 penalty += opt.footprint_weight * kUnknownDimPenalty;
-                notes.push_back(std::string("the ") + (sw ? "substitute" : "original") +
-                                " is a wide-terminal " + (sw ? sc : oc) +
+                // The note claims only what the records establish (Qarlos 2026-11-09:
+                // RWR80S28R0FSRSL and RLR32C2701GRRSL are axial bodies 10-14 mm long, and
+                // ERJB2CJR024V's LVR candidates state no dimensions at all, yet each note
+                // said the outlines "match when turned"). Rule:
+                //   * both records state both land axes and the orientation-agnostic compare
+                //     finds the same box (no axis over by more than the 2 % slack, none short
+                //     of kUndersizeBand) -> the outlines match only when turned;
+                //   * both state both axes and the boxes differ -> say so, with both boxes;
+                //   * either record lacks a complete land outline -> say which one states no
+                //     dimensions; nothing about the outline is claimed.
+                // The verdict is UNVERIFIED in every case, as before.
+                const std::string wide_side = sw ? "substitute" : "original";
+                const std::string plain_side = sw ? "original" : "substitute";
+                const auto& wide_dims = sw ? s_dims : o_dims;
+                const auto& plain_dims = sw ? o_dims : s_dims;
+                auto box = [](const Dims& d) { return mm(*d.length) + " x " + mm(*d.width) + " mm"; };
+                std::string outline;
+                if (plain_dims && has_land(*plain_dims) && wide_dims && has_land(*wide_dims)) {
+                    const LandCompare lc = compare_land(*plain_dims, *wide_dims);
+                    const bool same_box =
+                        lc.overflow <= kDimTolerance - 1.0 && lc.lin >= kUndersizeBand;
+                    outline = same_box
+                                  ? "the outlines match only when turned, the pads do not"
+                                  : "the outlines differ as well (" + plain_side + " " +
+                                        box(*plain_dims) + ", " + wide_side + " " +
+                                        box(*wide_dims) + ")";
+                } else {
+                    const bool plain_has = plain_dims && has_land(*plain_dims);
+                    const bool wide_has = wide_dims && has_land(*wide_dims);
+                    outline = std::string("the ") +
+                              (!plain_has && !wide_has ? "records state"
+                               : !plain_has            ? plain_side + "'s record states"
+                                                       : wide_side + "'s record states") +
+                              " no complete outline dimensions, so the outlines could not be "
+                              "compared either";
+                }
+                notes.push_back("the " + wide_side + " is a wide-terminal " + (sw ? sc : oc) +
                                 " chip (terminations along the long sides) and the " +
-                                (sw ? "original's" : "substitute's") +
-                                " record states no case code — the outlines match only when "
-                                "turned, the pads do not; verify the land pattern");
+                                plain_side + "'s record states no case code — " + outline +
+                                "; verify the land pattern");
             }
         }
         FootprintTier tier = footprint_tier(o_dims, s_dims, strict_case);
