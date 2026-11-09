@@ -2,6 +2,7 @@
 // (ABT #2029-#2051). Each case reproduces the reported row in miniature.
 #include <cmath>
 #include <optional>
+#include <stdexcept>
 #include <string>
 
 #include <catch2/catch_approx.hpp>
@@ -2000,3 +2001,251 @@ TEST_CASE("qarlos 2026-11-08 r2: an unstated resistor tolerance stays unverified
     }
 }
 
+
+// ── Qarlos 2026-11-09 (seeds 20365838, 20575296, 20680025, 20784754) ─────────
+
+// 380LX151M450K022 (1.7 A @ 20 kHz) against MAL219857151E3 (1.36 A @ 100 Hz): the ripple
+// rating was failed across two frequencies with no caveat. Different stated frequencies, or a
+// stated original frequency against an unstated one, are UNVERIFIED, noted, capped at
+// minor_review and directionless; same frequency or an unstated original compare as before.
+TEST_CASE("qarlos 2026-11-09: ripple current is compared only at a common frequency",
+          "[qarlos][views][crossref]") {
+    auto env = [](json elec) {
+        elec["capacitance"] = {{"nominal", 150e-6}};
+        elec["ratedVoltage"] = 450.0;
+        json di = {{"part", {{"partNumber", "380LX151M450K022"},
+                             {"technology", "aluminum-electrolytic-wet"}}},
+                   {"electrical", elec}};
+        return json{{"capacitor", {{"manufacturerInfo", {{"name", "Cornell Dubilier"},
+                                                         {"reference", "380LX151M450K022"},
+                                                         {"datasheetInfo", di}}}}}};
+    };
+    auto row = kelvin::extract_capacitor(env({{"rippleCurrent", 1.7},
+                                              {"rippleCurrentFrequency", 20000.0}}));
+    REQUIRE(row.has_value());
+    CHECK(row->ripple_current_frequency == 20000.0);
+    // a frequency with no ripple value quoted at it is not carried
+    auto bare = kelvin::extract_capacitor(env({{"rippleCurrentFrequency", 120.0}}));
+    REQUIRE(bare.has_value());
+    CHECK(std::isnan(bare->ripple_current_frequency));
+
+    auto cap = [](const char* mpn, double ir, std::optional<double> f) {
+        json j = {{"mpn", mpn}, {"value_si", 150e-6}, {"voltage", 450.0},
+                  {"technology", "aluminum-electrolytic-wet"}, {"esr", 0.44},
+                  {"ripple_current", ir}};
+        j["ripple_current_frequency"] = f ? json(*f) : json(nullptr);
+        return j;
+    };
+    const json orig = cap("380LX151M450K022", 1.7, 20000.0);
+    kelvin::crossref::Options opt;
+    opt.check_footprint = false;
+    // different frequencies: unverified, both values and frequencies named
+    {
+        auto r = kelvin::crossref::cross_reference(
+            "capacitor", orig, json::array({cap("MAL219857151E3", 1.36, 100.0)}), opt);
+        const json& c = r["candidates"][0];
+        CHECK(verdict_of(c, "ripple_current") == "unverified");
+        CHECK(has_note(c, "original 1.7 A at 20000 Hz, substitute 1.36 A at 100 Hz"));
+        CHECK(c["status"] == "partial");
+        CHECK(c["grade"] == "minor_review");
+        CHECK(c["direction"] != "downgrade");
+    }
+    // the substitute states no frequency: unverified too
+    {
+        auto r = kelvin::crossref::cross_reference(
+            "capacitor", orig, json::array({cap("NOFREQ", 1.36, std::nullopt)}), opt);
+        const json& c = r["candidates"][0];
+        CHECK(verdict_of(c, "ripple_current") == "unverified");
+        CHECK(has_note(c, "states 1.36 A at no frequency"));
+        CHECK(c["grade"] == "minor_review");
+    }
+    // same frequency: compared as stated, a real shortfall still fails
+    {
+        auto r = kelvin::crossref::cross_reference(
+            "capacitor", orig, json::array({cap("SAMEF", 1.36, 20000.0)}), opt);
+        CHECK(verdict_of(r["candidates"][0], "ripple_current") == "fail");
+    }
+    // the original states no frequency: compared as stated, as before
+    {
+        auto r = kelvin::crossref::cross_reference(
+            "capacitor", cap("ORIG_NOF", 1.7, std::nullopt),
+            json::array({cap("SUB", 1.36, 100.0)}), opt);
+        CHECK(verdict_of(r["candidates"][0], "ripple_current") == "fail");
+    }
+}
+
+// 380LX151M450K022 / 475VXH330MEFCSN35X35 state shape.assembly "Snap-In" (a CAS enum value);
+// Kelvin did not classify it and the note called the original's mount "not stated". Snap-In
+// is a through-hole board process; a stated but unclassifiable mount is quoted as stated.
+TEST_CASE("qarlos 2026-11-09: a stated Snap-In mount is classified and never 'not stated'",
+          "[qarlos][crossref][dims]") {
+    using kelvin::crossref::normalize_mount;
+    CHECK(normalize_mount("Snap-In") == "leaded");
+    CHECK(normalize_mount("Screw Type").empty());
+    json orig = {{"mpn", "380LX151M450K022"}, {"value_si", 150e-6}, {"voltage", 450.0},
+                 {"technology", "aluminum-electrolytic-wet"}, {"mount", "Snap-In"}};
+    json tht = {{"mpn", "THT_CAN"}, {"value_si", 150e-6}, {"voltage", 450.0},
+                {"technology", "aluminum-electrolytic-wet"}, {"mount", "THT"}};
+    json smt = tht;
+    smt["mpn"] = "SMT_CAN";
+    smt["mount"] = "SMT";
+    json unstated = tht;
+    unstated["mpn"] = "NO_MOUNT";
+    unstated["mount"] = "";
+    auto r = kelvin::crossref::cross_reference("capacitor", orig,
+                                               json::array({tht, smt, unstated}));
+    int seen = 0;
+    for (const auto& c : r["candidates"]) {
+        CHECK_FALSE(has_note(c, "original: not stated"));
+        if (c["mpn"] == "SMT_CAN") {
+            ++seen;
+            CHECK(c["status"] == "no_substitute");
+            CHECK(has_note(c, "mount type incompatible: Snap-In -> SMT"));
+        }
+        if (c["mpn"] == "THT_CAN") {
+            ++seen;
+            CHECK(verdict_of(c, "mounting") != "fail");
+        }
+        if (c["mpn"] == "NO_MOUNT") {
+            ++seen;
+            CHECK(has_note(c, "original: leaded"));
+        }
+    }
+    CHECK(seen == 3);
+    // a stated mount Kelvin cannot classify is quoted, not called absent
+    json screw = orig;
+    screw["mount"] = "Screw Type";
+    auto r2 = kelvin::crossref::cross_reference("capacitor", screw, json::array({tht}));
+    CHECK(has_note(r2["candidates"][0], "original: \"Screw Type\""));
+}
+
+// F339MX252231KIM2T0 states part.safetyClass x2 at 310 VAC and no series name, so the
+// series-name gate never engaged and non-safety DC film parts came back 'recommended'.
+TEST_CASE("qarlos 2026-11-09: a stated safety class and AC rating are extracted and compared",
+          "[qarlos][views][crossref]") {
+    json elec = {{"capacitance", {{"nominal", 2.2e-6}}}, {"ratedVoltage", 310.0},
+                 {"voltageRatedAcMax", 310.0}};
+    json env = {{"capacitor", {{"manufacturerInfo", {{"name", "Vishay"},
+        {"reference", "F339MX252231KIM2T0"},
+        {"datasheetInfo", {{"part", {{"partNumber", "F339MX252231KIM2T0"},
+                                     {"technology", "film-polypropylene"},
+                                     {"safetyClass", {{"class", "x2"}}}}},
+                           {"electrical", elec}}}}}}}};
+    auto row = kelvin::extract_capacitor(env);
+    REQUIRE(row.has_value());
+    CHECK(row->safety_class == "x2");
+    CHECK(row->v_rated_ac == 310.0);
+
+    auto cap = [](const char* mpn, json cls, json vac) {
+        return json{{"mpn", mpn}, {"value_si", 2.2e-6}, {"voltage", 400.0},
+                    {"technology", "film-polypropylene"}, {"family", ""},
+                    {"safety_class", cls}, {"voltage_ac", vac}};
+    };
+    json orig = cap("F339MX252231KIM2T0", "x2", 310.0);
+    orig["voltage"] = 310.0;
+    kelvin::crossref::Options opt;
+    opt.check_footprint = false;
+    auto run = [&](const json& c) {
+        return kelvin::crossref::cross_reference("capacitor", orig, json::array({c}), opt)
+            ["candidates"][0];
+    };
+    // R75MR422050H4J: a DC film part with no class and no AC rating is never recommended
+    {
+        json c = run(cap("R75MR422050H4J", nullptr, nullptr));
+        CHECK(c["status"] != "recommended");
+        CHECK(verdict_of(c, "safety_class") == "unverified");
+        CHECK(verdict_of(c, "voltage_ac") == "unverified");
+        CHECK(c["grade"] == "major_review");
+    }
+    // X1 covers X2
+    CHECK(run(cap("X1PART", "x1", 310.0))["status"] == "recommended");
+    CHECK(verdict_of(run(cap("X1Y2PART", "x1y2", 310.0)), "safety_class") == "pass");
+    // a stated class on the other axis, or a stated "none", is a mismatch and rejects
+    {
+        json c = run(cap("Y2PART", "y2", 310.0));
+        CHECK(c["status"] == "no_substitute");
+        CHECK(verdict_of(c, "safety_class") == "fail");
+        CHECK(has_note(c, "holds no X-class approval"));
+        json n = run(cap("NONE", "none", 310.0));
+        CHECK(n["status"] == "no_substitute");
+        CHECK(has_note(n, "NO safety-class approval"));
+    }
+    // a lower AC rating is a FAIL and rejects
+    {
+        json c = run(cap("X2_275", "x2", 275.0));
+        CHECK(c["status"] == "no_substitute");
+        CHECK(verdict_of(c, "voltage_ac") == "fail");
+        CHECK(has_note(c, "275 V AC vs the original's 310 V AC"));
+    }
+    // Y1 covers Y2; an original with no class compares nothing
+    {
+        json y2 = cap("Y2ORIG", "y2", 300.0);
+        auto r = kelvin::crossref::cross_reference(
+            "capacitor", y2, json::array({cap("Y1PART", "y1", 300.0)}), opt);
+        CHECK(verdict_of(r["candidates"][0], "safety_class") == "pass");
+        json plain = cap("PLAIN", nullptr, nullptr);
+        auto r2 = kelvin::crossref::cross_reference(
+            "capacitor", plain, json::array({cap("NONE", "none", nullptr)}), opt);
+        CHECK(verdict_of(r2["candidates"][0], "safety_class").empty());
+        CHECK(verdict_of(r2["candidates"][0], "voltage_ac").empty());
+    }
+    // a token outside the CAS enum is malformed data, not "no class"
+    CHECK_THROWS_AS(run(cap("BAD", "x9", 310.0)), std::invalid_argument);
+}
+
+// XT26008-T-K (-55..200 degC) took 125 degC chip inductors with no caveat: the magnetic row
+// carried no temperature range. Extracted now, and compared with the resistor rule.
+TEST_CASE("qarlos 2026-11-09: a magnetic's operating range is extracted and must be covered",
+          "[qarlos][views][crossref]") {
+    json env = {{"magnetic", {{"manufacturerInfo", {{"name", "Vanguard Electronics"},
+        {"reference", "XT26008-T-K"},
+        {"datasheetInfo", {{"electrical", json::array({{{"subtype", "inductor"},
+                                                        {"inductance", {{"nominal", 4.7e-8}}},
+                                                        {"ratedCurrents", {0.55}}}})},
+                           {"thermal", {{"operatingTemperature",
+                                         {{"minimum", -55.0}, {"maximum", 200.0}}}}}}}}}}}};
+    auto row = kelvin::extract_magnetic(env);
+    REQUIRE(row.has_value());
+    CHECK(row->temp_min_c == -55.0);
+    CHECK(row->temp_max_c == 200.0);
+
+    auto ind = [](const char* mpn, json lo, json hi) {
+        return json{{"mpn", mpn}, {"value_si", 4.7e-8}, {"rated_current", 0.55},
+                    {"saturation_current", 0.7}, {"dcr", 0.08}, {"temp_min_C", lo},
+                    {"temp_max_C", hi}};
+    };
+    json orig = ind("XT26008-T-K", -55.0, 200.0);
+    kelvin::crossref::Options opt;
+    opt.check_footprint = false;
+    auto r = kelvin::crossref::cross_reference(
+        "magnetic", orig,
+        json::array({ind("LQW18AS47NG00", -40.0, 125.0), ind("COVERS", -55.0, 200.0),
+                     ind("NO_RANGE", nullptr, nullptr)}),
+        opt);
+    int seen = 0;
+    for (const auto& c : r["candidates"]) {
+        if (c["mpn"] == "LQW18AS47NG00") {
+            ++seen;
+            CHECK(verdict_of(c, "temp_max_C") == "fail");
+            CHECK(verdict_of(c, "temp_min_C") == "fail");
+            CHECK(c["grade"] == "major_review");
+            CHECK(has_note(c, "rated only to +125"));
+        }
+        if (c["mpn"] == "COVERS") {
+            ++seen;
+            CHECK(verdict_of(c, "temp_max_C") == "pass");
+            CHECK(c["grade"] == "drop_in");
+        }
+        if (c["mpn"] == "NO_RANGE") {
+            ++seen;
+            CHECK(verdict_of(c, "temp_max_C") == "unverified");
+            CHECK(c["grade"] == "minor_review");
+            CHECK(has_note(c, "states no maximum operating temperature"));
+        }
+    }
+    CHECK(seen == 3);
+    // a one-degree shortfall is still a FAIL: no warn band
+    auto r2 = kelvin::crossref::cross_reference(
+        "magnetic", orig, json::array({ind("ONE_SHORT", -55.0, 199.0)}), opt);
+    CHECK(verdict_of(r2["candidates"][0], "temp_max_C") == "fail");
+}

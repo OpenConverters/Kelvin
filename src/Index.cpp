@@ -103,6 +103,12 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // is the row length the cross-reference's pin-field check runs over (Qarlos 2026-11-08: a
 // 24-way 5.00 mm strip passed against a 5.08 mm original, end pin 1.84 mm off its hole),
 // and a terminal block's pluggable / fixed form (ConnectorRow.pluggable, tri-state).
+// v20 carries a capacitor's stated safety class (CapacitorRow.safety_class, CAS
+// part.safetyClass.class) and the frequency its ripple current is stated at
+// (CapacitorRow.ripple_current_frequency), and a magnetic's operating-temperature range
+// (MagneticRow.temp_min_c / temp_max_c), all of which the cross-reference compares (Qarlos
+// 2026-11-09: an X2 original took non-safety parts, a 100 Hz ripple rating was failed against a
+// 20 kHz one, a 200 degC inductor took 125 degC parts with no caveat).
 constexpr uint32_t kFormatVersion = 20;
 
 // Identity of the code that produces rows, so a cached shard can be recognised as
@@ -321,6 +327,8 @@ void row_io(Ar& ar, CapacitorRow& r) {
     ar.dbl(r.temp_min_c);
     ar.dbl(r.temp_max_c);
     ar.dbl(r.v_rated_ac);   // v14
+    ar.str(r.safety_class);              // v20
+    ar.dbl(r.ripple_current_frequency);  // v20
     ar.boolean(r.is_production);
 }
 
@@ -396,6 +404,8 @@ void row_io(Ar& ar, MagneticRow& r) {
     ar.dbl(r.impedance_peak_freq);
     ar.str(r.device_type);
     ar.str(r.family);
+    ar.dbl(r.temp_min_c);  // v20
+    ar.dbl(r.temp_max_c);  // v20
     ar.boolean(r.is_production);
 }
 
