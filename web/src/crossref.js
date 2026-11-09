@@ -137,7 +137,9 @@ export const XREF = [
     hardMin: [{ row: 'vds_rated', factor: 0.9 }],
     // A P-channel part never substitutes for an N-channel one: keep the pool to the original's channel.
     sameStr: ['channel'],
-    spec: (r) => ({ ...base(r), vds: nz(r.vds_rated), id: nz(r.id_continuous), rds_on: nz(r.rds_on), qg: nz(r.qg_total), coss: nz(r.coss), vgs_threshold_max: nz(r.vgs_threshold_max), rds_on_vgs: nz(r.rds_on_vgs), vgs_max: nz(r.vgs_max), technology: r.technology ?? '', qualification: r.qualification ?? '', channel: r.channel || null }),
+    // vgs_threshold_typ (v20): the |typical| threshold, never read as a maximum — the ranker
+    // uses it only to prove a substitute's maximum exceeds the original's (max >= typ).
+    spec: (r) => ({ ...base(r), vds: nz(r.vds_rated), id: nz(r.id_continuous), rds_on: nz(r.rds_on), qg: nz(r.qg_total), coss: nz(r.coss), vgs_threshold_max: nz(r.vgs_threshold_max), vgs_threshold_typ: nz(r.vgs_threshold_typ), rds_on_vgs: nz(r.rds_on_vgs), vgs_max: nz(r.vgs_max), technology: r.technology ?? '', qualification: r.qualification ?? '', channel: r.channel || null }),
     params: [
       { key: 'vds', label: 'Vds', row: 'vds_rated', unit: 'V' },
       { key: 'id', label: 'Id', row: 'id_continuous', unit: 'A' },
@@ -303,7 +305,11 @@ export const XREF = [
       junction_capacitance: nz(r.junction_capacitance),
       clamping_waveform: r.clamping_waveform ?? '',
       peak_pulse_power_waveform: r.peak_pulse_power_waveform ?? '',
-      peak_pulse_current_waveform: r.peak_pulse_current_waveform ?? '' }),
+      peak_pulse_current_waveform: r.peak_pulse_current_waveform ?? '',
+      // v20 (Qarlos 2026-11-09): the junction temperature maximum, which the substitute must
+      // reach (lower = FAIL), and the qualification the record states ('' = not stated =
+      // UNKNOWN grade to the ranker, never "commercial").
+      tj_max: r.tj_max ?? null, qualification: r.qualification ?? '' }),
     params: [
       { key: 'vrrm', label: 'Vrrm', row: 'vrrm_rated', unit: 'V' },
       { key: 'if_avg', label: 'If avg', row: 'if_avg_rated', unit: 'A' },

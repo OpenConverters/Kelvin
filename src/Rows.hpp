@@ -125,6 +125,13 @@ struct MosfetRow : RowBase {
     // it null and the ranker reports the comparison UNVERIFIED.
     double qg_total = kNaN();
     double vgs_threshold_max = kNaN();
+    // |Vgs(th)| TYPICAL (gateThresholdVoltage.nominal, as a magnitude), NaN when not stated.
+    // It is NOT a maximum and is never read as one; it is carried because a typical above the
+    // original's guaranteed MAXIMUM already proves the substitute's maximum is higher (max >=
+    // typ): 1,350 records state only a nominal, and onsemi's logic-level NVMFS5C670NLET1G
+    // (Vth max 2 V) took BSC060N10NS6 (typ 3.5 V) with the threshold 'unverified' and no
+    // caveat (Qarlos 2026-11-09, seed 21098941). v20.
+    double vgs_threshold_typ = kNaN();
     // NOT 0, for the same reason as the capacitor ESR below: most of the catalogue does
     // not publish Coss, and 0 F is both physically impossible and indistinguishable from
     // a stated value. The browse row showed "coss": 0 next to null for every other absent
@@ -204,6 +211,11 @@ struct DiodeRow : RowBase {
     double peak_pulse_power = kNaN(), peak_pulse_current = kNaN();
     double junction_capacitance = kNaN();
     std::string clamping_waveform, peak_pulse_power_waveform, peak_pulse_current_waveform;
+    // part.qualification verbatim ("Automotive (AEC-Q101)", 5,352 of 47,193 diode records);
+    // empty = the record states none. Not carried, an AEC-Q101 original (ROHM
+    // RB168VYM150FHTR) was swapped for non-automotive Schottkys with no caveat (Qarlos
+    // 2026-11-09, seed 21308399). v20.
+    std::string qualification;
     bool is_production = false;
     bool no_thermal() const { return !present(rth_ja) || !present(tj_max); }
 };

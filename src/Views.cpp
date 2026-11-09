@@ -283,11 +283,27 @@ void fill_dimensions(RowBase& r, const json& di, const json& part, bool lies_fla
     // Case code: `part.case` is the field the catalogue actually populates
     // (100% of sampled capacitors/mosfets/resistors/diodes); `mechanical.case`
     // and the caseCode/package spellings are accepted as fallbacks.
-    if (auto c = get_str(part, "case")) r.case_code = *c;
-    else if (mech) { if (auto c = get_str(*mech, "case")) r.case_code = *c; }
+    //
+    // A PLACEHOLDER is not a case code (Qarlos 2026-11-09): 13 MOSFET, 84 diode and 624 IGBT
+    // records state case "Unknown" (Infineon BSC160N15NS5ATMA1 ...). Read as a code, two
+    // such records named the same "case" and the same-case rule called the land kept. Rule:
+    // a placeholder reads as not stated, and the next source is consulted.
+    auto stated_case = [](const std::optional<std::string>& c) -> std::optional<std::string> {
+        if (!c) return std::nullopt;
+        std::string t;
+        for (char ch : *c)
+            if (!std::isspace(static_cast<unsigned char>(ch)))
+                t += static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        if (t.empty() || t == "unknown" || t == "n/a" || t == "-" || t == "tbd" ||
+            t == "none")
+            return std::nullopt;
+        return c;
+    };
+    if (auto c = stated_case(get_str(part, "case"))) r.case_code = *c;
+    else if (mech) { if (auto c = stated_case(get_str(*mech, "case"))) r.case_code = *c; }
     if (r.case_code.empty()) {
-        if (auto c = get_str(part, "caseCode")) r.case_code = *c;
-        else if (auto p = get_str(part, "package")) r.case_code = *p;
+        if (auto c = stated_case(get_str(part, "caseCode"))) r.case_code = *c;
+        else if (auto p = stated_case(get_str(part, "package"))) r.case_code = *p;
     }
 }
 
@@ -393,11 +409,36 @@ std::optional<MosfetRow> extract_mosfet(const json& env) {
     // gate-threshold warn the record does not support (ABT #2045). With no stated bound the
     // field stays ABSENT (NaN): it used to be 0, and the row then reported a 0 V worst-case
     // threshold for every nominal-only record (SQJ409EP, BSC020N04LS, IGO60R040D1 ...).
-    std::optional<double> vgs;
+    //
+    // P-channel bounds are read as MAGNITUDES, whichever key holds them (Qarlos 2026-11-09,
+    // seed 21936773). The catalogue's P-channel records state the threshold four ways
+    // (survey of mosfets.ndjson): {minimum, maximum} both negative, the minimum always the
+    // larger magnitude (481, signed order); a lone negative minimum (656, e.g. -4 V); a lone
+    // negative MAXIMUM (147: onsemi FDMA86265P -4 V, FQD5P20TM -5 V, the vendor's "Max"
+    // column); a lone nominal (142). The old read took only the minimum, so every lone-maximum
+    // record lost its threshold and a -4 V part read 'unverified' against a -2 V logic-level
+    // ISP14EP15LM. Rule: the worst case is the LARGEST magnitude among the stated negative
+    // minimum/maximum. A lone negative maximum is that magnitude in either reading of the
+    // record: in the vendor-column reading it is |Vth|max; in the signed reading the
+    // magnitude is at least that, so a compare that calls it higher than the original's is
+    // right both ways. One exception, where the record says outright that its bound is the
+    // SMALL end: a stated nominal with a larger magnitude than every stated bound (Vishay
+    // SUD08P06-155L-GE3: maximum -1, nominal -2). Then no worst case is stated: absent.
+    std::optional<double> vgs, vgs_typ;
     if (const json* gtv = obj_get(*elec, "gateThresholdVoltage"); gtv && gtv->is_object()) {
-        auto hi = get_num(*gtv, "maximum"), lo = get_num(*gtv, "minimum");
-        if (p_channel && lo && *lo < 0.0) vgs = -*lo;
-        else if (pos(hi)) vgs = hi;
+        auto hi = get_num(*gtv, "maximum"), lo = get_num(*gtv, "minimum"),
+             nom = get_num(*gtv, "nominal");
+        if (p_channel && ((lo && *lo < 0.0) || (hi && *hi < 0.0))) {
+            double worst = 0.0;
+            if (lo && *lo < 0.0) worst = std::max(worst, -*lo);
+            if (hi && *hi < 0.0) worst = std::max(worst, -*hi);
+            if (!(nom && *nom < 0.0 && -*nom > worst)) vgs = worst;
+        } else if (pos(hi)) {
+            vgs = hi;
+        }
+        // The typical, as a magnitude (see MosfetRow::vgs_threshold_typ). A P-channel
+        // nominal is negative; an N-channel one must be positive to be read.
+        if (nom && *nom != 0.0 && (p_channel || *nom > 0.0)) vgs_typ = std::fabs(*nom);
     }
 
     MosfetRow r;
@@ -410,6 +451,7 @@ std::optional<MosfetRow> extract_mosfet(const json& env) {
     if (pos(qg)) r.qg_total = *qg;
     if (pos(coss_o)) r.coss = *coss_o;
     if (vgs) r.vgs_threshold_max = *vgs;
+    if (vgs_typ) r.vgs_threshold_typ = *vgs_typ;
     if (auto v = rating_magnitude(get_num(*elec, "onResistanceVgs"), p_channel); pos(v))
         r.rds_on_vgs = *v;
     if (auto v = rating_magnitude(get_num(*elec, "gateSourceVoltageMax"), p_channel); pos(v))
@@ -546,6 +588,8 @@ std::optional<DiodeRow> extract_diode(const json& env) {
     r.clamping_waveform = get_str(*elec, "clampingWaveform").value_or("");
     r.peak_pulse_power_waveform = get_str(*elec, "peakPulsePowerWaveform").value_or("");
     r.peak_pulse_current_waveform = get_str(*elec, "peakPulseCurrentWaveform").value_or("");
+    // Verbatim; "" = not stated (the ranker reads that as an UNKNOWN grade, never commercial).
+    r.qualification = get_str(*part, "qualification").value_or("");
     auto status = get_str(*mi, "status");
     r.is_production = status.has_value() && *status == "production";
     const json* thermal = obj_get(*di, "thermal");
