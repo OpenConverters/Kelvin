@@ -440,6 +440,10 @@ struct ConnectorRow : RowBase {
     // right-angle original with no orientation verdict at all (Qarlos 2026-11-08). Empty
     // when unstated.
     std::string orientation;
+    // familyDetails.pluggable on a terminalBlock: "true" (a pluggable plug), "false" (a fixed
+    // PCB block) or "" when unstated. A string, not a bool, because absence is a third state
+    // and must never read as false (Qarlos 2026-11-08).
+    std::string pluggable;
     bool is_production = false;
 };
 

@@ -101,7 +101,8 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // general-purpose thick film as drop_in, a 4x worse TCR went unmentioned).
 // v20 carries a connector's row count (ConnectorRow.rows, mechanical.rows): positions / rows
 // is the row length the cross-reference's pin-field check runs over (Qarlos 2026-11-08: a
-// 24-way 5.00 mm strip passed against a 5.08 mm original, end pin 1.84 mm off its hole).
+// 24-way 5.00 mm strip passed against a 5.08 mm original, end pin 1.84 mm off its hole),
+// and a terminal block's pluggable / fixed form (ConnectorRow.pluggable, tri-state).
 constexpr uint32_t kFormatVersion = 20;
 
 // Identity of the code that produces rows, so a cached shard can be recognised as
@@ -456,6 +457,7 @@ void row_io(Ar& ar, ConnectorRow& r) {
     ar.str(r.termination);
     ar.str(r.orientation);  // v19
     ar.dbl(r.rows);         // v20
+    ar.str(r.pluggable);    // v20
     ar.boolean(r.is_production);
 }
 

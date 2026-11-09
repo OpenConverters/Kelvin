@@ -1298,6 +1298,9 @@ std::optional<ConnectorRow> extract_connector(const json& env) {
                                    .value_or(get_str(*fd, "interface").value_or(""));
         r.termination = get_str(*fd, "termination")
                             .value_or(get_str(*fd, "clampType").value_or(""));
+        // terminalBlock's pluggable flag, tri-state: unstated stays "" (never "false").
+        if (auto it = fd->find("pluggable"); it != fd->end() && it->is_boolean())
+            r.pluggable = it->get<bool>() ? "true" : "false";
     }
     // The separable interface itself: only the mating-area material, which is what decides
     // whether two halves may be mated at all (gold onto tin frets and corrodes). The

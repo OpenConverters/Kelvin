@@ -214,6 +214,9 @@ export const XREF = [
       // cable): a vertical FPC connector for a right-angle original is a different
       // mechanical design. null when unstated: unverified with a note, never a match.
       orientation: r.orientation || null,
+      // familyDetails.pluggable (terminal blocks): true = pluggable plug, false = fixed PCB
+      // block, null = unstated. Tri-state on purpose: unstated is never 'fixed'.
+      pluggable: r.pluggable === 'true' ? true : r.pluggable === 'false' ? false : null,
       mating_cycles: nz(r.mating_cycles) }),
     params: [
       { key: 'positions', label: 'pos', row: 'positions', unit: '' },

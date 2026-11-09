@@ -1211,6 +1211,106 @@ TEST_CASE("qarlos 2026-11-08: a connector pitch difference is judged at the end 
     CHECK(row->rows == Approx(1.0));
 }
 
+// Both records state mechanical.rows and they differ: a different pin field, whatever the
+// pitch. One side only, or neither: rows alone give no verdict.
+TEST_CASE("qarlos 2026-11-08: a connector with a different row count is a different pin field",
+          "[qarlos][crossref]") {
+    auto hdr = [](const std::string& mpn, json pitch_mm, json rows) {
+        json o = {{"mpn", mpn},      {"family", "pinHeaderSocket"}, {"positions", 24.0},
+                  {"rated_current_A", 3.0}, {"mount", nullptr},     {"mounting", nullptr}};
+        o["pitch_mm"] = pitch_mm;
+        o["rows"] = rows;
+        return o;
+    };
+    kelvin::crossref::Options opt;
+    opt.max_results = 10;
+    auto r = kelvin::crossref::cross_reference(
+        "connector", hdr("ORIG", 2.54, 1.0),
+        json::array({hdr("TWO_ROWS", 2.54, 2.0), hdr("TWO_ROWS_NO_PITCH", nullptr, 2.0),
+                     hdr("ONE_ROW", 2.54, 1.0), hdr("ROWS_UNSTATED", 2.54, nullptr)}),
+        opt);
+    const json* two = cand_by_mpn(r, "TWO_ROWS");
+    REQUIRE(two);
+    CHECK(verdict_of(*two, "pitch_mm") == "fail");
+    CHECK((*two)["footprint"] == "different_land_pattern");
+    CHECK((*two)["status"] == "partial");
+    CHECK(has_note(*two, "contact rows differ: 1 -> 2 rows"));
+    // The arrangement alone settles it, even with no pitch on the substitute's record.
+    const json* np = cand_by_mpn(r, "TWO_ROWS_NO_PITCH");
+    REQUIRE(np);
+    CHECK((*np)["footprint"] == "different_land_pattern");
+    CHECK((*np)["status"] == "partial");
+    CHECK(has_note(*np, "contact rows differ: 1 -> 2 rows"));
+    const json* one = cand_by_mpn(r, "ONE_ROW");
+    REQUIRE(one);
+    CHECK(verdict_of(*one, "pitch_mm") == "pass");
+    CHECK_FALSE(one->contains("footprint"));
+    const json* un = cand_by_mpn(r, "ROWS_UNSTATED");
+    REQUIRE(un);
+    CHECK(verdict_of(*un, "pitch_mm") == "pass");
+    CHECK_FALSE(un->contains("footprint"));
+    CHECK(count_notes(*un, "contact rows differ") == 0);
+}
+
+// 395337424 (Molex Eurostyle pluggable plug) took WAGO 739-124 fixed PCB strips with no
+// form-factor note (seed 20784754). CONAS familyTerminalBlock.pluggable is the structured
+// field; it is tri-state and an unstated one is never read as "fixed".
+TEST_CASE("qarlos 2026-11-08: a pluggable terminal-block plug is not a fixed block",
+          "[qarlos][crossref]") {
+    auto tb = [](const std::string& mpn, json pluggable) {
+        json o = {{"mpn", mpn},        {"family", "terminalBlock"}, {"positions", 24.0},
+                  {"pitch_mm", 5.08},  {"rows", 1.0},               {"rated_current_A", 18.0},
+                  {"mount", nullptr},  {"mounting", nullptr}};
+        o["pluggable"] = pluggable;
+        return o;
+    };
+    kelvin::crossref::Options opt;
+    opt.max_results = 10;
+    auto r = kelvin::crossref::cross_reference(
+        "connector", tb("PLUG", true),
+        json::array({tb("FIXED", false), tb("PLUG2", true), tb("UNSTATED", nullptr)}), opt);
+    const json* fixed = cand_by_mpn(r, "FIXED");
+    REQUIRE(fixed);
+    CHECK(verdict_of(*fixed, "pluggable") == "fail");
+    CHECK((*fixed)["status"] == "no_substitute");
+    CHECK(has_note(*fixed, "terminal block form differs: pluggable -> fixed"));
+    const json* plug2 = cand_by_mpn(r, "PLUG2");
+    REQUIRE(plug2);
+    CHECK(verdict_of(*plug2, "pluggable") == "pass");
+    CHECK((*plug2)["grade"] == "drop_in");
+    const json* un = cand_by_mpn(r, "UNSTATED");
+    REQUIRE(un);
+    CHECK(verdict_of(*un, "pluggable") == "unverified");
+    CHECK(un->value("status", "") != "no_substitute");
+    CHECK((*un)["grade"] != "drop_in");
+    CHECK(has_note(*un, "pluggable vs fixed not established (original: pluggable, substitute: "
+                        "not stated)"));
+    // Neither record states it: silent.
+    auto r2 = kelvin::crossref::cross_reference("connector", tb("A", nullptr),
+                                                json::array({tb("B", nullptr)}), opt);
+    CHECK(verdict_of(r2["candidates"][0], "pluggable") == "");
+
+    // The extractor: tri-state, unstated stays empty (never "false").
+    auto env = [](json fd) {
+        return json{{"connector",
+                     {{"manufacturerInfo",
+                       {{"name", "Würth Elektronik"},
+                        {"reference", "X"},
+                        {"status", "production"},
+                        {"datasheetInfo",
+                         {{"part", {{"partNumber", "X"}}},
+                          {"mechanical", {{"positions", 4}, {"pitch", 0.00508}}},
+                          {"familyDetails", fd}}}}}}}};
+    };
+    auto t = kelvin::extract_connector(env({{"family", "terminalBlock"}, {"pluggable", true}}));
+    auto f = kelvin::extract_connector(env({{"family", "terminalBlock"}, {"pluggable", false}}));
+    auto n = kelvin::extract_connector(env({{"family", "terminalBlock"}}));
+    REQUIRE((t && f && n));
+    CHECK(t->pluggable == "true");
+    CHECK(f->pluggable == "false");
+    CHECK(n->pluggable.empty());
+}
+
 // Round-1 merge left connectors with TWO mount checks (a PARAM_SPECS 'mounting' key and the
 // shared compare_mount gate): a connector whose substitute states no board attach came back
 // with two 'mounting' verdicts and two notes. One gate now decides it.
