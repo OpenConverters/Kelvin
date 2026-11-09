@@ -3774,3 +3774,42 @@ TEST_CASE("qarlos v20: a bead/CMC rating the substitute does not state blocks 'u
     CHECK(r2["candidates"][0]["direction"] == "upgrade");
 }
 
+
+// Retest seed 20276947: for RNC55K1472FSB14 (Vishay RNC55, 14.7 kOhm 1 %), ERJB2AF153V (15 kOhm,
+// +2.04 %, inside the +/-5 % pool window) ranked FIRST, ahead of the exact-value ERJS parts: its
+// penalty (2.66) was below theirs (3.0). Owner's rule: a different nominal resistance stays on
+// offer as an alternative, but WARN on value, capped at major_review, never upgrade/equivalent,
+// and ranked after every exact-value candidate. Records verbatim from TAS resistors.ndjson.
+namespace {
+const char* kRNC55K1472FSB14 = R"J({"resistor": {"manufacturerInfo": {"name": "Vishay", "reference": "RNC55K1472FSB14", "datasheetUrl": "https://www.vishay.com/docs/31025/erc.pdf", "datasheetInfo": {"part": {"partNumber": "RNC55K1472FSB14", "technology": "metalFilm", "series": "RNC55"}, "electrical": {"resistance": {"nominal": 14700.0}, "tolerance": 0.01, "powerRating": 0.125, "temperatureCoefficient": 100, "powerRatingTemperature": 70, "maxVoltage": 200}, "thermal": {"operatingTemperature": {"minimum": -65, "maximum": 175}}, "provenance": [{"source": "manufacturerDatasheet", "sourceName": "Vishay Dale ERC datasheet", "sourceUrl": "https://www.vishay.com/docs/31025/erc.pdf", "retrievedDate": "2026-10-09", "fields": ["electrical.resistance", "electrical.tolerance", "electrical.temperatureCoefficient", "electrical.powerRating", "electrical.maxVoltage", "thermal.operatingTemperature"], "verification": "seriesConfirmed", "verificationDate": "2026-10-09"}, {"source": "manufacturerDatabase", "sourceName": "Vishay product part list", "sourceUrl": "https://www.vishay.com/en/product/31025/tab/designtools-ppg/", "retrievedDate": "2026-10-18", "fields": ["part.partNumber"], "verification": "partNamed", "verificationDate": "2026-10-18"}, {"source": "manufacturerDatasheet", "sourceName": "Vishay ERC (Military RNC/RNR) datasheet, document 31025, revision 04-Sep-2025", "sourceUrl": "https://www.vishay.com/docs/31025/erc.pdf", "retrievedDate": "2026-10-23", "fields": ["factors.powerDerating"], "verification": "seriesConfirmed", "verificationDate": "2026-10-23"}, {"source": "manufacturerDatasheet", "sourceName": "Vishay ERC datasheet", "sourceUrl": "https://www.vishay.com/docs/31025/erc.pdf", "retrievedDate": "2026-10-23", "verification": "seriesConfirmed", "verificationDate": "2026-10-23", "fields": ["mechanical.length", "mechanical.diameter"]}], "factors": {"powerDerating": {"temperature": [-65, 70, 125, 175], "amplitude": [1, 1, 0.8, 0]}}, "mechanical": {"length": {"nominal": 0.00635, "minimum": 0.00518, "maximum": 0.00714}, "diameter": {"nominal": 0.00239, "minimum": 0.00209, "maximum": 0.00269}}}}}})J";
+const char* kERJB2AF153V = R"J({"resistor":{"manufacturerInfo":{"name":"Panasonic","reference":"ERJB2AF153V","status":"production","datasheetUrl":"https://industrial.panasonic.com/cdbs/www-data/pdf/RDN0000/AOA0000C325.pdf","family":"High Power Current Sensing Resistors, Wide Terminal Type","datasheetInfo":{"part":{"partNumber":"ERJB2AF153V","technology":"currentSenseShunt","series":"High Power Current Sensing Resistors, Wide Terminal Type","case":"0612"},"electrical":{"resistance":{"nominal":15000.0},"tolerance":0.01,"powerRating":0.75,"temperatureCoefficient":100.0},"mechanical":{"length":{"nominal":0.0016},"width":{"nominal":0.0032},"landPattern":{"pattern":"singleRow","originDatum":"padCentroid","pads":[{"id":"1","x":-0.00075,"y":0.0,"shape":"rectangle","width":0.001,"height":0.0034},{"id":"2","x":0.00075,"y":0.0,"shape":"rectangle","width":0.001,"height":0.0034}]}},"provenance":[{"source":"scrape","sourceName":"Panasonic Industrial parametric search","sourceUrl":"https://industrial.panasonic.com/cdbs/www-data/pdf/RDN0000/AOA0000C325.pdf","retrievedDate":"2026-08-01","verification":"seriesConfirmed","verificationDate":"2026-10-10"},{"source":"derived","sourceName":"IPC-7351B","retrievedDate":"2026-08-02","fields":["mechanical.landPattern"],"derivation":"IPC-7351B nominal land pattern for the case code"},{"source":"manufacturerParametric","sourceName":"Panasonic Industry model listing","sourceUrl":"https://industrial.panasonic.com/ww/products/pt/current-sensing-chip-resistors/models/ERJB2AF153V","retrievedDate":"2026-10-09","fields":["electrical.resistance","electrical.tolerance","electrical.powerRating","electrical.temperatureCoefficient","part.case"],"verification":"valuesReadFromSource","verificationDate":"2026-10-18"}]}}}})J";
+const char* kERJS06F1472V = R"J({"resistor":{"manufacturerInfo":{"name":"Panasonic","reference":"ERJS06F1472V","status":"production","datasheetUrl":"https://industrial.panasonic.com/cdbs/www-data/pdf/RDP0000/AOA0000C334.pdf","family":"Anti-Sulfurated Thick Film Chip Resistors","datasheetInfo":{"part":{"partNumber":"ERJS06F1472V","technology":"thickFilm","series":"Anti-Sulfurated Thick Film Chip Resistors","case":"0805"},"electrical":{"resistance":{"nominal":14700.0},"tolerance":0.01,"powerRating":0.125,"temperatureCoefficient":100.0},"mechanical":{"length":{"nominal":0.002},"width":{"nominal":0.00125},"landPattern":{"pattern":"singleRow","originDatum":"padCentroid","pads":[{"id":"1","x":-0.00095,"y":0.0,"shape":"rectangle","width":0.001,"height":0.00145},{"id":"2","x":0.00095,"y":0.0,"shape":"rectangle","width":0.001,"height":0.00145}]}},"provenance":[{"source":"scrape","sourceName":"Panasonic Industrial parametric search","sourceUrl":"https://industrial.panasonic.com/cdbs/www-data/pdf/RDP0000/AOA0000C334.pdf","retrievedDate":"2026-08-01","verification":"seriesConfirmed","verificationDate":"2026-10-10"},{"source":"derived","sourceName":"IPC-7351B","retrievedDate":"2026-08-02","fields":["mechanical.landPattern"],"derivation":"IPC-7351B nominal land pattern for the case code"},{"source":"manufacturerParametric","sourceName":"Panasonic Industry model listing","sourceUrl":"https://industrial.panasonic.com/ww/products/pt/anti-sulfurated-chip-resistors/models/ERJS06F1472V","retrievedDate":"2026-10-09","fields":["electrical.resistance","electrical.tolerance","electrical.powerRating","electrical.temperatureCoefficient","part.case"],"verification":"valuesReadFromSource","verificationDate":"2026-10-18"}]}}}})J";
+}  // namespace
+
+TEST_CASE("qarlos 2026-11-09 retest: a different resistor value ranks after every exact-value part",
+          "[qarlos][crossref][rank]") {
+    kelvin::crossref::Options opt;
+    opt.max_results = 10;
+    // The near value is listed first so the order is the ranker's, not the input's.
+    auto r = kelvin::crossref::cross_reference(
+        "resistor", res_record_spec(kRNC55K1472FSB14),
+        json::array({res_record_spec(kERJB2AF153V), res_record_spec(kERJS06F1472V)}), opt);
+    REQUIRE(r["candidates"].size() == 2);
+    CHECK(r["candidates"][0]["mpn"] == "ERJS06F1472V");
+    CHECK(r["candidates"][1]["mpn"] == "ERJB2AF153V");
+
+    const json exact = res_find(r, "ERJS06F1472V");
+    const json near = res_find(r, "ERJB2AF153V");
+    REQUIRE(!exact.is_null());
+    REQUIRE(!near.is_null());
+    CHECK(verdict_of(exact, "value") == "pass");
+    CHECK_FALSE(has_note(exact, "nominal resistance differs"));
+
+    CHECK(near["status"] != "no_substitute");  // still offered, as an alternative
+    CHECK(verdict_of(near, "value") == "warn");
+    CHECK(near["grade"] == "major_review");
+    CHECK(near["direction"] != "upgrade");
+    CHECK(near["direction"] != "equivalent");
+    CHECK(has_note(near, "nominal resistance differs: 14.7 kΩ -> 15 kΩ (+2.04 %) — a different "
+                         "value, an alternative only"));
+}

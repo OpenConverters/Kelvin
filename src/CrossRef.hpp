@@ -82,6 +82,25 @@ inline std::string plain_pct(double v) {
 // The same, sign always shown — a shift has a direction and it matters.
 inline std::string signed_pct(double v) { return (v >= 0 ? "+" : "") + plain_pct(v); }
 
+// A resistance as an engineer writes it: SI prefix, up to six significant digits,
+// no trailing zeros ("14.7 kΩ", "15 kΩ", "0.5 Ω").
+inline std::string ohms(double v) {
+    static const struct { double scale; const char* unit; } k[] = {
+        {1e9, " GΩ"}, {1e6, " MΩ"}, {1e3, " kΩ"}, {1.0, " Ω"}, {1e-3, " mΩ"}, {1e-6, " µΩ"}};
+    const double a = std::fabs(v);
+    for (const auto& p : k)
+        if (a >= p.scale || p.scale == 1e-6) {
+            char buf[32];
+            std::snprintf(buf, sizeof(buf), "%.6g", v / p.scale);
+            return std::string(buf) + p.unit;
+        }
+    throw std::logic_error("ohms: unreachable");
+}
+
+// Representation epsilon for "the same nominal resistance": two records stating
+// 14.7 kΩ as 14700 and 1.47e4 must compare equal, and nothing else may.
+constexpr double kResistanceIdentityRelEps = 1e-9;
+
 // A length as a mechanical drawing states it: metres in, millimetres out, two
 // decimals at most, no trailing zeros ("6.36", "4"). Bare, so a note can write
 // the unit once for a pair ("10.4 x 10.3 mm").
@@ -766,6 +785,19 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // value's guarantee (resistors): a 0.25 % part cannot have a 0.93 % shift
     // called a drop-in on the strength of a catalogue-wide +/-1 % band.
     auto pv = score_primary_value(cat, o_val, s_val, has_pv, o_tol);
+    // Resistors: a different NOMINAL resistance is a different part, whatever the
+    // tolerance bands say. The ±5 % pool window keeps near values on offer as
+    // alternatives, but every one is a WARN on value, capped at major_review, never
+    // read as upgrade/equivalent, and ranked after every exact-value candidate
+    // (cross_reference sorts on "value_differs" before penalty — a tier, not a
+    // penalty constant another term could outweigh). The shared primitive
+    // primary_value_spec("resistor") is untouched: this is a Kelvin ranking rule.
+    bool value_differs = false;
+    if (has_pv && cat == "resistor" && pv.verdict != FAIL && o_val && s_val && *o_val > 0 &&
+        std::fabs(*s_val / *o_val - 1.0) > kResistanceIdentityRelEps) {
+        value_differs = true;
+        pv.verdict = WARN;
+    }
     if (has_pv) {
         params.push_back({{"name", "value"}, {"verdict", pv.verdict}});
         if (pv.verdict == FAIL) return reject("primary value out of range");
@@ -808,6 +840,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 }
                 notes.push_back(note);
             }
+            if (value_differs)
+                notes.push_back("nominal resistance differs: " + ohms(*o_val) + " -> " +
+                                ohms(*s_val) + " (" + signed_pct((*s_val / *o_val - 1.0) * 100.0) +
+                                ") — a different value, an alternative only");
         }
     }
 
@@ -3373,6 +3409,18 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                            (dir == "upgrade" || dir == "equivalent")))
                            ? "unknown"
                            : dir;
+    // A different nominal resistance (see value_differs above): an alternative only. Its
+    // grade is capped at major_review (a worse grade stands), and it never reads as
+    // "upgrade" or "equivalent" — the value it exists for is not the original's, so it is
+    // behind the exact-value parts whatever its other ratings. cross_reference ranks it
+    // after every exact-value candidate on this flag.
+    if (value_differs) {
+        out["value_differs"] = true;
+        const std::string g = out["grade"];
+        if (g == "drop_in" || g == "minor_review") out["grade"] = "major_review";
+        const std::string d = out["direction"];
+        if (d == "upgrade" || d == "equivalent") out["direction"] = "downgrade";
+    }
     return out;
 }
 
@@ -3396,7 +3444,16 @@ inline json cross_reference(const std::string& category, const json& original,
     std::vector<json> scored;
     scored.reserve(candidates.size());
     for (const auto& c : candidates) scored.push_back(score_candidate(category, original, c, opt));
+    // Order: viable candidates before rejects, then exact-value candidates before
+    // different-value alternatives (resistors, "value_differs"), then penalty. The
+    // value tier is a sort key, not a penalty, so no combination of other penalties
+    // can lift a different-value part above an exact-value one.
     std::stable_sort(scored.begin(), scored.end(), [](const json& a, const json& b) {
+        const bool ra = a.value("status", "") == "no_substitute",
+                   rb = b.value("status", "") == "no_substitute";
+        if (ra != rb) return rb;
+        const bool va = a.value("value_differs", false), vb = b.value("value_differs", false);
+        if (va != vb) return vb;
         return a.value("penalty", 1e18) < b.value("penalty", 1e18);
     });
     json cands = json::array();
