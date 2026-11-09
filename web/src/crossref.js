@@ -32,7 +32,7 @@ export const XREF = [
     // has no inductance value at all, and is characterised by its impedance
     // CURVE. Ranking it against the inductor config would ask for a primary
     // value that does not exist, so the family adapts to the chosen original.
-    variantFor: (orig) => (orig?.device_type === 'chipBead' ? BEAD_VARIANT : null),
+    variantFor: magneticVariantFor,
     // saturation_points is the record's WHOLE saturation table (v20 row field, built by the
     // engine's browse as [{current, percent_drop, temperature}], null criterion = not stated):
     // 10 % / 20 % / 30 % ratings are different numbers, the ranker compares them only at a
@@ -349,6 +349,25 @@ const BEAD_VARIANT = {
     { key: 'dcr', label: 'DCR', row: 'dcr', unit: 'Ω' },
     { key: 'rated_current', label: 'I rated', row: 'rated_current', unit: 'A' },
   ],
+}
+
+// A common-mode choke is typed as one (MAS electrical[0].subtype 'commonModeChoke') and its
+// `inductance` is its COMMON-MODE inductance. A power CMC states it and is ranked on it by
+// the inductor model, within its own device type (sameFacet). A signal CMC states no
+// inductance at all, only its common-mode |Z| curve ("160 ohm at 100 MHz" is its headline,
+// MAS impedancePoints: "Common-mode impedance vs. frequency"), so the inductor model asked it
+// for an L it does not have and refused it: ACM-21-161M-T, "no L value in the catalogue"
+// (Qarlos 2026-11-09, seed 20889483; 383 CMC records state a |Z| curve and no inductance).
+// Rule: a CMC with no inductance and a 100 MHz |Z| is ranked by the impedance model the
+// bead uses, still within its own device type, so it is only ever compared with other CMCs.
+// A CMC with neither stays on the inductor model and is refused for the missing L, honestly.
+const CMC_IMPEDANCE_VARIANT = { ...BEAD_VARIANT }
+
+export function magneticVariantFor(orig) {
+  if (orig?.device_type === 'chipBead') return BEAD_VARIANT
+  if (orig?.device_type === 'commonModeChoke' && nz(orig.inductance) == null &&
+      nz(orig.impedance_100mhz) != null) return CMC_IMPEDANCE_VARIANT
+  return null
 }
 
 // Shard rows carry 0 (fixed fields) or null (nullable fields) for "not in the

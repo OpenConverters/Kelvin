@@ -2879,3 +2879,249 @@ TEST_CASE("qarlos r5-7: screw-terminal against radial-leaded is a mount mismatch
     CHECK(kelvin::crossref::mount_class("", "Screw-Terminal") == "screw");
 }
 
+
+// ── Qarlos v20 re-test (2026-11-09), magnetic ────────────────────────────────
+// Every record below is the REAL TAS magnetics.ndjson line (distributorsInfo dropped), so the
+// tests run the extractor on what the catalogue states, then the ranker on the spec block
+// web/src/crossref.js builds from the browse row (base() + the magnetic spec).
+namespace {
+json real_mag(const char* text) { return json::parse(text); }
+json mag_spec_xref(const kelvin::MagneticRow& r) {
+    json row;
+    kelvin::browse::extra_row_json(r, row);
+    auto nz = [](double v) { return std::isnan(v) || !(v > 0) ? json(nullptr) : json(v); };
+    auto raw = [](double v) { return std::isnan(v) ? json(nullptr) : json(v); };
+    return json{{"mpn", r.mpn},
+                {"length_m", nz(r.length_m)}, {"width_m", nz(r.width_m)},
+                {"height_m", nz(r.height_m)}, {"case_code", r.case_code}, {"mount", r.mount},
+                {"lead_pitch_m", nz(r.lead_pitch_m)}, {"is_production", r.is_production},
+                {"provenance_retracted", r.provenance_retracted},
+                {"value_si", nz(r.inductance)},
+                {"saturation_current", nz(r.saturation_current)},
+                {"saturation_points", row["saturation_points"]},
+                {"rated_current", nz(r.rated_current)}, {"dcr", nz(r.dcr)}, {"srf", nz(r.srf)},
+                {"temp_min_C", raw(r.temp_min_c)}, {"temp_max_C", raw(r.temp_max_c)}};
+}
+const char* kRec1812PS = R"KREC({"magnetic":{"manufacturerInfo":{"name":"Coilcraft","reference":"1812PS-153KRC","status":"production","datasheetUrl":"https://www.coilcraft.com/en-us/files/datasheet/1812PS","datasheetInfo":{"part":{"description":"RF Inductors - SMD Power inductor"},"electrical":[{"subtype":"inductor","inductance":{"nominal":1.5e-05,"minimum":1.2e-05,"maximum":1.8e-05},"dcResistance":{"nominal":0.26},"inductancePoints":[{"current":0.0,"inductance":1.4999999999999999e-05,"temperature":25.0},{"current":0.005,"inductance":1.4984853584651633e-05,"temperature":25.0},{"current":0.009,"inductance":1.4984853584651633e-05,"temperature":25.0},{"current":0.018,"inductance":1.4989902389767756e-05,"temperature":25.0},{"current":0.026,"inductance":1.4984853584651633e-05,"temperature":25.0},{"current":0.036,"inductance":1.4984853584651633e-05,"temperature":25.0},{"current":0.046,"inductance":1.4984853584651633e-05,"temperature":25.0},{"current":0.054,"inductance":1.497980477953551e-05,"temperature":25.0},{"current":0.064,"inductance":1.497980477953551e-05,"temperature":25.0},{"current":0.074,"inductance":1.497980477953551e-05,"temperature":25.0},{"current":0.082,"inductance":1.4974755974419387e-05,"temperature":25.0},{"current":0.092,"inductance":1.4969707169303264e-05,"temperature":25.0},{"current":0.1,"inductance":1.4959609559071018e-05,"temperature":25.0},{"current":0.125,"inductance":1.4964658364187143e-05,"temperature":25.0},{"current":0.15,"inductance":1.4929316728374285e-05,"temperature":25.0},{"current":0.17,"inductance":1.4909121507909795e-05,"temperature":25.0},{"current":0.195,"inductance":1.4878828677213059e-05,"temperature":25.0},{"current":0.22,"inductance":1.4828340626051834e-05,"temperature":25.0},{"current":0.24,"inductance":1.4782901380006732e-05,"temperature":25.0},{"current":0.28,"inductance":1.476270615954224e-05,"temperature":25.0},{"current":0.32,"inductance":1.4767754964658363e-05,"temperature":25.0},{"current":0.37,"inductance":1.46415348367553e-05,"temperature":25.0},{"current":0.42,"inductance":1.450016829350387e-05,"temperature":25.0},{"current":0.46,"inductance":1.4363850555368563e-05,"temperature":25.0},{"current":0.52,"inductance":1.4111410299562435e-05,"temperature":25.0},{"current":0.62,"inductance":1.3530797711208349e-05,"temperature":25.0},{"current":0.7,"inductance":1.2909794681925279e-05,"temperature":25.0},{"current":0.8,"inductance":1.1874789633120162e-05,"temperature":25.0},{"current":0.88,"inductance":1.0804442948502186e-05,"temperature":25.0},{"current":0.98,"inductance":9.27364523729384e-06,"temperature":25.0}]}],"provenance":[{"source":"scrape","sourceName":"Coilcraft parametric search","sourceUrl":"https://www.coilcraft.com/en-us/files/datasheet/1812PS","retrievedDate":"2026-06-22"},{"source":"manufacturerParametric","sourceName":"Coilcraft parametric search","retrievedDate":"2026-07-21","fields":["mechanical.height","mechanical.length","mechanical.width"]},{"source":"manufacturerParametric","sourceName":"Coilcraft Power Inductor Finder (L vs DC bias)","sourceUrl":"https://www.coilcraft.com/en-us/tools/power-inductor-finder/","retrievedDate":"2026-11-03","fields":["electrical.inductancePoints"],"verification":"valuesReadFromSource","verificationDate":"2026-11-03","verificationMethod":"Typical inductance normalised to nominal vs DC bias current, 25 degC ambient; series data for the tool part 1812PS-153"}],"mechanical":{"length":{"nominal":0.00587},"width":{"nominal":0.00498},"height":{"nominal":0.00381}}}}}})KREC";
+const char* kRecSRN3012 = R"KREC({"magnetic":{"manufacturerInfo":{"name":"Bourns","reference":"SRN3012BTA-150M","status":"production","datasheetUrl":"https://www.bourns.com/docs/Product-Datasheets/SRN3012BTA.pdf","datasheetInfo":{"part":{"caseCode":"1212 (3030 Metric)","shielded":true},"electrical":[{"subtype":"inductor","inductance":{"nominal":1.4999999999999999e-05,"minimum":1.2e-05,"maximum":1.7999999999999997e-05},"dcResistance":{"maximum":0.4},"ratedCurrents":[1.2]}],"mechanical":{"mounting":"smt"},"thermal":{"operatingTemperature":{"minimum":-55.0,"maximum":125.0}},"provenance":[{"source":"manufacturerParametric","sourceName":"Bourns parametric search","sourceUrl":"https://www.bourns.com/docs/Product-Datasheets/SRN3012BTA.pdf","retrievedDate":"2026-08-01","verification":"partNamed","verificationDate":"2026-10-09"}]}}}})KREC";
+const char* kRec1008PS = R"KREC({"magnetic":{"manufacturerInfo":{"name":"Coilcraft","reference":"1008PS-103KRC","status":"production","datasheetInfo":{"part":{"description":"RF Inductors - SMD Power inductor"},"electrical":[{"subtype":"inductor","inductance":{"nominal":1e-05,"minimum":8.000000000000001e-06,"maximum":1.2e-05},"inductancePoints":[{"current":0.0,"inductance":9.999999999999999e-06,"temperature":25.0},{"current":0.1,"inductance":1.003068282399931e-05,"temperature":25.0},{"current":0.2,"inductance":1.0017526843279625e-05,"temperature":25.0},{"current":0.3,"inductance":9.940483487222473e-06,"temperature":25.0},{"current":0.4,"inductance":9.814981940112673e-06,"temperature":25.0},{"current":0.5,"inductance":9.634328825552582e-06,"temperature":25.0},{"current":0.6,"inductance":9.3835397379159e-06,"temperature":25.0},{"current":0.7,"inductance":9.0334940026381e-06,"temperature":25.0},{"current":0.8,"inductance":8.570575081053759e-06,"temperature":25.0},{"current":0.9,"inductance":8.005638136564797e-06,"temperature":25.0},{"current":1.0,"inductance":7.346214820202418e-06,"temperature":25.0},{"current":1.1,"inductance":6.751506305551103e-06,"temperature":25.0},{"current":1.2,"inductance":5.9089318162206145e-06,"temperature":25.0},{"current":1.3,"inductance":5.046679569521321e-06,"temperature":25.0},{"current":1.4,"inductance":4.05448193394889e-06,"temperature":25.0},{"current":1.5,"inductance":2.8102082126258946e-06,"temperature":25.0}]}],"provenance":[{"source":"scrape","sourceName":"Coilcraft parametric search","retrievedDate":"2026-06-22"},{"source":"manufacturerParametric","sourceName":"Coilcraft parametric search","retrievedDate":"2026-07-21","fields":["mechanical.height","mechanical.length","mechanical.width"]},{"source":"manufacturerParametric","sourceName":"Coilcraft product page (series parts table)","sourceUrl":"https://www.coilcraft.com/en-us/products/power/shielded-inductors/high-srf-power-chip/ps-fs/1008ps/","retrievedDate":"2026-10-18","fields":["electrical.inductance"],"verification":"partNamed","verificationDate":"2026-10-18"},{"source":"manufacturerParametric","sourceName":"Coilcraft Power Inductor Finder (L vs DC bias)","sourceUrl":"https://www.coilcraft.com/en-us/tools/power-inductor-finder/","retrievedDate":"2026-11-03","fields":["electrical.inductancePoints"],"verification":"valuesReadFromSource","verificationDate":"2026-11-03","verificationMethod":"Typical inductance normalised to nominal vs DC bias current, 25 degC ambient; series data for the tool part 1008PS-103"}],"mechanical":{"length":{"nominal":0.00381},"width":{"nominal":0.00378},"height":{"nominal":0.00274}}}}}})KREC";
+const char* kRecPA4342 = R"KREC({"magnetic":{"manufacturerInfo":{"name":"Pulse Electronics","reference":"PA4342.103NLT","status":"production","datasheetUrl":"https://yageogroup.com/content/datasheet/asset/file/DATASHEET_P769","family":"PIMC","datasheetInfo":{"part":{"partNumber":"PA4342.103NLT"},"electrical":[{"subtype":"inductor","inductance":{"nominal":1e-05},"dcResistance":{"nominal":0.03},"ratedCurrents":[7.5]}],"mechanical":{"length":{"nominal":0.0115},"height":{"nominal":0.004},"width":{"nominal":0.0103}},"thermal":{"operatingTemperature":{"minimum":-55.0,"maximum":125.0}},"provenance":[{"source":"scrape","sourceName":"YAGEO Group product catalogue","sourceUrl":"https://yageogroup.com/content/datasheet/asset/file/DATASHEET_P769","retrievedDate":"2026-06-22","verification":"partNamed","verificationDate":"2026-10-09"},{"source":"scrape","sourceName":"YAGEO Group product catalogue","retrievedDate":"2026-07-21","fields":["mechanical.height","mechanical.width"]}]}}}})KREC";
+const char* kRec0805CS = R"KREC({"magnetic":{"manufacturerInfo":{"name":"Coilcraft","reference":"0805CS-820XGLB","family":"0805CS","datasheetUrl":"https://www.coilcraft.com/en-us/products/rf/ceramic-core-chip-inductors/0805-(2012)/0805cs/0805cs-820/","datasheetInfo":{"part":{"partNumber":"0805CS-820XGLB","family":"0805CS"},"electrical":[{"subtype":"inductor","inductance":{"nominal":8.2e-08,"minimum":8.036e-08,"maximum":8.364e-08},"dcResistance":{"maximum":0.42},"selfResonantFrequency":1330000000.0,"ratedCurrentPoints":[{"current":0.4,"temperatureRise":15.0}]}],"provenance":[{"source":"manufacturerParametric","sourceName":"Coilcraft product page","sourceUrl":"https://www.coilcraft.com/en-us/products/rf/ceramic-core-chip-inductors/0805-(2012)/0805cs/0805cs-820/","retrievedDate":"2026-10-18","fields":["part.partNumber","electrical.0.inductance","electrical.0.dcResistance","electrical.0.selfResonantFrequency","electrical.0.ratedCurrentPoints"],"verification":"seriesConfirmed","verificationDate":"2026-10-18"}]}}}})KREC";
+const char* kRecM83446 = R"KREC({"magnetic":{"manufacturerInfo":{"name":"Vanguard Electronics","reference":"M83446/10-95FJ","status":"production","series":"33000","family":"33000","datasheetInfo":{"part":{"description":"33000 Fixed Chip Inductor (QPL)","family":"33000","caseCode":"No Tabs"},"electrical":[{"subtype":"inductor","inductance":{"nominal":5.6e-06,"minimum":5.32e-06,"maximum":5.88e-06},"dcResistance":{"maximum":1.8},"ratedCurrents":[0.16],"selfResonantFrequency":40000000.0}],"mechanical":{"assemblyType":"SMT"},"thermal":{"operatingTemperature":{"minimum":-55.0,"maximum":125.0}},"provenance":[{"source":"scrape","sourceName":"Vanguard Electronics product catalogue","retrievedDate":"2026-06-22"}]}}}})KREC";
+const char* kRecB78108 = R"KREC({"magnetic":{"manufacturerInfo":{"name":"TDK","reference":"B78108S1562K000","status":"production","datasheetUrl":"https://www.tdk-electronics.tdk.com/inf/30/db/ind_2008/b78108_148s.pdf","datasheetInfo":{"part":{"caseCode":"Axial"},"electrical":[{"subtype":"inductor","inductance":{"nominal":5.6e-06,"minimum":4.48e-06,"maximum":6.719999999999999e-06},"ratedCurrents":[0.78]}],"mechanical":{"mounting":"tht"},"provenance":[{"source":"manufacturerDatabase","sourceName":"TDK product database","sourceUrl":"https://www.tdk-electronics.tdk.com/inf/30/db/ind_2008/b78108_148s.pdf","retrievedDate":"2026-08-01","verification":"partNamed","verificationDate":"2026-10-09"},{"source":"manufacturerDatabase","sourceName":"TDK product center (part search listing)","sourceUrl":"https://product.tdk.com/en/search/inductor/inductor/lead/info?part_no=B78108S1562K000","retrievedDate":"2026-10-17","fields":["electrical.ratedCurrents"],"verification":"valuesReadFromSource","verificationDate":"2026-10-17"}]}}}})KREC";
+const char* kRecCWW0402 = R"KREC({"magnetic":{"manufacturerInfo":{"name":"Vanguard Electronics","reference":"CWW0402-47RGS","status":"production","series":"CWW0402","family":"CWW0402","datasheetInfo":{"part":{"description":"CWW0402 Fixed Chip Inductor (COTS+)","family":"CWW0402","caseCode":"0402"},"electrical":[{"subtype":"inductor","inductance":{"nominal":4.700000000000001e-08,"minimum":4.6060000000000003e-08,"maximum":4.794000000000001e-08},"dcResistance":{"maximum":0.83},"ratedCurrents":[0.112],"selfResonantFrequency":2100000000.0}],"mechanical":{"length":{"nominal":0.0011988799999999998},"assemblyType":"SMT"},"thermal":{"operatingTemperature":{"minimum":-55.0,"maximum":125.0}},"provenance":[{"source":"scrape","sourceName":"Vanguard Electronics product catalogue","retrievedDate":"2026-06-22"},{"source":"manufacturerParametric","sourceName":"Vanguard Electronics product page","sourceUrl":"https://www.ve1.com/products/rf-microwave/fixed-chip-inductor/cww0402/cww0402-47rgs/","retrievedDate":"2026-10-09","verification":"partNamed","verificationDate":"2026-10-09"}]}}}})KREC";
+const char* kRecLQW04 = R"KREC({"magnetic":{"manufacturerInfo":{"name":"Murata","reference":"LQW04AN47NH20D","status":"production","datasheetUrl":"https://pim.murata.com/en-global/pim/details/?partNum=LQW04AN47NH20D","datasheetInfo":{"part":{"caseCode":"0302 (0804 Metric)","shielded":true},"electrical":[{"subtype":"inductor","inductance":{"nominal":4.7000000000000004e-08,"minimum":3.7600000000000006e-08,"maximum":5.64e-08},"ratedCurrents":[0.14]}],"mechanical":{"mounting":"smt"},"thermal":{"operatingTemperature":{"minimum":-55.0,"maximum":125.0}},"provenance":[{"source":"manufacturerParametric","sourceName":"Murata product catalogue","sourceUrl":"https://pimapi.murata.com/public/api/pim/v1/products/search/cross-categories?partNum=LQW04AN47NH20D&languageRegion=en-global","retrievedDate":"2026-07-31"},{"source":"manufacturerParametric","sourceName":"Murata product catalogue (PIM API, values also printed on the productdetail page)","sourceUrl":"https://www.murata.com/en-us/products/productdetail?partno=LQW04AN47NH20D","retrievedDate":"2026-10-17","fields":["thermal.operatingTemperature","electrical.inductance","electrical.ratedCurrents","part.partNumber"],"verification":"valuesReadFromSource","verificationDate":"2026-10-17"}]}}}})KREC";
+}  // namespace
+
+// Findings v20 #1 / #2 (seeds 21832044, 21727315): a Coilcraft record whose ONLY saturation data
+// is its L-vs-DC-bias curve (MAS inductancePoints) reached the ranker with no Isat at all, so
+// 1812PS-153KRC (38 % down at 0.98 A) was 'upgrade' for the 1.2 A SRN3012BTA-150M and
+// 1008PS-103KRC (30 % down at 1.06 A) 'equivalent' for the 7.5 A PA4342.103NLT. The extractor
+// now reads Isat at 10/20/30 % off the record's own curve, interpolating only between measured
+// points.
+TEST_CASE("qarlos v20: Isat is read off the record's own L-vs-bias curve; the real pairs fail",
+          "[qarlos][views][crossref][isat]") {
+    auto ps1812 = kelvin::extract_magnetic(real_mag(kRec1812PS));
+    auto srn = kelvin::extract_magnetic(real_mag(kRecSRN3012));
+    auto ps1008 = kelvin::extract_magnetic(real_mag(kRec1008PS));
+    auto pa = kelvin::extract_magnetic(real_mag(kRecPA4342));
+    REQUIRE(ps1812.has_value());
+    REQUIRE(srn.has_value());
+    REQUIRE(ps1008.has_value());
+    REQUIRE(pa.has_value());
+
+    // 1812PS-153KRC: L(0) = 15 uH. 10 % (13.5 uH) is crossed between 0.62 A (13.53) and
+    // 0.70 A (12.91), 20 % (12 uH) between 0.70 and 0.80 A (11.87), 30 % (10.5 uH) between
+    // 0.88 A (10.80) and 0.98 A (9.27), the last measured point.
+    REQUIRE(ps1812->sat_table_current.size() == 3);
+    CHECK(ps1812->sat_table_percent_drop[0] == 10.0);
+    CHECK(ps1812->sat_table_percent_drop[1] == 20.0);
+    CHECK(ps1812->sat_table_percent_drop[2] == 30.0);
+    CHECK(ps1812->sat_table_current[0] == Approx(0.6239).margin(5e-4));
+    CHECK(ps1812->sat_table_current[1] == Approx(0.7881).margin(5e-4));
+    CHECK(ps1812->sat_table_current[2] == Approx(0.8995).margin(5e-4));
+    CHECK(ps1812->sat_table_temperature[2] == 25.0);
+    CHECK(ps1812->saturation_current == Approx(0.7881).margin(5e-4));  // the 20 % headline
+    CHECK(ps1812->saturation_percent_drop == 20.0);
+    // 1008PS-103KRC: L(0) = 10 uH; 30 % (7 uH) between 1.0 A (7.35) and 1.1 A (6.75).
+    REQUIRE(ps1008->sat_table_current.size() == 3);
+    CHECK(ps1008->sat_table_current[2] == Approx(1.0582).margin(5e-4));
+    // The originals state no curve and no Isat: nothing is derived for them.
+    CHECK(srn->sat_table_current.empty());
+    CHECK(pa->sat_table_current.empty());
+
+    kelvin::crossref::Options opt;  // footprint check ON, as the web runs it
+    auto r1 = kelvin::crossref::cross_reference("magnetic", mag_spec_xref(*srn),
+                                                json::array({mag_spec_xref(*ps1812)}), opt);
+    const json& c1 = r1["candidates"][0];
+    CHECK(verdict_of(c1, "saturation_current") == "fail");
+    CHECK(c1["direction"] != "upgrade");
+    CHECK(c1["direction"] != "equivalent");
+    CHECK(c1["grade"] != "drop_in");
+    CHECK(has_note(c1, "saturates below the original's rated current"));
+
+    auto r2 = kelvin::crossref::cross_reference("magnetic", mag_spec_xref(*pa),
+                                                json::array({mag_spec_xref(*ps1008)}), opt);
+    const json& c2 = r2["candidates"][0];
+    CHECK(verdict_of(c2, "saturation_current") == "fail");
+    CHECK(c2["direction"] != "upgrade");
+    CHECK(c2["direction"] != "equivalent");
+    CHECK(has_note(c2, "saturates below the original's rated current"));
+}
+
+TEST_CASE("qarlos v20: a bias curve is never extrapolated and needs its zero-bias point",
+          "[qarlos][views][isat]") {
+    auto curve = [](json pts) {
+        return kelvin::extract_magnetic(mag_env("Coilcraft", "X",
+            {{"subtype", "inductor"}, {"inductance", {{"nominal", 1e-05}}},
+             {"inductancePoints", pts}}));
+    };
+    // Reaches 10 % and 20 % but stops at 25 % down: no 30 % point is invented.
+    auto shallow = curve(json::array({{{"current", 0.0}, {"inductance", 1e-05}},
+                                      {{"current", 1.0}, {"inductance", 9e-06}},
+                                      {{"current", 2.0}, {"inductance", 7.5e-06}}}));
+    REQUIRE(shallow.has_value());
+    REQUIRE(shallow->sat_table_current.size() == 2);
+    CHECK(shallow->sat_table_current[0] == Approx(1.0));
+    CHECK(shallow->sat_table_current[1] == Approx(1.0 + 1.0 / 1.5));
+    CHECK(std::isnan(shallow->sat_table_temperature[0]));
+    // No point at 0 A: the small-signal reference is not on record, nothing is derived.
+    auto noref = curve(json::array({{{"current", 0.1}, {"inductance", 1e-05}},
+                                    {{"current", 2.0}, {"inductance", 5e-06}}}));
+    REQUIRE(noref.has_value());
+    CHECK(noref->sat_table_current.empty());
+    CHECK(std::isnan(noref->saturation_current));
+    // Several temperatures: the one nearest 25 degC is read, never a blend.
+    auto multi = curve(json::array({{{"current", 0.0}, {"inductance", 1e-05}, {"temperature", 20}},
+                                    {{"current", 1.0}, {"inductance", 8e-06}, {"temperature", 20}},
+                                    {{"current", 0.0}, {"inductance", 1e-05}, {"temperature", 85}},
+                                    {{"current", 1.0}, {"inductance", 6e-06}, {"temperature", 85}}}));
+    REQUIRE(multi.has_value());
+    REQUIRE(multi->sat_table_current.size() == 2);  // 10 % and 20 % on the 20 degC curve
+    CHECK(multi->sat_table_temperature[0] == 20.0);
+    CHECK(multi->sat_table_current[1] == Approx(1.0));
+    // A stated Isat wins: the curve is not read when the record states saturationCurrents.
+    auto stated = kelvin::extract_magnetic(mag_env("Coilcraft", "Y",
+        {{"subtype", "inductor"}, {"inductance", {{"nominal", 1e-05}}},
+         {"saturationCurrents", json::array({{{"percentInductanceDrop", 30.0}, {"current", 3.0}}})},
+         {"inductancePoints", json::array({{{"current", 0.0}, {"inductance", 1e-05}},
+                                           {{"current", 1.0}, {"inductance", 5e-06}}})}}));
+    REQUIRE(stated.has_value());
+    REQUIRE(stated->sat_table_current.size() == 1);
+    CHECK(stated->sat_table_current[0] == 3.0);
+}
+
+// Finding v20 #3 (seed 22041502): 0805CS-820XGLB states its rating only as MAS
+// ratedCurrentPoints (0.4 A at a 15 K rise), the schema's preferred form, and the extractor read
+// only ratedCurrents: the rating was dropped and every candidate's came back unweighed.
+TEST_CASE("qarlos v20: a rated current stated as ratedCurrentPoints is extracted and weighed",
+          "[qarlos][views][crossref]") {
+    auto cs = kelvin::extract_magnetic(real_mag(kRec0805CS));
+    REQUIRE(cs.has_value());
+    CHECK(cs->rated_current == 0.4);
+    json lower = mag_spec_xref(*cs);
+    lower["mpn"] = "LOWER";
+    lower["rated_current"] = 0.25;
+    kelvin::crossref::Options opt;
+    opt.check_footprint = false;
+    auto r = kelvin::crossref::cross_reference("magnetic", mag_spec_xref(*cs),
+                                               json::array({lower}), opt);
+    CHECK(verdict_of(r["candidates"][0], "rated_current") == "fail");
+}
+
+// Finding v20 #4 (seed 22146231): the TDK B78108S1562K000 record states mechanical.mounting
+// 'tht' (MAS), the M83446/10-95FJ original assemblyType 'SMT'. The extractor never read MAS
+// `mounting`, and the ranker skipped the mount gate for magnetics outright: minor_review, no note.
+TEST_CASE("qarlos v20: a magnetic's stated mount is extracted and an SMT/THT swap rejects",
+          "[qarlos][views][crossref]") {
+    auto m83 = kelvin::extract_magnetic(real_mag(kRecM83446));
+    auto tdk = kelvin::extract_magnetic(real_mag(kRecB78108));
+    REQUIRE(m83.has_value());
+    REQUIRE(tdk.has_value());
+    CHECK(m83->mount == "SMT");
+    CHECK(tdk->mount == "tht");
+    kelvin::crossref::Options opt;
+    auto r = kelvin::crossref::cross_reference("magnetic", mag_spec_xref(*m83),
+                                               json::array({mag_spec_xref(*tdk)}), opt);
+    const json& c = r["candidates"][0];
+    CHECK(verdict_of(c, "mounting") == "fail");
+    CHECK(c["status"] == "no_substitute");
+    CHECK(has_note(c, "mount type incompatible: SMT -> tht"));
+    // The case strings ("No Tabs", "Axial") are still never classified for a magnetic: with no
+    // stated mount on either side the axis stays silent.
+    json o = mag_spec_xref(*m83), s = mag_spec_xref(*tdk);
+    o["mount"] = "";
+    s["mount"] = "";
+    auto r2 = kelvin::crossref::cross_reference("magnetic", o, json::array({s}), opt);
+    CHECK(verdict_of(r2["candidates"][0], "mounting") == "");
+}
+
+// Finding v20 #5 (seed 20784754): LQW04AN47NH20D ("0302 (0804 Metric)") graded 'upgrade' for
+// CWW0402-47RGS ("0402"): the case gate skipped magnetics, and the direction came from the rated
+// current alone with the original's DCR and SRF unanswered by the substitute's record.
+TEST_CASE("qarlos v20: magnetic chip case codes that differ in every reading are a different case",
+          "[qarlos][crossref][dimensions]") {
+    using kelvin::crossref::magnetic_case_codes_differ;
+    CHECK(magnetic_case_codes_differ("0402", "0302 (0804 Metric)"));
+    CHECK(magnetic_case_codes_differ("0603", "0805"));
+    CHECK(magnetic_case_codes_differ("1212 (3030 Metric)", "1616 (4040 Metric)"));
+    // A reading in common, or nothing decodable, establishes nothing.
+    CHECK_FALSE(magnetic_case_codes_differ("0402", "1005"));  // metric 1005 is imperial 0402
+    CHECK_FALSE(magnetic_case_codes_differ("1210", "1210 (3225 Metric)"));
+    CHECK_FALSE(magnetic_case_codes_differ("No Tabs", "0402"));
+    CHECK_FALSE(magnetic_case_codes_differ("1008", "0805"));  // 1008 is in no table: not decoded
+    CHECK_FALSE(magnetic_case_codes_differ("0402", "0805A"));
+    CHECK_FALSE(magnetic_case_codes_differ("0805 (1608 Metric)", "0805"));  // inconsistent pair
+}
+
+TEST_CASE("qarlos v20: the real LQW04 / CWW0402 pair is a different case and never an upgrade",
+          "[qarlos][views][crossref]") {
+    auto cww = kelvin::extract_magnetic(real_mag(kRecCWW0402));
+    auto lqw = kelvin::extract_magnetic(real_mag(kRecLQW04));
+    REQUIRE(cww.has_value());
+    REQUIRE(lqw.has_value());
+    kelvin::crossref::Options opt;
+    auto r = kelvin::crossref::cross_reference("magnetic", mag_spec_xref(*cww),
+                                               json::array({mag_spec_xref(*lqw)}), opt);
+    const json& c = r["candidates"][0];
+    CHECK(c["footprint"] == "different_case");
+    CHECK(verdict_of(c, "footprint") == "warn");
+    CHECK(has_note(c, "different package/case (0402 -> 0302 (0804 Metric))"));
+    CHECK(c["grade"] != "drop_in");
+    CHECK(c["direction"] == "unknown");
+    CHECK(has_note(c, "the original states its dcr, srf; the substitute's record does not"));
+    // The direction rule on its own (footprint off, so the case gate cannot be what decides):
+    // the rated current alone is ahead, the DCR and SRF are unanswered -> not an upgrade.
+    kelvin::crossref::Options nofp;
+    nofp.check_footprint = false;
+    auto r2 = kelvin::crossref::cross_reference("magnetic", mag_spec_xref(*cww),
+                                                json::array({mag_spec_xref(*lqw)}), nofp);
+    CHECK(r2["candidates"][0]["direction"] == "unknown");
+    // ... and once the substitute answers both, the same rated current IS an upgrade.
+    json answered = mag_spec_xref(*lqw);
+    answered["dcr"] = 0.5;
+    answered["srf"] = 2.5e9;
+    auto r3 = kelvin::crossref::cross_reference("magnetic", mag_spec_xref(*cww),
+                                                json::array({answered}), nofp);
+    CHECK(r3["candidates"][0]["direction"] == "upgrade");
+}
+
+
+// The same direction rule on the impedance model: the signal CMC ACM-21-161M-T (now ranked on
+// its |Z|, seed 20889483) took ACM2012-201-2P as 'upgrade' with its 0.33 A rating unanswered.
+TEST_CASE("qarlos v20: a bead/CMC rating the substitute does not state blocks 'upgrade'",
+          "[qarlos][crossref]") {
+    json o = {{"mpn", "ACM-21-161M-T"}, {"impedance_100mhz", 160.0}, {"impedance_peak", 160.0},
+              {"impedance_peak_freq", 1e8}, {"dcr", 0.35}, {"rated_current", 0.33}};
+    json s = {{"mpn", "ACM2012-201-2P"}, {"impedance_100mhz", 200.0}, {"impedance_peak", 200.0},
+              {"impedance_peak_freq", 1e8}, {"dcr", 0.3}, {"rated_current", nullptr}};
+    kelvin::crossref::Options opt;
+    opt.check_footprint = false;
+    auto r = kelvin::crossref::cross_reference("chipBead", o, json::array({s}), opt);
+    CHECK(r["candidates"][0]["direction"] == "unknown");
+    CHECK(has_note(r["candidates"][0], "the original states its rated current"));
+    s["rated_current"] = 0.4;
+    auto r2 = kelvin::crossref::cross_reference("chipBead", o, json::array({s}), opt);
+    CHECK(r2["candidates"][0]["direction"] == "upgrade");
+}
+

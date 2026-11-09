@@ -1,5 +1,6 @@
 #include "Views.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <regex>
@@ -1051,6 +1052,90 @@ void magnetic_saturation_table(const json& elec, MagneticRow& r) {
         }
     }
 }
+
+// Saturation currents READ OFF the record's own inductance-vs-DC-bias curve (MAS
+// electrical[].inductancePoints, "the inductance roll-off / saturation curve"), for a record
+// that states no saturationCurrents table and no saturationCurrentPeak. Coilcraft's Power
+// Inductor Finder curves, among others, reached the catalogue only this way (2,102 inductor
+// records, survey of magnetics.ndjson 2026-11-09), and the ranker never saw them: 1812PS-153KRC,
+// whose curve is already 38 % down at 0.98 A, was graded 'upgrade' for a 1.2 A original, and
+// 1008PS-103KRC (30 % down at 1.06 A) 'equivalent' for a 7.5 A one (Qarlos 2026-11-09, seeds
+// 21832044 / 21727315). Rule:
+//   * the reference is the curve's OWN zero-bias point (MAS: the drop is measured "from the
+//     small-signal value"); a curve with no point at 0 A states no reference and yields nothing;
+//   * Isat at a criterion is the FIRST current at which the curve falls to (1 - drop) x L(0),
+//     linearly interpolated between the two measured points that bracket the crossing — never
+//     extrapolated past the last measured point, so a curve that never reaches a criterion
+//     states no Isat at it;
+//   * the criteria read are the ones vendors quote, 10 / 20 / 30 % (the span the ranker's isat
+//     rules already use), each tagged with its percent drop so the ranker compares like for like;
+//   * DECISION (owner to confirm): a curve given at several temperatures is read at ONE of
+//     them, the stated temperature nearest 25 degC (the room-temperature basis datasheet Isat
+//     figures are quoted at; the hotter one on a tie), never interpolated between temperatures;
+//     an untemperatured curve is read only when no temperature is stated at all.
+// Reading a stated curve is not a model: no saturation physics, no default, no typical value.
+void magnetic_saturation_from_bias_curve(const json& elec, MagneticRow& r) {
+    if (!r.sat_table_current.empty()) return;  // the record states its Isat outright
+    const json* pts = obj_get(elec, "inductancePoints");
+    if (!pts || !pts->is_array()) return;
+    struct BiasPoint { double current, inductance; };
+    struct Curve { bool has_temp; double temp; std::vector<BiasPoint> pts; };
+    std::vector<Curve> curves;
+    for (const auto& p : *pts) {
+        if (!p.is_object()) continue;
+        auto cur = get_num(p, "current");
+        auto L = get_num(p, "inductance");
+        if (!cur || !L || *cur < 0 || !(*L > 0)) continue;
+        auto t = get_num(p, "temperature");
+        Curve* c = nullptr;
+        for (auto& k : curves)
+            if (k.has_temp == t.has_value() && (!t || k.temp == *t)) c = &k;
+        if (!c) {
+            curves.push_back({t.has_value(), t ? *t : kNaN(), {}});
+            c = &curves.back();
+        }
+        c->pts.push_back({*cur, *L});
+    }
+    const Curve* pick = nullptr;
+    for (const auto& c : curves) {
+        if (!c.has_temp) continue;
+        if (!pick) { pick = &c; continue; }
+        const double dc = std::fabs(c.temp - 25.0), dp = std::fabs(pick->temp - 25.0);
+        if (dc < dp || (dc == dp && c.temp > pick->temp)) pick = &c;
+    }
+    if (!pick)
+        for (const auto& c : curves)
+            if (!c.has_temp) pick = &c;
+    if (!pick) return;
+    std::vector<BiasPoint> curve = pick->pts;
+    std::stable_sort(curve.begin(), curve.end(),
+                     [](const BiasPoint& a, const BiasPoint& b) { return a.current < b.current; });
+    if (curve.size() < 2 || curve.front().current != 0.0) return;  // no small-signal reference
+    const double L0 = curve.front().inductance;
+    for (const double drop : {10.0, 20.0, 30.0}) {
+        const double threshold = L0 * (1.0 - drop / 100.0);
+        for (size_t k = 1; k < curve.size(); ++k) {
+            const BiasPoint& a = curve[k - 1];
+            const BiasPoint& b = curve[k];
+            if (!(b.inductance <= threshold)) continue;
+            if (!(a.inductance > threshold) || !(b.current > a.current)) break;  // undecidable
+            const double frac = (a.inductance - threshold) / (a.inductance - b.inductance);
+            r.sat_table_current.push_back(a.current + frac * (b.current - a.current));
+            r.sat_table_percent_drop.push_back(drop);
+            r.sat_table_temperature.push_back(pick->has_temp ? pick->temp : kNaN());
+            break;
+        }
+    }
+    // The headline scalar follows the table rule of magnetic_saturation_current: the point
+    // nearest the 20 % convention.
+    for (size_t i = 0; i < r.sat_table_current.size(); ++i)
+        if (!present(r.saturation_current) ||
+            std::fabs(r.sat_table_percent_drop[i] - 20.0) <
+                std::fabs(r.saturation_percent_drop - 20.0)) {
+            r.saturation_current = r.sat_table_current[i];
+            r.saturation_percent_drop = r.sat_table_percent_drop[i];
+        }
+}
 }  // namespace
 
 std::optional<MagneticRow> extract_magnetic(const json& env) {
@@ -1074,6 +1159,14 @@ std::optional<MagneticRow> extract_magnetic(const json& env) {
     MagneticRow r;
     r.mpn = *mpn;
     r.manufacturer = *manuf;
+    // MAS states the board attach as mechanical.mounting (the PEAS connectionType enum: smt /
+    // tht / ...), a key fill_dimensions does not read: 9,083 magnetic records state it (survey
+    // 2026-11-09), and a TDK B78108S1562K000 ('tht', axial) was graded minor_review for an SMT
+    // original with no mount note (Qarlos 2026-11-09, seed 22146231). Set before
+    // fill_dimensions, which needs the mount, and which an explicit assemblyType still
+    // overrides (no record states both).
+    if (const json* mech = obj_get(*di, "mechanical"))
+        if (auto m = get_str(*mech, "mounting")) r.mount = *m;
     fill_dimensions(r, *di, *part);
 
     // electrical is an ARRAY; the first entry is the primary-winding projection we rank on.
@@ -1084,6 +1177,7 @@ std::optional<MagneticRow> extract_magnetic(const json& env) {
         if (L && *L > 0) r.inductance = *L;
         r.saturation_current = magnetic_saturation_current(elec, r.saturation_percent_drop);
         magnetic_saturation_table(elec, r);
+        magnetic_saturation_from_bias_curve(elec, r);
         const json* rc = obj_get(elec, "ratedCurrents");
         if (rc && rc->is_array()) {
             double best = kNaN();
@@ -1094,6 +1188,24 @@ std::optional<MagneticRow> extract_magnetic(const json& env) {
                 }
             r.rated_current = best;
         }
+        // MAS ratedCurrentPoints: the rated current qualified by its temperature-rise
+        // criterion, which the schema PREFERS over the bare ratedCurrents array and tells
+        // vendors to state instead of it. 4,724 magnetic records state only this form (survey
+        // 2026-11-09), so their rating was dropped: 0805CS-820XGLB (0.4 A at 15 K) left every
+        // candidate's rated current unweighed (Qarlos 2026-11-09, seed 22041502). Read when the
+        // bare array states nothing, with the same rule as that array: the largest stated
+        // current. The temperature-rise basis is not yet carried (no row field), exactly as the
+        // bare array carries none.
+        if (!present(r.rated_current))
+            if (const json* rcp = obj_get(elec, "ratedCurrentPoints"); rcp && rcp->is_array()) {
+                double best = kNaN();
+                for (const auto& p : *rcp) {
+                    if (!p.is_object()) continue;
+                    auto x = get_num(p, "current");
+                    if (x && *x > 0 && (!present(best) || *x > best)) best = *x;
+                }
+                r.rated_current = best;
+            }
         // DCR: prefer the worst-case (maximum) bound; fall back to the plural dcResistances[0].
         auto dcr = resolve_field(elec, "dcResistance", PEAS::DimensionalValues::MAXIMUM);
         if (!dcr) {

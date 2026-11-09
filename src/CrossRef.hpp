@@ -716,6 +716,15 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // Isat on both sides but at criteria that cannot be brought together (ABT #2042): the
     // same blindness, with its own note (written where it is detected).
     bool isat_basis_blind = false;
+    // Magnetics: a key electrical axis the ORIGINAL states and the substitute's record does
+    // not (rated current, DCR, SRF; Isat in that position already rejects). The axis stays
+    // UNVERIFIED, and a direction drawn from the remaining axes would claim the substitute
+    // is not behind on it: LQW04AN47NH20D came back 'upgrade' for CWW0402-47RGS on its rated
+    // current alone, with the original's 0.83 ohm DCR and 2.1 GHz SRF unanswered (Qarlos
+    // 2026-11-09, seed 20784754). Chip beads and signal CMCs (impedance model) take the same
+    // rule. Rule: any such axis turns 'upgrade' / 'equivalent' into
+    // 'unknown', exactly as direction_blind does; a measured regression still stands.
+    std::vector<std::string> magnetic_unweighed;
     auto note_direction = [&](Dir dir, std::optional<double> o, std::optional<double> s) {
         if (!o || !s || *o <= 0 || *s <= 0) return;
         const double ratio = *s / *o;
@@ -1260,6 +1269,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         }
 
         const bool numeric = (spec.dir == Dir::Lower || spec.dir == Dir::Higher);
+        if ((cat == "magnetic" || cat == "chipBead") && numeric && verdict == UNVERIFIED &&
+            (spec.key == "rated_current" || spec.key == "dcr" || spec.key == "srf") &&
+            detail::present(original, spec.key) && !detail::present(cand, spec.key))
+            magnetic_unweighed.push_back(param_label(spec.key));
         // Two ratings on different bases have no direction between them (ripple basis above).
         auto o = numeric && !ripple_blind ? detail::jnum(original, spec.key) : std::nullopt;
         auto s = numeric && !ripple_blind ? detail::jnum(cand, spec.key) : std::nullopt;
@@ -2103,6 +2116,16 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     const bool connector = cat == "connector";
     const char* mount_key = connector ? "mounting" : "mount";
     const std::string o_mt = str(original, mount_key), s_mt = str(cand, mount_key);
+    // Magnetics and chip beads are off the generic gate because their case strings ("No
+    // Tabs", "With Tabs", "Nonstandard", "2.5x2.0") do not classify. That skip also threw away
+    // the mount the record STATES (MAS mechanical.mounting / assemblyType): a THT axial TDK
+    // B78108S1562K000 came back minor_review for an SMT M83446/10-95FJ with no mount note
+    // (Qarlos 2026-11-09, seed 22146231). Rule: for these two categories the gate runs on the
+    // EXPLICIT mounts alone — package strings are never classified — with the shared outcome:
+    // both stated and different rejects, one stated and the other not caps the grade.
+    const bool explicit_mount_only = cat == "magnetic" || cat == "chipBead";
+    const std::string o_mpkg = explicit_mount_only ? std::string() : o_pkg;
+    const std::string s_mpkg = explicit_mount_only ? std::string() : s_pkg;
     // Name what each side's class was read from — its EXPLICIT assembly type when the
     // record states one, its package string otherwise (mount_class's order). Always
     // quoting the packages printed a half-empty "mount type incompatible:  -> 8x8x10"
@@ -2114,8 +2137,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // check_footprint. A connector's board attach is an IDENTITY of the part (owner's rule,
     // 2026-11-09): it is compared even when the caller switches the footprint check off.
     if (connector || opt.check_footprint) {
-        const MountMatch mount_match = mount_gate_applies(cat)
-                                           ? compare_mount(o_mt, s_mt, o_pkg, s_pkg)
+        const MountMatch mount_match = (mount_gate_applies(cat) || explicit_mount_only)
+                                           ? compare_mount(o_mt, s_mt, o_mpkg, s_mpkg)
                                            : MountMatch::Same;
         if (mount_match == MountMatch::Incompatible) {
             params.push_back({{"name", "mounting"}, {"verdict", FAIL}});
@@ -2127,11 +2150,11 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                 " — a different board-attach process, not a drop-in");
                 return reject("board mount differs (a different board-attach process)");
             }
-            notes.push_back("mount type incompatible: " + mount_src(o_mt, o_pkg) + " -> " +
-                            mount_src(s_mt, s_pkg));
+            notes.push_back("mount type incompatible: " + mount_src(o_mt, o_mpkg) + " -> " +
+                            mount_src(s_mt, s_mpkg));
             return reject("mount type incompatible (a different board-mount process)");
         }
-        const std::string o_cls = mount_class(o_mt, o_pkg), s_cls = mount_class(s_mt, s_pkg);
+        const std::string o_cls = mount_class(o_mt, o_mpkg), s_cls = mount_class(s_mt, s_mpkg);
         // A connector's board attach is one of its identity rows in the verdict table, so a
         // match is reported, not left blank (the other families keep a silent match).
         if (connector && mount_match == MountMatch::Same && !o_cls.empty() && !s_cls.empty())
@@ -2270,10 +2293,18 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // not a drop-in — and this is caught even when neither part's exact body
         // dimensions resolve (DO-214AB, SOD-128, QFN NxN … are often not in the
         // dimension tables). Magnetics/chip beads fall through to the SIZE check.
-        if (cat != "magnetic" && cat != "chipBead" && !out.contains("footprint")) {
+        // Magnetics and chip beads take part only when BOTH case codes decode as chip size
+        // codes and no reading of the two can be the same size (magnetic_case_codes_differ):
+        // a stated "0402" against "0302 (0804 Metric)" is a different land however either is
+        // read, and LQW04AN47NH20D came back 'upgrade' for CWW0402-47RGS with no package note
+        // (Qarlos 2026-11-09, seed 20784754). Their undecodable strings still fall through to
+        // the SIZE check.
+        if (!out.contains("footprint")) {
             const std::string oc = str(original, "case_code"), sc = str(cand, "case_code");
-            if (!oc.empty() && !sc.empty() &&
-                case_identity(cat, oc) != case_identity(cat, sc)) {
+            const bool magnetic_case = cat == "magnetic" || cat == "chipBead";
+            if (magnetic_case ? magnetic_case_codes_differ(oc, sc)
+                              : (!oc.empty() && !sc.empty() &&
+                                 case_identity(cat, oc) != case_identity(cat, sc))) {
                 out["footprint"] = "different_case";
                 params.push_back({{"name", "footprint"}, {"verdict", WARN}});
                 demote();
@@ -2940,6 +2971,14 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                         ", so the substitute's could not be weighed against it — better or "
                         "worse on that axis is unknown, whatever the other parameters say");
     }
+    if (!magnetic_unweighed.empty()) {
+        std::string axes;
+        for (size_t i = 0; i < magnetic_unweighed.size(); ++i)
+            axes += (i ? ", " : "") + magnetic_unweighed[i];
+        notes.push_back("the original states its " + axes + "; the substitute's record does "
+                        "not, so whether it is ahead or behind there is unknown — confirm it "
+                        "from the datasheet before calling this swap an upgrade");
+    }
 
     // ── retracted sources (ABT #2035) ────────────────────────────────────────
     // Every source the substitute's record cites has been retracted (VLIN1626-02G: a
@@ -3040,7 +3079,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // stands — blindness elsewhere cannot make a regression we did see disappear — and so does
     // "mixed", which already carries one.
     out["direction"] = (cand_retracted || ((direction_blind || isat_basis_blind || surge_blind ||
-                                            current_basis_blind) &&
+                                            current_basis_blind || !magnetic_unweighed.empty()) &&
                                            (dir == "upgrade" || dir == "equivalent")))
                            ? "unknown"
                            : dir;

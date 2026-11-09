@@ -24,6 +24,7 @@
 #include <map>
 #include <optional>
 #include <regex>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -656,13 +657,19 @@ inline std::string canonical_diode_case(const std::string& s) {
 //     bare "0603" could be imperial 0603 or metric 0603 (imperial 0201), and which one it is
 //     is never guessed.
 // The table is the IEC 60062 / EIA-198 metric<->imperial chip-size pairs.
-inline std::string canonical_chip_case(const std::string& s) {
-    static const std::map<std::string, std::string> kMetricToImperial = {
+// IEC metric chip code -> its EIA imperial code.
+inline const std::map<std::string, std::string>& chip_metric_to_imperial() {
+    static const std::map<std::string, std::string> t = {
         {"0201", "008004"}, {"0402", "01005"}, {"0603", "0201"}, {"1005", "0402"},
         {"1608", "0603"},   {"2012", "0805"},  {"3216", "1206"}, {"3225", "1210"},
         {"4516", "1806"},   {"4520", "1808"},  {"4532", "1812"}, {"5025", "2010"},
         {"5750", "2220"},   {"6332", "2512"},  {"2828", "1111"}, {"5728", "2211"},
         {"3212", "1205"},   {"0510", "0204"}};
+    return t;
+}
+
+inline std::string canonical_chip_case(const std::string& s) {
+    const std::map<std::string, std::string>& kMetricToImperial = chip_metric_to_imperial();
     static const std::regex pair_mi(R"(^\s*(\d{4,5})M\s*/\s*(\d{4,6})\s*$)",
                                     std::regex::icase);
     static const std::regex pair_im(R"(^\s*(\d{4,6})\s*/\s*(\d{4,5})M\s*$)",
@@ -694,6 +701,45 @@ inline std::string case_identity(const std::string& category, const std::string&
     if (category == "diode") return canonical_diode_case(s);
     if (category == "capacitor" || category == "resistor") return canonical_chip_case(s);
     return normalize_case_code(s);
+}
+
+// The EIA imperial chip sizes a MAGNETIC case code can denote, or none when it is not a chip
+// size code. A magnetic's case string is often no size at all ("No Tabs", "Nonstandard",
+// "0805A") and a bare four-digit code may be either system, so only two forms decode:
+//   * "IIII (MMMM Metric)": the record names both systems. It decodes to the imperial code,
+//     unless the metric half resolves to a DIFFERENT imperial code (then nothing decodes);
+//   * a bare code in the standard tables, to EVERY reading of it: the imperial chip code it
+//     spells and the imperial code of the metric chip code it spells ("0402" is the imperial
+//     0402 or the metric 0402 = imperial 01005, and nothing says which).
+// Anything else decodes to nothing. Power-inductor LLHH size codes are never guessed at.
+inline std::set<std::string> magnetic_chip_case_readings(const std::string& s) {
+    static const std::regex pair_metric(R"(^\s*(\d{4,5})\s*\(\s*(\d{4,5})\s*metric\s*\)\s*$)",
+                                        std::regex::icase);
+    static const std::regex bare(R"(^\s*(\d{4,5})\s*$)");
+    std::smatch m;
+    std::set<std::string> out;
+    if (std::regex_match(s, m, pair_metric)) {
+        const auto it = chip_metric_to_imperial().find(m[2].str());
+        if (it == chip_metric_to_imperial().end() || it->second == m[1].str())
+            out.insert(m[1].str());
+    } else if (std::regex_match(s, m, bare)) {
+        const std::string code = m[1].str();
+        if (dims_detail::chip_imperial().count(code)) out.insert(code);
+        const auto it = chip_metric_to_imperial().find(code);
+        if (it != chip_metric_to_imperial().end()) out.insert(it->second);
+    }
+    return out;
+}
+
+// True only when both magnetic case codes decode (above) and NO reading of one is a reading
+// of the other: the two parts are then different chip sizes however their codes are read, so
+// a different land pattern. Undecodable or overlapping readings establish nothing.
+inline bool magnetic_case_codes_differ(const std::string& a, const std::string& b) {
+    const auto ra = magnetic_chip_case_readings(a), rb = magnetic_chip_case_readings(b);
+    if (ra.empty() || rb.empty()) return false;
+    for (const auto& x : ra)
+        if (rb.count(x)) return false;
+    return true;
 }
 
 // Wide-terminal ("reverse geometry", long-side termination) chip codes: the EIA imperial
