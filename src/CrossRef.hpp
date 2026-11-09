@@ -335,10 +335,11 @@ inline constexpr double kEstablishedFootprintMismatchPenalty =
 // minor_review however clean the electricals are.
 //
 // `missing_required_data` is the electrical twin of that: the substitute's record
-// carries no value at all for a parameter whose absence is disqualifying (ESR on
-// a capacitor, Isat on a magnetic). Nothing FAILED — nothing was compared — but a
-// part nobody can check on the spec that defines it is not a drop-in either, so
-// it takes the same major_review cap a real regression would.
+// carries no value at all for a PRIMARY rating whose absence is disqualifying (ripple
+// current on a capacitor, Isat on a magnetic; owner's primary/secondary rule of
+// 2026-11-09, table at the grade site in score_candidate). Nothing FAILED — nothing
+// was compared — but a part nobody can check on the spec that defines it is not a drop-in either,
+// so it takes the same major_review cap a real regression would.
 inline const char* grade_for(const std::string& status, FootprintTier fit, bool any_warn,
                              bool any_fail, bool footprint_unverified = false,
                              bool missing_required_data = false,
@@ -1134,11 +1135,12 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // minor_review / upgrade for a 2.5 V EPSON original.
     bool timebase_supply_fail = false;
     bool timebase_supply_unverified = false;
-    // A timing part's control-pin function, or its frequency tolerance / stability, stated
-    // by the original and not by the substitute (or the pin function by the substitute
-    // only): UNVERIFIED, noted, and the grade capped below drop_in — drop_in asserts the
-    // same pinout and no accuracy regression, which nobody has shown (Qarlos 2026-11-09).
-    bool timebase_unverified = false;
+    // A timing part's control-pin function stated on one side only: UNVERIFIED, noted, and
+    // the grade capped below drop_in — the pin function is the part's pinout, a primary axis,
+    // and drop_in asserts the same pinout (Qarlos 2026-11-09). A frequency tolerance /
+    // stability the original states and the substitute does not is UNVERIFIED and noted
+    // too, but it is a secondary axis: no demotion, no cap (owner, 2026-11-09).
+    bool timebase_pin_unverified = false;
     // A connector orientation that could not be established (see the orientation block
     // after the PARAM_SPECS loop): not a drop-in.
     bool connector_orientation_unverified = false;
@@ -1171,23 +1173,27 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //   * the original states it, the substitute does not -> UNVERIFIED, noted;
     //   * the original states none -> compared as stated, exactly as before (no basis exists
     //     for any candidate, so none is skewed against another).
-    // An UNVERIFIED basis is demoted and capped at minor_review (drop_in asserts no rating
-    // regressed, which nobody has shown) and counts in neither direction. No conversion is
-    // attempted: never a "typical" frequency multiplier, and not the record's own multiplier
-    // table either (a candidate's table rarely reaches the original's frequency — 198 PHR-SI's
-    // stops at 10 kHz — and an extrapolated multiplier is a guess).
+    // An UNVERIFIED ripple basis is demoted and capped at minor_review (drop_in asserts no
+    // current rating regressed, which nobody has shown) and counts in neither direction.
+    // No conversion is attempted: never a "typical" frequency multiplier, and not the record's own
+    // multiplier table either (a candidate's table rarely reaches the original's frequency — 198
+    // PHR-SI's stops at 10 kHz — and an extrapolated multiplier is a guess).
     //
     // ESR is stated AT a frequency in exactly the same way, and gets exactly the same rule
     // through the same check (Qarlos 2026-11-09, seed 20365838): 380LX151M450K022 states
     // 0.44 ohm at 20 kHz, MAL219857151E3 0.637 ohm at 100 Hz, and the ESR verdict read
     // 'warn' and counted as a downgrade although the original's own curve gives 1.1 ohm at
     // 120 Hz. An ESR basis that is not common is UNVERIFIED (the esr_basis row), the ESR
-    // verdict with it, it counts in neither direction, and the grade is capped at
-    // minor_review. The decade-wide tolerance the old ESR check allowed (any two frequencies
-    // within 10x compared as bare numbers) is gone: 100 Hz and 120 Hz are the only two
-    // different frequencies treated as one basis, for ESR as for ripple.
+    // verdict with it and it counts in neither direction; ESR is a secondary axis, so it no
+    // longer demotes or caps the grade (owner, 2026-11-09). The decade-wide tolerance the
+    // old ESR check allowed (any two frequencies within 10x compared as bare numbers) is gone: 100
+    // Hz and 120 Hz are the only two different frequencies treated as one basis, for ESR as for
+    // ripple.
+    // `primary`: ripple current is a current rating (primary — demoted and capped); ESR is a
+    // secondary electrical, so an unverified ESR basis keeps its verdict, note and lack of
+    // direction but neither demotes nor caps (owner, 2026-11-09; table at the grade site).
     auto basis_unverified = [&](const char* value_key, const char* freq_key, const char* what,
-                                const char* unit) {
+                                const char* unit, bool primary) {
         const auto o_v = num(original, value_key), s_v = num(cand, value_key);
         const auto o_f = num(original, freq_key), s_f = num(cand, freq_key);
         if (!o_v || !s_v || !o_f) return false;
@@ -1210,14 +1216,16 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                           "the original's frequency from the datasheet",
                           what, *o_v, unit, *o_f, *s_v, unit, what);
         notes.push_back(buf);
-        demote();
+        if (primary) demote();
         return true;
     };
     const bool ripple_basis_unverified =
         cat == "capacitor" &&
-        basis_unverified("ripple_current", "ripple_current_frequency", "ripple current", "A");
+        basis_unverified("ripple_current", "ripple_current_frequency", "ripple current", "A",
+                         /*primary=*/true);
     const bool esr_basis_unverified =
-        cat == "capacitor" && basis_unverified("esr", "esr_frequency", "ESR", "ohm");
+        cat == "capacitor" && basis_unverified("esr", "esr_frequency", "ESR", "ohm",
+                                              /*primary=*/false);
     if (esr_basis_unverified) params.push_back({{"name", "esr_basis"}, {"verdict", UNVERIFIED}});
 
     // ── capacitance tolerance (the band each record guarantees) ─────────────
@@ -1237,11 +1245,11 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //   * the substitute's band wider on either side -> FAIL, a note quoting both bands — the
     //     timing-tolerance rule (no warn band), since a looser guarantee is a regression
     //     however small; tighter or equal -> PASS;
-    //   * the original states a band and the substitute does not -> UNVERIFIED, noted, and the
-    //     grade capped below drop_in (drop_in asserts the value guarantee did not regress);
+    //   * the original states a band and the substitute does not -> UNVERIFIED and noted; a
+    //     secondary axis, so no demotion and no grade cap (owner, 2026-11-09);
     //   * the original states none -> not compared (no basis exists for any candidate).
     // One fact, one verdict: where this ran, the shared table's tolerance_pct row is skipped.
-    bool cap_tol_judged = false, cap_tol_unverified = false;
+    bool cap_tol_judged = false;
     if (cat == "capacitor") {
         const auto o_n = num(original, "value_si"), s_n = num(cand, "value_si");
         const auto o_lo = num(original, "capacitance_min"), o_hi = num(original, "capacitance_max");
@@ -1293,9 +1301,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                     "or matching point");
                 }
             } else {
-                cap_tol_unverified = true;
                 params.push_back({{"name", "capacitance_tolerance"}, {"verdict", UNVERIFIED}});
-                demote();
                 notes.push_back("the original guarantees " + band(*o_n, *o_lo, *o_hi) +
                                 "; the substitute's record states no capacitance band — confirm "
                                 "its tolerance from the datasheet");
@@ -1381,7 +1387,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                 "' — pin 1 is wired for the original's function, so this is a "
                                 "different pinout, not a drop-in");
             } else if (verdict == UNVERIFIED && (!o_en.empty() || !s_en.empty())) {
-                timebase_unverified = true;
+                timebase_pin_unverified = true;
                 notes.push_back(
                     !o_en.empty()
                         ? "the original's control pin is '" + o_en +
@@ -1405,7 +1411,6 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 notes.push_back(std::string(buf) +
                                 " — the design's timing budget was built on the original's");
             } else if (verdict == UNVERIFIED && o_p && !s_p) {
-                timebase_unverified = true;
                 std::snprintf(buf, sizeof buf,
                               "the original's %s is +/-%g ppm; the substitute's record states "
                               "none",
@@ -1487,9 +1492,16 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                             "confirm it from the datasheet before this swap");
             if (hard_gate) return reject("a parameter the match turns on is absent from the "
                                          "substitute's record — cannot be verified");
-            demote();
             penalty += opt.gate_weight * kVerdictFailPenalty;
-            missing_required_data = true;
+            // Only a PRIMARY rating's absence is missing required data (owner, 2026-11-09).
+            // The one secondary axis the shared table marks exclude_missing_sub is a
+            // capacitor's ESR: it keeps the FAIL penalty (ranking still prefers a part that
+            // states it) and the note, but neither demotes nor caps the grade.
+            const bool secondary_axis = cat == "capacitor" && spec.key == "esr";
+            if (!secondary_axis) {
+                demote();
+                missing_required_data = true;
+            }
         } else if (verdict == FAIL) {
             if (hard_gate)
                 return reject(spec.dir == Dir::ExactMatch
@@ -1704,18 +1716,17 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             }
         }
     }
-    // ── resistor TCR and operating range: say it, and do not call an unknown a drop-in ──
+    // ── resistor TCR and operating range: say it, and say what is unknown ──
     // TNPW0805680RDETA (25 ppm/K thin film) took ERJS06D6800V (100 ppm/K) with nothing said
     // (Qarlos 2026-11-08): the TCR verdict alone does not tell the engineer how far apart the
     // two are. And an operating range the original states but the substitute's record does
-    // not is UNVERIFIED — drop_in asserts no rating regressed, which nobody has shown, so it
-    // takes the same minor_review cap as an unverified footprint.
+    // not is UNVERIFIED, with a note naming the end that went unchecked.
     // The same operating-range rule holds for a magnetic (Qarlos 2026-11-09, seed 20680025):
-    // its PARAM_SPECS carry temp_min_C / temp_max_C with no warn band, and an end the
-    // original states but the substitute's record does not takes the same cap here.
-    // Set by an operating-range end or (resistor) a TCR the original states and the
-    // substitute's record does not: both are temperature behaviour nobody has shown kept.
-    bool temp_unverified = false;
+    // its PARAM_SPECS carry temp_min_C / temp_max_C with no warn band.
+    // Operating range, TCR and diode Tj max are SECONDARY axes (owner, 2026-11-09): stated on
+    // the original only, they are UNVERIFIED and noted but neither demote nor cap the grade
+    // (they used to cap at minor_review; see the table at the grade site). A stated shortfall
+    // is still a FAIL from the table loop.
     if (cat == "resistor" || cat == "magnetic" || cat == "diode") {
         auto verdict_of = [&](const char* name) -> std::string {
             for (const auto& p : params)
@@ -1734,14 +1745,12 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                             " — the resistance drifts that much more over temperature; verify "
                             "anywhere the value sets a ratio, a reference or a gain");
         }
-        // A TCR the original states and the substitute's record does not is UNVERIFIED, noted,
-        // and capped at minor_review — the operating-range rule below, for the same reason:
-        // drop_in asserts nothing regressed, and nobody has shown the drift did not.
+        // A TCR the original states and the substitute's record does not is UNVERIFIED and
+        // noted — the operating-range rule below (secondary: no demotion, no cap).
         // CRCW080530R0JNTA (200 ppm/K) took three YAGEO AC0805 parts, whose records state no
         // TCR, as drop_in with no note (Qarlos 2026-11-09, seed 22146231). When NEITHER record
         // states one, the gap is the same for every candidate and nothing is said.
         if (cat == "resistor" && tv == UNVERIFIED && o_tcr && !s_tcr) {
-            temp_unverified = true;
             char b[96];
             std::snprintf(b, sizeof b, "the original states a TCR of +/-%g ppm/K",
                           std::fabs(*o_tcr));
@@ -1751,7 +1760,6 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         }
         for (const char* k : {"temp_min_C", "temp_max_C"}) {
             if (verdict_of(k) == UNVERIFIED && num(original, k) && !num(cand, k)) {
-                temp_unverified = true;
                 notes.push_back(std::string("the original states its operating range to ") +
                                 degc(*num(original, k)) +
                                 " degC; the substitute's record states no " +
@@ -1762,8 +1770,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // A diode's maximum junction temperature (tj_max in kDiode, no band): a lower one is
         // already a FAIL counted worse by the table loop; name both temperatures, because the
         // verdict alone does not say how much thermal margin went. One the original states
-        // and the substitute's record does not is UNVERIFIED, noted and capped like the
-        // operating range above (Qarlos 2026-11-09, seeds 20575296 / 20889483).
+        // and the substitute's record does not is UNVERIFIED and noted like the operating
+        // range above, with no demotion and no cap (Qarlos 2026-11-09, seeds 20575296 /
+        // 20889483; secondary since the owner's rule of the same day).
         if (cat == "diode") {
             const auto o_tj = num(original, "tj_max"), s_tj = num(cand, "tj_max");
             const std::string v = verdict_of("tj_max");
@@ -1773,14 +1782,12 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                 " degC — less thermal margin at the original's operating point; "
                                 "re-check the junction temperature in the design");
             } else if (v == UNVERIFIED && o_tj && !s_tj) {
-                temp_unverified = true;
                 notes.push_back("the original's maximum junction temperature is " +
                                 degc(*o_tj) +
                                 " degC; the substitute's record states none — confirm it from "
                                 "the datasheet");
             }
         }
-        if (temp_unverified) demote();
     }
     // A magnetic's SRF short of the original's (srf spec, CrossRefParams.hpp): name both
     // frequencies, so the engineer can set the gap against the circuit's working frequency.
@@ -1811,7 +1818,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                         " — the substitute meets your existing counterpart on a different mating "
                         "surface; dissimilar finishes fret and corrode at a separable joint");
 
-    if (timebase_unverified) demote();
+    if (timebase_pin_unverified) demote();
     if (timebase_supply_fail)
         notes.push_back("supply range does not cover the original's: the original runs from " +
                         supply_range(original) + ", the substitute from " + supply_range(cand) +
@@ -2062,8 +2069,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // 21203670). Rules (OWNER DECIDED for the absent case):
     //  * both state Cj: equal or lower PASS, up to 2x WARN, beyond FAIL (counted worse);
     //  * the original states one and the substitute's record does not: UNVERIFIED, noted,
-    //    with the missing-required-data consequence (FAIL penalty, capped at major_review) —
-    //    a part whose capacitance may be 100x the original's is never a minor review;
+    //    with the FAIL penalty so a part that states its Cj ranks first. It used to be
+    //    missing required data (capped at major_review); Cj is a SECONDARY electrical under
+    //    the owner's 2026-11-09 rule (only primary ratings cap), so it no longer demotes or
+    //    caps — see the table at the grade site;
     //  * only the substitute states one: UNVERIFIED, nothing to hold it to.
     if (cat == "diode") {
         const auto oc = num(original, "junction_capacitance"),
@@ -2094,9 +2103,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             }
         } else if (oc) {
             params.push_back({{"name", "junction_capacitance"}, {"verdict", UNVERIFIED}});
-            demote();
             penalty += opt.gate_weight * kVerdictFailPenalty;
-            missing_required_data = true;
             notes.push_back("substitute's record carries no junction capacitance — the "
                             "original states " + pf(*oc) +
                             "; confirm it from the datasheet before this swap");
@@ -2973,8 +2980,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // axis that varies most across one footprint: a 2.5 x 2.0 mm body ships 1.0 to 1.2 mm
         // tall. The original stating a height and the substitute's record stating none left
         // the axis silent, and VLS252012HBX-100M-1 came back drop_in against a 1.0 mm
-        // LQH2HPH100MGR (ABT #2029). The clearance is UNVERIFIED and the grade is capped the
-        // way an unverified footprint caps it.
+        // LQH2HPH100MGR (ABT #2029). The clearance is UNVERIFIED and noted. Height alone is a
+        // SECONDARY axis (owner, 2026-11-09): the land is what makes a drop-in, so an unstated
+        // height neither demotes nor caps the grade any more; an ESTABLISHED taller body still
+        // warns / redesigns below.
         //
         // The same silence is no different on any other family: a chip resistor, a capacitor
         // or a transistor whose original states a height and whose substitute states none
@@ -2984,7 +2993,6 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             o_dims->height && (!s_dims || !s_dims->height) && !out.contains("height_fit")) {
             out["height_fit"] = "unknown";
             params.push_back({{"name", "height"}, {"verdict", UNVERIFIED}});
-            demote();
             notes.push_back("the substitute's record states no height (the original is " +
                             mm(*o_dims->height) +
                             " mm tall), so vertical clearance could not be verified; confirm it "
@@ -3023,7 +3031,6 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // A regression here is a regression on the dielectric axis, so it counts against the
     // direction exactly as a WARN/FAIL on a numeric axis does (ABT #2039): a C0G original
     // with an N750 substitute came back an 'upgrade' on its higher voltage (seed 21517857).
-    bool dielectric_unverified = false;
     if (cat == "capacitor") {
         const std::string reg = dielectric_regression(str(original, "dielectric_code"),
                                                       str(cand, "dielectric_code"));
@@ -3037,9 +3044,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             // Two DIFFERENT stated codes whose equivalence nothing above could decide (an
             // undecodable code such as SL, BX or a vendor's own, or two class-1 codes of one
             // coefficient where one states no tolerance): never silent, never a drop-in. The
-            // dielectric_code verdict is UNVERIFIED; say so and cap the grade like any
-            // unverified fit (Qarlos 2026-11-09: a C0G original's dielectric axis must not be
-            // passed over without a word).
+            // dielectric_code verdict is UNVERIFIED; say so (Qarlos 2026-11-09: a C0G
+            // original's dielectric axis must not be passed over without a word). A secondary
+            // axis (owner, 2026-11-09): noted, but no demotion and no grade cap.
             const std::string ok = dielectric_key(str(original, "dielectric_code")),
                               sk = dielectric_key(str(cand, "dielectric_code"));
             bool unverified = false;
@@ -3048,8 +3055,6 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                     p.value("verdict", "") == std::string(UNVERIFIED))
                     unverified = true;
             if (!ok.empty() && !sk.empty() && ok != sk && unverified) {
-                dielectric_unverified = true;
-                demote();
                 notes.push_back("dielectric codes differ (" + ok + " -> " + sk +
                                 ") and their temperature characteristics could not be compared "
                                 "— confirm the substitute's dielectric from its datasheet");
@@ -3108,8 +3113,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         //     its maximum is higher still (max >= typ), an ESTABLISHED downgrade for the
         //     original's gate drive: the verdict becomes WARN, or FAIL beyond the table's 2x
         //     band, exactly what the stated maximum would have earned at that value at least;
-        //   * otherwise -> UNVERIFIED, demoted out of 'recommended', with a note naming the
-        //     original's maximum and what the substitute's record states.
+        //   * otherwise -> UNVERIFIED, with a note naming the original's maximum and what the
+        //     substitute's record states. A secondary electrical (owner, 2026-11-09): no
+        //     demotion, no grade cap.
         // The typical is never read AS the maximum: it only bounds it from below.
         if (o_th && !s_th) {
             const auto s_typ = num(cand, "vgs_threshold_typ");
@@ -3131,7 +3137,6 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                     "datasheet");
                 } else {
                     p["verdict"] = UNVERIFIED;
-                    demote();
                     notes.push_back(
                         "the original's gate threshold is at most " + volts(*o_th) +
                         " V; the substitute's record states no maximum" +
@@ -3547,26 +3552,65 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                : h == "much_taller" ? HeightFit::MuchTaller
                                     : HeightFit::Unknown;
     }
-    // An unverified clearance caps the grade exactly as an unverified footprint does.
-    if (out.value("height_fit", "") == "unknown") footprint_unverified = true;
-    // So does a connector orientation that could not be established.
+    // ── which one-sided UNVERIFIED axes cap the grade (owner's rule, 2026-11-09) ──────────
+    // A benchmark showed drop-ins falling from 28 % to 12 %, mostly because a substitute that
+    // does not state a SECONDARY axis was capped at minor_review. The rule now:
+    //   * PRIMARY axis stated by one side only (or on an incomparable basis) -> UNVERIFIED,
+    //     noted, demoted, and capped (minor_review below; major_review where the absence is
+    //     missing_required_data);
+    //   * SECONDARY axis stated by one side only (or on an incomparable basis) -> UNVERIFIED
+    //     and noted, any direction effect kept and any penalty kept, but NO demotion and NO
+    //     cap, so drop_in stays reachable;
+    //   * an ESTABLISHED mismatch (both sides state the axis: WARN / FAIL) is unchanged.
+    //
+    //   axis (flag / site)                                   class      unverified ->
+    //   ---------------------------------------------------  ---------  -------------------
+    //   land / footprint unknown (footprint_unverified)       primary    cap minor_review
+    //   lead form axial/radial (lead_form_unverified)         primary    cap minor_review
+    //   SMD / THT / board mount (mount_unverified)            primary    cap minor_review
+    //   connector pitch alignment (connector_pitch_unverif.)  primary    cap minor_review
+    //   connector gender/termination/pitch/rows (identity)    primary    cap minor_review
+    //   connector orientation (connector_orientation_unv.)    primary    cap minor_review
+    //   connector pluggable vs fixed (pluggable_unverified)   primary    cap minor_review
+    //   diode die configuration / internal connection         primary    cap minor_review
+    //   oscillator control-pin function (timebase_pin_unv.)   primary    cap minor_review
+    //   resistor power at rating temp (power_basis_unverif.)  primary    cap minor_review
+    //   capacitor ripple-current basis (ripple_basis_unv.)    primary    cap minor_review
+    //   MIL qualified reliability (qualification_unverified)  primary    cap minor_review
+    //   safety class / AC rating, Isat, ripple, bead |Z|,
+    //     connector family/positions/rated current, analog
+    //     subtype/channels, timebase subtype/tech/frequency,
+    //     varistor Vclamp/Isurge, TVS Ppk/Ipp, diode If basis,
+    //     zener Vz (missing_required_data)                    primary    cap major_review
+    //   AEC-Q grade (automotive_grade)                        primary    demoted, no cap*
+    //   Id / If(AV) / Ic, magnetic & bead rated current,
+    //     connector rated voltage, diode power dissipation    primary    no cap*
+    //   height-only clearance (height_fit unknown)            secondary  note only
+    //   operating-temperature range (resistor, magnetic)      secondary  note only
+    //   resistor TCR                                          secondary  note only
+    //   diode Tj max                                          secondary  note only
+    //   diode junction capacitance (was missing_required)     secondary  note + FAIL penalty
+    //   capacitor ESR absent (was missing_required)           secondary  note + FAIL penalty
+    //   capacitor ESR basis (esr_basis_unverified)            secondary  note only
+    //   capacitance tolerance band                            secondary  note only
+    //   capacitor dielectric codes not comparable             secondary  note only
+    //   timing frequency tolerance / stability unstated       secondary  note only
+    //   MOSFET Vgs(th) max, Coss, Qg and other secondary
+    //     electricals (table verdicts)                        secondary  note only
+    //   magnetic / bead SRF, DCR one-sided                    secondary  direction 'unknown'
+    // Identity rows of a connector, the land, and the ratings in the owner's list are
+    // primary; every other axis is secondary.
+    // * primary, but never had a one-sided cap: "primary axes keep their caps" keeps what
+    //   exists and adds none (left for the owner to decide).
     if (connector_orientation_unverified) footprint_unverified = true;
-    // And a connector pin field whose alignment could not be established.
     if (connector_pitch_unverified) footprint_unverified = true;
-    // And a pluggable / fixed form stated on one side only.
     if (connector_pluggable_unverified) footprint_unverified = true;
-    // And a gender, wire termination, contact pitch or row count stated on one side only.
     if (connector_identity_unverified) footprint_unverified = true;
-    // drop_in asserts no rating regressed; a power nobody can state at the original's rating
-    // temperature has not been shown not to, so it takes the same minor_review cap.
-    out["grade"] = grade_for(status, tier, any_warn, any_fail,
-                             footprint_unverified || power_basis_unverified ||
-                                 ripple_basis_unverified || esr_basis_unverified ||
-                                 cap_tol_unverified || lead_form_unverified ||
-                                 qualification_unverified ||
-                                 topology_unverified ||
-                                 mount_unverified || temp_unverified || timebase_unverified ||
-                                 dielectric_unverified,
+    const bool primary_unverified = footprint_unverified || power_basis_unverified ||
+                                    ripple_basis_unverified || lead_form_unverified ||
+                                    qualification_unverified || topology_unverified ||
+                                    mount_unverified || timebase_pin_unverified;
+    out["grade"] = grade_for(status, tier, any_warn, any_fail, primary_unverified,
                              missing_required_data, hfit);
 
     // Direction: on the directional parameters we could actually compare, did

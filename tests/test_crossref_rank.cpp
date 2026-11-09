@@ -108,8 +108,10 @@ TEST_CASE("a substitute with no ESR reads unverified, not failed", "[crossref][r
     }
     CHECK(esr_verdict == "unverified");
     CHECK_FALSE(any_fail);  // nothing was compared, so nothing failed
-    // The consequence stays: not a drop-in, and below the part we could check.
-    CHECK(no_esr["grade"] == "major_review");
+    // Owner 2026-11-09: ESR is a secondary axis, so its absence no longer caps (it was
+    // major_review). It still ranks below the part we could check. The minor_review left is
+    // the leaded land (no lead pitch on either record), a primary axis.
+    CHECK(no_esr["grade"] == "minor_review");
     CHECK(no_esr["status"] == "partial");
     CHECK(no_esr["penalty"].get<double>() > find("MEASURED")["penalty"].get<double>());
     // And it says why, rather than leaving tool_notes null as it did.

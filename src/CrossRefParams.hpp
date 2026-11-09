@@ -557,8 +557,8 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
         // Operating range (Qarlos 2026-11-09, seed 20680025: XT26008-T-K, rated -55..200 degC,
         // took 125 degC chip inductors with no caveat). The resistor rule: the substitute must
         // cover the original's range at both ends with NO warn band (abs_tol 0) — a lower
-        // maximum or a warmer minimum is a FAIL. Absent -> UNVERIFIED, which CrossRef.hpp caps
-        // at minor_review when it is the original that states the end.
+        // maximum or a warmer minimum is a FAIL. Absent -> UNVERIFIED and noted (a secondary
+        // axis: no grade cap, owner 2026-11-09).
         {"temp_min_C", D::Lower, 0.0, 0.0, false, false, nullptr},
         {"temp_max_C", D::Higher, 0.0, 0.0, false, false, nullptr},
         // Self-resonant frequency (Qarlos 2026-11-09, seed 21098941: AIML-0402HP-R20K-T, SRF

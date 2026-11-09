@@ -163,8 +163,9 @@ TEST_CASE("qarlos #2042: Isat across different drop criteria warns and names bot
     CHECK(row->saturation_percent_drop == 30.0);
 }
 
-// ABT #2029: a known original height against an unknown candidate height is not a drop-in.
-TEST_CASE("qarlos #2029: unknown candidate height caps a magnetic at minor_review",
+// ABT #2029: a known original height against an unknown candidate height is reported
+// UNVERIFIED with a note. Height is a secondary axis (owner, 2026-11-09): no cap any more.
+TEST_CASE("qarlos #2029: unknown candidate height on a magnetic is unverified and noted",
           "[qarlos][crossref][dims]") {
     json orig = {{"mpn", "LQH2HPH100MGR"}, {"value_si", 10e-6}, {"saturation_current", 0.6},
                  {"rated_current", 0.5}, {"length_m", 2.5e-3}, {"width_m", 2.0e-3},
@@ -174,7 +175,7 @@ TEST_CASE("qarlos #2029: unknown candidate height caps a magnetic at minor_revie
     auto r = kelvin::crossref::cross_reference("magnetic", orig, json::array({cand}));
     const json& c = r["candidates"][0];
     CHECK(verdict_of(c, "height") == "unverified");
-    CHECK(c["grade"] == "minor_review");
+    CHECK(c["grade"] == "drop_in");  // owner 2026-11-09: height is secondary, no cap
     CHECK(has_note(c, "states no height"));
 }
 
@@ -914,7 +915,7 @@ TEST_CASE("qarlos 2026-11-08: a case-code table height is not the record's heigh
         REQUIRE(!c.is_null());
         CHECK(verdict_of(c, "height") == "unverified");
         CHECK(c["height_fit"] == "unknown");
-        CHECK(c["grade"] != "drop_in");
+        CHECK(c["grade"] == "drop_in");  // owner 2026-11-09: height is secondary
         CHECK(has_note(c, "states no height"));
     }
     // The footprint still follows from the case code (the code IS the land).
@@ -934,7 +935,7 @@ TEST_CASE("qarlos 2026-11-08: a package table height is not judged on a mosfet",
     auto r = kelvin::crossref::cross_reference("mosfet", orig, json::array({cand}));
     const json& c = r["candidates"][0];
     CHECK(verdict_of(c, "height") == "unverified");
-    CHECK(c["grade"] != "drop_in");
+    CHECK(c["grade"] == "drop_in");  // owner 2026-11-09: height is secondary
 }
 
 // Run2 seed 20263126: RN50C5000FR36 is 0.05 W at 125 degC (flat to 125, zero at 175);
@@ -1762,11 +1763,11 @@ TEST_CASE("qarlos 2026-11-08 r2: a resistor's operating range must cover the ori
     CHECK(m["grade"] == "major_review");
     CHECK(m["direction"] != "upgrade");
     CHECK(has_note(m, "rated only to +155"));
-    // Unknown is UNVERIFIED, and not a drop-in.
+    // Unknown is UNVERIFIED and noted (secondary since 2026-11-09: no cap).
     const json s = res_by(r, "NO_RANGE");
     REQUIRE(!s.is_null());
     CHECK(verdict_of(s, "temp_max_C") == "unverified");
-    CHECK(s["grade"] == "minor_review");
+    CHECK(s["grade"] == "drop_in");  // owner 2026-11-09: operating range is secondary
     CHECK(has_note(s, "states no maximum operating temperature"));
     // The same range: no cap from it.
     CHECK(res_by(r, "SAME_RANGE")["grade"] == "drop_in");
@@ -2268,7 +2269,7 @@ TEST_CASE("qarlos 2026-11-09: a magnetic's operating range is extracted and must
         if (c["mpn"] == "NO_RANGE") {
             ++seen;
             CHECK(verdict_of(c, "temp_max_C") == "unverified");
-            CHECK(c["grade"] == "minor_review");
+            CHECK(c["grade"] == "drop_in");  // owner 2026-11-09: range is secondary
             CHECK(has_note(c, "states no maximum operating temperature"));
         }
     }
@@ -2429,7 +2430,7 @@ TEST_CASE("qarlos 2026-11-09 r5-7: a TCR the substitute does not state is unveri
     const json c = res_find(r, "AC0805JR-0730RL");
     REQUIRE(!c.is_null());
     CHECK(verdict_of(c, "tcr") == "unverified");
-    CHECK(c["grade"] == "minor_review");
+    CHECK(c["grade"] == "drop_in");  // owner 2026-11-09: TCR is secondary, no cap
     CHECK(has_note(c, "the original states a TCR of +/-200 ppm/K"));
     CHECK(has_note(c, "substitute's record states none"));
     // Neither side states a TCR: the gap is common to every candidate, nothing is said.
@@ -2501,7 +2502,7 @@ TEST_CASE("qarlos 2026-11-09: an oscillator's nominal frequency is identity, not
 
 // Stability (+/- ppm) is a separate axis from the nominal: equal or tighter passes, looser
 // by any amount FAILs (the old 2x band warned a 50 ppm part for a 25 ppm one), unstated on
-// the substitute is UNVERIFIED and caps the grade.
+// the substitute is UNVERIFIED and noted (secondary since 2026-11-09: no cap).
 TEST_CASE("qarlos 2026-11-09: a looser oscillator stability fails; unstated is unverified",
           "[qarlos][crossref]") {
     const json orig = osc("ASSVP-14.7456MHZ-R-C16", 14745600.0, 2.4999999999999998e-05, 3.3,
@@ -2523,7 +2524,7 @@ TEST_CASE("qarlos 2026-11-09: a looser oscillator stability fails; unstated is u
     const json* none = cand_by_mpn(r, "NOSTAB");
     REQUIRE(none);
     CHECK(verdict_of(*none, "stability_ppm") == "unverified");
-    CHECK((*none)["grade"] != "drop_in");
+    CHECK((*none)["grade"] == "drop_in");  // owner 2026-11-09: stability is secondary
     CHECK(has_note(*none, "the original's frequency stability is +/-25 ppm; the substitute's "
                           "record states none"));
 }
@@ -2852,11 +2853,12 @@ TEST_CASE("qarlos r5-7: a different class-1 temperature coefficient fails",
     CHECK(verdict_of(run("C0G", "BP"), "dielectric_code") == "pass");   // MIL 0 +/-30
     CHECK(verdict_of(run("C0H", "C0G"), "dielectric_code") == "pass");  // tighter
     CHECK(verdict_of(run("X7R", "Y5V"), "dielectric_code") == "fail");
-    // same coefficient, a tolerance one code does not state: undecided, noted and capped
+    // same coefficient, a tolerance one code does not state: undecided and noted (secondary,
+    // no cap since 2026-11-09)
     {
         json c = run("U2J", "N750");
         CHECK(verdict_of(c, "dielectric_code") == "unverified");
-        CHECK(c["grade"] == "minor_review");
+        CHECK(c["grade"] == "drop_in");  // owner 2026-11-09: dielectric is secondary
         CHECK(has_note(c, "dielectric codes differ (U2J -> N750)"));
     }
     // an undecodable code against a stated one is never silent
@@ -3345,14 +3347,15 @@ TEST_CASE("qarlos v20: a looser capacitance tolerance FAILs with both bands quot
     CHECK(c2["grade"] != "drop_in");
     CHECK(has_note(c2, "+/-0.1 pF"));
     CHECK(has_note(c2, "+/-0.05 pF"));
-    // a candidate with no band against a banded original: unverified and capped
+    // a candidate with no band against a banded original: unverified (secondary, no cap
+    // since 2026-11-09)
     auto bare = gqm;
     bare.mpn = "BARE";
     bare.capacitance_min = bare.capacitance_max = kelvin::kNaN();
     auto r3 = kelvin::crossref::cross_reference("capacitor", cap_spec(mca),
                                                 json::array({cap_spec(bare)}), opt);
     CHECK(verdict_of(r3["candidates"][0], "capacitance_tolerance") == "unverified");
-    CHECK(r3["candidates"][0]["grade"] != "drop_in");
+    CHECK(r3["candidates"][0]["grade"] == "drop_in");  // owner 2026-11-09: secondary
     // a lone end is not a band
     auto lone = cap_row(cap_env("X", "LONE", rf, json::object(),
         {{"capacitance", {{"nominal", 3e-13}, {"maximum", 4e-13}}}, {"ratedVoltage", 50.0}}));
@@ -4017,15 +4020,18 @@ TEST_CASE("qarlos 2026-11-09 md9: SOD323 resolves the SOD-323 outline",
 }
 
 // Item 10 (seed 21203670): a 2 pF small-signal Schottky original holds every diode substitute
-// to its junction capacitance; one the substitute does not state caps at major_review.
-TEST_CASE("qarlos 2026-11-09 md10: an unstated junction capacitance caps at major_review",
+// to its junction capacitance; one the substitute does not state is UNVERIFIED with the FAIL
+// penalty (it capped at major_review until the owner's 2026-11-09 secondary-axis rule).
+TEST_CASE("qarlos 2026-11-09 md10: an unstated junction capacitance is unverified and penalised",
           "[qarlos][crossref]") {
     auto r = md_rank("diode", "BAS70JW", {"SB3100", "SBL10100A"});
     REQUIRE(r["candidates"].size() == 2);
     for (const auto& c : r["candidates"]) {
         INFO(c["mpn"]);
         CHECK(verdict_of(c, "junction_capacitance") == "unverified");
-        CHECK(c["grade"] == "major_review");
+        // owner 2026-11-09: Cj is secondary, no longer missing required data; the
+        // minor_review left is the established package change (different_case).
+        CHECK(c["grade"] == "minor_review");
         CHECK(has_note(c, "no junction capacitance — the original states 2 pF"));
     }
     // Both stated: CD214A-B360R (135 pF) against BAS70JW (2 pF) is far beyond 2x.
@@ -4093,4 +4099,67 @@ TEST_CASE("qarlos 2026-11-09 retest: a different resistor value ranks after ever
     CHECK(near["direction"] != "equivalent");
     CHECK(has_note(near, "nominal resistance differs: 14.7 kΩ -> 15 kΩ (+2.04 %) — a different "
                          "value, an alternative only"));
+}
+
+
+// ── Owner's primary/secondary rule (2026-11-09) ─────────────────────────────
+// A benchmark showed drop-ins falling from 28 % to 12 %, mostly because a substitute that does
+// not state a SECONDARY axis was capped at minor_review. Owner's decision: a one-sided UNVERIFIED
+// on a secondary axis keeps its verdict and note but no longer caps the grade; primary axes
+// (value, voltage/current/power ratings, pinout/identity, footprint/land/mount, safety class,
+// qualification) keep their caps. The three records below are REAL TAS records
+// (resistors.ndjson, verbatim).
+namespace {
+// YAGEO 10 kohm 1 % 0.4 W thin-film MELF/axial: operating range -55..155 degC stated.
+const char* kMF0204FTE52_10K = R"J({"resistor":{"manufacturerInfo":{"name":"YAGEO","reference":"MF0204FTE52-10K","status":"production","datasheetUrl":"https://yageogroup.com/content/datasheet/asset/file/YAGEO-MF0_DATASHEET","family":"MF0","datasheetInfo":{"part":{"partNumber":"MF0204FTE52-10K","technology":"thinFilm"},"electrical":{"resistance":{"nominal":10000.0},"tolerance":0.01,"powerRating":0.4},"thermal":{"operatingTemperature":{"minimum":-55.0,"maximum":155.0}},"provenance":[{"source":"scrape","sourceName":"YAGEO Group product catalogue","sourceUrl":"https://yageogroup.com/content/datasheet/asset/file/YAGEO-MF0_DATASHEET","retrievedDate":"2026-08-01","verification":"seriesConfirmed","verificationDate":"2026-10-10"},{"source":"manufacturerParametric","sourceName":"YAGEO Group parametric catalogue","sourceUrl":"https://yageogroup.com/search/unique-parts/MF0204FTE52-10K","retrievedDate":"2026-10-18","fields":["electrical.resistance","electrical.tolerance","electrical.powerRating","thermal.operatingTemperature"],"verification":"valuesReadFromSource","verificationDate":"2026-10-18"},{"source":"manufacturerDatasheet","sourceName":"YAGEO MF0 series datasheet, V.4, Jan. 13, 2026","sourceUrl":"https://yageogroup.com/content/datasheet/asset/file/YAGEO-MF0_DATASHEET","retrievedDate":"2026-10-23","fields":["factors.powerDerating"],"verification":"seriesConfirmed","verificationDate":"2026-10-23"}],"factors":{"powerDerating":{"temperature":[-55,70,155],"amplitude":[1,1,0]}}}}}})J";
+// YAGEO 10 kohm 1 % 0.4 W thin-film, the same derating curve: no operating range on record.
+const char* kMMF204FRE10K = R"J({"resistor":{"manufacturerInfo":{"name":"YAGEO","reference":"MMF204FRE10K","status":"production","datasheetUrl":"https://yageogroup.com/content/datasheet/asset/file/YAGEO-MMF_DATASHEET","family":"MMF","datasheetInfo":{"part":{"partNumber":"MMF204FRE10K","technology":"thinFilm"},"electrical":{"resistance":{"nominal":10000.0},"tolerance":0.01,"powerRating":0.4},"provenance":[{"source":"scrape","sourceName":"YAGEO Group product catalogue","sourceUrl":"https://yageogroup.com/content/datasheet/asset/file/YAGEO-MMF_DATASHEET","retrievedDate":"2026-08-01","verification":"seriesConfirmed","verificationDate":"2026-10-10"},{"source":"manufacturerParametric","sourceName":"YAGEO Group parametric catalogue","sourceUrl":"https://yageogroup.com/search/unique-parts/MMF204FRE10K","retrievedDate":"2026-10-18","fields":["electrical.resistance","electrical.tolerance","electrical.powerRating"],"verification":"valuesReadFromSource","verificationDate":"2026-10-18"},{"source":"manufacturerDatasheet","sourceName":"YAGEO MMF series datasheet, V.5, Nov. 13, 2024","sourceUrl":"https://yageogroup.com/content/datasheet/asset/file/YAGEO-MMF_DATASHEET","retrievedDate":"2026-11-04","fields":["factors.powerDerating"],"verification":"seriesConfirmed","verificationMethod":"Maximum dissipation in percent of rated power versus ambient temperature, series datasheet figure: 100 % from -55 C to the 70 C rated-power temperature, falling linearly to 0 % at 155 C.","verificationDate":"2026-11-04"}],"factors":{"powerDerating":{"temperature":[-55,70,155],"amplitude":[1,1,0]}}}}}})J";
+// Panasonic 30 ohm 5 % 0.125 W 0805: no rating temperature or derating on record, against
+// CRCW080530R0JNTA's 0.125 W at 70 degC.
+const char* kERJS06J300V = R"J({"resistor":{"manufacturerInfo":{"name":"Panasonic","reference":"ERJS06J300V","status":"production","datasheetUrl":"https://industrial.panasonic.com/cdbs/www-data/pdf/RDP0000/AOA0000C334.pdf","family":"Anti-Sulfurated Thick Film Chip Resistors","datasheetInfo":{"part":{"partNumber":"ERJS06J300V","technology":"thickFilm","series":"Anti-Sulfurated Thick Film Chip Resistors","case":"0805"},"electrical":{"resistance":{"nominal":30.0},"tolerance":0.05,"powerRating":0.125,"temperatureCoefficient":200.0},"mechanical":{"length":{"nominal":0.002},"width":{"nominal":0.00125},"landPattern":{"pattern":"singleRow","originDatum":"padCentroid","pads":[{"id":"1","x":-0.00095,"y":0.0,"shape":"rectangle","width":0.001,"height":0.00145},{"id":"2","x":0.00095,"y":0.0,"shape":"rectangle","width":0.001,"height":0.00145}]}},"provenance":[{"source":"scrape","sourceName":"Panasonic Industrial parametric search","sourceUrl":"https://industrial.panasonic.com/cdbs/www-data/pdf/RDP0000/AOA0000C334.pdf","retrievedDate":"2026-08-01","verification":"seriesConfirmed","verificationDate":"2026-10-10"},{"source":"derived","sourceName":"IPC-7351B","retrievedDate":"2026-08-02","fields":["mechanical.landPattern"],"derivation":"IPC-7351B nominal land pattern for the case code"},{"source":"manufacturerParametric","sourceName":"Panasonic Industry model listing","sourceUrl":"https://industrial.panasonic.com/ww/products/pt/anti-sulfurated-chip-resistors/models/ERJS06J300V","retrievedDate":"2026-10-09","fields":["electrical.resistance","electrical.tolerance","electrical.powerRating","electrical.temperatureCoefficient","part.case"],"verification":"valuesReadFromSource","verificationDate":"2026-10-18"}]}}}})J";
+}  // namespace
+
+TEST_CASE("owner 2026-11-09: a substitute missing only a secondary axis can be a drop_in",
+          "[qarlos][crossref][grade]") {
+    auto r = kelvin::crossref::cross_reference("resistor", res_record_spec(kMF0204FTE52_10K),
+                                               json::array({res_record_spec(kMMF204FRE10K)}),
+                                               res_opt());
+    const json c = res_find(r, "MMF204FRE10K");
+    REQUIRE(!c.is_null());
+    // The secondary axis is still reported as unknown, with its notes ...
+    CHECK(verdict_of(c, "temp_min_C") == "unverified");
+    CHECK(verdict_of(c, "temp_max_C") == "unverified");
+    CHECK(has_note(c, "states no minimum operating temperature"));
+    CHECK(has_note(c, "states no maximum operating temperature"));
+    // ... the primary ratings are established (power along both derating curves) ...
+    CHECK(verdict_of(c, "power_rating") == "pass");
+    // ... and the unknown no longer caps the grade or demotes the row.
+    CHECK(c["grade"] == "drop_in");
+    CHECK(c["status"] == "recommended");
+}
+
+TEST_CASE("owner 2026-11-09: a substitute missing a primary axis is still capped",
+          "[qarlos][crossref][grade]") {
+    // Power at the original's rating temperature (a power rating) not on the substitute's
+    // record: capped at minor_review, with its note.
+    auto r = kelvin::crossref::cross_reference("resistor", res_record_spec(kCRCW080530R0JNTA),
+                                               json::array({res_record_spec(kERJS06J300V)}),
+                                               res_opt());
+    const json c = res_find(r, "ERJS06J300V");
+    REQUIRE(!c.is_null());
+    CHECK(verdict_of(c, "power_rating") == "unverified");
+    CHECK(has_note(c, "power rating not comparable at the original's rating temperature"));
+    CHECK(c["grade"] == "minor_review");
+    CHECK(c["status"] == "partial");
+
+    // Connector contact pitch (the land pattern) stated by the original only.
+    json orig = {{"mpn", "O"}, {"family", "boardToBoard"}, {"positions", 10.0},
+                 {"pitch_mm", 2.54}, {"rated_current_A", 3.0}};
+    json cand = {{"mpn", "NO_PITCH"}, {"family", "boardToBoard"}, {"positions", 10.0},
+                 {"rated_current_A", 3.0}};
+    auto rc = kelvin::crossref::cross_reference("connector", orig, json::array({cand}));
+    const json& cc = rc["candidates"][0];
+    CHECK(verdict_of(cc, "pitch_mm") == "unverified");
+    CHECK(has_note(cc, "contact pitch not established"));
+    CHECK(cc["grade"] == "minor_review");
 }
