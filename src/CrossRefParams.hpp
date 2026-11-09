@@ -522,6 +522,12 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
         // drop_in for a 0.5 W one). Equal-or-higher passes, down to 90 % warns, lower
         // fails — the resistor power-rating rule. An absent value is UNVERIFIED.
         {"power_dissipation", D::Higher, 0.9, std::nullopt, false, false, nullptr},
+        // Maximum junction temperature (Qarlos 2026-11-09, seeds 20575296 / 20889483: a
+        // 125 degC Bourns Schottky took a 175 / 150 degC Vishay / onsemi part clean, one even
+        // 'upgrade'). The substitute must reach the original's Tj max with NO band (abs_tol
+        // 0): the design's thermal margin was computed against it. Lower = FAIL, absent =
+        // UNVERIFIED (CrossRef.hpp names both temperatures, or the gap, in a note).
+        {"tj_max", D::Higher, 0.0, 0.0, false, false, nullptr},
     };
     static const std::vector<ParamSpec> kResistor = {
         {"power_rating", D::Higher, 0.9, std::nullopt, false, false, nullptr},

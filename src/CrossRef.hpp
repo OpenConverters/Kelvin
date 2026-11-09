@@ -1492,7 +1492,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // Set by an operating-range end or (resistor) a TCR the original states and the
     // substitute's record does not: both are temperature behaviour nobody has shown kept.
     bool temp_unverified = false;
-    if (cat == "resistor" || cat == "magnetic") {
+    if (cat == "resistor" || cat == "magnetic" || cat == "diode") {
         auto verdict_of = [&](const char* name) -> std::string {
             for (const auto& p : params)
                 if (p.value("name", "") == name) return p.value("verdict", "");
@@ -1533,6 +1533,27 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                 " degC; the substitute's record states no " +
                                 (std::string(k) == "temp_min_C" ? "minimum" : "maximum") +
                                 " operating temperature — confirm it from the datasheet");
+            }
+        }
+        // A diode's maximum junction temperature (tj_max in kDiode, no band): a lower one is
+        // already a FAIL counted worse by the table loop; name both temperatures, because the
+        // verdict alone does not say how much thermal margin went. One the original states
+        // and the substitute's record does not is UNVERIFIED, noted and capped like the
+        // operating range above (Qarlos 2026-11-09, seeds 20575296 / 20889483).
+        if (cat == "diode") {
+            const auto o_tj = num(original, "tj_max"), s_tj = num(cand, "tj_max");
+            const std::string v = verdict_of("tj_max");
+            if (v == FAIL && o_tj && s_tj) {
+                notes.push_back("lower maximum junction temperature: the substitute is rated to " +
+                                degc(*s_tj) + " degC against the original's " + degc(*o_tj) +
+                                " degC — less thermal margin at the original's operating point; "
+                                "re-check the junction temperature in the design");
+            } else if (v == UNVERIFIED && o_tj && !s_tj) {
+                temp_unverified = true;
+                notes.push_back("the original's maximum junction temperature is " +
+                                degc(*o_tj) +
+                                " degC; the substitute's record states none — confirm it from "
+                                "the datasheet");
             }
         }
         if (temp_unverified) demote();
@@ -1655,6 +1676,26 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                            label + " at the original's waveform");
                 return;
             }
+            // Clamping voltage is a point on the V-I curve: the same waveform at a different
+            // current is a different point (Qarlos 2026-11-09, seed 20784754: TPC20AHM3_A/H
+            // clamps 27.7 V at 54.2 A, 15KPA018-SD-Q 28.4 V at 527.8 A, and the ranker warned
+            // "higher clamp voltage" across a 10x current gap). Rule (DECISION for the owner:
+            // the 1.1 band): both records state their test current and the larger is more
+            // than 1.1x the smaller -> UNVERIFIED, with both (Vc, Ipp) pairs named. No scaling
+            // to a common current — the dynamic resistance is not on record.
+            if (std::string(key) == "clamping_voltage") {
+                constexpr double kClampCurrentBand = 1.1;
+                const auto oi = num(original, "clamping_current"),
+                           si = num(cand, "clamping_current");
+                if (oi && si && std::max(*oi, *si) > kClampCurrentBand * std::min(*oi, *si)) {
+                    unverified("clamping voltage stated at different test currents (" +
+                               fmt(*o, unit) + " at " + fmt(*oi, "A") + " on the original, " +
+                               fmt(*s, unit) + " at " + fmt(*si, "A") +
+                               " on the substitute) — not comparable; confirm the substitute's "
+                               "clamping voltage at the original's current");
+                    return;
+                }
+            }
             const ParamSpec spec{key, dir, tol, std::nullopt, false, false, nullptr};
             const char* v = compare_numeric(spec, o, s).verdict;
             params.push_back({{"name", key}, {"verdict", v}});
@@ -1679,31 +1720,6 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                        "clamping voltage", "V", false,
                        "the protected circuit sees a higher voltage during a surge; re-check its "
                        "rating");
-
-        // Junction capacitance loads the line being protected (a high-speed I/O is what an
-        // ESD part guards). Stated without an impulse, so compared directly.
-        if (const auto oc = num(original, "junction_capacitance"),
-            sc = num(cand, "junction_capacitance");
-            oc || sc) {
-            const ParamSpec spec{"junction_capacitance", Dir::Lower, 2.0, std::nullopt, false,
-                                 false, nullptr};
-            const char* v = compare_numeric(spec, oc, sc).verdict;
-            params.push_back({{"name", "junction_capacitance"}, {"verdict", v}});
-            if (v == FAIL || v == WARN) {
-                demote();
-                penalty += opt.gate_weight * (v == FAIL ? kVerdictFailPenalty : kVerdictWarnPenalty);
-                ++worse;
-                notes.push_back("junction capacitance " + fmt(*sc * 1e12, "pF") +
-                                " against the original's " + fmt(*oc * 1e12, "pF") +
-                                " — more load on the protected line; check its signal integrity");
-            } else if (oc && !sc) {
-                notes.push_back("substitute's record carries no junction capacitance — the "
-                                "original states " + fmt(*oc * 1e12, "pF") +
-                                "; confirm the load on the protected line from the datasheet");
-            } else {
-                note_direction(Dir::Lower, oc, sc);
-            }
-        }
 
         // Breakdown window: where the part begins to conduct. Upper ends when both state
         // one, else lower ends.
@@ -1815,6 +1831,57 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             } else {
                 params.push_back({{"name", "polarity"}, {"verdict", PASS}});
             }
+        }
+    }
+
+    // ── junction capacitance, every diode whose original states one ─────────
+    // It loads the line a protection part guards, and it is the switching/RF behaviour of a
+    // small-signal or Schottky part. It was compared only for TVS / ESD originals, so BAS70JW
+    // (2 pF small-signal Schottky) took SB3100 (a 3 A rectifier whose record states no Cj,
+    // hundreds of pF on its datasheet) and SBL10100A as minor_review (Qarlos 2026-11-09, seed
+    // 21203670). Rules (OWNER DECIDED for the absent case):
+    //  * both state Cj: equal or lower PASS, up to 2x WARN, beyond FAIL (counted worse);
+    //  * the original states one and the substitute's record does not: UNVERIFIED, noted,
+    //    with the missing-required-data consequence (FAIL penalty, capped at major_review) —
+    //    a part whose capacitance may be 100x the original's is never a minor review;
+    //  * only the substitute states one: UNVERIFIED, nothing to hold it to.
+    if (cat == "diode") {
+        const auto oc = num(original, "junction_capacitance"),
+                   sc = num(cand, "junction_capacitance");
+        auto pf = [](double f) {
+            char b[48];
+            std::snprintf(b, sizeof b, "%g pF", f * 1e12);
+            return std::string(b);
+        };
+        const std::string load = protection ? "more load on the protected line; check its "
+                                              "signal integrity"
+                                            : "more capacitance across the junction; check "
+                                              "switching speed and signal loading in the "
+                                              "original's circuit";
+        if (oc && sc) {
+            const ParamSpec spec{"junction_capacitance", Dir::Lower, 2.0, std::nullopt, false,
+                                 false, nullptr};
+            const char* v = compare_numeric(spec, oc, sc).verdict;
+            params.push_back({{"name", "junction_capacitance"}, {"verdict", v}});
+            if (v == FAIL || v == WARN) {
+                demote();
+                penalty += opt.gate_weight * (v == FAIL ? kVerdictFailPenalty : kVerdictWarnPenalty);
+                ++worse;
+                notes.push_back("junction capacitance " + pf(*sc) + " against the original's " +
+                                pf(*oc) + " — " + load);
+            } else {
+                note_direction(Dir::Lower, oc, sc);
+            }
+        } else if (oc) {
+            params.push_back({{"name", "junction_capacitance"}, {"verdict", UNVERIFIED}});
+            demote();
+            penalty += opt.gate_weight * kVerdictFailPenalty;
+            missing_required_data = true;
+            notes.push_back("substitute's record carries no junction capacitance — the "
+                            "original states " + pf(*oc) +
+                            "; confirm it from the datasheet before this swap");
+        } else if (sc) {
+            params.push_back({{"name", "junction_capacitance"}, {"verdict", UNVERIFIED}});
         }
     }
 

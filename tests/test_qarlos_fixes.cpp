@@ -10,6 +10,7 @@
 #include <nlohmann/json.hpp>
 
 #include "Browse.hpp"
+#include "Index.hpp"
 #include "CrossRef.hpp"
 #include "Select.hpp"
 #include "Views.hpp"
@@ -2879,3 +2880,284 @@ TEST_CASE("qarlos r5-7: screw-terminal against radial-leaded is a mount mismatch
     CHECK(kelvin::crossref::mount_class("", "Screw-Terminal") == "screw");
 }
 
+
+// ── Qarlos 2026-11-09 re-test (v20), MOSFET + diode ──────────────────────────
+// Every case below runs on the REAL TAS records (verbatim lines of mosfets.ndjson /
+// diodes.ndjson in tests/fixtures/qarlos_2026-11-09_*.ndjson), indexed by the real shard
+// builder, read back through browse_rows (the row the web receives) and turned into the
+// spec exactly as web/src/crossref.js builds it.
+namespace {
+json nz_(const json& v) {
+    return v.is_number() && v.get<double>() > 0 ? v : json(nullptr);
+}
+json raw_(const json& v) { return v.is_null() ? json(nullptr) : v; }
+json base_spec(const json& r) {
+    return json{{"mpn", r["mpn"]},
+                {"length_m", nz_(r["lengthM"])},
+                {"width_m", nz_(r["widthM"])},
+                {"height_m", nz_(r["heightM"])},
+                {"case_code", r.value("caseCode", "")},
+                {"mount", r.value("mount", "")},
+                {"lead_pitch_m", r.contains("leadPitchM") ? nz_(r["leadPitchM"]) : json(nullptr)},
+                {"is_production", r["is_production"]},
+                {"provenance_retracted", r.value("provenanceRetracted", false)}};
+}
+// XREF mosfet spec (web/src/crossref.js).
+json mosfet_spec(const json& r) {
+    json s = base_spec(r);
+    s["vds"] = nz_(r["vds_rated"]);
+    s["id"] = nz_(r["id_continuous"]);
+    s["rds_on"] = nz_(r["rds_on"]);
+    s["qg"] = nz_(r["qg_total"]);
+    s["coss"] = nz_(r["coss"]);
+    s["vgs_threshold_max"] = nz_(r["vgs_threshold_max"]);
+    s["vgs_threshold_typ"] = nz_(r["vgs_threshold_typ"]);
+    s["rds_on_vgs"] = nz_(r["rds_on_vgs"]);
+    s["vgs_max"] = nz_(r["vgs_max"]);
+    s["technology"] = r.value("technology", "");
+    s["qualification"] = r.value("qualification", "");
+    const std::string ch = r.value("channel", "");
+    s["channel"] = ch.empty() ? json(nullptr) : json(ch);
+    return s;
+}
+// XREF diode spec (web/src/crossref.js).
+json diode_spec(const json& r) {
+    json s = base_spec(r);
+    s["vrrm"] = nz_(r["vrrm_rated"]);
+    s["if_avg"] = nz_(r["if_avg_rated"]);
+    s["vf"] = nz_(r["vf_typ"]);
+    s["power_dissipation"] = nz_(r["power_dissipation"]);
+    s["qrr"] = raw_(r["qrr"]);
+    s["trr"] = raw_(r["trr"]);
+    s["technology"] = r.value("technology", "");
+    const std::string dc = r.value("die_configuration", ""), ic = r.value("internal_connection", "");
+    s["die_configuration"] = dc.empty() ? json(nullptr) : json(dc);
+    s["internal_connection"] = ic.empty() ? json(nullptr) : json(ic);
+    s["vz_min_V"] = nz_(r["vz_min"]);
+    s["vz_max_V"] = nz_(r["vz_max"]);
+    s["vz_tolerance_pct"] =
+        r["vz_tolerance"].is_number() ? json(r["vz_tolerance"].get<double>() * 100) : json(nullptr);
+    for (const char* k : {"clamping_voltage", "clamping_current", "peak_pulse_power",
+                          "peak_pulse_current", "junction_capacitance"})
+        s[k] = nz_(r[k]);
+    for (const char* k : {"clamping_waveform", "peak_pulse_power_waveform",
+                          "peak_pulse_current_waveform", "qualification"})
+        s[k] = r.value(k, "");
+    s["tj_max"] = raw_(r["tj_max"]);
+    return s;
+}
+std::string fixture_(const char* f) {
+    return std::string(KELVIN_TEST_DIR) + "/fixtures/qarlos_2026-11-09_" + f;
+}
+// mpn -> browse row, over the real records.
+const json& md_row(const std::string& family, const std::string& mpn) {
+    static const json mos = [] {
+        auto sh = kelvin::build_mosfet_shard(fixture_("mosfets.ndjson"));
+        return kelvin::browse::browse_rows(sh, json{{"limit", 1000}})["rows"];
+    }();
+    static const json dio = [] {
+        auto sh = kelvin::build_diode_shard(fixture_("diodes.ndjson"));
+        return kelvin::browse::browse_rows(sh, json{{"limit", 1000}})["rows"];
+    }();
+    for (const auto& r : family == "mosfet" ? mos : dio)
+        if (r.value("mpn", "") == mpn) return r;
+    throw std::runtime_error("fixture has no " + family + " record " + mpn);
+}
+json md_spec(const std::string& family, const std::string& mpn) {
+    const json& r = md_row(family, mpn);
+    return family == "mosfet" ? mosfet_spec(r) : diode_spec(r);
+}
+// Rank `cands` for `orig` exactly as the site does (footprint check on).
+json md_rank(const std::string& family, const std::string& orig,
+             const std::vector<std::string>& cands) {
+    json c = json::array();
+    for (const auto& m : cands) c.push_back(md_spec(family, m));
+    return kelvin::crossref::cross_reference(family, md_spec(family, orig), c);
+}
+}  // namespace
+
+// Item 1 (seeds 20300704, 21203670): one JEDEC outline under two names is one land.
+TEST_CASE("qarlos 2026-11-09 md1: TO-252 (D-PAK) is DPAK, TO-220 FullPAK is TO-220FP",
+          "[qarlos][crossref][dims]") {
+    using kelvin::crossref::case_identity;
+    CHECK(case_identity("mosfet", "TO-252 (D-PAK)") == case_identity("mosfet", "DPAK"));
+    CHECK(case_identity("mosfet", "TO-220 FullPAK") == case_identity("mosfet", "TO-220FP"));
+    // ... and different outlines stay different.
+    CHECK(case_identity("mosfet", "TO-220 FullPAK") != case_identity("mosfet", "TO-220"));
+    CHECK(case_identity("mosfet", "Q-DPAK") != case_identity("mosfet", "DPAK"));
+    for (auto [o, c] : {std::pair{"CSD20065D", "IPD600N25N3 G"},
+                        std::pair{"IPA90R500S7", "STF8N90K5"}}) {
+        INFO(o << " -> " << c);
+        auto r = md_rank("mosfet", o, {c});
+        const json& cand = r["candidates"][0];
+        CHECK(cand["footprint"] != "different_case");
+        CHECK(verdict_of(cand, "footprint") != "warn");
+        CHECK_FALSE(has_note(cand, "different package/case"));
+    }
+}
+
+// Item 2 (seed 20994212): Q-DPAK is not DPAK; its footprint note may not quote DPAK's box.
+TEST_CASE("qarlos 2026-11-09 md2: a Q-DPAK resolves no DPAK outline",
+          "[qarlos][crossref][dims]") {
+    using kelvin::crossref::resolve_dimensions;
+    CHECK_FALSE(resolve_dimensions("Q-DPAK", "mosfet").has_value());
+    CHECK(resolve_dimensions("DPAK", "mosfet").has_value());
+    CHECK(md_row("mosfet", "IPDQ65R040CFD7A")["lengthM"].is_null());
+    auto r = md_rank("mosfet", "SiHG055N65E", {"IPDQ65R040CFD7A"});
+    const json& c = r["candidates"][0];
+    CHECK_FALSE(has_note(c, "6.6"));
+    CHECK_FALSE(has_note(c, "6.1 mm"));
+}
+
+// Item 3 (seed 22041502): same stated TO-220 on both, the candidate's only "box" a package-table
+// outline -> the land is kept, footprint fits.
+TEST_CASE("qarlos 2026-11-09 md3: same case code with a table outline keeps the land",
+          "[qarlos][crossref][dims]") {
+    auto r = md_rank("mosfet", "NTP18G120", {"IPP200N15N3"});
+    const json& c = r["candidates"][0];
+    CHECK(c["footprint"] == "fits");
+    CHECK(verdict_of(c, "footprint") == "pass");
+    CHECK_FALSE(has_note(c, "smaller body"));
+}
+
+// Item 4 (seed 20470567): a bare "Automotive" original engages the automotive gate.
+TEST_CASE("qarlos 2026-11-09 md4: an 'Automotive' original holds the substitute to it",
+          "[qarlos][crossref]") {
+    // IPW65R048CFDA "Automotive"; SiHG61N65EF states nothing, IPDQ65R040CFD7A the same
+    // "Automotive" label. The non-automotive case is SiHG61N65EF's real record with the
+    // label Infineon's IPD600N25N3 G states ("Industrial"): that part itself is a 250 V
+    // one and is rejected on Vds before the grade gate is reached.
+    json industrial = md_spec("mosfet", "SiHG61N65EF");
+    industrial["mpn"] = "SiHG61N65EF-INDUSTRIAL";
+    industrial["qualification"] = md_row("mosfet", "IPD600N25N3 G")["qualification"];
+    REQUIRE(industrial["qualification"] == "Industrial");
+    auto r = kelvin::crossref::cross_reference(
+        "mosfet", md_spec("mosfet", "IPW65R048CFDA"),
+        json::array({md_spec("mosfet", "SiHG61N65EF"), industrial,
+                     md_spec("mosfet", "IPDQ65R040CFD7A")}));
+    const json* none = cand_by_mpn(r, "SiHG61N65EF");
+    const json* ind = cand_by_mpn(r, "SiHG61N65EF-INDUSTRIAL");
+    const json* same = cand_by_mpn(r, "IPDQ65R040CFD7A");
+    REQUIRE(none);
+    REQUIRE(ind);
+    REQUIRE(same);
+    CHECK(verdict_of(*none, "automotive_grade") == "unverified");
+    CHECK((*none)["status"] != "recommended");
+    CHECK(has_note(*none, "states no qualification"));
+    CHECK(verdict_of(*ind, "automotive_grade") == "fail");
+    CHECK((*same)["status"] != "no_substitute");  // scored through the grade gate
+    CHECK(verdict_of(*same, "automotive_grade") == "");
+    CHECK_FALSE(has_note(*same, "automotive"));
+}
+
+// Item 5 (seed 21098941): logic-level original (Vth max 2 V), substitute states only a 3.5 V
+// typical -> its maximum is above 2 V: WARN with the note, not a silent 'unverified'.
+TEST_CASE("qarlos 2026-11-09 md5: a typical Vth above the original's maximum warns",
+          "[qarlos][crossref][views]") {
+    CHECK(md_row("mosfet", "BSC060N10NS6")["vgs_threshold_max"].is_null());
+    CHECK(md_row("mosfet", "BSC060N10NS6")["vgs_threshold_typ"] == 3.5);
+    auto r = md_rank("mosfet", "NVMFS5C670NLET1G", {"BSC060N10NS6"});
+    const json& c = r["candidates"][0];
+    CHECK(verdict_of(c, "vgs_threshold_max") == "warn");
+    CHECK(has_note(c, "TYPICAL Vgs(th) is 3.5 V"));
+    CHECK(c["status"] != "recommended");
+}
+
+// Item 6 (seed 21936773): a P-channel record whose only bound is a negative MAXIMUM (onsemi's
+// "Max" column, FDMA86265P -4 V) keeps its |Vth| worst case.
+TEST_CASE("qarlos 2026-11-09 md6: a lone negative P-channel maximum is the |Vth| worst case",
+          "[qarlos][crossref][views]") {
+    CHECK(md_row("mosfet", "FDMA86265P")["vgs_threshold_max"] == 4.0);
+    CHECK(md_row("mosfet", "ISP14EP15LM")["vgs_threshold_max"] == 2.0);
+    auto r = md_rank("mosfet", "ISP14EP15LM", {"FDMA86265P"});
+    CHECK(verdict_of(r["candidates"][0], "vgs_threshold_max") == "warn");
+}
+
+// Item 7 (seeds 20575296, 20889483): a lower diode Tj max is a FAIL with both temperatures;
+// one the substitute does not state is unverified and noted.
+TEST_CASE("qarlos 2026-11-09 md7: a diode's lower Tj max fails, an unstated one is unverified",
+          "[qarlos][crossref]") {
+    for (auto [o, c, ot, st] : {std::tuple{"VSSAF3M6-M3/H", "CD214A-B360R", "175", "125"},
+                                std::tuple{"SS16FSH", "CD-HD006", "150", "125"}}) {
+        INFO(o << " -> " << c);
+        auto r = md_rank("diode", o, {c});
+        const json& cand = r["candidates"][0];
+        CHECK(verdict_of(cand, "tj_max") == "fail");
+        CHECK(cand["direction"] != "upgrade");
+        CHECK(cand["direction"] != "equivalent");
+        CHECK(cand["grade"] == "major_review");
+        CHECK(has_note(cand, std::string("rated to +") + st + " degC against the original's +" +
+                                 ot + " degC"));
+    }
+    // BAS70JW's record states no Tj max.
+    auto r = md_rank("diode", "VSSAF3M6-M3/H", {"BAS70JW"});
+    const json& c = r["candidates"][0];
+    CHECK(verdict_of(c, "tj_max") == "unverified");
+    CHECK(has_note(c, "maximum junction temperature is +175 degC; the substitute's record states none"));
+}
+
+// Item 8 (seed 20784754): Vc 27.7 V at 54.2 A against 28.4 V at 527.8 A is two points of
+// two V-I curves, not a comparison.
+TEST_CASE("qarlos 2026-11-09 md8: clamping voltages at different test currents are unverified",
+          "[qarlos][crossref]") {
+    auto r = md_rank("diode", "TPC20AHM3_A/H", {"15KPA018-SD-Q"});
+    const json& c = r["candidates"][0];
+    CHECK(verdict_of(c, "clamping_voltage") == "unverified");
+    CHECK(has_note(c, "27.7 V at 54.2 A on the original, 28.4 V at 527.8 A on the substitute"));
+    CHECK_FALSE(has_note(c, "higher voltage during a surge"));
+}
+
+// Item 9 (seed 21517857): "SOD323" and "SOD-323" are one package-table key.
+TEST_CASE("qarlos 2026-11-09 md9: SOD323 resolves the SOD-323 outline",
+          "[qarlos][crossref][dims]") {
+    using kelvin::crossref::resolve_dimensions;
+    auto a = resolve_dimensions("SOD323", "diode"), b = resolve_dimensions("SOD-323", "diode");
+    REQUIRE(a.has_value());
+    REQUIRE(b.has_value());
+    CHECK(*a->length == *b->length);
+    CHECK(*a->width == *b->width);
+    // A digit-digit hyphen is part of the name: SOT-23-5 is not SOT-235.
+    CHECK(kelvin::crossref::dims_detail::pkg_key("SOT-23-5") == "SOT23-5");
+    auto r = md_rank("diode", "GDZ20B-G", {"BZX384-A20"});
+    CHECK(r["candidates"][0]["footprint"] == "fits");
+}
+
+// Item 10 (seed 21203670): a 2 pF small-signal Schottky original holds every diode substitute
+// to its junction capacitance; one the substitute does not state caps at major_review.
+TEST_CASE("qarlos 2026-11-09 md10: an unstated junction capacitance caps at major_review",
+          "[qarlos][crossref]") {
+    auto r = md_rank("diode", "BAS70JW", {"SB3100", "SBL10100A"});
+    REQUIRE(r["candidates"].size() == 2);
+    for (const auto& c : r["candidates"]) {
+        INFO(c["mpn"]);
+        CHECK(verdict_of(c, "junction_capacitance") == "unverified");
+        CHECK(c["grade"] == "major_review");
+        CHECK(has_note(c, "no junction capacitance — the original states 2 pF"));
+    }
+    // Both stated: CD214A-B360R (135 pF) against BAS70JW (2 pF) is far beyond 2x.
+    auto r2 = md_rank("diode", "BAS70JW", {"CD214A-B360R"});
+    CHECK(verdict_of(r2["candidates"][0], "junction_capacitance") == "fail");
+}
+
+// Item 11 (seed 21308399): the diode row carries part.qualification, and an AEC-Q101 original
+// holds the substitute to it.
+TEST_CASE("qarlos 2026-11-09 md11: a diode's AEC-Q101 qualification engages the gate",
+          "[qarlos][crossref][views]") {
+    CHECK(md_row("diode", "RB168VYM150FHTR")["qualification"] == "Automotive (AEC-Q101)");
+    CHECK(md_row("diode", "SS1H15LS")["qualification"] == "");
+    auto r = md_rank("diode", "RB168VYM150FHTR", {"SS1H15LS"});
+    const json& c = r["candidates"][0];
+    CHECK(verdict_of(c, "automotive_grade") == "unverified");
+    CHECK(c["status"] != "recommended");
+}
+
+// Side fixes: a placeholder case string is not a case code; Infineon's D-DPAK is not D2PAK.
+TEST_CASE("qarlos 2026-11-09 md-side: 'Unknown' is no case, D-DPAK is no D2PAK",
+          "[qarlos][views][dims]") {
+    CHECK_FALSE(md_row("mosfet", "BSC160N15NS5ATMA1").contains("caseCode"));
+    using kelvin::crossref::case_identity;
+    using kelvin::crossref::resolve_dimensions;
+    CHECK_FALSE(resolve_dimensions("D-DPAK", "mosfet").has_value());
+    CHECK_FALSE(resolve_dimensions("DDPAK", "mosfet").has_value());
+    CHECK(case_identity("mosfet", "D-DPAK") != case_identity("mosfet", "D2PAK"));
+}

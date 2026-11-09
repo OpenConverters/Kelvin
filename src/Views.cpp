@@ -233,11 +233,27 @@ void fill_dimensions(RowBase& r, const json& di, const json& part, bool lies_fla
     // Case code: `part.case` is the field the catalogue actually populates
     // (100% of sampled capacitors/mosfets/resistors/diodes); `mechanical.case`
     // and the caseCode/package spellings are accepted as fallbacks.
-    if (auto c = get_str(part, "case")) r.case_code = *c;
-    else if (mech) { if (auto c = get_str(*mech, "case")) r.case_code = *c; }
+    //
+    // A PLACEHOLDER is not a case code (Qarlos 2026-11-09): 13 MOSFET, 84 diode and 624 IGBT
+    // records state case "Unknown" (Infineon BSC160N15NS5ATMA1 ...). Read as a code, two
+    // such records named the same "case" and the same-case rule called the land kept. Rule:
+    // a placeholder reads as not stated, and the next source is consulted.
+    auto stated_case = [](const std::optional<std::string>& c) -> std::optional<std::string> {
+        if (!c) return std::nullopt;
+        std::string t;
+        for (char ch : *c)
+            if (!std::isspace(static_cast<unsigned char>(ch)))
+                t += static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        if (t.empty() || t == "unknown" || t == "n/a" || t == "-" || t == "tbd" ||
+            t == "none")
+            return std::nullopt;
+        return c;
+    };
+    if (auto c = stated_case(get_str(part, "case"))) r.case_code = *c;
+    else if (mech) { if (auto c = stated_case(get_str(*mech, "case"))) r.case_code = *c; }
     if (r.case_code.empty()) {
-        if (auto c = get_str(part, "caseCode")) r.case_code = *c;
-        else if (auto p = get_str(part, "package")) r.case_code = *p;
+        if (auto c = stated_case(get_str(part, "caseCode"))) r.case_code = *c;
+        else if (auto p = stated_case(get_str(part, "package"))) r.case_code = *p;
     }
 }
 

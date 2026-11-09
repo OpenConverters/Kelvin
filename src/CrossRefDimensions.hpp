@@ -143,6 +143,9 @@ inline const std::map<std::string, LWH>& package_mm() {
     return t;
 }
 
+// No "DDPAK" -> D2PAK entry: Infineon's D-DPAK / DDPAK is its double-DPAK, top-side-cooled
+// outline, a different land from the D2PAK (TO-263), and the alias only waited for a record
+// spelled without the hyphen to call the two one package (Qarlos 2026-11-09).
 inline const std::map<std::string, std::string>& package_aliases() {
     static const std::map<std::string, std::string> t{
         {"SC-59", "SOT-23"},    {"TO-236", "SOT-23"},   {"SC-59A", "SOT-23"},
@@ -151,7 +154,7 @@ inline const std::map<std::string, std::string>& package_aliases() {
         {"SC-70-6", "SOT-363"}, {"SC-88", "SOT-363"},   {"TO-243", "SOT-89"},
         {"SC-62", "SOT-89"},    {"TO-261", "SOT-223"},  {"SC-73", "SOT-223"},
         {"TO-252", "DPAK"},     {"TO-252AA", "DPAK"},   {"TO-263", "D2PAK"},
-        {"TO-263AB", "D2PAK"},  {"DDPAK", "D2PAK"},     {"SO-8", "SOIC-8"},
+        {"TO-263AB", "D2PAK"},  {"SO-8", "SOIC-8"},
         {"SOIC8", "SOIC-8"},    {"SO8", "SOIC-8"},      {"SO-14", "SOIC-14"},
         {"SO-16", "SOIC-16"},
     };
