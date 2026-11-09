@@ -65,6 +65,7 @@ inline const FieldTable<MosfetRow>& fields<MosfetRow>() {
          {"qg_total", &MosfetRow::qg_total},
          {"coss", &MosfetRow::coss},
          {"vgs_threshold_max", &MosfetRow::vgs_threshold_max},
+         {"vgs_threshold_typ", &MosfetRow::vgs_threshold_typ},
          {"rds_on_vgs", &MosfetRow::rds_on_vgs},
          {"vgs_max", &MosfetRow::vgs_max},
          {"rth_ja", &MosfetRow::rth_ja},
@@ -103,7 +104,8 @@ inline const FieldTable<DiodeRow>& fields<DiodeRow>() {
          {"internal_connection", &DiodeRow::internal_connection},
          {"clamping_waveform", &DiodeRow::clamping_waveform},
          {"peak_pulse_power_waveform", &DiodeRow::peak_pulse_power_waveform},
-         {"peak_pulse_current_waveform", &DiodeRow::peak_pulse_current_waveform}},
+         {"peak_pulse_current_waveform", &DiodeRow::peak_pulse_current_waveform},
+         {"qualification", &DiodeRow::qualification}},
         {{"is_production", &DiodeRow::is_production}},
         {}};
     return t;

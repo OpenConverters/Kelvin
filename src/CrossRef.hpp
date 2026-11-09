@@ -2384,6 +2384,29 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                 "; verify the land pattern");
             }
         }
+        // ── same stated case = same land (MOSFETs, diodes) ──────────────────
+        // A MOSFET or diode case code names a registered outline (TO-220, DPAK, SOD-323,
+        // DO-214AB ...), and two records naming the same one name the same pads. The body
+        // compare below must not overrule that with a box neither record states: NTP18G120
+        // (TO-220, drawn 15.7 x 10.2 mm) took IPP200N15N3 (TO-220, no mechanical block) as
+        // "smaller body ... not a drop-in" because the candidate's box was the package
+        // TABLE's 10.16 x 4.57 mm TO-220 row, whose axes are width x thickness (Qarlos
+        // 2026-11-09, seed 22041502). The same gap left a SOD323 zener 'unknown' against a
+        // SOD-323 one (seed 21517857). Rule: both records state case codes with the same
+        // case_identity, and at least one side's land is NOT a drawing of its own (a table
+        // outline, or none at all) -> the land is kept: footprint 'fits', PASS. When BOTH
+        // records draw their own bodies, those drawings are compared as before.
+        if ((cat == "mosfet" || cat == "diode") && !out.contains("footprint")) {
+            const std::string oc = str(original, "case_code"), sc = str(cand, "case_code");
+            auto drawn_land = [](const std::optional<Dims>& d) {
+                return d && has_land(*d) && !d->land_from_table;
+            };
+            if (!oc.empty() && !sc.empty() && case_identity(cat, oc) == case_identity(cat, sc) &&
+                !(drawn_land(o_dims) && drawn_land(s_dims))) {
+                out["footprint"] = "fits";
+                params.push_back({{"name", "footprint"}, {"verdict", PASS}});
+            }
+        }
         FootprintTier tier = footprint_tier(o_dims, s_dims, strict_case);
         // Same standard chip code on both records: a drawing a few percent off the original's
         // is the same land, not a larger case (see kSameChipCodeBodySpread).
@@ -2717,6 +2740,56 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     if (cat == "mosfet") {
         auto o_th = num(original, "vgs_threshold_max"), s_th = num(cand, "vgs_threshold_max");
         auto o_rv = num(original, "rds_on_vgs"), s_rv = num(cand, "rds_on_vgs");
+        // ── |Vgs(th)| max: the original states one, the substitute does not ──────────
+        // (Qarlos 2026-11-09, seed 21098941: logic-level NVMFS5C670NLET1G, Vth max 2 V, took
+        // BSC060N10NS6 / BSC046N08NS5 whose records state only a TYPICAL of 3.5 / 3.8 V, with
+        // vgs_threshold_max 'unverified' and no caveat.) Rule:
+        //   * the substitute's stated TYPICAL is above the original's guaranteed maximum ->
+        //     its maximum is higher still (max >= typ), an ESTABLISHED downgrade for the
+        //     original's gate drive: the verdict becomes WARN, or FAIL beyond the table's 2x
+        //     band, exactly what the stated maximum would have earned at that value at least;
+        //   * otherwise -> UNVERIFIED, demoted out of 'recommended', with a note naming the
+        //     original's maximum and what the substitute's record states.
+        // The typical is never read AS the maximum: it only bounds it from below.
+        if (o_th && !s_th) {
+            const auto s_typ = num(cand, "vgs_threshold_typ");
+            for (auto& p : params) {
+                if (p.value("name", "") != "vgs_threshold_max") continue;
+                if (s_typ && *s_typ > *o_th + 1e-9) {
+                    const bool fail = *s_typ > *o_th * 2.0;
+                    p["verdict"] = fail ? FAIL : WARN;
+                    demote();
+                    penalty += opt.gate_weight * (fail ? kVerdictFailPenalty : kVerdictWarnPenalty);
+                    ++worse;
+                    notes.push_back("higher gate threshold than the original: the substitute's "
+                                    "TYPICAL Vgs(th) is " + volts(*s_typ) +
+                                    " V, already above the original's guaranteed maximum of " +
+                                    volts(*o_th) +
+                                    " V, so its maximum is higher still — a downgrade for the "
+                                    "original's gate drive (a logic-level drive may not enhance "
+                                    "it fully); check the drive voltage against the substitute's "
+                                    "datasheet");
+                } else {
+                    p["verdict"] = UNVERIFIED;
+                    demote();
+                    notes.push_back(
+                        "the original's gate threshold is at most " + volts(*o_th) +
+                        " V; the substitute's record states no maximum" +
+                        (s_typ ? " (typical " + volts(*s_typ) + " V)" : std::string()) +
+                        ", so Vgs(th) is UNVERIFIED — confirm the substitute enhances at the "
+                        "original's gate drive from its datasheet");
+                }
+            }
+        }
+        // A higher maximum inside the 1.25x band the gate_drive check below leaves alone is
+        // still a downgrade for a logic-level drive (less overdrive at the same Vgs). The
+        // table verdict already WARNs it; it was silent.
+        if (o_th && s_th && *s_th > *o_th + 1e-9 && *s_th <= *o_th * 1.25)
+            notes.push_back("higher gate threshold than the original (Vgs(th) max " +
+                            volts(*s_th) + " V vs " + volts(*o_th) +
+                            " V) — less gate overdrive at the original's drive voltage, a "
+                            "downgrade for a logic-level drive; check enhancement and switching "
+                            "at that drive");
         if (o_th && s_th && *s_th > *o_th * 1.25) {
             // "the existing drive voltage" is the Vgs the ORIGINAL's Rds(on) is specified
             // at — the only statement of the drive level either record makes. Where the
@@ -2859,7 +2932,47 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         if (is_automotive_grade(str(p, "mpn"))) return Grade::Aec;
         return p.contains("qualification") ? Grade::Unknown : Grade::NotAec;
     };
-    if (grade_of(original) == Grade::Aec) {
+    // A bare "Automotive" label on the ORIGINAL (Qarlos 2026-11-09, seed 20470567). The label
+    // reads UNKNOWN for a SUBSTITUTE (it does not establish AEC-Q), and the same reading on
+    // the original's side made the whole gate skip: Infineon's IPW65R048CFDA, qualification
+    // "Automotive", was replaced by Vishay SiHG61N65EF (no qualification on record) graded
+    // 'recommended' with no note. The original's label is still a statement that the part
+    // was built for automotive service, and the design it sits in may depend on that, so the
+    // gate engages for it too. Rule (DECISION for the owner to confirm):
+    //   * substitute names AEC-Q, or carries the same bare automotive label -> nothing
+    //     flagged (it claims at least what the original claims);
+    //   * substitute states a non-automotive grade (Industrial, Standard, ...) -> FAIL, as for
+    //     an AEC-Q original;
+    //   * substitute states nothing -> UNVERIFIED, demoted to partial, with a note.
+    auto automotive_label = [&](const json& p) {
+        const std::string q = lower_copy(str(p, "qualification"));
+        return q.find("automotive") != std::string::npos &&
+               q.find("non-automotive") == std::string::npos &&
+               q.find("aec") == std::string::npos;
+    };
+    const Grade o_grade = grade_of(original);
+    const bool o_label_only = o_grade != Grade::Aec && automotive_label(original);
+    if (o_label_only) {
+        const Grade g = grade_of(cand);
+        const std::string oq = str(original, "qualification");
+        const std::string q = str(cand, "qualification");
+        if (g == Grade::NotAec) {
+            params.push_back({{"name", "automotive_grade"}, {"verdict", FAIL}});
+            demote();
+            penalty += opt.gate_weight * kVerdictFailPenalty;
+            notes.push_back("original is labelled \"" + oq + "\" (an automotive part); the "
+                            "substitute's record states \"" + q +
+                            "\" — not an automotive part");
+        } else if (g == Grade::Unknown && !automotive_label(cand)) {
+            params.push_back({{"name", "automotive_grade"}, {"verdict", UNVERIFIED}});
+            demote();
+            notes.push_back("original is labelled \"" + oq +
+                            "\" (an automotive part); the substitute's record states no "
+                            "qualification, so its automotive grade is UNVERIFIED — confirm "
+                            "AEC-Q qualification from the datasheet");
+        }
+    }
+    if (o_grade == Grade::Aec) {
         const Grade g = grade_of(cand);
         if (g == Grade::NotAec) {
             params.push_back({{"name", "automotive_grade"}, {"verdict", FAIL}});

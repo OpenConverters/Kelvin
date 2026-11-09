@@ -284,6 +284,7 @@ void row_io(Ar& ar, MosfetRow& r) {
     ar.dbl(r.tj_max);
     ar.str(r.technology);
     ar.str(r.channel);      // v14
+    ar.dbl(r.vgs_threshold_typ);  // v20
     ar.boolean(r.is_production);
     ar.boolean(r.datasheet_usable);
 }
@@ -314,6 +315,7 @@ void row_io(Ar& ar, DiodeRow& r) {
     ar.str(r.clamping_waveform);       // v17
     ar.str(r.peak_pulse_power_waveform);    // v17
     ar.str(r.peak_pulse_current_waveform);  // v17
+    ar.str(r.qualification);           // v20
     ar.boolean(r.is_production);
 }
 

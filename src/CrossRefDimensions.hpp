@@ -43,6 +43,12 @@ struct Dims {
     // fixes a land; it does not fix how tall one vendor's body is (a "0603" chip resistor
     // ships 0.35 to 0.55 mm), so the ranker never judges clearance from such a height.
     bool height_from_table = false;
+    // The same for the LAND axes: length/width are the table's outline for a named code, not
+    // a body the record states. Package tables are typical outlines with their own axis
+    // conventions (the TO-220 row is width x thickness x height), so a table box is never
+    // weighed against a record's drawn body as if it were that part's body (Qarlos
+    // 2026-11-09, seed 22041502). See CrossRef.hpp, the same-case rule.
+    bool land_from_table = false;
 };
 
 namespace dims_detail {
@@ -160,19 +166,59 @@ inline Dims to_metres(const LWH& v) {
     return d;
 }
 
+// The lookup key of a package name: norm_pkg, then a hyphen that only separates the
+// letter prefix of a registered name from its digits is dropped ("SOD-323" and "SOD323",
+// "TO-220" and "TO220", "SC-70-3" and "SC70-3" are one key). The catalogue writes these
+// names both ways (1,119 diode records say "SOD323", 1,057 "SOT23", 173 MOSFETs "TO220")
+// and the table held only the hyphenated spelling, so a same-package part resolved no
+// dimensions at all and its footprint read 'unknown' with the unknown-dimension penalty
+// (Qarlos 2026-11-09, seed 21517857: BZX384-A20 "SOD323" against GDZ20B-G "SOD-323").
+// Only a LETTER-hyphen-DIGIT boundary is punctuation: "SOT-23-5" keeps its digit-digit
+// hyphen, and "D-DPAK" (Infineon's double DPAK, not a D2PAK) keeps its letter-letter one.
+inline std::string pkg_key(const std::string& s) {
+    const std::string n = norm_pkg(s);
+    std::string out;
+    for (size_t i = 0; i < n.size(); ++i) {
+        if (n[i] == '-' && i > 0 && i + 1 < n.size() &&
+            std::isalpha(static_cast<unsigned char>(n[i - 1])) &&
+            std::isdigit(static_cast<unsigned char>(n[i + 1])))
+            continue;
+        out += n[i];
+    }
+    return out;
+}
+
 inline std::optional<LWH> resolve_package(const std::string& code) {
-    std::string key = norm_pkg(code);
-    auto alias = package_aliases().find(key);
-    if (alias != package_aliases().end()) key = alias->second;
-    auto it = package_mm().find(key);
-    if (it != package_mm().end()) return it->second;
-    // tolerate a vendor-prepended prefix ("PACKAGE-SOT-23" -> "SOT-23")
-    for (const auto& [canon, v] : package_mm()) {
-        if (key.size() > canon.size() &&
-            key.compare(key.size() - canon.size(), canon.size(), canon) == 0) {
-            return v;
+    // Both tables re-keyed by pkg_key once, so the input and the table compare on the
+    // same spelling.
+    static const std::map<std::string, std::string> aliases = [] {
+        std::map<std::string, std::string> t;
+        for (const auto& [k, v] : package_aliases()) t[pkg_key(k)] = pkg_key(v);
+        return t;
+    }();
+    static const std::map<std::string, LWH> table = [] {
+        std::map<std::string, LWH> t;
+        for (const auto& [k, v] : package_mm()) t[pkg_key(k)] = v;
+        return t;
+    }();
+    std::string key = pkg_key(code);
+    // A vendor-prepended NOISE word is tolerated ("PACKAGE-SOT-23" -> "SOT-23"), and only
+    // that. The old rule accepted ANY prefix ending in a table name, so every Q-DPAK
+    // (90 MOSFETs) resolved to the DPAK outline and the footprint note quoted DPAK's
+    // 6.6 x 6.1 mm for a different, larger top-side-cooled package (Qarlos 2026-11-09, seed
+    // 20994212, IPDQ65R040CFD7A); ThinDPAK, D-DPAK, DPAKDPAK, ITO-220 and TSOT-23-6 matched
+    // the same way. A different prefix is a different outline, so it resolves nothing.
+    for (const char* noise : {"PACKAGE-", "PKG-", "CASE-"}) {
+        const std::string n = noise;
+        if (key.size() > n.size() && key.compare(0, n.size(), n) == 0) {
+            key = key.substr(n.size());
+            break;
         }
     }
+    auto alias = aliases.find(key);
+    if (alias != aliases.end()) key = alias->second;
+    auto it = table.find(key);
+    if (it != table.end()) return it->second;
     return std::nullopt;
 }
 
@@ -191,6 +237,7 @@ inline std::optional<Dims> resolve_dimensions(const std::string& case_code,
     auto from_table = [](const LWH& v) {
         Dims d = to_metres(v);
         d.height_from_table = d.height.has_value();
+        d.land_from_table = true;
         return d;
     };
 
@@ -624,6 +671,67 @@ inline std::string normalize_case_code(const std::string& s) {
 // Only registrations that ARE the named outline are listed (JEDEC DO-214AA/AB/AC,
 // DO-204AL/AC/AH, DO-213AB, DO-219AB/AC/AD, DO-220AA, DO-215AA/AB, DO-221AC/BC,
 // TO-277A, TO-263AC, SOD-80).
+// The shared matcher behind every package alias table: a group is one registered outline
+// written as its normalised members; a case string matches a group only when its
+// normalised form EQUALS a member, or two different members one after the other (the
+// "NAME (REGISTRATION)" and "NAME / REGISTRATION" forms, either order). Anything else is
+// returned as its plain normalised code. No substring, prefix or fuzzy match.
+inline std::string canonical_case_in(const std::vector<std::vector<std::string>>& groups,
+                                     const std::string& s) {
+    const std::string n = normalize_case_code(s);
+    for (const auto& g : groups) {
+        for (const auto& a : g) {
+            if (n == a) return g.front();
+            for (const auto& b : g)
+                if (&a != &b && n == a + b) return g.front();
+        }
+    }
+    return n;
+}
+
+// MOSFET package identity through an EXPLICIT alias table (Qarlos 2026-11-09). One JEDEC
+// outline under its industry name, its JEDEC registration, the 3-terminal suffix form and
+// Infineon's PG- name is ONE land pattern, and the catalogue writes it every way: 'DPAK' 431,
+// 'TO-252' 150, 'TO252 (DPAK)' 85, 'DPAK-3 / TO-252-3' 96, 'DPAK (TO-252)' 55 ... So TI's
+// CSD20065D 'TO-252 (D-PAK)' against Infineon's IPD600N25N3 G 'DPAK' (seed 20300704), and
+// Infineon's IPA90R500S7 'TO-220 FullPAK' against ST's STF8N90K5 'TO-220FP' (seed 21203670),
+// came back "different package/case ... a substitute to re-lay-out". Each group is one
+// outline; only names that ARE that outline are listed:
+//   DPAK   = TO-252 / TO-252AA / DPAK-3 / TO-252-3 / PG-TO252-3 / D-PAK
+//   D2PAK  = TO-263 / TO-263AB / D2PAK-3 / TO-263-3 / TO-263-2 / PG-TO263-3 (the 2-lead
+//            and 3-lead D2PAK share the land: two leads plus the tab; the catalogue's own
+//            'D2PAK-3 / TO-263-2' record states the equivalence)
+//   IPAK   = TO-251 / TO-251AA;  I2PAK = TO-262 / TO-262-3
+//   TO-220 = TO-220-3 / TO-220AB / PG-TO220-3
+//   TO-220FP = TO-220 FullPAK = TO-220F = TO-220-3 FullPAK = TO-220FP-3 (the fully
+//            isolated TO-220; Toshiba's TO-220SIS and ROHM's TO-220CFM are vendor outlines
+//            of their own and are NOT folded in)
+//   TO-247 = TO-247-3 / TO-247AC / TO-247AD / PG-TO247-3
+//   SOT-23 = TO-236 / TO-236AB / SOT-23-3;  SOT-223 = TO-261 / TO-261AA / SOT-223-4 / TO-261-4
+//   SO-8   = SOIC-8;  SC-70 = SOT-323;  TOLL = TO-LL / HSOF-8 / PG-HSOF-8
+// Different outlines stay different: Q-DPAK, D2PAK-7 / D2PAK 7-pin / TO-263-7, TO-247-4,
+// sTOLL, DPAK+, ThinDPAK, TO-220SIS each normalise to themselves.
+inline std::string canonical_mosfet_case(const std::string& s) {
+    static const std::vector<std::vector<std::string>> kGroups = {
+        {"DPAK", "TO252", "TO252AA", "DPAK3", "TO2523", "PGTO2523"},
+        {"D2PAK", "TO263", "TO263AB", "D2PAK3", "TO2633", "TO2632", "PGTO2633"},
+        {"IPAK", "TO251", "TO251AA"},
+        {"I2PAK", "TO262", "TO2623"},
+        {"TO220", "TO2203", "TO220AB", "PGTO2203"},
+        {"TO220FP", "TO220FULLPAK", "TO220F", "TO2203FULLPAK", "TO220FP3"},
+        {"TO247", "TO2473", "TO247AC", "TO247AD", "PGTO2473"},
+        {"SOT23", "TO236", "TO236AB", "SOT233"},
+        {"SOT223", "TO261", "TO261AA", "SOT2234", "TO2614"},
+        {"SO8", "SOIC8"},
+        {"SC70", "SOT323"},
+        {"TOLL", "TOLL8L", "HSOF8", "PGHSOF8"}};
+    // A '+' names a different outline ("DPAK+", "D2PAK+"), but the alnum normaliser drops it,
+    // which made DPAK+ compare equal to DPAK. Keep it: such a name matches no group and
+    // compares equal only to the same '+' name.
+    if (s.find('+') != std::string::npos) return normalize_case_code(s) + "+";
+    return canonical_case_in(kGroups, s);
+}
+
 inline std::string canonical_diode_case(const std::string& s) {
     static const std::vector<std::vector<std::string>> kGroups = {
         {"DO214AC", "SMA"},      {"DO214AA", "SMB"},     {"DO214AB", "SMC"},
@@ -632,15 +740,7 @@ inline std::string canonical_diode_case(const std::string& s) {
         {"DO219AC", "MICROSMF"}, {"DO219AD", "MICROSMP"}, {"DO220AA", "SMP"},
         {"DO215AA", "SMBG"},     {"DO215AB", "SMCG"},    {"DO221AC", "SLIMSMA"},
         {"DO221BC", "SMPA"},     {"TO277A", "SMPC"},     {"TO263AC", "SMPD"}};
-    const std::string n = normalize_case_code(s);
-    for (const auto& g : kGroups) {
-        for (const auto& a : g) {
-            if (n == a) return g.front();
-            for (const auto& b : g)
-                if (&a != &b && n == a + b) return g.front();
-        }
-    }
-    return n;
+    return canonical_case_in(kGroups, s);
 }
 
 // Chip-passive case identity with EXPLICITLY marked metric codes resolved to their imperial
@@ -687,11 +787,12 @@ inline std::string canonical_chip_case(const std::string& s) {
     return imperial;
 }
 
-// The identity a case-kept gate compares: the alias-resolved form for diodes, the metric-
-// resolved chip code for chip passives (capacitors, resistors), the plain normalised code
-// everywhere else (an 'SMA' connector is an RF interface, not DO-214AC).
+// The identity a case-kept gate compares: the alias-resolved form for diodes and MOSFETs,
+// the metric-resolved chip code for chip passives (capacitors, resistors), the plain
+// normalised code everywhere else (an 'SMA' connector is an RF interface, not DO-214AC).
 inline std::string case_identity(const std::string& category, const std::string& s) {
     if (category == "diode") return canonical_diode_case(s);
+    if (category == "mosfet") return canonical_mosfet_case(s);
     if (category == "capacitor" || category == "resistor") return canonical_chip_case(s);
     return normalize_case_code(s);
 }
