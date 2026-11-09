@@ -249,6 +249,28 @@ struct CapacitorRow : RowBase {
     // 40 % or more, so the cross-reference compares the two ratings only on a common basis
     // (Qarlos 2026-11-09, seed 20365838).
     double ripple_current_frequency = kNaN();
+    // v20: the capacitance band the record GUARANTEES (CAS electrical.capacitance.minimum /
+    // .maximum, farads), kept in farads exactly as stated. NaN (both) unless the record states
+    // both ends and they bracket the nominal with a non-zero width. A small part's tolerance
+    // is absolute (+/-0.05 pF on 0.3 pF), a larger one's is a percentage; the record states
+    // only the two ends, so the band travels as farads and is compared as farads (Qarlos
+    // 2026-11-09: a +/-5 % C0G took the same grade as a +/-1 % original, seed 20365838).
+    double capacitance_min = kNaN();
+    double capacitance_max = kNaN();
+    // v20: the leaded body's form, from mechanical.shape.shapeType: "axial" (a shapeType
+    // naming "axial") or "radial" (one naming "radial"); "" when the record says neither.
+    // Axial vs radial is a different land pattern (lead exit at the two ends of the body vs
+    // both leads on one face), so the cross-reference compares it as land identity (Qarlos
+    // 2026-11-09, seeds 21517857 / 20994212).
+    std::string lead_form;
+    // v20: the qualified reliability level the record states (PEAS qualifiedReliability on
+    // part: specification, the failure-rate grade letter as the specification letters it,
+    // and the failure rate in 1/s). "" / NaN when not stated. A MIL-PRF-55681 grade S part
+    // replaced by a commercial one is not a drop-in, which nothing compared before (Qarlos
+    // 2026-11-09, seed 20365838).
+    std::string qualified_spec;
+    std::string qualified_grade;
+    double qualified_failure_rate = kNaN();
     // Equivalent series INDUCTANCE, from the record's equivalent circuit
     // (CAS modelParams.ls). The one number a layout cannot supply and a
     // package name cannot stand in for: within a single 0402 the real spread

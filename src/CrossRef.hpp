@@ -378,7 +378,11 @@ inline std::optional<Dims> dims_of(const json& p, const std::string& category) {
     if (category == "magnetic" || category == "chipBead") return partial();
     std::string code = str(p, "case_code");
     if (code.empty()) code = str(p, "package");
-    if (auto coded = resolve_dimensions(code, category)) {
+    // A leaded capacitor (through-hole mount or an axial / radial form on record) is never
+    // sized from a chip case table (resolve_dimensions, leaded_body).
+    const bool leaded_body = category == "capacitor" && (normalize_mount(str(p, "mount")) == "leaded" ||
+                                                         !str(p, "lead_form").empty());
+    if (auto coded = resolve_dimensions(code, category, leaded_body)) {
         // The drawing's own height still stands where the table fixes no height —
         // a chip's height is not encoded in its case code.
         //
@@ -1127,45 +1131,137 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // attempted: never a "typical" frequency multiplier, and not the record's own multiplier
     // table either (a candidate's table rarely reaches the original's frequency — 198 PHR-SI's
     // stops at 10 kHz — and an extrapolated multiplier is a guess).
-    bool ripple_basis_unverified = false;
+    //
+    // ESR is stated AT a frequency in exactly the same way, and gets exactly the same rule
+    // through the same check (Qarlos 2026-11-09, seed 20365838): 380LX151M450K022 states
+    // 0.44 ohm at 20 kHz, MAL219857151E3 0.637 ohm at 100 Hz, and the ESR verdict read
+    // 'warn' and counted as a downgrade although the original's own curve gives 1.1 ohm at
+    // 120 Hz. An ESR basis that is not common is UNVERIFIED (the esr_basis row), the ESR
+    // verdict with it, it counts in neither direction, and the grade is capped at
+    // minor_review. The decade-wide tolerance the old ESR check allowed (any two frequencies
+    // within 10x compared as bare numbers) is gone: 100 Hz and 120 Hz are the only two
+    // different frequencies treated as one basis, for ESR as for ripple.
+    auto basis_unverified = [&](const char* value_key, const char* freq_key, const char* what,
+                                const char* unit) {
+        const auto o_v = num(original, value_key), s_v = num(cand, value_key);
+        const auto o_f = num(original, freq_key), s_f = num(cand, freq_key);
+        if (!o_v || !s_v || !o_f) return false;
+        char buf[320];
+        auto same_f = [](double a, double b) { return std::fabs(a - b) <= 1e-9 * std::max(a, b); };
+        auto mains_basis = [&](double f) { return same_f(f, 100.0) || same_f(f, 120.0); };
+        const bool same_basis =
+            s_f && (same_f(*o_f, *s_f) || (mains_basis(*o_f) && mains_basis(*s_f)));
+        if (same_basis) return false;
+        if (s_f)
+            std::snprintf(buf, sizeof buf,
+                          "%s quoted at different frequencies (original %g %s at %g Hz, "
+                          "substitute %g %s at %g Hz) — not directly comparable; confirm the "
+                          "substitute's %s at the original's frequency from its datasheet",
+                          what, *o_v, unit, *o_f, *s_v, unit, *s_f, what);
+        else
+            std::snprintf(buf, sizeof buf,
+                          "the original's %s is %g %s at %g Hz; the substitute's record states "
+                          "%g %s at no frequency — not directly comparable; confirm its %s at "
+                          "the original's frequency from the datasheet",
+                          what, *o_v, unit, *o_f, *s_v, unit, what);
+        notes.push_back(buf);
+        demote();
+        return true;
+    };
+    const bool ripple_basis_unverified =
+        cat == "capacitor" &&
+        basis_unverified("ripple_current", "ripple_current_frequency", "ripple current", "A");
+    const bool esr_basis_unverified =
+        cat == "capacitor" && basis_unverified("esr", "esr_frequency", "ESR", "ohm");
+    if (esr_basis_unverified) params.push_back({{"name", "esr_basis"}, {"verdict", UNVERIFIED}});
+
+    // ── capacitance tolerance (the band each record guarantees) ─────────────
+    // A capacitor's tolerance is the band the circuit was designed around, exactly as a
+    // resistor's is: a +/-5 % C0G is not a drop-in for a +/-1 % one in a filter or timing
+    // network. Kelvin never compared it — the capacitor spec carried no tolerance — so
+    // CDR31BP470BFYSAB (47 pF +/-1 %) took +/-5 % GRM21A5 parts at the same grade and
+    // penalty as its +/-1 % equivalent, and MCARQ167SCG0R3ATRA1J (0.3 pF +/-0.05 pF) took a
+    // +/-0.1 pF GQM part as drop_in (Qarlos 2026-11-09, seeds 20365838 / 21727315).
+    // Rule (DECISION for the owner to confirm): each record's band is its stated minimum and
+    // maximum, in farads, as deviations below and above its own nominal (asymmetric bands
+    // such as -20/+80 % stay asymmetric):
+    //   * equal nominals -> the deviations are compared in FARADS, the unit the records state,
+    //     so an absolute small-part tolerance (+/-0.05 pF) is never turned into a percentage;
+    //   * different nominals (the value window allows them) -> each deviation is taken as a
+    //     fraction of that record's OWN stated nominal; nothing is assumed about either part;
+    //   * the substitute's band wider on either side -> FAIL, a note quoting both bands — the
+    //     timing-tolerance rule (no warn band), since a looser guarantee is a regression
+    //     however small; tighter or equal -> PASS;
+    //   * the original states a band and the substitute does not -> UNVERIFIED, noted, and the
+    //     grade capped below drop_in (drop_in asserts the value guarantee did not regress);
+    //   * the original states none -> not compared (no basis exists for any candidate).
+    // One fact, one verdict: where this ran, the shared table's tolerance_pct row is skipped.
+    bool cap_tol_judged = false, cap_tol_unverified = false;
     if (cat == "capacitor") {
-        const auto o_ir = num(original, "ripple_current"), s_ir = num(cand, "ripple_current");
-        const auto o_f = num(original, "ripple_current_frequency"),
-                   s_f = num(cand, "ripple_current_frequency");
-        if (o_ir && s_ir && o_f) {
-            char buf[256];
-            auto same_f = [](double a, double b) {
-                return std::fabs(a - b) <= 1e-9 * std::max(a, b);
-            };
-            auto mains_ripple_basis = [&](double f) { return same_f(f, 100.0) || same_f(f, 120.0); };
-            const bool same_basis =
-                s_f && (same_f(*o_f, *s_f) || (mains_ripple_basis(*o_f) && mains_ripple_basis(*s_f)));
-            if (s_f && !same_basis) {
-                ripple_basis_unverified = true;
-                std::snprintf(buf, sizeof buf,
-                              "ripple current quoted at different frequencies (original %g A at "
-                              "%g Hz, substitute %g A at %g Hz)",
-                              *o_ir, *o_f, *s_ir, *s_f);
-                notes.push_back(std::string(buf) +
-                                " — not directly comparable; confirm the substitute's rating at "
-                                "the original's frequency from its datasheet");
-            } else if (!s_f) {
-                ripple_basis_unverified = true;
-                std::snprintf(buf, sizeof buf,
-                              "the original's ripple current is %g A at %g Hz; the substitute's "
-                              "record states %g A at no frequency",
-                              *o_ir, *o_f, *s_ir);
-                notes.push_back(std::string(buf) +
-                                " — not directly comparable; confirm its rating at the "
-                                "original's frequency from the datasheet");
+        const auto o_n = num(original, "value_si"), s_n = num(cand, "value_si");
+        const auto o_lo = num(original, "capacitance_min"), o_hi = num(original, "capacitance_max");
+        const auto s_lo = num(cand, "capacitance_min"), s_hi = num(cand, "capacitance_max");
+        auto farads = [](double f) {
+            const char* u = "F";
+            double v = f;
+            if (f < 1e-9) { v = f * 1e12; u = "pF"; }
+            else if (f < 1e-6) { v = f * 1e9; u = "nF"; }
+            else if (f < 1e-3) { v = f * 1e6; u = "uF"; }
+            else { v = f * 1e3; u = "mF"; }
+            char b[48];
+            std::snprintf(b, sizeof b, "%.4g %s", v, u);
+            return std::string(b);
+        };
+        auto band = [&](double n, double lo, double hi) {
+            const double dn = n - lo, up = hi - n;
+            const double rel = 1e-9 * n;
+            std::string s = std::fabs(dn - up) <= rel
+                                ? "+/-" + farads(up)
+                                : "-" + farads(dn) + "/+" + farads(up);
+            s += " (" + (std::fabs(dn - up) <= rel ? "+/-" + plain_pct(100.0 * up / n)
+                                                     : "-" + plain_pct(100.0 * dn / n) + "/+" +
+                                                           plain_pct(100.0 * up / n)) + ")";
+            return s;
+        };
+        if (o_n && *o_n > 0 && o_lo && o_hi) {
+            cap_tol_judged = true;
+            if (s_n && *s_n > 0 && s_lo && s_hi) {
+                const bool same_nominal = std::fabs(*o_n - *s_n) <= 1e-9 * std::max(*o_n, *s_n);
+                // Deviations below / above nominal, in farads (equal nominals) or as a
+                // fraction of each record's own nominal (different nominals).
+                const double o_scale = same_nominal ? 1.0 : *o_n, s_scale = same_nominal ? 1.0 : *s_n;
+                const double o_dn = (*o_n - *o_lo) / o_scale, o_up = (*o_hi - *o_n) / o_scale;
+                const double s_dn = (*s_n - *s_lo) / s_scale, s_up = (*s_hi - *s_n) / s_scale;
+                // 1e-6 relative slack: the records' farads are decimal renderings (4.465e-11
+                // stored as 4.4649999999999996e-11), not a tolerance on the guarantee.
+                auto wider = [](double s, double o) { return s > o * (1.0 + 1e-6) + 1e-30; };
+                const bool looser = wider(s_dn, o_dn) || wider(s_up, o_up);
+                params.push_back({{"name", "capacitance_tolerance"}, {"verdict", looser ? FAIL : PASS}});
+                if (looser) {
+                    demote();
+                    ++worse;
+                    penalty += opt.gate_weight * kVerdictFailPenalty;
+                    notes.push_back("looser capacitance tolerance: the substitute guarantees " +
+                                    band(*s_n, *s_lo, *s_hi) + " against the original's " +
+                                    band(*o_n, *o_lo, *o_hi) +
+                                    " — not a drop-in wherever the value sets a filter, timing "
+                                    "or matching point");
+                }
+            } else {
+                cap_tol_unverified = true;
+                params.push_back({{"name", "capacitance_tolerance"}, {"verdict", UNVERIFIED}});
+                demote();
+                notes.push_back("the original guarantees " + band(*o_n, *o_lo, *o_hi) +
+                                "; the substitute's record states no capacitance band — confirm "
+                                "its tolerance from the datasheet");
             }
-            if (ripple_basis_unverified) demote();
         }
     }
     // ── PARAM_SPECS verdicts (the shared Heaviside table) ────────────────────
     for (const ParamSpec& spec : params_for(cat)) {
         const bool supply_key = spec.key == "supply_min_V" || spec.key == "supply_max_V";
         if (cat == "timeBase" && supply_key && timebase_passive) continue;
+        if (cat == "capacitor" && spec.key == "tolerance_pct" && cap_tol_judged) continue;
         bool has_data = detail::present(original, spec.key) || detail::present(cand, spec.key);
         if (spec.key == "saturation_current")
             has_data = has_data || detail::present(original, "saturation_points") ||
@@ -1179,7 +1275,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             power_at_t && !power_t.subst && *detail::jnum(cand, spec.key) < *power_t.orig;
         const bool pin_field = spec.key == "pitch_mm" && connector_pitch.verdict != nullptr;
         const bool ripple_blind =
-            cat == "capacitor" && spec.key == "ripple_current" && ripple_basis_unverified;
+            cat == "capacitor" && ((spec.key == "ripple_current" && ripple_basis_unverified) ||
+                                   (spec.key == "esr" && esr_basis_unverified));
         const ParamOutcome outcome =
             pin_field             ? ParamOutcome(connector_pitch.verdict)
             : ripple_blind        ? ParamOutcome(UNVERIFIED)
@@ -2246,6 +2343,51 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         }
     }
 
+    // ── leaded form: axial vs radial (capacitors) ───────────────────────────
+    // A leaded body's form is its land pattern: an axial part lies along the board with a
+    // lead out of each end (holes a body length plus bends apart), a radial one stands with
+    // both leads out of one face (holes at its lead spacing). Neither fits the other's holes,
+    // whatever the two bodies measure. KEMET C322C270JAG5TA (radial, 5.08 mm) took axial
+    // A330J15C0GL5TAA parts with no form-factor note, and the axial M39003/01-2751/PR took
+    // radial molded T378 tantalums graded "one case size larger" (Qarlos 2026-11-09, seeds
+    // 21517857 / 20994212). Rule (land identity, the connector-orientation treatment):
+    //   * both records state a form and it differs -> FAIL with a note (a different land);
+    //   * one states a form and the other does not, and the other is not an established SMD
+    //     part (that mismatch is the mount gate's) -> UNVERIFIED, noted, capped below drop_in;
+    //   * neither states one -> silent (identical for every candidate).
+    bool lead_form_unverified = false;
+    if (cat == "capacitor" && opt.check_footprint) {
+        const std::string o_lf = str(original, "lead_form"), s_lf = str(cand, "lead_form");
+        if (!o_lf.empty() && !s_lf.empty()) {
+            if (o_lf != s_lf) {
+                params.push_back({{"name", "lead_form"}, {"verdict", FAIL}});
+                demote();
+                penalty += opt.footprint_weight * kEstablishedFootprintMismatchPenalty;
+                notes.push_back("leaded form differs: the original is " + o_lf +
+                                "-leaded, the substitute " + s_lf +
+                                "-leaded — a different land pattern (hole positions), not a "
+                                "drop-in");
+            } else {
+                params.push_back({{"name", "lead_form"}, {"verdict", PASS}});
+            }
+        } else if (!o_lf.empty() || !s_lf.empty()) {
+            const bool other_smd = mount_class(o_lf.empty() ? o_mt : s_mt,
+                                               o_lf.empty() ? o_pkg : s_pkg) == "smd";
+            if (!other_smd) {
+                lead_form_unverified = true;
+                params.push_back({{"name", "lead_form"}, {"verdict", UNVERIFIED}});
+                demote();
+                notes.push_back(!o_lf.empty()
+                                    ? "the original is " + o_lf +
+                                          "-leaded; the substitute's record states no axial / "
+                                          "radial form — confirm its lead form from the datasheet"
+                                    : "the substitute is " + s_lf +
+                                          "-leaded; the original's record states no axial / "
+                                          "radial form — confirm both lead forms match");
+            }
+        }
+    }
+
     // ── physical fit ─────────────────────────────────────────────────────────
     if (opt.check_footprint) {
         auto o_dims = dims_of(original, cat), s_dims = dims_of(cand, cat);
@@ -2789,26 +2931,6 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         }
     }
 
-    // ── ESR / ripple measurement conditions ─────────────────────────────────
-    // ESR is strongly frequency-dependent and a ripple rating is meaningless
-    // without its frequency: a 120 Hz rating and a 100 kHz rating are not
-    // interconvertible. Comparing them as bare numbers manufactures a verdict.
-    // Where both sides state a frequency and they disagree by more than a
-    // decade, the comparison is reported UNVERIFIED rather than passed.
-    if (cat == "capacitor") {
-        auto o_f = num(original, "esr_frequency"), s_f = num(cand, "esr_frequency");
-        if (o_f && s_f && *o_f > 0 && *s_f > 0) {
-            double ratio = *o_f > *s_f ? *o_f / *s_f : *s_f / *o_f;
-            if (ratio > 10.0) {
-                params.push_back({{"name", "esr_basis"}, {"verdict", UNVERIFIED}});
-                notes.push_back("ESR quoted at different frequencies (" +
-                                std::to_string(static_cast<long>(*o_f)) + " Hz vs " +
-                                std::to_string(static_cast<long>(*s_f)) +
-                                " Hz) — not directly comparable");
-            }
-        }
-    }
-
     // ── MOSFET gate-drive compatibility ─────────────────────────────────────
     // The classic swap failure: a logic-level part replaced by a standard-level
     // one still switches on the bench at 10 V and never fully enhances from a
@@ -2985,6 +3107,66 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         }
     }
 
+    // ── qualified reliability (MIL / established-reliability level) ──────────
+    // A part qualified to a failure-rate level under a named specification (PEAS
+    // qualifiedReliability: MIL-PRF-55681 grade S, MIL-PRF-39003 grade R at 0.001 %/1000 h)
+    // is bought for that certification; a commercial part of the same ratings does not carry
+    // it. CDR31BP470BFYSAB (MIL-PRF-55681, grade S) took Murata GRM commercial parts with no
+    // reliability caveat (Qarlos 2026-11-09, seed 20365838). Treated like the AEC-Q grade, the
+    // record's word only (nothing decoded from an MPN or a series). Rule:
+    //   * the original states no qualification -> nothing to hold, not compared;
+    //   * same specification and same grade (or the original states no grade) -> PASS;
+    //   * same specification, both state a failure rate -> the substitute's at or below the
+    //     original's PASSes, above it FAILs with both rates quoted;
+    //   * anything else — the substitute states no qualification, another specification, or
+    //     another grade with no rates to compare (the same letter means different rates under
+    //     different specifications, and the order of letters is the specification's) ->
+    //     UNVERIFIED, noted, and the grade capped below drop_in.
+    bool qualification_unverified = false;
+    if (cat == "capacitor") {
+        const std::string o_q = str(original, "qualified_spec"), s_q = str(cand, "qualified_spec");
+        if (!o_q.empty()) {
+            const std::string o_g = str(original, "qualified_grade"), s_g = str(cand, "qualified_grade");
+            const auto o_fr = num(original, "qualified_failure_rate"),
+                       s_fr = num(cand, "qualified_failure_rate");
+            auto level = [](const std::string& q, const std::string& g) {
+                return q + (g.empty() ? std::string() : " grade " + g);
+            };
+            auto fit = [](double per_s) {  // FIT = failures per 1e9 h
+                char b[48];
+                std::snprintf(b, sizeof b, "%.4g FIT", per_s * 3600.0 * 1e9);
+                return std::string(b);
+            };
+            const std::string o_level = level(o_q, o_g);
+            if (s_q == o_q && (o_g.empty() || s_g == o_g)) {
+                params.push_back({{"name", "qualified_reliability"}, {"verdict", PASS}});
+            } else if (s_q == o_q && o_fr && s_fr) {
+                const bool worse_rate = *s_fr > *o_fr * (1.0 + 1e-6);
+                params.push_back(
+                    {{"name", "qualified_reliability"}, {"verdict", worse_rate ? FAIL : PASS}});
+                if (worse_rate) {
+                    demote();
+                    ++worse;
+                    penalty += opt.gate_weight * kVerdictFailPenalty;
+                    notes.push_back("higher qualified failure rate: the substitute is " +
+                                    level(s_q, s_g) + " (" + fit(*s_fr) + ") against the original's " +
+                                    o_level + " (" + fit(*o_fr) + ")");
+                }
+            } else {
+                qualification_unverified = true;
+                params.push_back({{"name", "qualified_reliability"}, {"verdict", UNVERIFIED}});
+                demote();
+                notes.push_back(
+                    "the original is qualified to " + o_level + "; " +
+                    (s_q.empty() ? std::string("the substitute's record states no qualified "
+                                               "reliability level")
+                                 : "the substitute's record states " + level(s_q, s_g) +
+                                       ", which cannot be ranked against it from the records") +
+                    " — confirm the program accepts it before substituting");
+            }
+        }
+    }
+
     // ── rated voltage decoded from the MPN, when the record lacks it ─────────
     if (cat == "capacitor" && !num(original, "voltage") && !num(cand, "voltage")) {
         auto od = decode_cap_mpn(str(original, "mpn"));
@@ -3124,7 +3306,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // temperature has not been shown not to, so it takes the same minor_review cap.
     out["grade"] = grade_for(status, tier, any_warn, any_fail,
                              footprint_unverified || power_basis_unverified ||
-                                 ripple_basis_unverified ||
+                                 ripple_basis_unverified || esr_basis_unverified ||
+                                 cap_tol_unverified || lead_form_unverified ||
+                                 qualification_unverified ||
                                  topology_unverified ||
                                  mount_unverified || temp_unverified || timebase_unverified ||
                                  dielectric_unverified,

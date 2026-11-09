@@ -681,6 +681,39 @@ std::optional<CapacitorRow> extract_capacitor(const json& env) {
     // "" (not stated); the explicit token "none" is a stated fact and is kept as such.
     if (const json* sc = obj_get(*part, "safetyClass"); sc && sc->is_object())
         r.safety_class = get_str(*sc, "class").value_or("");
+    // The guaranteed capacitance band (v20), in farads as stated. Kept only when the record
+    // states BOTH ends and they bracket the nominal with a non-zero width: a lone end, or a
+    // "band" of zero width, is not a tolerance statement, and nothing is inferred from the
+    // MPN tolerance letter or a typical band.
+    if (const json* cj = obj_get(*elec, "capacitance"); cj && cj->is_object()) {
+        auto lo = get_num(*cj, "minimum"), hi = get_num(*cj, "maximum");
+        if (lo && hi && *lo > 0 && *lo <= r.capacitance && *hi >= r.capacitance && *hi > *lo) {
+            r.capacitance_min = *lo;
+            r.capacitance_max = *hi;
+        }
+    }
+    // The leaded form (v20), from the shapeType words the vendors write ("Axial", "Axial
+    // Leaded", "Axial Hermetic", "Radial", "Radial Boxed", "Radial Disc", "Radial Molded",
+    // "Resin dipped & radial leaded type", ...). A shapeType naming neither ("Box", "SMD
+    // Chip", "Single-ended") leaves it "" — never guessed from the series or the technology.
+    if (const json* mech = obj_get(*di, "mechanical"))
+        if (const json* shape = obj_get(*mech, "shape"))
+            if (auto st = get_str(*shape, "shapeType")) {
+                std::string l = *st;
+                for (auto& c : l) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                const bool ax = l.find("axial") != std::string::npos;
+                const bool rad = l.find("radial") != std::string::npos;
+                if (ax != rad) r.lead_form = ax ? "axial" : "radial";
+            }
+    // The qualified reliability level (v20, PEAS qualifiedReliability on part), verbatim.
+    if (const json* qr = obj_get(*part, "qualifiedReliability"); qr && qr->is_object()) {
+        r.qualified_spec = get_str(*qr, "specification").value_or("");
+        if (!r.qualified_spec.empty()) {
+            r.qualified_grade = get_str(*qr, "grade").value_or("");
+            if (auto fr = get_num(*qr, "failureRate"); fr && *fr >= 0)
+                r.qualified_failure_rate = *fr;
+        }
+    }
     // No scalar ESR, but a measured ESR-vs-frequency curve: read it AT 100 kHz, the
     // frequency the catalogue's scalar ESRs are overwhelmingly quoted at, and say so in
     // esr_frequency. TDK publishes the curve and no scalar, so every TDK candidate reached

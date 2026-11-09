@@ -109,6 +109,12 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // (MagneticRow.temp_min_c / temp_max_c), all of which the cross-reference compares (Qarlos
 // 2026-11-09: an X2 original took non-safety parts, a 100 Hz ripple rating was failed against a
 // 20 kHz one, a 200 degC inductor took 125 degC parts with no caveat).
+// v20 also carries a capacitor's guaranteed capacitance band (CapacitorRow.capacitance_min /
+// capacitance_max, farads), its leaded form (CapacitorRow.lead_form: axial / radial) and its
+// qualified reliability level (CapacitorRow.qualified_spec / qualified_grade /
+// qualified_failure_rate), all compared by the cross-reference (Qarlos 2026-11-09: a +/-5 %
+// part took a +/-1 % original's grade, axial parts were offered for a radial original, a
+// MIL-PRF-55681 grade S original took commercial parts with no caveat).
 // v20 carries a timing device's control-pin function (TimingRow.enable_function, TDAS
 // electrical.enableFunction), which the cross-reference compares as pinout identity (Qarlos
 // 2026-11-09: an output-enable XO took standby parts as drop_in).
@@ -339,6 +345,12 @@ void row_io(Ar& ar, CapacitorRow& r) {
     ar.dbl(r.v_rated_ac);   // v14
     ar.str(r.safety_class);              // v20
     ar.dbl(r.ripple_current_frequency);  // v20
+    ar.dbl(r.capacitance_min);           // v20
+    ar.dbl(r.capacitance_max);           // v20
+    ar.str(r.lead_form);                 // v20
+    ar.str(r.qualified_spec);            // v20
+    ar.str(r.qualified_grade);           // v20
+    ar.dbl(r.qualified_failure_rate);    // v20
     ar.boolean(r.is_production);
 }
 

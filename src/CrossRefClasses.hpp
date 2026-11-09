@@ -156,6 +156,13 @@ struct DielectricEnvelope {
     double temp_max_c = 0;
     double delta_c_pct = 0;  // maximum |dC/C| over the range, percent
     bool class1 = false;     // C0G/NP0: ppm-stable, no bias derating, no ageing
+    // The class-2 change as the code states it, each side as a positive percentage: X7R is
+    // +15/-15, Y5V +22/-82, X8L +15/-40. delta_c_pct is the larger of the two. A band is wider
+    // when EITHER side is: X8L keeps X8R's +15 % and widens the fall from -15 % to -40 %, which
+    // went unseen because 'L' was not decoded at all (Qarlos 2026-11-09, seed 20889483:
+    // GCJ188L81H392KA01 graded 'pass' for the X8R C0603C392G4HAC7867).
+    double delta_up_pct = 0;
+    double delta_down_pct = 0;
 };
 
 inline std::string dielectric_key(const std::string& code_raw) {
@@ -296,9 +303,14 @@ inline std::optional<DielectricEnvelope> dielectric_envelope(const std::string& 
         {'X', -55}, {'Y', -30}, {'Z', 10}};
     static const struct { char k; double v; } kHigh[] = {
         {'4', 65}, {'5', 85}, {'6', 105}, {'7', 125}, {'8', 150}, {'9', 200}};
-    static const struct { char k; double v; } kDelta[] = {
-        {'A', 1.0},  {'B', 1.5},  {'C', 2.2},  {'D', 3.3},  {'E', 4.7}, {'F', 7.5},
-        {'P', 10.0}, {'R', 15.0}, {'S', 22.0}, {'T', 33.0}, {'U', 56.0}, {'V', 82.0}};
+    // The third symbol, +rise / -fall in percent (EIA-198, with the asymmetric letters as
+    // published: T +22/-33, U +22/-56, V +22/-82, and L +15/-40, the letter Murata and TDK
+    // print on X8L / X7L / X6L). The symmetric letters are +/- the same value.
+    static const struct { char k; double up, down; } kDelta[] = {
+        {'A', 1.0, 1.0},   {'B', 1.5, 1.5},   {'C', 2.2, 2.2},   {'D', 3.3, 3.3},
+        {'E', 4.7, 4.7},   {'F', 7.5, 7.5},   {'P', 10.0, 10.0}, {'R', 15.0, 15.0},
+        {'L', 15.0, 40.0}, {'S', 22.0, 22.0}, {'T', 22.0, 33.0}, {'U', 22.0, 56.0},
+        {'V', 22.0, 82.0}};
     if (c.size() != 3) return std::nullopt;
     DielectricEnvelope e;
     bool lo = false, hi = false, d = false;
@@ -307,7 +319,12 @@ inline std::optional<DielectricEnvelope> dielectric_envelope(const std::string& 
     for (const auto& x : kHigh)
         if (x.k == c[1]) { e.temp_max_c = x.v; hi = true; }
     for (const auto& x : kDelta)
-        if (x.k == c[2]) { e.delta_c_pct = x.v; d = true; }
+        if (x.k == c[2]) {
+            e.delta_up_pct = x.up;
+            e.delta_down_pct = x.down;
+            e.delta_c_pct = std::max(x.up, x.down);
+            d = true;
+        }
     if (!lo || !hi || !d) return std::nullopt;
     return e;
 }
@@ -331,9 +348,25 @@ inline std::string dielectric_regression(const std::string& original, const std:
     if (s->temp_min_c > o->temp_min_c)
         issues.push_back("lower temperature " + std::to_string(static_cast<int>(s->temp_min_c)) +
                          " degC vs " + std::to_string(static_cast<int>(o->temp_min_c)));
-    if (s->delta_c_pct > o->delta_c_pct)
+    // The capacitance change, side by side for two class-2 codes (a class-1 envelope carries
+    // only a magnitude, delta_c_pct, and is compared on it as before).
+    if (!o->class1 && !s->class1) {
+        if (s->delta_up_pct > o->delta_up_pct || s->delta_down_pct > o->delta_down_pct) {
+            auto band = [](const DielectricEnvelope& e) {
+                char b[48];
+                if (e.delta_up_pct == e.delta_down_pct)
+                    std::snprintf(b, sizeof b, "+/-%g%%", e.delta_up_pct);
+                else
+                    std::snprintf(b, sizeof b, "+%g/-%g%%", e.delta_up_pct, e.delta_down_pct);
+                return std::string(b);
+            };
+            issues.push_back("capacitance change " + band(*s) + " vs " + band(*o) +
+                             " over the temperature range");
+        }
+    } else if (s->delta_c_pct > o->delta_c_pct) {
         issues.push_back("capacitance change +/-" + std::to_string(static_cast<int>(s->delta_c_pct)) +
                          "% vs +/-" + std::to_string(static_cast<int>(o->delta_c_pct)) + "%");
+    }
     if (!o->class1 && s->class1) return "";  // class 1 for class 2 is an improvement
     if (o->class1 && !s->class1)
         issues.push_back("class-1 dielectric replaced by class-2 (adds bias derating and ageing)");

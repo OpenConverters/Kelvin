@@ -180,8 +180,16 @@ inline std::optional<LWH> resolve_package(const std::string& code) {
 
 // Resolve a case/package code to physical dimensions (metres), category-aware.
 // nullopt when the code is not recognised — never a guess.
+//
+// `leaded_body`: the part is a LEADED body (a through-hole mount or an axial / radial form on
+// record). A chip case table — EIA chip codes, the molded-tantalum letters and their metric
+// footprints — describes an SMD body and its pads, so it must not size a leaded body: the
+// axial M39003/01-2751/PR (case "B") was sized as an EIA 3528 tantalum chip and its radial
+// candidates graded "one case size larger" against it (Qarlos 2026-11-09, seed 20994212).
+// Named packages and can codes ("10x20") still resolve; a chip code on a leaded body does not.
 inline std::optional<Dims> resolve_dimensions(const std::string& case_code,
-                                              const std::string& category) {
+                                              const std::string& category,
+                                              bool leaded_body = false) {
     using namespace dims_detail;
     std::string raw = trim(case_code);
     if (raw.empty()) return std::nullopt;
@@ -198,7 +206,7 @@ inline std::optional<Dims> resolve_dimensions(const std::string& case_code,
     if (auto pkg = resolve_package(raw)) return from_table(*pkg);
 
     // 2) Molded tantalum EIA letter (single A-D), capacitors only.
-    if (cat == "capacitor") {
+    if (cat == "capacitor" && !leaded_body) {
         auto it = tantalum_letter().find(upper(raw));
         if (it != tantalum_letter().end()) return from_table(it->second);
     }
@@ -235,7 +243,7 @@ inline std::optional<Dims> resolve_dimensions(const std::string& case_code,
     // 4) Four-digit numeric codes — meaning depends on family.
     static const std::regex four(R"((?:^|[^0-9])(\d{4})(?:[^0-9]|$))");
     std::smatch fm;
-    if (std::regex_search(raw, fm, four)) {
+    if (!leaded_body && std::regex_search(raw, fm, four)) {
         const std::string code = fm[1].str();
         // 4a) Chip passives (and chip inductors): imperial EIA first.
         auto imp = chip_imperial().find(code);

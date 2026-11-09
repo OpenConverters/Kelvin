@@ -3256,3 +3256,276 @@ TEST_CASE("qarlos v20: a connector row count stated on one side is compared",
     CHECK(has_note(c, "contact rows not established (original: 2, substitute: not stated)"));
     CHECK(c["grade"] != "drop_in");
 }
+
+// ── Qarlos v20 re-test (2026-11-09), capacitor ───────────────────────────────
+namespace {
+// The capacitor spec block as web/src/crossref.js builds it from the row (base() + spec()).
+json cap_spec(const kelvin::CapacitorRow& r) {
+    auto nz = [](double v) { return std::isnan(v) || !(v > 0) ? json(nullptr) : json(v); };
+    auto raw = [](double v) { return std::isnan(v) ? json(nullptr) : json(v); };
+    auto s = [](const std::string& v) { return v.empty() ? json(nullptr) : json(v); };
+    return json{{"mpn", r.mpn}, {"length_m", nz(r.length_m)}, {"width_m", nz(r.width_m)},
+                {"height_m", nz(r.height_m)}, {"case_code", r.case_code}, {"mount", r.mount},
+                {"lead_pitch_m", nz(r.lead_pitch_m)},
+                {"value_si", nz(r.capacitance)}, {"voltage", nz(r.v_rated)}, {"esr", nz(r.esr)},
+                {"ripple_current", nz(r.ripple_current_rms)}, {"technology", r.technology},
+                {"dielectric_code", r.dielectric_code}, {"family", r.family},
+                {"esr_frequency", nz(r.esr_frequency)}, {"temp_min_C", raw(r.temp_min_c)},
+                {"temp_max_C", raw(r.temp_max_c)},
+                {"ripple_current_frequency", nz(r.ripple_current_frequency)},
+                {"capacitance_min", nz(r.capacitance_min)}, {"capacitance_max", nz(r.capacitance_max)},
+                {"lead_form", s(r.lead_form)}, {"qualified_spec", s(r.qualified_spec)},
+                {"qualified_grade", s(r.qualified_grade)},
+                {"qualified_failure_rate", raw(r.qualified_failure_rate)}};
+}
+kelvin::CapacitorRow cap_row(json env) {
+    auto r = kelvin::extract_capacitor(env);
+    REQUIRE(r.has_value());
+    return *r;
+}
+json c0g_part(const char* series, const char* dielectric = "C0G") {
+    return json{{"series", series}, {"technology", "ceramic-class-1"}, {"case", "0805"},
+                {"dielectricCode", dielectric}};
+}
+json cband(double nom, double lo, double hi) {
+    return json{{"nominal", nom}, {"minimum", lo}, {"maximum", hi}};
+}
+json find_cand(const json& res, const char* mpn) {
+    for (const auto& c : res["candidates"])
+        if (c["mpn"] == mpn) return c;
+    FAIL("candidate " << mpn << " missing");
+    return json{};
+}
+}  // namespace
+
+// Finding 1: a looser capacitance tolerance is a downgrade (TAS record values).
+// CDR31BP470BFYSAB 47 pF +/-1 % vs GRM21A5C2E470JW01 +/-5 % and ...GW01 +/-2 %;
+// MCARQ167SCG0R3ATRA1J 0.3 pF +/-0.05 pF vs GQM1875C2ER30BB12D +/-0.1 pF.
+TEST_CASE("qarlos v20: a looser capacitance tolerance FAILs with both bands quoted",
+          "[qarlos][crossref][views]") {
+    kelvin::crossref::Options opt;
+    opt.check_footprint = false;
+    auto cdr = cap_row(cap_env("Vishay", "CDR31BP470BFYSAB", c0g_part("CDR31", "BP"), json::object(),
+        {{"capacitance", cband(4.7e-11, 4.653e-11, 4.747e-11)}, {"ratedVoltage", 100.0}}));
+    CHECK(cdr.capacitance_min == 4.653e-11);
+    CHECK(cdr.capacitance_max == 4.747e-11);
+    auto jw = cap_row(cap_env("Murata", "GRM21A5C2E470JW01", c0g_part("GRM21A5"), json::object(),
+        {{"capacitance", cband(4.7e-11, 4.4649999999999996e-11, 4.935e-11)}, {"ratedVoltage", 250.0}}));
+    auto gw = cap_row(cap_env("Murata", "GRM21A5C2E470GW01", c0g_part("GRM21A5"), json::object(),
+        {{"capacitance", cband(4.7e-11, 4.606e-11, 4.794e-11)}, {"ratedVoltage", 250.0}}));
+    auto same = cdr;  // the original's own band
+    same.mpn = "SAME";
+    auto r = kelvin::crossref::cross_reference(
+        "capacitor", cap_spec(cdr), json::array({cap_spec(jw), cap_spec(gw), cap_spec(same)}), opt);
+    const json cjw = find_cand(r, "GRM21A5C2E470JW01"), cgw = find_cand(r, "GRM21A5C2E470GW01"),
+               csame = find_cand(r, "SAME");
+    CHECK(verdict_of(cjw, "capacitance_tolerance") == "fail");
+    CHECK(verdict_of(cgw, "capacitance_tolerance") == "fail");
+    CHECK(verdict_of(csame, "capacitance_tolerance") == "pass");
+    CHECK(cjw["grade"] != "drop_in");
+    CHECK(has_note(cjw, "looser capacitance tolerance: the substitute guarantees +/-2.35 pF (+/-5 %) "
+                        "against the original's +/-0.47 pF (+/-1 %)"));
+    CHECK(cjw["penalty"].get<double>() > csame["penalty"].get<double>());
+    // the reverse (a tighter substitute) passes
+    auto rev = kelvin::crossref::cross_reference("capacitor", cap_spec(jw),
+                                                 json::array({cap_spec(cdr)}), opt);
+    CHECK(verdict_of(rev["candidates"][0], "capacitance_tolerance") == "pass");
+
+    // an absolute small-part tolerance, compared in farads
+    json rf = {{"technology", "ceramic-class-1"}, {"case", "0603"}, {"dielectricCode", "C0G"}};
+    auto mca = cap_row(cap_env("Taiyo Yuden", "MCARQ167SCG0R3ATRA1J", rf, json::object(),
+        {{"capacitance", cband(3e-13, 2.5e-13, 3.4999999999999997e-13)}, {"ratedVoltage", 250.0}}));
+    auto gqm = cap_row(cap_env("Murata", "GQM1875C2ER30BB12D", rf, json::object(),
+        {{"capacitance", cband(3e-13, 2e-13, 4e-13)}, {"ratedVoltage", 250.0}}));
+    auto r2 = kelvin::crossref::cross_reference("capacitor", cap_spec(mca),
+                                                json::array({cap_spec(gqm)}), opt);
+    const json& c2 = r2["candidates"][0];
+    CHECK(verdict_of(c2, "capacitance_tolerance") == "fail");
+    CHECK(c2["grade"] != "drop_in");
+    CHECK(has_note(c2, "+/-0.1 pF"));
+    CHECK(has_note(c2, "+/-0.05 pF"));
+    // a candidate with no band against a banded original: unverified and capped
+    auto bare = gqm;
+    bare.mpn = "BARE";
+    bare.capacitance_min = bare.capacitance_max = kelvin::kNaN();
+    auto r3 = kelvin::crossref::cross_reference("capacitor", cap_spec(mca),
+                                                json::array({cap_spec(bare)}), opt);
+    CHECK(verdict_of(r3["candidates"][0], "capacitance_tolerance") == "unverified");
+    CHECK(r3["candidates"][0]["grade"] != "drop_in");
+    // a lone end is not a band
+    auto lone = cap_row(cap_env("X", "LONE", rf, json::object(),
+        {{"capacitance", {{"nominal", 3e-13}, {"maximum", 4e-13}}}, {"ratedVoltage", 50.0}}));
+    CHECK(std::isnan(lone.capacitance_min));
+    CHECK(std::isnan(lone.capacitance_max));
+}
+
+// Finding 2: ESR at different frequencies is not compared (TAS record values).
+// 380LX151M450K022 0.44 ohm @ 20 kHz vs MAL219857151E3 0.637 ohm @ 100 Hz.
+TEST_CASE("qarlos v20: ESR is compared only on a common frequency basis", "[qarlos][crossref]") {
+    kelvin::crossref::Options opt;
+    opt.check_footprint = false;
+    json al = {{"technology", "aluminum-electrolytic-wet"}};
+    auto cde = cap_row(cap_env("Cornell Dubilier", "380LX151M450K022", al, json::object(),
+        {{"capacitance", cband(1.5e-4, 1.2e-4, 1.8e-4)}, {"ratedVoltage", 450.0}, {"esr", 0.44},
+         {"esrFrequency", 20000}, {"rippleCurrent", 1.7}, {"rippleCurrentFrequency", 20000}}));
+    auto mal = cap_row(cap_env("Vishay", "MAL219857151E3", al, json::object(),
+        {{"capacitance", {{"nominal", 1.5e-4}}}, {"ratedVoltage", 450.0}, {"esr", 0.637},
+         {"esrFrequency", 100}, {"rippleCurrent", 1.36}, {"rippleCurrentFrequency", 100}}));
+    auto r = kelvin::crossref::cross_reference("capacitor", cap_spec(cde),
+                                               json::array({cap_spec(mal)}), opt);
+    const json& c = r["candidates"][0];
+    CHECK(verdict_of(c, "esr") == "unverified");
+    CHECK(verdict_of(c, "esr_basis") == "unverified");
+    CHECK(c["direction"] != "downgrade");
+    CHECK(c["grade"] != "drop_in");
+    CHECK(has_note(c, "ESR quoted at different frequencies (original 0.44 ohm at 20000 Hz, "
+                      "substitute 0.637 ohm at 100 Hz)"));
+    // 100 Hz and 120 Hz are one basis: compared directly
+    auto at120 = cde;
+    at120.esr_frequency = 120;
+    at120.esr = 0.5;
+    auto r2 = kelvin::crossref::cross_reference("capacitor", cap_spec(at120),
+                                                json::array({cap_spec(mal)}), opt);
+    CHECK(verdict_of(r2["candidates"][0], "esr") == "warn");
+    CHECK(verdict_of(r2["candidates"][0], "esr_basis") == "");
+    // within a decade used to be compared as bare numbers; it is not a common basis
+    auto at1k = cde;
+    at1k.esr_frequency = 1000;
+    auto r3 = kelvin::crossref::cross_reference("capacitor", cap_spec(at1k),
+                                                json::array({cap_spec(mal)}), opt);
+    CHECK(verdict_of(r3["candidates"][0], "esr") == "unverified");
+}
+
+// Finding 3: X8L (+15/-40 %) for X8R (+/-15 %) is a regression (TAS record values).
+TEST_CASE("qarlos v20: the class-2 compare decodes all three symbols, X8L for X8R fails",
+          "[qarlos][crossref][classes]") {
+    auto x8l = kelvin::crossref::dielectric_envelope("X8L");
+    REQUIRE(x8l.has_value());
+    CHECK(x8l->delta_up_pct == 15.0);
+    CHECK(x8l->delta_down_pct == 40.0);
+    const std::string reg = kelvin::crossref::dielectric_regression("X8R", "X8L");
+    CHECK(reg.find("capacitance change +15/-40% vs +/-15%") != std::string::npos);
+    CHECK(kelvin::crossref::dielectric_regression("X8L", "X8R").empty());
+    // the asymmetric letters compare side by side: Y5U (+22/-56) for Y5V (+22/-82) is no worse
+    CHECK(kelvin::crossref::dielectric_regression("Y5V", "Y5U").empty());
+    CHECK_FALSE(kelvin::crossref::dielectric_regression("Y5U", "Y5V").empty());
+    kelvin::crossref::Options opt;
+    opt.check_footprint = false;
+    auto kem = cap_row(cap_env("KEMET", "C0603C392G4HAC7867",
+        {{"series", "SMD Comm X8R HT150C"}, {"case", "0603"}, {"technology", "ceramic-class-2"},
+         {"dielectricCode", "X8R"}},
+        json::object(), {{"capacitance", cband(3.9e-9, 3.822e-9, 3.978e-9)}, {"ratedVoltage", 16.0}}));
+    auto gcj = cap_row(cap_env("Murata", "GCJ188L81H392KA01",
+        {{"series", "GCJ188L"}, {"case", "1608M/0603"}, {"technology", "ceramic-class-2"},
+         {"dielectricCode", "X8L"}},
+        json::object(), {{"capacitance", cband(3.9e-9, 3.51e-9, 4.290000000000001e-9)}, {"ratedVoltage", 50.0}}));
+    auto r = kelvin::crossref::cross_reference("capacitor", cap_spec(kem),
+                                               json::array({cap_spec(gcj)}), opt);
+    const json& c = r["candidates"][0];
+    CHECK(verdict_of(c, "dielectric_code") == "fail");
+    CHECK(verdict_of(c, "dielectric_envelope") == "fail");
+    CHECK(c["grade"] != "drop_in");
+    CHECK(has_note(c, "+15/-40%"));
+}
+
+// Finding 4: a MIL-PRF-55681 grade S original against parts stating no qualification.
+TEST_CASE("qarlos v20: a qualified-reliability original caps a substitute stating none",
+          "[qarlos][crossref][views]") {
+    kelvin::crossref::Options opt;
+    opt.check_footprint = false;
+    json cdr_part = c0g_part("CDR31", "BP");
+    cdr_part["qualifiedReliability"] = {{"specification", "MIL-PRF-55681"}, {"grade", "S"}};
+    auto cdr = cap_row(cap_env("Vishay", "CDR31BP470BFYSAB", cdr_part, json::object(),
+        {{"capacitance", cband(4.7e-11, 4.653e-11, 4.747e-11)}, {"ratedVoltage", 100.0}}));
+    CHECK(cdr.qualified_spec == "MIL-PRF-55681");
+    CHECK(cdr.qualified_grade == "S");
+    CHECK(std::isnan(cdr.qualified_failure_rate));
+    // a commercial part with the original's own band, so only the qualification differs
+    auto grm = cap_row(cap_env("Murata", "GRM21A5C2E470GW01", c0g_part("GRM21A5"), json::object(),
+        {{"capacitance", cband(4.7e-11, 4.653e-11, 4.747e-11)}, {"ratedVoltage", 250.0}}));
+    auto r = kelvin::crossref::cross_reference("capacitor", cap_spec(cdr),
+                                               json::array({cap_spec(grm)}), opt);
+    const json& c = r["candidates"][0];
+    CHECK(verdict_of(c, "qualified_reliability") == "unverified");
+    CHECK(c["grade"] == "minor_review");
+    CHECK(has_note(c, "the original is qualified to MIL-PRF-55681 grade S; the substitute's record "
+                      "states no qualified reliability level"));
+    // same specification: the stated failure rates decide (M39003/01 grade R vs grade M)
+    auto mil = [](const char* mpn, const char* g, double fr) {
+        json p = {{"series", "M39003/01"}, {"technology", "tantalum-mno2"}, {"case", "B"},
+                  {"qualifiedReliability", {{"specification", "MIL-PRF-39003"}, {"grade", g},
+                                            {"failureRate", fr}, {"distribution", "exponential"}}}};
+        return cap_row(cap_env("KEMET", mpn, p, json::object(),
+            {{"capacitance", cband(1e-6, 9.5e-7, 1.05e-6)}, {"ratedVoltage", 35.0}}));
+    };
+    auto r2 = kelvin::crossref::cross_reference(
+        "capacitor", cap_spec(mil("M39003/01-R", "R", 2.7778e-11)),
+        json::array({cap_spec(mil("M39003/01-M", "M", 2.7778e-09)),
+                     cap_spec(mil("M39003/01-R2", "R", 2.7778e-11))}),
+        opt);
+    CHECK(verdict_of(find_cand(r2, "M39003/01-M"), "qualified_reliability") == "fail");
+    CHECK(has_note(find_cand(r2, "M39003/01-M"), "higher qualified failure rate"));
+    CHECK(verdict_of(find_cand(r2, "M39003/01-R2"), "qualified_reliability") == "pass");
+    // a better rate on the substitute passes
+    auto r3 = kelvin::crossref::cross_reference(
+        "capacitor", cap_spec(mil("M39003/01-M", "M", 2.7778e-09)),
+        json::array({cap_spec(mil("M39003/01-R", "R", 2.7778e-11))}), opt);
+    CHECK(verdict_of(r3["candidates"][0], "qualified_reliability") == "pass");
+}
+
+// Finding 5: axial vs radial is a different land pattern; a leaded body is never sized from a
+// chip case table (TAS record values).
+TEST_CASE("qarlos v20: axial vs radial is land identity; no chip table on a leaded body",
+          "[qarlos][crossref][views][dimensions]") {
+    kelvin::crossref::Options opt;
+    auto c322 = cap_row(cap_env("KEMET", "C322C270JAG5TA",
+        {{"series", "GoldMax 300 Comm C0G"}, {"case", "C322"}, {"technology", "ceramic-class-1"},
+         {"dielectricCode", "C0G"}},
+        {{"shape", {{"assembly", "THT"}, {"shapeType", "Radial"}}},
+         {"dimensions", {{"length", {{"maximum", 0.00508}}}, {"thickness", {{"maximum", 0.00318}}},
+                         {"height", {{"maximum", 0.0066}}},
+                         {"pitch", {{"nominal", 0.00508}, {"minimum", 0.0043}, {"maximum", 0.00586}}}}}},
+        {{"capacitance", cband(2.7e-11, 2.565e-11, 2.835e-11)}, {"ratedVoltage", 250.0}}));
+    CHECK(c322.lead_form == "radial");
+    auto a330 = cap_row(cap_env("KEMET", "A330J15C0GL5TAA",
+        {{"technology", "ceramic-class-1"}, {"dielectricCode", "C0G"}},
+        {{"shape", {{"assembly", "THT"}, {"shapeType", "Axial Leaded"}}}},
+        {{"capacitance", cband(3.3e-11, 3.135e-11, 3.4650000000000004e-11)}, {"ratedVoltage", 500.0}}));
+    CHECK(a330.lead_form == "axial");
+    auto r = kelvin::crossref::cross_reference("capacitor", cap_spec(c322),
+                                               json::array({cap_spec(a330)}), opt);
+    const json& c = r["candidates"][0];
+    CHECK(verdict_of(c, "lead_form") == "fail");
+    CHECK(c["grade"] != "drop_in");
+    CHECK(has_note(c, "leaded form differs: the original is radial-leaded, the substitute "
+                      "axial-leaded"));
+    // one side states no form and the other is not SMD: unverified and capped
+    auto noform = a330;
+    noform.mpn = "NOFORM";
+    noform.lead_form = "";
+    auto ru = kelvin::crossref::cross_reference("capacitor", cap_spec(c322),
+                                                json::array({cap_spec(noform)}), opt);
+    CHECK(verdict_of(ru["candidates"][0], "lead_form") == "unverified");
+    CHECK(ru["candidates"][0]["grade"] != "drop_in");
+
+    // M39003/01-2751/PR: axial, case "B", no drawing — not an EIA 3528 tantalum chip.
+    auto m39 = cap_row(cap_env("Vishay", "M39003/01-2751/PR",
+        {{"technology", "tantalum-mno2"}, {"series", "M39003/01"}, {"case", "B"},
+         {"qualifiedReliability", {{"specification", "MIL-PRF-39003"}, {"grade", "R"},
+                                   {"failureRate", 2.7778e-11}, {"distribution", "exponential"}}}},
+        {{"shape", {{"assembly", "THT"}, {"shapeType", "Axial"}}}},
+        {{"capacitance", cband(2.2e-5, 1.98e-5, 2.42e-5)}, {"ratedVoltage", 15.0}}));
+    auto t378 = cap_row(cap_env("KEMET", "T378E226K015AS", {{"technology", "tantalum-mno2"}},
+        {{"shape", {{"assembly", "THT"}, {"shapeType", "Radial Molded"}}},
+         {"dimensions", {{"height", {{"nominal", 0.00787}}}, {"thickness", {{"nominal", 0.0033}}}}}},
+        {{"capacitance", {{"nominal", 2.2e-5}}}, {"ratedVoltage", 15.0}}));
+    CHECK_FALSE(kelvin::crossref::dims_of(cap_spec(m39), "capacitor").has_value());
+    CHECK_FALSE(kelvin::crossref::resolve_dimensions("B", "capacitor", true).has_value());
+    CHECK(kelvin::crossref::resolve_dimensions("B", "capacitor").has_value());  // an SMD chip
+    auto r2 = kelvin::crossref::cross_reference("capacitor", cap_spec(m39),
+                                                json::array({cap_spec(t378)}), opt);
+    const json& c2 = r2["candidates"][0];
+    CHECK(verdict_of(c2, "lead_form") == "fail");
+    CHECK(c2.value("footprint", "") != "one_size_larger");
+}
+
