@@ -141,7 +141,10 @@ export const XREF = [
     primary: null,
     sameFacet: { f: 'technology', label: 'technology' },
     hardKeys: ['frequency', 'technology', 'load_capacitance'],
-    exactNum: [{ row: 'frequency', tol: 1e-4 }],
+    // Equal within the representation epsilon (1e-9 = 0.001 ppm), never a band: the old
+    // 1e-4 (100 ppm) pool let 25.00125 MHz and 24.9987 MHz parts in for a 25 MHz original,
+    // and the ranker graded them 'pass' (Qarlos 2026-11-09). Matches the ranker's kTimeBase.
+    exactNum: [{ row: 'frequency', tol: 1e-9 }],
     spec: (r) => ({ ...base(r), subtype: r.device_type ?? '', technology: r.technology ?? '',
       device_type: r.device_type ?? '', frequency: nz(r.frequency),
       load_capacitance: nz(r.load_capacitance),
@@ -152,6 +155,9 @@ export const XREF = [
       // as "an identity parameter differs" against an LVDS original — an unknown
       // reported as a mismatch, the same trap as the connector strings (ABT #505).
       esr: nz(r.esr), output_type: r.output_type || null, mode: r.mode || null,
+      // v20: the control pin's function (none / outputEnable / standby / triState), a hard
+      // identity key in the ranker; blank -> null for the same reason as output_type.
+      enable_function: r.enable_function || null,
       // The supply range of an active oscillator: the substitute's must cover the
       // original's (the ranker FAILs a shortfall at either end and skips the keys for a
       // passive crystal or resonator, which has no supply). Neither was passed, so a
@@ -170,6 +176,8 @@ export const XREF = [
       { key: 'supply_min_V', label: 'Vdd min', row: 'vsupply_min', unit: 'V' },
       { key: 'supply_max_V', label: 'Vdd max', row: 'vsupply_max', unit: 'V' },
       { key: 'output_type', label: 'output', row: 'output_type', str: true },
+      { key: 'enable_function', label: 'pin 1', row: 'enable_function', str: true },
+      { key: 'stability_ppm', label: 'stab', row: 'frequency_stability', unit: 'ppm', scale: 1e6 },
       { key: 'temp_min_C', label: 'T min', row: 'temp_min_c', unit: '°C' },
       { key: 'temp_max_C', label: 'T max', row: 'temp_max_c', unit: '°C' },
     ],

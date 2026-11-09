@@ -123,13 +123,29 @@ struct ParamOutcome {
     bool missing_required_sub = false;
 };
 
+// Two catalogue numbers that differ only in their last bits are the same stated value.
+// The records carry decimal datasheet figures through binary doubles and unit scaling,
+// so one vendor's 33 nC arrives as 3.3e-08 and another's as 3.3000000000000004e-08, and
+// a 20 ppm stability as 1.9999999999999998e-05. A strict `sv <= ov` read the second Qg
+// as HIGHER than the first and warned (SSM3J132TU vs SiA477EDJT, Qarlos 2026-11-09,
+// seed 20889483). Relative 1e-9 is far below any datasheet resolution (a 1 ppm crystal
+// tolerance is 1e-6 of the frequency) and far above double rounding (~1e-16), so it only
+// ever merges representations of one number, never two real values.
+constexpr double kRepresentationEpsilon = 1e-9;
+inline bool same_stated_value(double a, double b) {
+    if (a == b) return true;
+    return std::abs(a - b) <= kRepresentationEpsilon * std::max(std::abs(a), std::abs(b));
+}
+
 // Mirrors _compare_numeric: LOWER/HIGHER with abs_tol (additive) or tol_factor.
+// Equal (within the representation epsilon above) always passes, in either direction.
 inline ParamOutcome compare_numeric(const ParamSpec& spec, std::optional<double> o,
                                     std::optional<double> s) {
     if (!o && !s) return UNVERIFIED;
     if (!s) return {UNVERIFIED, spec.exclude_missing_sub};
     if (!o) return UNVERIFIED;
     double ov = *o, sv = *s;
+    if (same_stated_value(sv, ov)) return PASS;
     if (spec.dir == Dir::Lower) {
         if (sv <= ov) return PASS;
         double ceiling = spec.abs_tol ? ov + *spec.abs_tol : ov * spec.tol_factor;
@@ -585,12 +601,36 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
     static const std::vector<ParamSpec> kTimeBase = {
         {"subtype", D::ExactMatch, 0.0, std::nullopt, false, true, nullptr},
         {"technology", D::ExactMatch, 0.0, std::nullopt, false, true, nullptr},
-        {"frequency", D::ExactMatch, 1e-4, std::nullopt, false, true, nullptr},
+        // The nominal frequency is the part's identity, not a value with a tolerance: a
+        // 25.00125 MHz oscillator is a different part from a 25 MHz one, whatever its
+        // stability. The old 1e-4 relative band (100 ppm) passed SG-8018CA 25.001250M
+        // (+50 ppm) and 24.998700M (-52 ppm) for a 25 MHz ECS-3225SMVQ, and a 14.745 MHz
+        // part (-40.7 ppm) for a 14.7456 MHz one, with no note (Qarlos 2026-11-09, seeds
+        // 20889483 / 21622586). Equal within the representation epsilon only (1e-9 =
+        // 0.001 ppm); a hard key, so a difference rejects, and CrossRef.hpp states both
+        // frequencies and the offset in ppm.
+        {"frequency", D::ExactMatch, kRepresentationEpsilon, std::nullopt, false, true, nullptr},
         {"load_capacitance_pF", D::ExactMatch, 0.05, std::nullopt, false, false, nullptr},
         {"output_type", D::ExactMatch, 0.0, std::nullopt, false, false, nullptr},
         {"mode", D::ExactMatch, 0.0, std::nullopt, false, false, nullptr},
-        {"tolerance_ppm", D::Lower, 2.0, std::nullopt, false, false, nullptr},
-        {"stability_ppm", D::Lower, 2.0, std::nullopt, false, false, nullptr},
+        // The control pin's function (TDAS electrical.enableFunction: none / outputEnable /
+        // standby / triState). Pin 1 of a packaged XO is wired by the board for ONE of
+        // them: an output-enable pin keeps the oscillator running and gates the output, a
+        // standby pin powers the whole device down (restart costs the start-up time),
+        // "none" is no control pin. ISM92-3251BH-25.000 MHZ (outputEnable) took ASFL1
+        // (standby) as drop_in (Qarlos 2026-11-09, seed 21832044). A hard identity key like
+        // output_type: both stated and different rejects, with a note naming both; stated
+        // on one side only is UNVERIFIED, noted, and caps the grade below drop_in
+        // (CrossRef.hpp).
+        {"enable_function", D::ExactMatch, 0.0, std::nullopt, false, false, nullptr},
+        // Frequency tolerance and stability (+/- ppm) are the accuracy the design was built
+        // around (a UART baud budget, an Ethernet +/-100 ppm link, an RTC's drift): a
+        // substitute must be equal or tighter. Looser by any amount is a FAIL, not a
+        // warning — the old 2x warn band let a 50 ppm part through for a 25 ppm one.
+        // Unstated on the substitute is UNVERIFIED (compare_numeric). Equality is judged
+        // within the representation epsilon (49.999999999999996 ppm is 50 ppm).
+        {"tolerance_ppm", D::Lower, 1.0, std::nullopt, false, false, nullptr},
+        {"stability_ppm", D::Lower, 1.0, std::nullopt, false, false, nullptr},
         {"aging_ppm_y", D::Lower, 2.0, std::nullopt, false, false, nullptr},
         {"esr", D::Lower, 1.5, std::nullopt, false, false, nullptr},
         // An active oscillator runs from the board's rail, and the board's rail is

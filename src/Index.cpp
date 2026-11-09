@@ -109,6 +109,9 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // (MagneticRow.temp_min_c / temp_max_c), all of which the cross-reference compares (Qarlos
 // 2026-11-09: an X2 original took non-safety parts, a 100 Hz ripple rating was failed against a
 // 20 kHz one, a 200 degC inductor took 125 degC parts with no caveat).
+// v20 carries a timing device's control-pin function (TimingRow.enable_function, TDAS
+// electrical.enableFunction), which the cross-reference compares as pinout identity (Qarlos
+// 2026-11-09: an output-enable XO took standby parts as drop_in).
 constexpr uint32_t kFormatVersion = 20;
 
 // Identity of the code that produces rows, so a cached shard can be recognised as
@@ -446,6 +449,7 @@ void row_io(Ar& ar, TimingRow& r) {
     ar.str(r.mode);
     ar.dbl(r.temp_min_c);   // v16
     ar.dbl(r.temp_max_c);   // v16
+    ar.str(r.enable_function);  // v20
     ar.boolean(r.is_production);
 }
 

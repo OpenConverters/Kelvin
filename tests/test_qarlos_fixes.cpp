@@ -2249,3 +2249,189 @@ TEST_CASE("qarlos 2026-11-09: a magnetic's operating range is extracted and must
         "magnetic", orig, json::array({ind("ONE_SHORT", -55.0, 199.0)}), opt);
     CHECK(verdict_of(r2["candidates"][0], "temp_max_C") == "fail");
 }
+
+// ── Qarlos 2026-11-09 rounds 5-6: timing frequency identity, stability, control pin; MOSFET Qg ──
+namespace {
+// The spec web/src/crossref.js builds for a timing row, from the REAL TAS record fields
+// (frequency, frequencyStability x 1e6, supply, operating range, outputType, enableFunction).
+json osc(const std::string& mpn, double f, double stability_frac, double vmin, double vmax,
+         double tmin, double tmax, const char* enable) {
+    json o = {{"mpn", mpn}, {"subtype", "oscillator"}, {"technology", "crystalOscillator"},
+              {"device_type", "oscillator"}, {"frequency", f},
+              {"stability_ppm", stability_frac * 1e6}, {"output_type", "cmos"},
+              {"supply_min_V", vmin}, {"supply_max_V", vmax},
+              {"temp_min_C", tmin}, {"temp_max_C", tmax}};
+    o["enable_function"] = enable ? json(enable) : json(nullptr);
+    return o;
+}
+json run_timing(const json& orig, const json& cands) {
+    kelvin::crossref::Options opt;
+    opt.check_footprint = false;
+    return kelvin::crossref::cross_reference("timeBase", orig, cands, opt);
+}
+}  // namespace
+
+// ECS-3225SMVQ-250-DS-TR (25 MHz, 20 ppm) took SG-8018CA 25.001250M-TJHSA0 (+50 ppm) as a
+// frequency 'pass' (seed 20889483); ASSVP-14.7456MHZ-R-C16 took SG-8018CA 14.7450M-TJHPA0
+// (-40.7 ppm) the same way (seed 21622586). The 1e-4 relative band was 100 ppm. A different
+// nominal frequency rejects, with both frequencies and the offset in ppm.
+TEST_CASE("qarlos 2026-11-09: an oscillator's nominal frequency is identity, not a band",
+          "[qarlos][crossref]") {
+    const json ecs = osc("ECS-3225SMVQ-250-DS-TR", 25000000.0, 1.9999999999999998e-05, 1.62,
+                         3.63, -40.0, 125.0, nullptr);
+    auto r = run_timing(ecs, json::array({
+        osc("SG-8018CA 25.001250M-TJHSA0", 25001250.0, 4.9999999999999996e-05, 1.62, 3.63,
+            -40.0, 105.0, nullptr),
+        osc("SAME-25M-20PPM", 25000000.0, 2e-05, 1.62, 3.63, -40.0, 125.0, nullptr)}));
+    const json* off = cand_by_mpn(r, "SG-8018CA 25.001250M-TJHSA0");
+    REQUIRE(off);
+    CHECK(verdict_of(*off, "frequency") == "fail");
+    CHECK((*off)["status"] == "no_substitute");
+    CHECK(has_note(*off, "the original is 25000000 Hz, the substitute 25001250 Hz (+50.0 ppm)"));
+    // Equal nominal (and 2e-05 vs 1.9999999999999998e-05 is the same 20 ppm): a pass,
+    // and the stability compare is equal, not looser.
+    const json* same = cand_by_mpn(r, "SAME-25M-20PPM");
+    REQUIRE(same);
+    CHECK(verdict_of(*same, "frequency") == "pass");
+    CHECK(verdict_of(*same, "stability_ppm") == "pass");
+    CHECK((*same)["grade"] == "drop_in");
+
+    const json assvp = osc("ASSVP-14.7456MHZ-R-C16", 14745600.0, 2.4999999999999998e-05, 3.3,
+                           3.3, -40.0, 85.0, "standby");
+    auto r2 = run_timing(assvp, json::array({osc("SG-8018CA 14.7450M-TJHPA0", 14745000.0,
+                                                 4.9999999999999996e-05, 1.62, 3.63, -40.0,
+                                                 105.0, nullptr)}));
+    const json& c2 = r2["candidates"][0];
+    CHECK(c2["status"] == "no_substitute");
+    CHECK(has_note(c2, "(-40.7 ppm)"));
+}
+
+// Stability (+/- ppm) is a separate axis from the nominal: equal or tighter passes, looser
+// by any amount FAILs (the old 2x band warned a 50 ppm part for a 25 ppm one), unstated on
+// the substitute is UNVERIFIED and caps the grade.
+TEST_CASE("qarlos 2026-11-09: a looser oscillator stability fails; unstated is unverified",
+          "[qarlos][crossref]") {
+    const json orig = osc("ASSVP-14.7456MHZ-R-C16", 14745600.0, 2.4999999999999998e-05, 3.3,
+                          3.3, -40.0, 85.0, "standby");
+    json nostab = osc("NOSTAB", 14745600.0, 0.0, 3.3, 3.3, -40.0, 85.0, "standby");
+    nostab["stability_ppm"] = nullptr;
+    auto r = run_timing(orig, json::array({
+        osc("LOOSER-50", 14745600.0, 4.9999999999999996e-05, 3.3, 3.3, -40.0, 85.0, "standby"),
+        osc("TIGHTER-20", 14745600.0, 2e-05, 3.3, 3.3, -40.0, 85.0, "standby"), nostab}));
+    const json* loose = cand_by_mpn(r, "LOOSER-50");
+    REQUIRE(loose);
+    CHECK(verdict_of(*loose, "stability_ppm") == "fail");
+    CHECK((*loose)["grade"] == "major_review");
+    CHECK(has_note(*loose, "looser frequency stability: the substitute is +/-50 ppm against "
+                           "the original's +/-25 ppm"));
+    const json* tight = cand_by_mpn(r, "TIGHTER-20");
+    REQUIRE(tight);
+    CHECK(verdict_of(*tight, "stability_ppm") == "pass");
+    const json* none = cand_by_mpn(r, "NOSTAB");
+    REQUIRE(none);
+    CHECK(verdict_of(*none, "stability_ppm") == "unverified");
+    CHECK((*none)["grade"] != "drop_in");
+    CHECK(has_note(*none, "the original's frequency stability is +/-25 ppm; the substitute's "
+                          "record states none"));
+}
+
+// ISM92-3251BH-25.000 MHZ (ILSI, enableFunction outputEnable) took ASFL1-25.000MHZ-LC-T
+// (standby) and every other standby part as drop_in with no note (seed 21832044). The pin-1
+// function is pinout identity: both stated and different rejects; one side only is
+// UNVERIFIED and capped.
+TEST_CASE("qarlos 2026-11-09: an oscillator's control-pin function is pinout identity",
+          "[qarlos][views][crossref]") {
+    json env = {{"timeBase", {{"oscillator", {{"manufacturerInfo", {{"name", "ILSI"},
+        {"reference", "ISM92-3251BH-25.000 MHZ"}, {"status", "production"},
+        {"datasheetInfo", {{"part", {{"partNumber", "ISM92-3251BH-25.000 MHZ"},
+                                     {"package", "5032 4-SMD"}}},
+            {"electrical", {{"technology", "crystalOscillator"}, {"frequency", 25000000.0},
+                            {"frequencyStability", 4.9999999999999996e-05},
+                            {"outputType", "cmos"},
+                            {"supply", {{"minimumSupplyVoltage", 3.3},
+                                        {"maximumSupplyVoltage", 3.3},
+                                        {"currentConsumption", 0.04}}},
+                            {"enableFunction", "outputEnable"}}},
+            {"thermal", {{"operatingTemperature", {{"minimum", -40.0},
+                                                    {"maximum", 85.0}}}}}}}}}}}}}};
+    auto row = kelvin::extract_timing(env);
+    REQUIRE(row.has_value());
+    CHECK(row->enable_function == "outputEnable");
+
+    const json ism = osc("ISM92-3251BH-25.000 MHZ", 25000000.0, 4.9999999999999996e-05, 3.3,
+                         3.3, -40.0, 85.0, "outputEnable");
+    auto r = run_timing(ism, json::array({
+        osc("ASFL1-25.000MHZ-LC-T", 25000000.0, 4.9999999999999996e-05, 3.3, 3.3, -40.0, 85.0,
+            "standby"),
+        osc("NO-PIN-FN", 25000000.0, 4.9999999999999996e-05, 3.3, 3.3, -40.0, 85.0, nullptr),
+        osc("OE-TOO", 25000000.0, 4.9999999999999996e-05, 3.3, 3.3, -40.0, 85.0,
+            "outputEnable")}));
+    const json* sb = cand_by_mpn(r, "ASFL1-25.000MHZ-LC-T");
+    REQUIRE(sb);
+    CHECK(verdict_of(*sb, "enable_function") == "fail");
+    CHECK((*sb)["status"] == "no_substitute");
+    CHECK(has_note(*sb, "control-pin function differs: the original's is 'outputEnable', the "
+                        "substitute's 'standby'"));
+    const json* unk = cand_by_mpn(r, "NO-PIN-FN");
+    REQUIRE(unk);
+    CHECK(verdict_of(*unk, "enable_function") == "unverified");
+    CHECK((*unk)["status"] != "no_substitute");
+    CHECK((*unk)["grade"] != "drop_in");
+    CHECK(has_note(*unk, "the original's control pin is 'outputEnable'"));
+    const json* oe = cand_by_mpn(r, "OE-TOO");
+    REQUIRE(oe);
+    CHECK(verdict_of(*oe, "enable_function") == "pass");
+    CHECK((*oe)["grade"] == "drop_in");
+    // Stated on the substitute only: unverified the other way round, also capped.
+    auto r2 = run_timing(osc("ORIG-NOFN", 25000000.0, 5e-05, 3.3, 3.3, -40.0, 85.0, nullptr),
+                         json::array({osc("SUB-SB", 25000000.0, 5e-05, 3.3, 3.3, -40.0, 85.0,
+                                          "standby")}));
+    CHECK(verdict_of(r2["candidates"][0], "enable_function") == "unverified");
+    CHECK(r2["candidates"][0]["grade"] != "drop_in");
+    CHECK(has_note(r2["candidates"][0], "the substitute's control pin is 'standby'"));
+}
+
+// SSM3J132TU (Toshiba, 33 nC) took SiA477EDJT (Vishay, 3.3000000000000004e-08 in its record)
+// with Qg 'warn' (seed 20889483): the strict `sv <= ov` read the last-bit difference as a
+// higher Qg. Equal is a pass; lower is better; higher still warns / fails.
+TEST_CASE("qarlos 2026-11-09: an equal MOSFET Qg is a pass, not a warn", "[qarlos][crossref]") {
+    auto orig_row = kelvin::extract_mosfet(mosfet_env("SSM3J132TU", "pChannel",
+        {{"drainSourceVoltage", -12.0}, {"gateSourceVoltageMax", 6.0},
+         {"continuousDrainCurrent", -5.4}, {"powerDissipation", 0.5},
+         {"inputCapacitance", 2.7e-09}, {"totalGateCharge", 3.3e-08}, {"onResistance", 0.017},
+         {"onResistanceVgs", 4.5},
+         {"gateThresholdVoltage", {{"minimum", -1.0}, {"maximum", -0.3}}}}));
+    auto sub_row = kelvin::extract_mosfet(mosfet_env("SiA477EDJT", "pChannel",
+        {{"drainSourceVoltage", -12.0}, {"continuousDrainCurrent", -12},
+         {"gateSourceVoltageMax", 8}, {"powerDissipation", 19},
+         {"outputCapacitance", 7.25e-10}, {"totalGateCharge", 3.3000000000000004e-08},
+         {"onResistance", 0.013000000000000001},
+         {"gateThresholdVoltage", {{"minimum", -1.0}}}}));
+    REQUIRE(orig_row.has_value());
+    REQUIRE(sub_row.has_value());
+    auto spec = [](const kelvin::MosfetRow& m) {
+        // The fields web/src/crossref.js passes for the Qg compare (qg = qg_total).
+        return json{{"mpn", m.mpn}, {"vds", m.vds_rated}, {"id", m.id_continuous},
+                    {"rds_on", m.rds_on}, {"qg", m.qg_total}, {"channel", m.channel}};
+    };
+    kelvin::crossref::Options opt;
+    opt.check_footprint = false;
+    auto r = kelvin::crossref::cross_reference("mosfet", spec(*orig_row),
+                                               json::array({spec(*sub_row)}), opt);
+    CHECK(verdict_of(r["candidates"][0], "qg") == "pass");
+    // Direction is unchanged: a real increase still warns, a decrease passes.
+    json higher = spec(*sub_row);
+    higher["mpn"] = "HIGHER";
+    higher["qg"] = 4.0e-08;
+    json lower = spec(*sub_row);
+    lower["mpn"] = "LOWER";
+    lower["qg"] = 2.0e-08;
+    auto r2 = kelvin::crossref::cross_reference("mosfet", spec(*orig_row),
+                                                json::array({higher, lower}), opt);
+    const json* hi = cand_by_mpn(r2, "HIGHER");
+    const json* lo = cand_by_mpn(r2, "LOWER");
+    REQUIRE(hi);
+    REQUIRE(lo);
+    CHECK(verdict_of(*hi, "qg") == "warn");
+    CHECK(verdict_of(*lo, "qg") == "pass");
+}

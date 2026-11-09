@@ -766,7 +766,7 @@
    "expect": {
     "subtype": "pass",
     "technology": "pass",
-    "frequency": "pass",
+    "frequency": "fail",
     "load_capacitance_pF": "pass",
     "tolerance_ppm": "pass",
     "esr": "pass"
