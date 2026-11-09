@@ -2566,6 +2566,49 @@ TEST_CASE("qarlos 2026-11-09: an oscillator's control-pin function is pinout ide
     CHECK(has_note(r2["candidates"][0], "the substitute's control pin is 'standby'"));
 }
 
+// Owner decision 2026-11-09: output enable and tri-state are ONE pin function (both gate
+// the output to high impedance with the oscillator running), so OE against triState passes
+// with no note; standby is a different function and still rejects with its note. The
+// original is the real ISM92-3251BH-25.000 MHZ record (outputEnable). No TAS timing record
+// states "triState" today (2,484 outputEnable, 7,247 standby, 1,061 none), so the triState
+// side is the same part with only its control-pin function changed.
+TEST_CASE("qarlos 2026-11-09: output enable and tri-state are one control-pin function",
+          "[qarlos][crossref]") {
+    const json ism = osc("ISM92-3251BH-25.000 MHZ", 25000000.0, 4.9999999999999996e-05, 3.3,
+                         3.3, -40.0, 85.0, "outputEnable");
+    auto r = run_timing(ism, json::array({
+        osc("TRISTATE-SAME", 25000000.0, 4.9999999999999996e-05, 3.3, 3.3, -40.0, 85.0,
+            "triState"),
+        osc("ASFL1-25.000MHZ-LC-T", 25000000.0, 4.9999999999999996e-05, 3.3, 3.3, -40.0, 85.0,
+            "standby")}));
+    const json* ts = cand_by_mpn(r, "TRISTATE-SAME");
+    REQUIRE(ts);
+    CHECK(verdict_of(*ts, "enable_function") == "pass");
+    CHECK((*ts)["grade"] == "drop_in");
+    CHECK_FALSE(has_note(*ts, "control-pin function differs"));
+    CHECK_FALSE(has_note(*ts, "control pin is"));
+    const json* sb = cand_by_mpn(r, "ASFL1-25.000MHZ-LC-T");
+    REQUIRE(sb);
+    CHECK(verdict_of(*sb, "enable_function") == "fail");
+    CHECK((*sb)["status"] == "no_substitute");
+    CHECK(has_note(*sb, "control-pin function differs: the original's is 'outputEnable', the "
+                        "substitute's 'standby'"));
+    // The same equivalence the other way round: a triState original takes an OE part.
+    auto r2 = run_timing(osc("TRISTATE-ORIG", 25000000.0, 5e-05, 3.3, 3.3, -40.0, 85.0,
+                             "triState"),
+                         json::array({osc("OE-SUB", 25000000.0, 5e-05, 3.3, 3.3, -40.0, 85.0,
+                                          "outputEnable"),
+                                      osc("NONE-SUB", 25000000.0, 5e-05, 3.3, 3.3, -40.0, 85.0,
+                                          "none")}));
+    const json* oe = cand_by_mpn(r2, "OE-SUB");
+    REQUIRE(oe);
+    CHECK(verdict_of(*oe, "enable_function") == "pass");
+    const json* none = cand_by_mpn(r2, "NONE-SUB");
+    REQUIRE(none);
+    CHECK(verdict_of(*none, "enable_function") == "fail");
+    CHECK(has_note(*none, "the original's is 'triState', the substitute's 'none'"));
+}
+
 // SSM3J132TU (Toshiba, 33 nC) took SiA477EDJT (Vishay, 3.3000000000000004e-08 in its record)
 // with Qg 'warn' (seed 20889483): the strict `sv <= ov` read the last-bit difference as a
 // higher Qg. Equal is a pass; lower is better; higher still warns / fails.
@@ -2830,6 +2873,14 @@ TEST_CASE("qarlos r5-7: an explicitly metric chip code is its imperial equivalen
 // Finding r7.1 (seed 21936773): FG26C0G2A223JNT06 states L 5.5, W 6.0, T 3.5 mm (THT disc);
 // T was dropped and the L x W face became the land, while L x T x H candidates were boxed on
 // their real land.
+// Owner decision 2026-11-09 (verify the convention before it counts): 00f06be then read every
+// such box with KEMET's convention (W across the leads, L upward: KEMET C1119 S-Series p.2,
+// C1116 V-Series p.2). TDK's FG catalogue (leadmlcc_halogenfree_fg_en 20181102) draws the
+// FG26 (p.14) with L = 5.5 across the leads and W = 6.0 upward, and Murata's RDE sheet does
+// the same, so that read turned TDK's and Murata's boxes on their side. The record does not
+// say which convention it uses, so the box is AMBIGUOUS: no land, no height, flagged, and the
+// cross-reference reports the footprint UNVERIFIED (next test). Same fixture as before; the
+// assertions changed from 00f06be's guessed orientation to "ambiguous".
 TEST_CASE("qarlos r5-7: a leaded L x W x T box with no height keeps its thickness",
           "[qarlos][views]") {
     auto fg = kelvin::extract_capacitor(cap_env("TDK", "FG26C0G2A223JNT06",
@@ -2839,9 +2890,11 @@ TEST_CASE("qarlos r5-7: a leaded L x W x T box with no height keeps its thicknes
          {"shape", {{"assembly", "THT"}, {"shapeType", "Disc"}}}},
         {{"capacitance", {{"nominal", 2.2e-08}}}, {"ratedVoltage", 100.0}}));
     REQUIRE(fg.has_value());
-    CHECK(fg->length_m == Approx(0.006));
-    CHECK(fg->width_m == Approx(0.0035));
-    CHECK(fg->height_m == Approx(0.0055));
+    CHECK(fg->box_axes_ambiguous);
+    CHECK(std::isnan(fg->length_m));
+    CHECK(std::isnan(fg->width_m));
+    CHECK(std::isnan(fg->height_m));
+    CHECK(fg->lead_pitch_m == Approx(0.005));
     // KEMET C322C270JAG5TA states L x T x H: unchanged (land L x T, height H)
     auto c322 = kelvin::extract_capacitor(cap_env("KEMET", "C322C270JAG5TA",
         {{"technology", "ceramic-class-1"}, {"case", "C322"}, {"dielectricCode", "C0G"}},
@@ -2853,6 +2906,142 @@ TEST_CASE("qarlos r5-7: a leaded L x W x T box with no height keeps its thicknes
     CHECK(c322->length_m == Approx(0.00508));
     CHECK(c322->width_m == Approx(0.00318));
     CHECK(c322->height_m == Approx(0.0066));
+    CHECK_FALSE(c322->box_axes_ambiguous);
+}
+
+// Owner decision 2026-11-09: the L x W x T radial box is ambiguous for every vendor, whatever
+// its own convention, because the record does not state it. Real TAS records:
+//   Murata RDER72E105MUB1H03B (L 7.7, W 12.5, T 4.0 mm; the Murata sheet's drawing has L
+//     across the leads, W upward) and KEMET VRR07L103KGS (L 7.62, W 7.62, T 3.81 mm; KEMET
+//     C1116 p.2 has W across, L upward) are both flagged and carry no box;
+//   KEMET SRA25B104KGS, an AXIAL box (shapeType "Axial Rectangular"; KEMET C1119 p.2 axial
+//     view: L along the axis, W across, T upward) is NOT ambiguous: land L x W, height T.
+// The ranker then reports an ambiguous side's footprint UNVERIFIED with its note, and an
+// established lead-pitch mismatch still rules first.
+TEST_CASE("qarlos 2026-11-09: an L x W x T radial box with no height is ambiguous; footprint "
+          "unverified",
+          "[qarlos][views][crossref][dims]") {
+    auto rde = kelvin::extract_capacitor(cap_env("Murata", "RDER72E105MUB1H03B",
+        {{"series", "RDE"}, {"technology", "ceramic-class-2"}, {"dielectricCode", "X7R"}},
+        {{"shape", {{"assembly", "THT"}, {"shapeType", "Radial Leaded"}}},
+         {"dimensions", {{"length", {{"maximum", 0.0077}}}, {"width", {{"maximum", 0.0125}}},
+                         {"thickness", {{"maximum", 0.004}}}, {"pitch", {{"nominal", 0.005}}},
+                         {"pinDiameter", {{"nominal", 0.0005}}}}}},
+        {{"capacitance", {{"nominal", 1e-06}}}, {"ratedVoltage", 250.0}}));
+    REQUIRE(rde.has_value());
+    CHECK(rde->box_axes_ambiguous);
+    CHECK(std::isnan(rde->length_m));
+    CHECK(std::isnan(rde->height_m));
+    auto vrr = kelvin::extract_capacitor(cap_env("KEMET", "VRR07L103KGS",
+        {{"series", "VRR Indust X7R HVHT200C"}, {"technology", "ceramic-class-2"},
+         {"dielectricCode", "X7R"}},
+        {{"shape", {{"assembly", "THT"}, {"shapeType", "Radial"}}},
+         {"dimensions", {{"length", {{"maximum", 0.00762}}}, {"thickness", {{"maximum", 0.00381}}},
+                         {"width", {{"maximum", 0.00762}}},
+                         {"pitch", {{"nominal", 0.00508}, {"minimum", 0.00432}, {"maximum", 0.00584}}},
+                         {"pinDiameter", {{"nominal", 0.000635}}}, {"pinLength", {{"nominal", 0.03175}}}}}},
+        {{"capacitance", {{"nominal", 1e-08}}}, {"ratedVoltage", 500.0}}));
+    REQUIRE(vrr.has_value());
+    CHECK(vrr->box_axes_ambiguous);
+    CHECK(std::isnan(vrr->width_m));
+    auto sra = kelvin::extract_capacitor(cap_env("KEMET", "SRA25B104KGS",
+        {{"series", "SRA Comm X7R"}, {"technology", "ceramic-class-2"}, {"dielectricCode", "X7R"}},
+        {{"shape", {{"assembly", "THT"}, {"shapeType", "Axial Rectangular"}}},
+         {"dimensions", {{"length", {{"maximum", 0.00686}}}, {"thickness", {{"maximum", 0.00254}}},
+                         {"width", {{"maximum", 0.00254}}}, {"pinDiameter", {{"nominal", 0.000508}}},
+                         {"pinLength", {{"nominal", 0.03175}}}}}},
+        {{"capacitance", {{"nominal", 1e-07}}}, {"ratedVoltage", 50.0}}));
+    REQUIRE(sra.has_value());
+    CHECK_FALSE(sra->box_axes_ambiguous);
+    CHECK(sra->length_m == Approx(0.00686));
+    CHECK(sra->width_m == Approx(0.00254));
+    CHECK(sra->height_m == Approx(0.00254));
+
+    // The ranker: the spec web/src/crossref.js base() builds from the browse row
+    // (boxAxesAmbiguous -> box_axes_ambiguous).
+    auto spec = [](const kelvin::CapacitorRow& r, double c, double v) {
+        auto nz = [](double x) { return std::isnan(x) || !(x > 0) ? json(nullptr) : json(x); };
+        return json{{"mpn", r.mpn}, {"value_si", c}, {"voltage", v},
+                    {"technology", "ceramic-class-2"}, {"dielectric_code", "X7R"},
+                    {"mount", r.mount}, {"case_code", r.case_code},
+                    {"length_m", nz(r.length_m)}, {"width_m", nz(r.width_m)},
+                    {"height_m", nz(r.height_m)}, {"lead_pitch_m", nz(r.lead_pitch_m)},
+                    {"box_axes_ambiguous", r.box_axes_ambiguous}};
+    };
+    // A same-pitch radial box stated L x T x H (unambiguous) for the Murata original.
+    json boxed = {{"mpn", "BOXED-5MM"}, {"value_si", 1e-06}, {"voltage", 250.0},
+                  {"technology", "ceramic-class-2"}, {"dielectric_code", "X7R"},
+                  {"mount", "THT"}, {"length_m", 0.0077}, {"width_m", 0.004},
+                  {"height_m", 0.0125}, {"lead_pitch_m", 0.005}};
+    json wide = boxed;
+    wide["mpn"] = "BOXED-10MM";
+    wide["lead_pitch_m"] = 0.01;
+    auto r = kelvin::crossref::cross_reference("capacitor", spec(*rde, 1e-06, 250.0),
+                                               json::array({boxed, wide}));
+    const json* same = cand_by_mpn(r, "BOXED-5MM");
+    REQUIRE(same);
+    CHECK((*same)["footprint"] == "unknown");
+    CHECK(verdict_of(*same, "footprint") == "unverified");
+    CHECK((*same)["grade"] != "drop_in");
+    CHECK(has_note(*same, "the original's record draws its body as L x W x T with no height"));
+    const json* far = cand_by_mpn(r, "BOXED-10MM");
+    REQUIRE(far);
+    CHECK((*far)["footprint"] == "different_land_pattern");
+    CHECK(has_note(*far, "lead pitch differs"));
+    // The other way round: the ambiguous KEMET part offered for an unambiguous original.
+    json orig = boxed;
+    orig["mpn"] = "ORIG-L-T-H";
+    orig["value_si"] = 1e-08;
+    orig["voltage"] = 500.0;
+    orig["lead_pitch_m"] = 0.00508;
+    auto r2 = kelvin::crossref::cross_reference("capacitor", orig,
+                                                json::array({spec(*vrr, 1e-08, 500.0)}));
+    const json& c2 = r2["candidates"][0];
+    CHECK(c2["footprint"] == "unknown");
+    CHECK(has_note(c2, "the substitute's record draws its body as L x W x T with no height"));
+}
+
+// Upright disc capacitors that state only a diameter and a thickness (KEMET 1,577, TDK 871,
+// Vishay 60 records) were folded like a can: a diameter x diameter land with no height, T lost.
+// A disc stands on its leads in its own plane: footprint D x T, height D. Drawings: Vishay D
+// Series (doc 28549) p.2 "Lead configuration"; KEMET C900 (C1065) p.3 "Lead Configurations";
+// TDK CK45 (e413_ck45) p.3/3. Real TAS records.
+TEST_CASE("qarlos 2026-11-09: an upright disc's footprint is diameter x thickness, its height "
+          "the diameter",
+          "[qarlos][views]") {
+    auto d101 = kelvin::extract_capacitor(cap_env("Vishay", "D101K20Y5PL63J5R",
+        {{"series", "D Series"}, {"technology", "ceramic-class-2"}, {"dielectricCode", "Y5P"}},
+        {{"dimensions", {{"diameter", {{"maximum", 0.005}}}, {"thickness", {{"maximum", 0.0035}}},
+                         {"pitch", {{"nominal", 0.005}}}, {"pinDiameter", {{"nominal", 0.0006}}}}},
+         {"shape", {{"assembly", "THT"}, {"shapeType", "Disc"}}}},
+        {{"capacitance", {{"nominal", 1e-10}}}, {"ratedVoltage", 500.0}}));
+    REQUIRE(d101.has_value());
+    CHECK(d101->length_m == Approx(0.005));
+    CHECK(d101->width_m == Approx(0.0035));
+    CHECK(d101->height_m == Approx(0.005));
+    CHECK_FALSE(d101->box_axes_ambiguous);
+    auto c901 = kelvin::extract_capacitor(cap_env("KEMET", "C901U100DZNDAA7317",
+        {{"series", "C900AC SFTY X1-440 Y2-300"}, {"technology", "ceramic-class-1"},
+         {"case", "7x5mm"}, {"dielectricCode", "C0G"}},
+        {{"shape", {{"assembly", "THT"}, {"shapeType", "Radial Disc"}}},
+         {"dimensions", {{"thickness", {{"maximum", 0.005}}}, {"diameter", {{"maximum", 0.007}}},
+                         {"pitch", {{"nominal", 0.01}, {"minimum", 0.009}, {"maximum", 0.011}}},
+                         {"pinDiameter", {{"nominal", 0.0005}}}, {"pinLength", {{"nominal", 0.02}}}}}},
+        {{"capacitance", {{"nominal", 1e-11}}}, {"voltageRatedAcMax", 440.0}}));
+    REQUIRE(c901.has_value());
+    CHECK(c901->length_m == Approx(0.007));
+    CHECK(c901->width_m == Approx(0.005));
+    CHECK(c901->height_m == Approx(0.007));
+    auto ck45 = kelvin::extract_capacitor(cap_env("TDK", "CK45-B3AD101KYGNA",
+        {{"series", "CK"}, {"technology", "ceramic-class-2"}, {"case", ""}, {"dielectricCode", "B"}},
+        {{"dimensions", {{"diameter", {{"maximum", 0.0055}}}, {"pitch", {{"nominal", 0.005}}},
+                         {"thickness", {{"maximum", 0.005}}}}},
+         {"shape", {{"assembly", "THT"}, {"shapeType", "Disc"}}}},
+        {{"capacitance", {{"nominal", 1e-10}}}, {"ratedVoltage", 1000.0}}));
+    REQUIRE(ck45.has_value());
+    CHECK(ck45->length_m == Approx(0.0055));
+    CHECK(ck45->width_m == Approx(0.005));
+    CHECK(ck45->height_m == Approx(0.0055));
 }
 
 // Findings r5.3 / r7.3 (seeds 21098941 / 22146231): a Screw Type part (CAS shape.assembly)

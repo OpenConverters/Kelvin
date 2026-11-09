@@ -2384,6 +2384,36 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                 "; verify the land pattern");
             }
         }
+        // A leaded L x W x T body with no height whose record does not say which of L and W
+        // stands up from the board (RowBase.box_axes_ambiguous): TDK and Murata draw L across
+        // the leads and W upward, KEMET the reverse (Views.cpp fill_dimensions cites the
+        // drawings). The row carries no box, so no size compare can rule; the footprint is
+        // UNVERIFIED, capped like any unverified land, with a note naming whose box it is.
+        // An established mismatch decided above (a different lead pitch, a different case,
+        // a class conflict) still stands: it does not depend on the body's orientation.
+        {
+            const bool o_amb = flag(original, "box_axes_ambiguous"),
+                       s_amb = flag(cand, "box_axes_ambiguous");
+            if ((o_amb || s_amb) && !out.contains("footprint")) {
+                out["footprint"] = "unknown";
+                params.push_back({{"name", "footprint"}, {"verdict", UNVERIFIED}});
+                demote();
+                penalty += opt.footprint_weight * kUnknownDimPenalty;
+                const std::string who =
+                    o_amb && s_amb ? "both records draw their bodies as L x W x T with no "
+                                     "height, and neither says"
+                    : o_amb        ? "the original's record draws its body as L x W x T with "
+                                     "no height, and does not say"
+                                   : "the substitute's record draws its body as L x W x T with "
+                                     "no height, and does not say";
+                notes.push_back(who +
+                                " which of L and W is the height above the board (vendors' "
+                                "drawings disagree), "
+                                "so the body's footprint and height could not be established; "
+                                "footprint fit is UNVERIFIED, confirm the land and clearance "
+                                "from the datasheet drawings");
+            }
+        }
         FootprintTier tier = footprint_tier(o_dims, s_dims, strict_case);
         // Same standard chip code on both records: a drawing a few percent off the original's
         // is the same land, not a larger case (see kSameChipCodeBodySpread).

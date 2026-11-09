@@ -635,6 +635,7 @@ json browse_rows(const Shard<Row>& shard, const json& query) {
         // A leaded body's lead pitch (m), its land datum; absent when unstated (v19).
         if (!std::isnan(r.lead_pitch_m)) o["leadPitchM"] = r.lead_pitch_m;
         if (r.provenance_retracted) o["provenanceRetracted"] = true;  // ABT #2035
+    if (r.box_axes_ambiguous) o["boxAxesAmbiguous"] = true;       // v20, see RowBase
         for (const auto& [name, mem] : t.nums) {
             double v = r.*mem;
             if (std::isnan(v)) o[name] = nullptr;

@@ -375,6 +375,10 @@ export function base(r) {
     // Every provenance entry of the record is retracted: the ranker treats its data as
     // unverified (ABT #2035).
     provenance_retracted: r.provenanceRetracted === true,
+    // A leaded L x W x T body with no height whose record does not say which of L and W
+    // stands up from the board: the row carries no box and the ranker reports the
+    // footprint UNVERIFIED with a note (v20).
+    box_axes_ambiguous: r.boxAxesAmbiguous === true,
   }
 }
 

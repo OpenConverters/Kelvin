@@ -105,6 +105,12 @@ struct RowBase {
     // the record states no provenance at all — that is a different gap, not a retraction
     // (ABT #2035).
     bool provenance_retracted = false;
+    // v20 — the record draws its leaded body as L x W x T with no height, and nothing in it
+    // says which of L and W is the height above the board: TDK and Murata put L across the
+    // leads and W upward, KEMET the other way round (Views.cpp fill_dimensions). The box is
+    // then left unfilled (length/width/height NaN) and the cross-reference reports the
+    // footprint UNVERIFIED with a note instead of guessing an orientation.
+    bool box_axes_ambiguous = false;
 };
 
 struct MosfetRow : RowBase {

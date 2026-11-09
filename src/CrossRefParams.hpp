@@ -53,6 +53,16 @@ inline const ClassRank& connector_family_rank() {  // EXACT_MATCH equivalence gr
     static const ClassRank R = {{"pinheadersocket", 1}, {"boardtoboard", 1}};
     return R;
 }
+// EXACT_MATCH equivalence group for an oscillator's control pin (TDAS
+// electrical.enableFunction). Owner decision 2026-11-09: "outputEnable" and "triState"
+// are ONE pin function: both keep the oscillator running and put the output in high
+// impedance when the pin is pulled low, so a board wired for one works with the other.
+// "standby" (powers the device down; restart costs the start-up time) and "none" (no
+// control pin) are not in the group, so each still rejects against every other value.
+inline const ClassRank& enable_function_rank() {
+    static const ClassRank R = {{"outputenable", 1}, {"tristate", 1}};
+    return R;
+}
 inline const ClassRank& yes_no_rank() {  // CLASS_MATCH (rail-to-rail)
     static const ClassRank R = {{"yes", 1}, {"no", 0}};
     return R;
@@ -656,8 +666,10 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
         // (standby) as drop_in (Qarlos 2026-11-09, seed 21832044). A hard identity key like
         // output_type: both stated and different rejects, with a note naming both; stated
         // on one side only is UNVERIFIED, noted, and caps the grade below drop_in
-        // (CrossRef.hpp).
-        {"enable_function", D::ExactMatch, 0.0, std::nullopt, false, false, nullptr},
+        // (CrossRef.hpp). outputEnable and triState are one function
+        // (enable_function_rank): they pass, with no note.
+        {"enable_function", D::ExactMatch, 0.0, std::nullopt, false, false,
+         &enable_function_rank()},
         // Frequency tolerance and stability (+/- ppm) are the accuracy the design was built
         // around (a UART baud budget, an Ethernet +/-100 ppm link, an RTC's drift): a
         // substitute must be equal or tighter. Looser by any amount is a FAIL, not a

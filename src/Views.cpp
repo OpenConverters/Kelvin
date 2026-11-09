@@ -117,7 +117,9 @@ std::optional<double> curve_at(const json* c, double x, const char* x_unit, cons
 // stated diameter is its width and its height and the length stays the length. Without it a
 // diameter is read as an upright can, which turned a 9.53 mm-long PTF65 into a 3.68 x 3.68 mm
 // footprint standing 9.53 mm tall (ABT #2032).
-void fill_dimensions(RowBase& r, const json& di, const json& part, bool lies_flat = false) {
+// `upright_disc`: the body is a disc standing on its leads (see the diameter fold below).
+void fill_dimensions(RowBase& r, const json& di, const json& part, bool lies_flat = false,
+                     bool upright_disc = false) {
     // Mount type first: `thickness` below needs it, because the same T label names a
     // different axis on a chip than on a leaded body. Three schemas spell the SAME fact
     // three ways: `mechanical.assemblyType` (semiconductors, magnetics),
@@ -176,7 +178,29 @@ void fill_dimensions(RowBase& r, const json& di, const json& part, bool lies_fla
         // explicit drawing and a case code yield the same box instead of two
         // incomparable ones. Dropping the diameter left every can in the catalogue
         // with no seat at all, and the footprint check with nothing to compare.
-        if (pos(dia) && lies_flat) {
+        //
+        // An UPRIGHT DISC (`upright_disc`: shapeType names a disc) is the exception to the
+        // can fold: it stands on its leads with its face vertical and the leads in the
+        // face's plane, so the diameter runs across the leads AND upward, and the thickness
+        // is the land's depth. Board footprint D x T, height D. Datasheets checked
+        // 2026-11-09: Vishay D Series (doc 28549, rev. 08-Jan-2026) p.2 "Lead
+        // configuration": D drawn in the lead plane, T in the side view; KEMET C900
+        // (C1065_X1_440_VAC_Y2_300_VAC, 10/25/22) p.3 "Lead Configurations": "D Body
+        // Diameter" across the leads, "T Body Thickness" side view; TDK CK45 (e413_ck45,
+        // July 2011) p.3/3 taping drawing: D in the lead plane, T in the side view. The
+        // can fold read KEMET C901U100DZNDAA7317 (D 7, T 5 mm) as a 7 x 7 mm land with no
+        // height and lost T. Only when the record states no length or width of its own (a
+        // disc that does would be a drawing this rule has not seen); a stated height (the
+        // seated height) is kept; an unstated thickness leaves the depth unknown, never D.
+        const bool disc_fold = upright_disc && pos(dia) && !lies_flat &&
+                               !present(r.length_m) && !present(r.width_m);
+        if (disc_fold) {
+            std::optional<double> disc_thk = resolve_field(src, "thickness");
+            if (nested && !pos(disc_thk)) disc_thk = resolve_field(*mech, "thickness");
+            r.length_m = *dia;
+            if (pos(disc_thk)) r.width_m = *disc_thk;
+            if (!present(r.height_m)) r.height_m = *dia;
+        } else if (pos(dia) && lies_flat) {
             if (!present(r.length_m) && present(r.height_m)) r.length_m = r.height_m;
             r.width_m = *dia;
             r.height_m = *dia;
@@ -209,22 +233,47 @@ void fill_dimensions(RowBase& r, const json& di, const json& part, bool lies_fla
                 } else if (mount == "leaded") {
                     if (!present(r.width_m)) {
                         r.width_m = *thk;
+                    } else if (present(r.length_m) && !present(r.height_m) && lies_flat) {
+                        // An AXIAL box drawn L x W x T (KEMET SRA / TRA): L is the body
+                        // axis, lead exit to lead exit, parallel to the board; W and T
+                        // are its cross-section, W across and T upward — KEMET C1119
+                        // S-Series (7/2/2024) p.2, "Dimensions", axial end view: W drawn
+                        // horizontal, T vertical; and CAS's own definition of thickness
+                        // as the dimension perpendicular to the mounting plane. So the
+                        // land is L x W and the height T.
+                        r.height_m = *thk;
                     } else if (present(r.length_m) && !present(r.height_m)) {
-                        // A leaded box drawn L x W x T with no H (TDK FA/FG/FK radial
+                        // A RADIAL box drawn L x W x T with no H (TDK FA/FG/FK radial
                         // MLCCs: 4,620 records; KEMET 28, Murata 12, survey 2026-11-09).
-                        // T is still the body depth, a footprint axis (the rule above);
-                        // L and W then span the face the leads leave from, so one of
-                        // them is the height. Dropping T kept that FACE as the
-                        // footprint: FG26C0G2A223JNT06 (L 5.5, W 6.0, T 3.5 mm) reached
-                        // the ranker as a 5.5 x 6.0 mm land with no height, while its
-                        // L x T x H candidates were boxed on their real land (Qarlos
-                        // 2026-11-09, seed 21936773). DECISION for the owner to confirm:
-                        // W is the across-the-leads width and L the length along the
-                        // leads (the height above the seating plane), TDK's radial
-                        // drawing convention, so the land is W x T and the height L.
-                        r.height_m = r.length_m;
-                        r.length_m = r.width_m;
-                        r.width_m = *thk;
+                        // T is the body depth, a footprint axis, on every vendor's
+                        // drawing; L and W span the face the leads leave from, so one is
+                        // the height above the board and the other runs across the
+                        // leads. WHICH one is a vendor convention, and the vendors
+                        // disagree (datasheets checked 2026-11-09):
+                        //   TDK FG catalogue (leadmlcc_halogenfree_fg_en, 20181102):
+                        //     the type code reads "LxWxT"; FG26 = 5.5x6.0x3.5, and the
+                        //     FG26 drawing (p.14) puts 5.5 across the leads, 6.0 upward
+                        //     (FG28 p.6, FG18 p.23 the same): L across, W = height;
+                        //   Murata RDER72E105MUB1H03B data sheet p.1 "Appearance &
+                        //     Shape": "L max." across the leads, "W max." upward: L
+                        //     across, W = height;
+                        //   KEMET C1119 S-Series p.2 and C1116 V-Series p.2 radial
+                        //     drawings: W across the leads, L upward: L = height.
+                        // The record states neither the convention nor the height, and
+                        // CAS defines length / width only as "Length / B" and "Width /
+                        // A", so the orientation cannot be read from the data. Choosing
+                        // by manufacturer name would be a guess wearing a datasheet's
+                        // clothes; instead the box stays unfilled and the row says why,
+                        // and the cross-reference reports the footprint UNVERIFIED with
+                        // a note (CrossRef.hpp). The fix belongs in TAS: state the height
+                        // above the board as `height` (and the across-leads axis as
+                        // `length`), as the KEMET L x T x H radial records already do.
+                        // (Before: T dropped, FG26C0G2A223JNT06 boxed on its 5.5 x 6.0 mm
+                        // face; then 00f06be's guess of KEMET's convention for every
+                        // vendor, which turned TDK's and Murata's boxes on their side.)
+                        r.length_m = kNaN();
+                        r.width_m = kNaN();
+                        r.box_axes_ambiguous = true;
                     }
                 }
             }
@@ -583,15 +632,18 @@ std::optional<CapacitorRow> extract_capacitor(const json& env) {
     // it in mechanical.shape.shapeType ("Axial", "Axial Leaded", "Axial Hermetic", "Axial
     // Cylindrical", "Axial-lead", ...), so a shapeType naming "axial" is the evidence. Any
     // other shape keeps the upright-can fold.
-    bool axial = false;
+    // A shapeType naming "disc" ("Disc", "Radial Disc") is the same kind of evidence for an
+    // upright disc: footprint diameter x thickness, height the diameter (fill_dimensions).
+    bool axial = false, disc = false;
     if (const json* mech = obj_get(*di, "mechanical"))
         if (const json* shape = obj_get(*mech, "shape"))
             if (auto st = get_str(*shape, "shapeType")) {
                 std::string l = *st;
                 for (auto& c : l) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
                 axial = l.find("axial") != std::string::npos;
+                disc = !axial && l.find("disc") != std::string::npos;
             }
-    fill_dimensions(r, *di, *part, /*lies_flat=*/axial);
+    fill_dimensions(r, *di, *part, /*lies_flat=*/axial, /*upright_disc=*/disc);
     r.capacitance = *cap_nom;
     if (pos(v_rated)) r.v_rated = *v_rated;
     if (pos(v_rated_ac)) r.v_rated_ac = *v_rated_ac;

@@ -115,6 +115,9 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // v20 carries a magnetic's whole saturation table (MagneticRow.sat_table_current /
 // sat_table_percent_drop / sat_table_temperature), not only the point nearest 20 %, so an
 // unknown-criterion Isat is held against the substitute's 10-30 % curve (Qarlos 2026-11-08).
+// v20 carries RowBase.box_axes_ambiguous: a leaded L x W x T body with no height whose record
+// does not say which of L and W stands up from the board (vendors' drawings disagree), so
+// the cross-reference reports its footprint UNVERIFIED instead of guessing (2026-11-09).
 constexpr uint32_t kFormatVersion = 20;
 
 // Identity of the code that produces rows, so a cached shard can be recognised as
@@ -265,6 +268,7 @@ void io_base(Ar& ar, RowBase& r) {
     ar.str(r.mount);
     ar.boolean(r.provenance_retracted);  // v17
     ar.dbl(r.lead_pitch_m);              // v19
+    ar.boolean(r.box_axes_ambiguous);    // v20
 }
 
 template <class Ar>
