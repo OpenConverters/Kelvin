@@ -79,7 +79,15 @@ export const XREF = [
       // v20 (Qarlos 2026-11-09): the frequency the ripple rating is stated at (a 100 Hz and a
       // 20 kHz rating are compared only on a common basis), and the IEC 60384-14 safety class
       // the record states (CAS part.safetyClass.class). Absent -> null, never a typical value.
-      ripple_current_frequency: nz(r.ripple_current_frequency), safety_class: r.safety_class || null }),
+      ripple_current_frequency: nz(r.ripple_current_frequency), safety_class: r.safety_class || null,
+      // v20 (Qarlos 2026-11-09): the guaranteed capacitance band in farads, as the record states
+      // its two ends (compared as farads, never turned into a percentage); the leaded form
+      // (axial / radial, a land-pattern identity); and the qualified reliability level
+      // (MIL / established reliability). Absent -> null, never a typical value.
+      capacitance_min: nz(r.capacitance_min), capacitance_max: nz(r.capacitance_max),
+      lead_form: r.lead_form || null,
+      qualified_spec: r.qualified_spec || null, qualified_grade: r.qualified_grade || null,
+      qualified_failure_rate: r.qualified_failure_rate ?? null }),
     params: [
       { key: 'value', label: 'C', row: 'capacitance', unit: 'F' },
       { key: 'voltage', label: 'V rated', row: 'v_rated', unit: 'V' },
