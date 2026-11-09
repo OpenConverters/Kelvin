@@ -119,11 +119,13 @@ inline const FieldTable<CapacitorRow>& fields<CapacitorRow>() {
          {"esl", &CapacitorRow::esl},
          {"rth", &CapacitorRow::rth},
          {"esr_frequency", &CapacitorRow::esr_frequency},
+         {"ripple_current_frequency", &CapacitorRow::ripple_current_frequency},
          {"temp_min_c", &CapacitorRow::temp_min_c},
          {"temp_max_c", &CapacitorRow::temp_max_c}},
         {{"technology", &CapacitorRow::technology},
          {"dielectric_code", &CapacitorRow::dielectric_code},
-         {"family", &CapacitorRow::family}},
+         {"family", &CapacitorRow::family},
+         {"safety_class", &CapacitorRow::safety_class}},
         {{"is_production", &CapacitorRow::is_production}},
         {}};
     return t;
@@ -207,7 +209,9 @@ inline const FieldTable<MagneticRow>& fields<MagneticRow>() {
          {"turns_ratio", &MagneticRow::turns_ratio},
          {"impedance_100mhz", &MagneticRow::impedance_100mhz},
          {"impedance_peak", &MagneticRow::impedance_peak},
-         {"impedance_peak_freq", &MagneticRow::impedance_peak_freq}},
+         {"impedance_peak_freq", &MagneticRow::impedance_peak_freq},
+         {"temp_min_c", &MagneticRow::temp_min_c},
+         {"temp_max_c", &MagneticRow::temp_max_c}},
         {{"device_type", &MagneticRow::device_type}, {"family", &MagneticRow::family}},
         {{"is_production", &MagneticRow::is_production}},
         {}};

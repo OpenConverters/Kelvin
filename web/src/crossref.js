@@ -40,12 +40,17 @@ export const XREF = [
     spec: (r) => ({ ...base(r), value_si: nz(r.inductance), saturation_current: nz(r.saturation_current),
       saturation_points: nz(r.saturation_current) != null && r.saturation_percent_drop != null
         ? [{ percent_drop: r.saturation_percent_drop, current: r.saturation_current }] : null,
-      rated_current: nz(r.rated_current), dcr: nz(r.dcr) }),
+      rated_current: nz(r.rated_current), dcr: nz(r.dcr),
+      // v20 (Qarlos 2026-11-09): the operating range, which the substitute must cover at both
+      // ends. Raw, NOT through nz(): a cold limit is negative and 0 degC is a real rating.
+      // Absent -> null -> UNVERIFIED in the ranker.
+      temp_min_C: r.temp_min_c ?? null, temp_max_C: r.temp_max_c ?? null }),
     params: [
       { key: 'value', label: 'L', row: 'inductance', unit: 'H' },
       { key: 'saturation_current', label: 'Isat', row: 'saturation_current', unit: 'A' },
       { key: 'rated_current', label: 'I rated', row: 'rated_current', unit: 'A' },
       { key: 'dcr', label: 'DCR', row: 'dcr', unit: 'Ω' },
+      { key: 'temp_max_C', label: 'T max', row: 'temp_max_c', unit: '°C' },
     ],
   },
   {
@@ -56,15 +61,20 @@ export const XREF = [
     // An AC-only original (line-safety X/Y) has no DC rating to gate on; its AC rating
     // stands in, and only then — a DC original is never gated on an AC figure.
     hardMin: [{ row: 'v_rated', factor: 0.9 }, { row: 'v_rated_ac', factor: 0.9, onlyWithout: 'v_rated' }],
-    // `family` is the series name, and for a capacitor across the mains it is the
-    // only place the IEC 60384-14 line-safety approval appears — the catalogue has
-    // no safety-class field (ABT #677), so the vendors' own series names ("MKP-X1 R",
+    // `family` is the series name, and for a capacitor across the mains it was the
+    // only place the IEC 60384-14 line-safety approval appeared until CAS gained
+    // part.safetyClass (carried below as `safety_class`, v20, and read first by the
+    // ranker); before that the vendors' own series names ("MKP-X1 R",
     // "MKP-X2", "MKP-Y2", "R47 X1 440 VAC") are the whole evidence base. Without it
     // the ranker compared a 560 V catalogue figure against 440 V and graded six X2
     // parts drop-in upgrades for an X1 original (ABT #557). The ranker reads it ONLY
     // when the ORIGINAL's series names a class, so nothing changes for the rest of
     // the catalogue.
-    spec: (r) => ({ ...base(r), value_si: nz(r.capacitance), voltage: nz(r.v_rated), esr: nz(r.esr), ripple_current: nz(r.ripple_current_rms), technology: r.technology ?? '', dielectric_code: r.dielectric_code ?? '', family: r.family ?? '', voltage_ac: nz(r.v_rated_ac), esr_frequency: nz(r.esr_frequency), temp_min_C: r.temp_min_c, temp_max_C: r.temp_max_c }),
+    spec: (r) => ({ ...base(r), value_si: nz(r.capacitance), voltage: nz(r.v_rated), esr: nz(r.esr), ripple_current: nz(r.ripple_current_rms), technology: r.technology ?? '', dielectric_code: r.dielectric_code ?? '', family: r.family ?? '', voltage_ac: nz(r.v_rated_ac), esr_frequency: nz(r.esr_frequency), temp_min_C: r.temp_min_c, temp_max_C: r.temp_max_c,
+      // v20 (Qarlos 2026-11-09): the frequency the ripple rating is stated at (a 100 Hz and a
+      // 20 kHz rating are compared only on a common basis), and the IEC 60384-14 safety class
+      // the record states (CAS part.safetyClass.class). Absent -> null, never a typical value.
+      ripple_current_frequency: nz(r.ripple_current_frequency), safety_class: r.safety_class || null }),
     params: [
       { key: 'value', label: 'C', row: 'capacitance', unit: 'F' },
       { key: 'voltage', label: 'V rated', row: 'v_rated', unit: 'V' },

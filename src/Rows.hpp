@@ -228,9 +228,21 @@ struct CapacitorRow : RowBase {
     // compare, and it graded six X2 parts 'drop_in' upgrades for an X1 mains
     // capacitor (ABT #557).
     std::string family;
+    // v20: the IEC 60384-14 safety class as the record STATES it (CAS part.safetyClass.class:
+    // x1 / x2 / y1 / y2 / y4 / x1y2 / x1y1 / none), verbatim. "" = the record states no class
+    // (field absent or null) — unknown, never "none". The schema gained this field after
+    // ABT #677; before v20 Kelvin read only the series name, so a Vishay F339 X2 part whose
+    // record says safetyClass x2 and names no series took non-safety DC film capacitors as
+    // 'recommended' (Qarlos 2026-11-09, seed 20784754).
+    std::string safety_class;
     // ESR without its measurement frequency is not comparable — a 120 Hz figure
     // and a 100 kHz figure differ severalfold on the same part.
     double esr_frequency = kNaN();
+    // v20: the frequency ripple_current_rms is stated AT (CAS electrical.rippleCurrentFrequency,
+    // Hz). NaN = not stated. A 100 Hz and a 20 kHz ripple rating of the same can differ by
+    // 40 % or more, so the cross-reference compares the two ratings only on a common basis
+    // (Qarlos 2026-11-09, seed 20365838).
+    double ripple_current_frequency = kNaN();
     // Equivalent series INDUCTANCE, from the record's equivalent circuit
     // (CAS modelParams.ls). The one number a layout cannot supply and a
     // package name cannot stand in for: within a single 0402 the real spread
@@ -339,6 +351,11 @@ struct MagneticRow : RowBase {
     double impedance_peak_freq = kNaN();  // Hz
     std::string device_type;              // electrical[0].subtype (inductor/transformer/…): annotated, never gated
     std::string family;                   // manufacturerInfo.family or part.family (series, for context)
+    // v20: the operating-temperature range (PEAS thermal.operatingTemperature, degC), which the
+    // cross-reference compares: a 200 degC original took 125 degC parts with no caveat (Qarlos
+    // 2026-11-09, seed 20680025). NaN = not stated, never a typical range.
+    double temp_min_c = kNaN();
+    double temp_max_c = kNaN();
     bool is_production = false;
     bool has_inductance() const { return present(inductance); }
 };

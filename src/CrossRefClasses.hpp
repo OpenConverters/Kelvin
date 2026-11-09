@@ -16,6 +16,7 @@
 #include <algorithm>
 #include <cctype>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -243,6 +244,10 @@ inline std::string dielectric_regression(const std::string& original, const std:
 // carries does not say so, and a ranker that inferred it would be asserting a
 // safety approval it cannot show. Unknown is reported as unknown, and the caller
 // treats it as unverified — never as a pass.
+//
+// Since then CAS has gained the field (part.safetyClass.class); v20 rows carry it and
+// safety_class_from_token() reads it. The series-name decode below stays for records that
+// state the class only in their series name.
 struct SafetyClass {
     // Rank within an axis, higher = the more onerous approval. Absent = the
     // record names no class on that axis, which is UNKNOWN, not "none".
@@ -288,6 +293,48 @@ inline SafetyClass safety_class(const std::string& series) {
     return out;
 }
 
+// The class a record STATES in CAS part.safetyClass.class (v20 rows carry it verbatim as
+// `safety_class`). The schema enum is x1 / x2 / y1 / y2 / y4 / x1y2 / x1y1 / none; "none" is the
+// datasheet positively stating no approval, and decodes to an empty class (any() false) — the
+// caller tells it apart from "not stated" by the token being non-empty. A token outside the
+// enum is malformed data and throws: reading it as "no class" would be exactly the silent
+// guess this gate exists to refuse.
+inline SafetyClass safety_class_from_token(const std::string& token) {
+    SafetyClass out;
+    if (token == "none") return out;
+    if (token == "x1") out.x = 3;
+    else if (token == "x2") out.x = 2;
+    else if (token == "y1") out.y = 4;
+    else if (token == "y2") out.y = 3;
+    else if (token == "y4") out.y = 1;
+    else if (token == "x1y2") { out.x = 3; out.y = 3; }
+    else if (token == "x1y1") { out.x = 3; out.y = 4; }
+    else
+        throw std::invalid_argument("capacitor safety_class '" + token +
+                                    "' is not a CAS part.safetyClass.class value");
+    return out;
+}
+
+// A substitute whose record STATES its safety class (part.safetyClass) and that class does not
+// hold the original's approval axis at all — an X2 original against a stated Y2, or against a
+// stated "none". Not an absence of evidence: the record says what the part is certified as, and
+// it is not certified on this axis. X never covers Y and Y is not read as covering X (the rule
+// compares like with like within one family).
+inline std::string safety_class_not_held(char axis, int orig_rank, const std::string& sub_token) {
+    const std::string o = safety_class_name(axis, orig_rank);
+    std::string up = sub_token;
+    for (auto& c : up) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    const std::string said = sub_token == "none"
+                                 ? "states it carries NO safety-class approval"
+                                 : "states safety class " + up + ", which holds no " +
+                                       std::string(1, axis) + "-class approval";
+    return "line-safety approval not held: the original is an IEC 60384-14 class-" + o +
+           " capacitor and the substitute's record " + said +
+           ". This is a safety approval, not a margin — no rated-voltage headroom substitutes "
+           "for it, and the swap is not certifiable where the original's class was the "
+           "requirement";
+}
+
 // Why an X1 is not replaced by an X2. Stated as the approval change it is, with
 // both class names, because "voltage: pass" is what the engineer would otherwise
 // read off the row.
@@ -318,12 +365,11 @@ inline std::string safety_class_unverified(char axis, int orig_rank,
                                         substitute_series + "\"";
     return "line-safety class UNVERIFIED: the original is an IEC 60384-14 class-" + o +
            " mains capacitor and " + names +
-           " and states no safety class, so the approval could not be compared. Kelvin's "
-           "catalogue carries no safety-class field (ABT #677) — the class is only ever read "
-           "from the series name — so this is an absence of evidence, not evidence the "
-           "substitute is unapproved. The rated-voltage row above compares catalogue voltages "
-           "and is NOT the AC mains rating this class is granted against. Confirm the "
-           "substitute's X/Y approval on its datasheet before this swap";
+           " and states no safety class (no part.safetyClass, and the series name names "
+           "none), so the approval could not be compared. This is an absence of evidence, not "
+           "evidence the substitute is unapproved. The rated-voltage row above compares "
+           "catalogue voltages and is NOT the AC mains rating this class is granted against. "
+           "Confirm the substitute's X/Y approval on its datasheet before this swap";
 }
 
 // ── Resistor device class: discrete chip vs multi-element array/network ──────

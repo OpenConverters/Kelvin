@@ -532,8 +532,14 @@ inline std::string normalize_mount(const std::string& assembly_type) {
     std::string a = assembly_type;
     for (auto& c : a) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     if (a == "smt" || a == "smd" || a == "surfacemount" || a == "surface_mount") return "smd";
+    // "snap-in" is CAS shape.assembly's own enum value (THT / Screw Type / SMT / Snap-In /
+    // Chassis Mount): a snap-in can's pins go through plated holes and are wave-soldered, so it
+    // is a through-hole board process — the same class leaded_tokens() already gives the
+    // "SNAP-IN" package string. Unclassified, a stated Snap-In mount was reported as "not
+    // stated" (Qarlos 2026-11-09, 380LX151M450K022 / 475VXH330MEFCSN35X35). Screw Type and
+    // Chassis Mount stay unclassified, like "chassis": neither is a board process.
     if (a == "tht" || a == "th" || a == "throughhole" || a == "through_hole" || a == "radial" ||
-        a == "axial")
+        a == "axial" || a == "snap-in" || a == "snapin" || a == "snap_in")
         return "leaded";
     if (a == "pressfit" || a == "press_fit" || a == "press-fit") return "pressfit";
     if (a == "skedd") return "skedd";

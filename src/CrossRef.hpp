@@ -732,12 +732,39 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // went unchecked. Silence used to read as agreement: the six KEMET R46 offered
     // for a WIMA MKP-X1 R were 'recommended' / 'drop_in' / 'upgrade' with voltage
     // "pass" and notes null (ABT #557).
+    //
+    // v20 (Qarlos 2026-11-09, seed 20784754): CAS now has the field — part.safetyClass.class —
+    // and the spec carries it as `safety_class`. Vishay's F339MX252231KIM2T0 states x2 there,
+    // 310 VAC, and no series name, so this gate never engaged and non-safety DC film parts came
+    // back 'recommended'. Each side's class is read from the stated field when the record has
+    // one, else from its series name as before. Rule (owner decision to confirm):
+    //   * the original states no class (or states "none")  -> nothing is compared;
+    //   * same or stricter class on the original's axis     -> pass (X1 covers X2, Y1 covers
+    //     Y2; X never covers Y and Y is not read as covering X);
+    //   * a lower class on that axis                        -> FAIL, rejected (as before);
+    //   * the substitute's record STATES its class and it holds nothing on that axis (a stated
+    //     Y2 or "none" against an X2 original)              -> FAIL, rejected like an identity
+    //     mismatch: the record says what the part is certified as;
+    //   * the substitute states no class anywhere           -> UNVERIFIED with the FAIL's
+    //     consequence (demoted, FAIL penalty, capped at major_review), as before. Rejecting
+    //     this case outright is an open decision for the owner: it would overturn the ABT #557
+    //     rule that an unstated class is an absence of evidence, not a mismatch.
+    // The AC rating is part of the approval (IEC 60384-14 grants a class AT a rated AC
+    // voltage), so for a class-stating original it is compared too: a substitute AC rating
+    // below the original's is a FAIL and rejects; an unstated one is UNVERIFIED with the same
+    // consequence as an unverified class. Equal or higher passes. The DC "voltage" row above
+    // is not that rating and is never read as it.
     if (cat == "capacitor") {
         const std::string o_series = str(original, "family");
-        const SafetyClass o_class = safety_class(o_series);
+        const std::string o_token = str(original, "safety_class");
+        const SafetyClass o_class =
+            o_token.empty() ? safety_class(o_series) : safety_class_from_token(o_token);
         if (o_class.any()) {
             const std::string s_series = str(cand, "family");
-            const SafetyClass s_class = safety_class(s_series);
+            const std::string s_token = str(cand, "safety_class");
+            const bool s_stated = !s_token.empty();
+            const SafetyClass s_class =
+                s_stated ? safety_class_from_token(s_token) : safety_class(s_series);
             struct AxisPair {
                 char axis;
                 std::optional<int> o, s;
@@ -746,7 +773,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             bool downgraded = false, unverified = false;
             for (const AxisPair& a : axes) {
                 if (!a.o) continue;  // the original claims nothing on this axis
-                if (!a.s) {
+                if (!a.s && s_stated) {
+                    downgraded = true;
+                    notes.push_back(safety_class_not_held(a.axis, *a.o, s_token));
+                } else if (!a.s) {
                     unverified = true;
                     notes.push_back(safety_class_unverified(a.axis, *a.o, s_series));
                 } else if (*a.s < *a.o) {
@@ -757,7 +787,32 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             params.push_back({{"name", "safety_class"},
                               {"verdict", downgraded ? FAIL : (unverified ? UNVERIFIED : PASS)}});
             if (downgraded) return reject("line-safety approval class downgrade");
-            if (unverified) {
+            const auto o_ac = num(original, "voltage_ac"), s_ac = num(cand, "voltage_ac");
+            bool ac_unverified = false;
+            if (o_ac) {
+                char buf[64];
+                if (s_ac && *s_ac < *o_ac) {
+                    params.push_back({{"name", "voltage_ac"}, {"verdict", FAIL}});
+                    std::snprintf(buf, sizeof buf, "%g V AC vs the original's %g V AC", *s_ac,
+                                  *o_ac);
+                    notes.push_back(std::string("AC rating below the original's: ") + buf +
+                                    " — the safety class is granted at its rated AC voltage, "
+                                    "so the substitute is not approved for the original's mains");
+                    return reject("AC voltage rating below a safety-class original's");
+                }
+                if (s_ac) {
+                    params.push_back({{"name", "voltage_ac"}, {"verdict", PASS}});
+                } else {
+                    params.push_back({{"name", "voltage_ac"}, {"verdict", UNVERIFIED}});
+                    ac_unverified = true;
+                    std::snprintf(buf, sizeof buf, "%g V AC", *o_ac);
+                    notes.push_back(std::string("the original is approved at ") + buf +
+                                    "; the substitute's record states no AC rating, so its mains "
+                                    "rating could not be compared (its DC rating is not that "
+                                    "rating) — confirm it on the datasheet");
+                }
+            }
+            if (unverified || ac_unverified) {
                 demote();
                 penalty += opt.gate_weight * kVerdictFailPenalty;
                 missing_required_data = true;
@@ -926,6 +981,52 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // power_at_rating_temperature). Computed once, consumed by the power_rating spec below.
     const PowerAtTemperature power_t =
         cat == "resistor" ? power_at_rating_temperature(original, cand) : PowerAtTemperature{};
+    // ── capacitor ripple-current basis ──────────────────────────────────────
+    // A ripple rating is stated AT a frequency, and the same can is rated very differently at
+    // 100 Hz and at 20 kHz: 380LX151M450K022 is 1.2 A at 120 Hz and 1.7 A at 20 kHz. Its
+    // 1.7 A @ 20 kHz was failed against a candidate's 1.36 A @ 100 Hz with no caveat (Qarlos
+    // 2026-11-09, seed 20365838). Rule — compare like with like, the treatment the resistor
+    // power basis gets (power_at_rating_temperature):
+    //   * both records state the frequency and it is the same -> compared as stated;
+    //   * both state it and it DIFFERS (any difference: 100 Hz vs 120 Hz is a different
+    //     basis too) -> UNVERIFIED, with a note giving both values and both frequencies;
+    //   * the original states it, the substitute does not -> UNVERIFIED, noted;
+    //   * the original states none -> compared as stated, exactly as before (no basis exists
+    //     for any candidate, so none is skewed against another).
+    // An UNVERIFIED basis is demoted and capped at minor_review (drop_in asserts no rating
+    // regressed, which nobody has shown) and counts in neither direction. No conversion is
+    // attempted: never a "typical" frequency multiplier, and not the record's own multiplier
+    // table either (a candidate's table rarely reaches the original's frequency — 198 PHR-SI's
+    // stops at 10 kHz — and an extrapolated multiplier is a guess).
+    bool ripple_basis_unverified = false;
+    if (cat == "capacitor") {
+        const auto o_ir = num(original, "ripple_current"), s_ir = num(cand, "ripple_current");
+        const auto o_f = num(original, "ripple_current_frequency"),
+                   s_f = num(cand, "ripple_current_frequency");
+        if (o_ir && s_ir && o_f) {
+            char buf[256];
+            if (s_f && std::fabs(*o_f - *s_f) > 1e-9 * std::max(*o_f, *s_f)) {
+                ripple_basis_unverified = true;
+                std::snprintf(buf, sizeof buf,
+                              "ripple current quoted at different frequencies (original %g A at "
+                              "%g Hz, substitute %g A at %g Hz)",
+                              *o_ir, *o_f, *s_ir, *s_f);
+                notes.push_back(std::string(buf) +
+                                " — not directly comparable; confirm the substitute's rating at "
+                                "the original's frequency from its datasheet");
+            } else if (!s_f) {
+                ripple_basis_unverified = true;
+                std::snprintf(buf, sizeof buf,
+                              "the original's ripple current is %g A at %g Hz; the substitute's "
+                              "record states %g A at no frequency",
+                              *o_ir, *o_f, *s_ir);
+                notes.push_back(std::string(buf) +
+                                " — not directly comparable; confirm its rating at the "
+                                "original's frequency from the datasheet");
+            }
+            if (ripple_basis_unverified) demote();
+        }
+    }
     // ── PARAM_SPECS verdicts (the shared Heaviside table) ────────────────────
     for (const ParamSpec& spec : params_for(cat)) {
         const bool supply_key = spec.key == "supply_min_V" || spec.key == "supply_max_V";
@@ -936,8 +1037,11 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                        detail::present(cand, "saturation_points");
         if (!has_data) continue;
         const bool power_at_t = cat == "resistor" && spec.key == "power_rating" && power_t.applies;
+        const bool ripple_blind =
+            cat == "capacitor" && spec.key == "ripple_current" && ripple_basis_unverified;
         const ParamOutcome outcome =
-            !power_at_t     ? compare_param(spec, original, cand)
+            ripple_blind    ? ParamOutcome(UNVERIFIED)
+            : !power_at_t   ? compare_param(spec, original, cand)
             : power_t.subst ? compare_numeric(spec, power_t.orig, power_t.subst)
                             : ParamOutcome(UNVERIFIED);
         const std::string verdict = outcome.verdict;
@@ -961,8 +1065,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         }
 
         const bool numeric = (spec.dir == Dir::Lower || spec.dir == Dir::Higher);
-        auto o = numeric ? detail::jnum(original, spec.key) : std::nullopt;
-        auto s = numeric ? detail::jnum(cand, spec.key) : std::nullopt;
+        // Two ratings on different bases have no direction between them (ripple basis above).
+        auto o = numeric && !ripple_blind ? detail::jnum(original, spec.key) : std::nullopt;
+        auto s = numeric && !ripple_blind ? detail::jnum(cand, spec.key) : std::nullopt;
         if (power_at_t) {
             using power_detail::celsius;
             using power_detail::watts;
@@ -1138,8 +1243,11 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // two are. And an operating range the original states but the substitute's record does
     // not is UNVERIFIED — drop_in asserts no rating regressed, which nobody has shown, so it
     // takes the same minor_review cap as an unverified footprint.
+    // The same operating-range rule holds for a magnetic (Qarlos 2026-11-09, seed 20680025):
+    // its PARAM_SPECS carry temp_min_C / temp_max_C with no warn band, and an end the
+    // original states but the substitute's record does not takes the same cap here.
     bool temp_unverified = false;
-    if (cat == "resistor") {
+    if (cat == "resistor" || cat == "magnetic") {
         auto verdict_of = [&](const char* name) -> std::string {
             for (const auto& p : params)
                 if (p.value("name", "") == name) return p.value("verdict", "");
@@ -1147,7 +1255,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         };
         const std::string tv = verdict_of("tcr");
         const auto o_tcr = num(original, "tcr"), s_tcr = num(cand, "tcr");
-        if ((tv == WARN || tv == FAIL) && o_tcr && s_tcr) {
+        if (cat == "resistor" && (tv == WARN || tv == FAIL) && o_tcr && s_tcr) {
             char b[160];
             std::snprintf(b, sizeof b,
                           "TCR +/-%g ppm/K vs the original's +/-%g ppm/K (%.3gx worse)",
@@ -1770,11 +1878,16 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             // same known-vs-absent rule the height axis follows.)
             params.push_back({{"name", "mounting"}, {"verdict", UNVERIFIED}});
             mount_unverified = true;
-            auto said = [](const std::string& cls) {
-                return cls.empty() ? std::string("not stated") : cls;
+            // Report what the record SAYS: a stated mount Kelvin does not classify (CAS
+            // "Screw Type", "Chassis Mount") is quoted as stated, never called "not stated" —
+            // the note contradicted the record when Snap-In was unclassified (Qarlos 2026-11-09).
+            auto said = [](const std::string& cls, const std::string& mt) {
+                if (!cls.empty()) return cls;
+                if (!mt.empty()) return "\"" + mt + "\" (not classifiable as SMD or through-hole)";
+                return std::string("not stated");
             };
-            notes.push_back("mount type not established (original: " + said(o_cls) +
-                            ", substitute: " + said(s_cls) +
+            notes.push_back("mount type not established (original: " + said(o_cls, o_mt) +
+                            ", substitute: " + said(s_cls, s_mt) +
                             ") — confirm SMD vs through-hole from the datasheets");
         }
     }
@@ -2522,6 +2635,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // temperature has not been shown not to, so it takes the same minor_review cap.
     out["grade"] = grade_for(status, tier, any_warn, any_fail,
                              footprint_unverified || power_basis_unverified ||
+                                 ripple_basis_unverified ||
                                  topology_unverified ||
                                  mount_unverified || temp_unverified,
                              missing_required_data, hfit);

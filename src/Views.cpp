@@ -584,6 +584,16 @@ std::optional<CapacitorRow> extract_capacitor(const json& env) {
     r.family = get_str(*mi, "family").value_or("");
     if (r.family.empty()) r.family = get_str(*part, "series").value_or("");
     if (auto v = get_num(*elec, "esrFrequency"); pos(v)) r.esr_frequency = *v;
+    // The frequency the scalar ripple rating is stated AT (v20). Only alongside a ripple
+    // value: a frequency with nothing quoted at it is not a basis for anything. Never
+    // inferred from the series, the technology or a "typical" 100/120 Hz.
+    if (present(r.ripple_current_rms))
+        if (auto v = get_num(*elec, "rippleCurrentFrequency"); pos(v))
+            r.ripple_current_frequency = *v;
+    // The IEC 60384-14 safety class the record states (v20), verbatim. Absent or null stays
+    // "" (not stated); the explicit token "none" is a stated fact and is kept as such.
+    if (const json* sc = obj_get(*part, "safetyClass"); sc && sc->is_object())
+        r.safety_class = get_str(*sc, "class").value_or("");
     // No scalar ESR, but a measured ESR-vs-frequency curve: read it AT 100 kHz, the
     // frequency the catalogue's scalar ESRs are overwhelmingly quoted at, and say so in
     // esr_frequency. TDK publishes the curve and no scalar, so every TDK candidate reached
@@ -1102,6 +1112,16 @@ std::optional<MagneticRow> extract_magnetic(const json& env) {
     std::string fam = get_str(*mi, "family").value_or("");
     if (fam.empty()) fam = get_str(*part, "family").value_or("");
     r.family = fam;
+    // Operating-temperature range (v20): PEAS datasheetInfoThermal thermal.operatingTemperature,
+    // the only temperature key the magnetic catalogue uses (survey of magnetics.ndjson,
+    // 2026-11-09: 80,794 of 97,191 records state it, 74,954 with a minimum). Straight from the
+    // object: a cold limit is negative and 0 degC is a real rating.
+    if (const json* th = obj_get(*di, "thermal")) {
+        if (const json* t = obj_get(*th, "operatingTemperature")) {
+            if (auto v = get_num(*t, "minimum")) r.temp_min_c = *v;
+            if (auto v = get_num(*t, "maximum")) r.temp_max_c = *v;
+        }
+    }
     auto status = get_str(*mi, "status");
     r.is_production = status.has_value() && *status == "production";
     return r;

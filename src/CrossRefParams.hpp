@@ -457,6 +457,13 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
         {"saturation_current", D::Higher, 0.9, std::nullopt, false, true, nullptr},
         {"dcr", D::Lower, 1.3, std::nullopt, false, false, nullptr},
         {"rated_current", D::Higher, 0.9, std::nullopt, false, false, nullptr},
+        // Operating range (Qarlos 2026-11-09, seed 20680025: XT26008-T-K, rated -55..200 degC,
+        // took 125 degC chip inductors with no caveat). The resistor rule: the substitute must
+        // cover the original's range at both ends with NO warn band (abs_tol 0) — a lower
+        // maximum or a warmer minimum is a FAIL. Absent -> UNVERIFIED, which CrossRef.hpp caps
+        // at minor_review when it is the original that states the end.
+        {"temp_min_C", D::Lower, 0.0, 0.0, false, false, nullptr},
+        {"temp_max_C", D::Higher, 0.0, 0.0, false, false, nullptr},
     };
     static const std::vector<ParamSpec> kChipBead = {
         // exclude_missing_sub: impedance IS what a bead is. A candidate with no
