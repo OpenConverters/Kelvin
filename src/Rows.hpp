@@ -400,6 +400,11 @@ struct ConnectorRow : RowBase {
     // state one and it was dropped on the way into the shard, which is why 2.54 mm parts were
     // graded drop_in against a 2.00 mm original (ABT #485).
     double pitch = kNaN();
+    // mechanical.rows — how many rows the positions are split into. positions / rows is the
+    // length of a row, and the row length is what turns a small pitch difference into a pin
+    // that misses its hole: 23 x 0.08 mm = 1.84 mm at the end of a 24-way 5.00 mm strip in a
+    // 5.08 mm board (Qarlos 2026-11-08). NaN when unstated.
+    double rows = kNaN();
     // degC — environmental.operatingTemperature, a HARD environmental limit and the only
     // rating a connector carries besides current and voltage. 365,680 of the 391,073
     // catalogue rows state one and it was dropped on the way into the shard, so a +105 degC

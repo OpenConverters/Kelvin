@@ -1131,6 +1131,86 @@ TEST_CASE("qarlos 2026-11-08: the connector extractor carries mechanical.orienta
     CHECK(std::isnan(b->lead_pitch_m));
 }
 
+// 395337424 (Molex Eurostyle, 24 positions, 1 row, 5.08 mm) took 739-124 (WAGO, 24 positions,
+// 5.00 mm) with pitch "pass", no note and no penalty (seed 20784754): the old 2 % relative
+// band let 0.08 mm through, and over 23 pitches the end pin is 1.84 mm off its hole. The pin
+// field must line up: (positions_per_row - 1) x |dpitch| <= 0.1 mm.
+TEST_CASE("qarlos 2026-11-08: a connector pitch difference is judged at the end pin",
+          "[qarlos][crossref]") {
+    auto tb = [](const std::string& mpn, double pitch_mm, json positions, json rows) {
+        // The shape web/src/crossref.js sends for a terminal block.
+        json o = {{"mpn", mpn},           {"family", "terminalBlock"}, {"pitch_mm", pitch_mm},
+                  {"rated_current_A", 18.0}, {"mount", nullptr},       {"mounting", nullptr}};
+        o["positions"] = positions;
+        o["rows"] = rows;
+        return o;
+    };
+    const json orig = tb("395337424", 5.08, 24.0, 1.0);
+    kelvin::crossref::Options opt;
+    opt.max_results = 10;
+    auto r = kelvin::crossref::cross_reference(
+        "connector", orig,
+        json::array({tb("739-124", 5.00, 24.0, nullptr), tb("SAME", 5.08, 24.0, nullptr)}), opt);
+
+    const json* wago = cand_by_mpn(r, "739-124");
+    REQUIRE(wago);
+    CHECK(verdict_of(*wago, "pitch_mm") == "fail");
+    CHECK((*wago)["footprint"] == "different_land_pattern");
+    CHECK((*wago)["status"] == "partial");
+    CHECK((*wago)["grade"] != "drop_in");
+    CHECK(has_note(*wago, "pitch differs: 5.08 -> 5 mm"));
+    CHECK(has_note(*wago, "over 24 positions per row the last contact sits 1.84 mm off its pad"));
+    const json* same = cand_by_mpn(r, "SAME");
+    REQUIRE(same);
+    CHECK(verdict_of(*same, "pitch_mm") == "pass");
+    CHECK(r["candidates"][0]["mpn"] == "SAME");
+
+    // The same 0.08 mm on a 2-way part: 1 x 0.08 mm, inside 0.1 mm — the pin field lines up.
+    auto r2 = kelvin::crossref::cross_reference(
+        "connector", tb("O2", 5.08, 2.0, 1.0), json::array({tb("C2", 5.00, 2.0, nullptr)}), opt);
+    CHECK(verdict_of(r2["candidates"][0], "pitch_mm") == "pass");
+
+    // 24 positions in 2 rows of 12: 11 x 0.08 = 0.88 mm, still a different land pattern.
+    auto r3 = kelvin::crossref::cross_reference(
+        "connector", tb("O3", 5.08, 24.0, 2.0), json::array({tb("C3", 5.00, 24.0, 2.0)}), opt);
+    CHECK(verdict_of(r3["candidates"][0], "pitch_mm") == "fail");
+    CHECK(has_note(r3["candidates"][0], "over 12 positions per row the last contact sits 0.88 mm"));
+
+    // No row count on either record: 24 positions may be one row (1.84 mm) or several; the
+    // arrangement decides and nobody stated it -> unverified, noted, capped. Not a pass.
+    auto r4 = kelvin::crossref::cross_reference(
+        "connector", tb("O4", 5.08, 24.0, nullptr), json::array({tb("C4", 5.00, 24.0, nullptr)}),
+        opt);
+    const json& c4 = r4["candidates"][0];
+    CHECK(verdict_of(c4, "pitch_mm") == "unverified");
+    CHECK(c4["grade"] != "drop_in");
+    CHECK(has_note(c4, "neither record states how the 24 positions are split into rows"));
+
+    // No position count at all: a non-zero difference is unverified — two positions is not
+    // assumed.
+    auto r5 = kelvin::crossref::cross_reference(
+        "connector", tb("O5", 5.08, nullptr, nullptr),
+        json::array({tb("C5", 5.00, nullptr, nullptr)}), opt);
+    const json& c5 = r5["candidates"][0];
+    CHECK(verdict_of(c5, "pitch_mm") == "unverified");
+    CHECK(c5["grade"] != "drop_in");
+    CHECK(has_note(c5, "neither record states a position count"));
+
+    // The extractor carries mechanical.rows into the row (v20).
+    auto env = json{{"connector",
+                     {{"manufacturerInfo",
+                       {{"name", "Molex"},
+                        {"reference", "395337424"},
+                        {"status", "production"},
+                        {"datasheetInfo",
+                         {{"part", {{"partNumber", "395337424"}}},
+                          {"mechanical", {{"positions", 24}, {"rows", 1}, {"pitch", 0.00508}}},
+                          {"familyDetails", {{"family", "terminalBlock"}}}}}}}}}};
+    auto row = kelvin::extract_connector(env);
+    REQUIRE(row.has_value());
+    CHECK(row->rows == Approx(1.0));
+}
+
 // Round-1 merge left connectors with TWO mount checks (a PARAM_SPECS 'mounting' key and the
 // shared compare_mount gate): a connector whose substitute states no board attach came back
 // with two 'mounting' verdicts and two notes. One gate now decides it.

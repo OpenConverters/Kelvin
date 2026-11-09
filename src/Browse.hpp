@@ -264,6 +264,7 @@ inline const FieldTable<ConnectorRow>& fields<ConnectorRow>() {
          {"rated_voltage", &ConnectorRow::rated_voltage},
          {"positions", &ConnectorRow::positions},
          {"pitch", &ConnectorRow::pitch},
+         {"rows", &ConnectorRow::rows},
          {"temp_min_c", &ConnectorRow::temp_min_c},
          {"temp_max_c", &ConnectorRow::temp_max_c},
          {"mating_cycles", &ConnectorRow::mating_cycles}},

@@ -557,6 +557,90 @@ inline PowerAtTemperature power_at_rating_temperature(const json& original, cons
     return r;
 }
 
+// ── connector pitch: does the pin field line up? ─────────────────────────────
+// A connector record carries no body outline, so its contact pitch IS its land pattern:
+// contact k of a row sits (k-1) x pitch from contact 1. Two pitches that differ by a few
+// hundredths of a millimetre (5.00 / 5.08, 2.50 / 2.54) are a fit on a two-hole pattern
+// and a misfit on a long row, because the difference ADDS UP along the row: a 24-way
+// 5.00 mm strip in a 5.08 mm board puts its end pin 23 x 0.08 = 1.84 mm off its hole. A
+// relative tolerance on the pitch alone (the old 2 % ExactMatch band) passed that pair.
+//
+// Rule (owner decision to confirm: the 0.1 mm limit is the one the owner approved for a
+// two-hole 2.50/2.54 and 5.00/5.08 pattern, applied here to the FARTHEST pin):
+//   offset = (positions_per_row - 1) x |pitch_original - pitch_substitute|
+//   offset <= 0.1 mm  -> pass (the pin field lines up);
+//   offset >  0.1 mm  -> fail: a different land pattern, reported exactly like any other
+//                        pitch mismatch (footprint different_land_pattern, partial), with
+//                        a note giving both pitches, the per-row count and the end-pin offset.
+// positions_per_row = ceil(positions / rows), taken from each record that states both
+// (mechanical.positions and mechanical.rows); when both records state it, the LONGER row
+// decides (that row's end pin is the one that has to reach its hole). When neither record
+// states rows, the row length is not known and is only BOUNDED, never assumed:
+//   * from below by 2 — a stated contact-to-contact pitch means at least two contacts sit
+//     that far apart, so a difference over 0.1 mm already misplaces the first neighbour
+//     -> fail (certain whatever the row length);
+//   * from above by the stated position count (a row cannot hold more contacts than the
+//     part has), so an offset within 0.1 mm even over the whole count -> pass;
+//   * in between, the arrangement decides and nobody stated it -> unverified with a note.
+// With no position count on either side, a non-zero difference within 0.1 mm is
+// unverified: two positions is NOT assumed as the row length.
+// Only decides when BOTH pitches are stated; otherwise the PARAM_SPECS table's own
+// missing-value handling applies.
+struct ConnectorPitchFit {
+    const char* verdict = nullptr;  // PASS / FAIL / UNVERIFIED; nullptr = not decided here
+    double per_row = 0.0;           // contacts per row the verdict was taken over (0 = unknown)
+    double offset_mm = 0.0;         // end-pin offset over that row
+    std::string note;
+};
+constexpr double kConnectorPinFieldLimitMm = 0.1;
+inline ConnectorPitchFit connector_pitch_fit(const json& original, const json& cand) {
+    ConnectorPitchFit f;
+    const auto o_p = num(original, "pitch_mm"), s_p = num(cand, "pitch_mm");
+    if (!o_p || !s_p) return f;
+    const double d = std::fabs(*o_p - *s_p);
+    // Floating-point equality only: any real catalogue difference is >= 0.01 mm.
+    if (d <= 1e-9 * std::max(*o_p, *s_p)) {
+        f.verdict = PASS;
+        return f;
+    }
+    double per_row = 0.0;
+    for (const json* rec : {&original, &cand}) {
+        const auto n = num(*rec, "positions"), rows = num(*rec, "rows");
+        if (n && rows && *rows >= 1.0) per_row = std::max(per_row, std::ceil(*n / *rows));
+    }
+    const std::string pitches =
+        "pitch " + mm(*o_p * 1e-3) + " -> " + mm(*s_p * 1e-3) + " mm";
+    if (per_row > 0.0) {
+        f.per_row = per_row;
+        f.offset_mm = (per_row - 1.0) * d;
+        f.verdict = f.offset_mm <= kConnectorPinFieldLimitMm ? PASS : FAIL;
+        return f;
+    }
+    if (d > kConnectorPinFieldLimitMm) {
+        // The adjacent contact already misses; the row length does not change the verdict.
+        f.verdict = FAIL;
+        return f;
+    }
+    double bound = 0.0;
+    for (const json* rec : {&original, &cand})
+        if (const auto n = num(*rec, "positions")) bound = std::max(bound, *n);
+    if (bound >= 1.0 && (bound - 1.0) * d <= kConnectorPinFieldLimitMm) {
+        f.verdict = PASS;
+        return f;
+    }
+    f.verdict = UNVERIFIED;
+    if (bound >= 1.0)
+        f.note = pitches + ": neither record states how the " +
+                 std::to_string(static_cast<long>(bound)) +
+                 " positions are split into rows, and in a single row the end pin would sit " +
+                 mm((bound - 1.0) * d * 1e-3) +
+                 " mm off its hole (over 0.1 mm) — confirm the pin field lines up";
+    else
+        f.note = pitches + ": neither record states a position count, so the end-pin offset "
+                 "cannot be worked out — confirm the pin field lines up";
+    return f;
+}
+
 // Score one candidate against the original. Returns a per-candidate JSON verdict.
 inline json score_candidate(const std::string& cat, const json& original, const json& cand,
                             const Options& opt) {
@@ -893,6 +977,12 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // "footprint": null next to a known pitch mismatch reads as "we could not check
     // the fit" when it has just been checked and failed (ABT #485).
     bool connector_pitch_conflict = false;
+    // Whether the pin field lines up (connector_pitch_fit above): it decides the pitch_mm
+    // verdict whenever both records state a pitch. An alignment nobody can establish is
+    // an unverified land pattern and caps the grade like one.
+    const ConnectorPitchFit connector_pitch =
+        cat == "connector" ? connector_pitch_fit(original, cand) : ConnectorPitchFit{};
+    bool connector_pitch_unverified = false;
     // The other two halves of "does it mate": the finish on the separable surface and the
     // way the wire attaches. Both are stated by the records and both were declared absent
     // from the catalogue by the family caveat, so neither was ever compared (ABT #487).
@@ -936,12 +1026,18 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                        detail::present(cand, "saturation_points");
         if (!has_data) continue;
         const bool power_at_t = cat == "resistor" && spec.key == "power_rating" && power_t.applies;
+        const bool pin_field = spec.key == "pitch_mm" && connector_pitch.verdict != nullptr;
         const ParamOutcome outcome =
-            !power_at_t     ? compare_param(spec, original, cand)
+            pin_field       ? ParamOutcome(connector_pitch.verdict)
+            : !power_at_t   ? compare_param(spec, original, cand)
             : power_t.subst ? compare_numeric(spec, power_t.orig, power_t.subst)
                             : ParamOutcome(UNVERIFIED);
         const std::string verdict = outcome.verdict;
         params.push_back({{"name", spec.key}, {"verdict", verdict}});
+        if (pin_field && verdict == UNVERIFIED) {
+            connector_pitch_unverified = true;
+            notes.push_back(connector_pitch.note);
+        }
         if (cat == "connector" && verdict == FAIL) {
             if (spec.key == "pitch_mm") connector_pitch_conflict = true;
             if (spec.key == "contact_plating") connector_plating_conflict = true;
@@ -1841,10 +1937,18 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             std::string note = "pitch differs: " + mm(*o_pitch * 1e-3) + " -> " +
                                mm(*s_pitch * 1e-3) + " mm (" +
                                signed_pct(100.0 * (*s_pitch / *o_pitch - 1.0)) + ")";
-            auto n = num(original, "positions");
+            // The row the verdict was taken over (connector_pitch_fit): the per-row count
+            // when a record states the rows, else the stated position count.
+            std::optional<double> n;
+            if (connector_pitch.per_row > 0.0) n = connector_pitch.per_row;
+            else n = num(original, "positions");
+            // Without a stated row count the verdict rests on the adjacent contact alone
+            // (connector_pitch_fit); the end-pin figure is then for a single row, said so.
             if (n && *n >= 2.0)
-                note += "; over " + std::to_string(static_cast<long>(*n)) +
-                        " positions the last contact sits " +
+                note += (connector_pitch.per_row > 0.0 ? "; over " : "; in a single row of ") +
+                        std::to_string(static_cast<long>(*n)) +
+                        (connector_pitch.per_row > 0.0 ? " positions per row" : " positions") +
+                        " the last contact sits " +
                         mm(std::fabs(*s_pitch - *o_pitch) * (*n - 1.0) * 1e-3) +
                         " mm off its pad";
             notes.push_back(note + " — a different land pattern, not a drop-in");
@@ -2518,6 +2622,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     if (out.value("height_fit", "") == "unknown") footprint_unverified = true;
     // So does a connector orientation that could not be established.
     if (connector_orientation_unverified) footprint_unverified = true;
+    // And a connector pin field whose alignment could not be established.
+    if (connector_pitch_unverified) footprint_unverified = true;
     // drop_in asserts no rating regressed; a power nobody can state at the original's rating
     // temperature has not been shown not to, so it takes the same minor_review cap.
     out["grade"] = grade_for(status, tier, any_warn, any_fail,

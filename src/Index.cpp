@@ -99,7 +99,10 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // current_sense / pulse_withstanding), which the cross-reference compares (Qarlos
 // 2026-11-08: a 175 C metal film took 155 C parts as pass, a current-sense chip took
 // general-purpose thick film as drop_in, a 4x worse TCR went unmentioned).
-constexpr uint32_t kFormatVersion = 19;
+// v20 carries a connector's row count (ConnectorRow.rows, mechanical.rows): positions / rows
+// is the row length the cross-reference's pin-field check runs over (Qarlos 2026-11-08: a
+// 24-way 5.00 mm strip passed against a 5.08 mm original, end pin 1.84 mm off its hole).
+constexpr uint32_t kFormatVersion = 20;
 
 // Identity of the code that produces rows, so a cached shard can be recognised as
 // having been built by a DIFFERENT extractor than the one running now (ABT #426).
@@ -452,6 +455,7 @@ void row_io(Ar& ar, ConnectorRow& r) {
     ar.str(r.contact_plating);
     ar.str(r.termination);
     ar.str(r.orientation);  // v19
+    ar.dbl(r.rows);         // v20
     ar.boolean(r.is_production);
 }
 
