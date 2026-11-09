@@ -1260,6 +1260,7 @@ std::optional<ConnectorRow> extract_connector(const json& env) {
     if (mech && mech->is_object()) {
         set_if_pos(r.positions, get_num(*mech, "positions"));
         set_if_pos(r.pitch, get_num(*mech, "pitch"));
+        set_if_pos(r.rows, get_num(*mech, "rows"));
         set_if_pos(r.mating_cycles, get_num(*mech, "matingCycles"));
         // Mating-axis orientation (vertical / rightAngle / horizontal / mezzanine / edge /
         // cable). Empty when unstated: the ranker then reports it unverified, never a match.
@@ -1297,6 +1298,9 @@ std::optional<ConnectorRow> extract_connector(const json& env) {
                                    .value_or(get_str(*fd, "interface").value_or(""));
         r.termination = get_str(*fd, "termination")
                             .value_or(get_str(*fd, "clampType").value_or(""));
+        // terminalBlock's pluggable flag, tri-state: unstated stays "" (never "false").
+        if (auto it = fd->find("pluggable"); it != fd->end() && it->is_boolean())
+            r.pluggable = it->get<bool>() ? "true" : "false";
     }
     // The separable interface itself: only the mating-area material, which is what decides
     // whether two halves may be mated at all (gold onto tin frets and corrodes). The

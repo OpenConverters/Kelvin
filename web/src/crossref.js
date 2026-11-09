@@ -199,6 +199,9 @@ export const XREF = [
     spec: (r) => ({ ...base(r), family: r.family ?? '', positions: nz(r.positions),
       polarity: r.polarity || null, interface_standard: r.interface_standard || null,
       pitch_mm: r.pitch != null && r.pitch > 0 ? r.pitch * 1e3 : null,
+      // mechanical.rows: positions / rows is the row the ranker's pin-field check runs
+      // over (a small pitch difference adds up along a row). null when unstated.
+      rows: nz(r.rows),
       rated_current_A: nz(r.rated_current), rated_voltage_V: nz(r.rated_voltage),
       temp_min_C: r.temp_min_c, temp_max_C: r.temp_max_c,
       contact_plating: r.contact_plating || null, termination: r.termination || null,
@@ -211,6 +214,9 @@ export const XREF = [
       // cable): a vertical FPC connector for a right-angle original is a different
       // mechanical design. null when unstated: unverified with a note, never a match.
       orientation: r.orientation || null,
+      // familyDetails.pluggable (terminal blocks): true = pluggable plug, false = fixed PCB
+      // block, null = unstated. Tri-state on purpose: unstated is never 'fixed'.
+      pluggable: r.pluggable === 'true' ? true : r.pluggable === 'false' ? false : null,
       mating_cycles: nz(r.mating_cycles) }),
     params: [
       { key: 'positions', label: 'pos', row: 'positions', unit: '' },

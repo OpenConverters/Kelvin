@@ -557,6 +557,107 @@ inline PowerAtTemperature power_at_rating_temperature(const json& original, cons
     return r;
 }
 
+// ── connector pitch: does the pin field line up? ─────────────────────────────
+// A connector record carries no body outline, so its contact pitch IS its land pattern:
+// contact k of a row sits (k-1) x pitch from contact 1. Two pitches that differ by a few
+// hundredths of a millimetre (5.00 / 5.08, 2.50 / 2.54) are a fit on a two-hole pattern
+// and a misfit on a long row, because the difference ADDS UP along the row: a 24-way
+// 5.00 mm strip in a 5.08 mm board puts its end pin 23 x 0.08 = 1.84 mm off its hole. A
+// relative tolerance on the pitch alone (the old 2 % ExactMatch band) passed that pair.
+//
+// Rule (owner decision to confirm: the 0.1 mm limit is the one the owner approved for a
+// two-hole 2.50/2.54 and 5.00/5.08 pattern, applied here to the FARTHEST pin):
+//   offset = (positions_per_row - 1) x |pitch_original - pitch_substitute|
+//   offset <= 0.1 mm  -> pass (the pin field lines up);
+//   offset >  0.1 mm  -> fail: a different land pattern, reported exactly like any other
+//                        pitch mismatch (footprint different_land_pattern, partial), with
+//                        a note giving both pitches, the per-row count and the end-pin offset.
+// positions_per_row = ceil(positions / rows), taken from each record that states both
+// (mechanical.positions and mechanical.rows); when both records state it, the LONGER row
+// decides (that row's end pin is the one that has to reach its hole). When neither record
+// states rows, the row length is not known and is only BOUNDED, never assumed:
+//   * from below by 2 — a stated contact-to-contact pitch means at least two contacts sit
+//     that far apart, so a difference over 0.1 mm already misplaces the first neighbour
+//     -> fail (certain whatever the row length);
+//   * from above by the stated position count (a row cannot hold more contacts than the
+//     part has), so an offset within 0.1 mm even over the whole count -> pass;
+//   * in between, the arrangement decides and nobody stated it -> unverified with a note.
+// With no position count on either side, a non-zero difference within 0.1 mm is
+// unverified: two positions is NOT assumed as the row length.
+// Only decides when BOTH pitches are stated; otherwise the PARAM_SPECS table's own
+// missing-value handling applies.
+// Row count: when BOTH records state mechanical.rows and they differ (1 row against 2), the
+// pins are arranged differently and cannot meet the same holes whatever the pitch — a
+// different pin field, reported like a pitch mismatch (pitch FAIL when both pitches are
+// stated, footprint different_land_pattern in every case), with a note naming both row
+// counts. A row count stated on one side only, or on neither, gives no verdict on its own.
+struct ConnectorPitchFit {
+    const char* verdict = nullptr;  // PASS / FAIL / UNVERIFIED; nullptr = not decided here
+    double per_row = 0.0;           // contacts per row the verdict was taken over (0 = unknown)
+    double offset_mm = 0.0;         // end-pin offset over that row
+    bool rows_differ = false;       // both records state rows, and they differ
+    double o_rows = 0.0, s_rows = 0.0;
+    std::string note;
+};
+constexpr double kConnectorPinFieldLimitMm = 0.1;
+inline ConnectorPitchFit connector_pitch_fit(const json& original, const json& cand) {
+    ConnectorPitchFit f;
+    const auto o_r = num(original, "rows"), s_r = num(cand, "rows");
+    if (o_r && s_r && *o_r != *s_r) {
+        f.rows_differ = true;
+        f.o_rows = *o_r;
+        f.s_rows = *s_r;
+    }
+    const auto o_p = num(original, "pitch_mm"), s_p = num(cand, "pitch_mm");
+    if (!o_p || !s_p) return f;
+    if (f.rows_differ) {
+        f.verdict = FAIL;
+        return f;
+    }
+    const double d = std::fabs(*o_p - *s_p);
+    // Floating-point equality only: any real catalogue difference is >= 0.01 mm.
+    if (d <= 1e-9 * std::max(*o_p, *s_p)) {
+        f.verdict = PASS;
+        return f;
+    }
+    double per_row = 0.0;
+    for (const json* rec : {&original, &cand}) {
+        const auto n = num(*rec, "positions"), rows = num(*rec, "rows");
+        if (n && rows && *rows >= 1.0) per_row = std::max(per_row, std::ceil(*n / *rows));
+    }
+    const std::string pitches =
+        "pitch " + mm(*o_p * 1e-3) + " -> " + mm(*s_p * 1e-3) + " mm";
+    if (per_row > 0.0) {
+        f.per_row = per_row;
+        f.offset_mm = (per_row - 1.0) * d;
+        f.verdict = f.offset_mm <= kConnectorPinFieldLimitMm ? PASS : FAIL;
+        return f;
+    }
+    if (d > kConnectorPinFieldLimitMm) {
+        // The adjacent contact already misses; the row length does not change the verdict.
+        f.verdict = FAIL;
+        return f;
+    }
+    double bound = 0.0;
+    for (const json* rec : {&original, &cand})
+        if (const auto n = num(*rec, "positions")) bound = std::max(bound, *n);
+    if (bound >= 1.0 && (bound - 1.0) * d <= kConnectorPinFieldLimitMm) {
+        f.verdict = PASS;
+        return f;
+    }
+    f.verdict = UNVERIFIED;
+    if (bound >= 1.0)
+        f.note = pitches + ": neither record states how the " +
+                 std::to_string(static_cast<long>(bound)) +
+                 " positions are split into rows, and in a single row the end pin would sit " +
+                 mm((bound - 1.0) * d * 1e-3) +
+                 " mm off its hole (over 0.1 mm) — confirm the pin field lines up";
+    else
+        f.note = pitches + ": neither record states a position count, so the end-pin offset "
+                 "cannot be worked out — confirm the pin field lines up";
+    return f;
+}
+
 // Score one candidate against the original. Returns a per-candidate JSON verdict.
 inline json score_candidate(const std::string& cat, const json& original, const json& cand,
                             const Options& opt) {
@@ -893,6 +994,12 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // "footprint": null next to a known pitch mismatch reads as "we could not check
     // the fit" when it has just been checked and failed (ABT #485).
     bool connector_pitch_conflict = false;
+    // Whether the pin field lines up (connector_pitch_fit above): it decides the pitch_mm
+    // verdict whenever both records state a pitch. An alignment nobody can establish is
+    // an unverified land pattern and caps the grade like one.
+    const ConnectorPitchFit connector_pitch =
+        cat == "connector" ? connector_pitch_fit(original, cand) : ConnectorPitchFit{};
+    bool connector_pitch_unverified = false;
     // The other two halves of "does it mate": the finish on the separable surface and the
     // way the wire attaches. Both are stated by the records and both were declared absent
     // from the catalogue by the family caveat, so neither was ever compared (ABT #487).
@@ -916,6 +1023,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // A connector orientation that could not be established (see the orientation block
     // after the PARAM_SPECS loop): not a drop-in.
     bool connector_orientation_unverified = false;
+    // Pluggable vs fixed terminal block stated on one side only (see the pluggable block).
+    bool connector_pluggable_unverified = false;
     // A passive resonator (quartz crystal, ceramic resonator) has no supply: it is driven
     // by the MCU's oscillator stage. The supply keys mean nothing there and are not
     // compared even if a record happened to carry one.
@@ -941,13 +1050,19 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // delivers at most its nominal there, and that is already less than the original's.
         const bool power_nominal_short =
             power_at_t && !power_t.subst && *detail::jnum(cand, spec.key) < *power_t.orig;
+        const bool pin_field = spec.key == "pitch_mm" && connector_pitch.verdict != nullptr;
         const ParamOutcome outcome =
-            !power_at_t           ? compare_param(spec, original, cand)
+            pin_field             ? ParamOutcome(connector_pitch.verdict)
+            : !power_at_t         ? compare_param(spec, original, cand)
             : power_t.subst       ? compare_numeric(spec, power_t.orig, power_t.subst)
             : power_nominal_short ? ParamOutcome(FAIL)
                                   : ParamOutcome(UNVERIFIED);
         const std::string verdict = outcome.verdict;
         params.push_back({{"name", spec.key}, {"verdict", verdict}});
+        if (pin_field && verdict == UNVERIFIED) {
+            connector_pitch_unverified = true;
+            notes.push_back(connector_pitch.note);
+        }
         if (cat == "connector" && verdict == FAIL) {
             if (spec.key == "pitch_mm") connector_pitch_conflict = true;
             if (spec.key == "contact_plating") connector_plating_conflict = true;
@@ -1143,6 +1258,46 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                     notes.push_back("orientation not established (original: " + said(oo) +
                                     ", substitute: " + said(so) +
                                     ") — confirm vertical / right-angle from the datasheets");
+            }
+        }
+        // ── pluggable vs fixed terminal block (CONAS familyTerminalBlock.pluggable) ──
+        // A pluggable terminal-block plug is the loose half that mates onto a board header;
+        // a fixed PCB terminal block is soldered to the board and takes the wire itself. One
+        // is not a drop-in for the other: Molex's 395337424 Eurostyle plug took WAGO 739-124
+        // fixed strips (Qarlos 2026-11-08). Tri-state, never defaulted:
+        //   both stated, different -> reject (a plug is not a fixed block);
+        //   both stated, same      -> pass;
+        //   stated on one side     -> unverified with a note, capped like an unverified footprint;
+        //   stated on neither      -> not compared (silent).
+        const auto pluggable_of = [](const json& rec) -> std::optional<bool> {
+            auto it = rec.find("pluggable");
+            if (it == rec.end() || it->is_null()) return std::nullopt;
+            if (!it->is_boolean())
+                throw std::invalid_argument("cross_reference: connector 'pluggable' must be "
+                                            "true, false or null");
+            return it->get<bool>();
+        };
+        const auto op = pluggable_of(original), sp = pluggable_of(cand);
+        if (op || sp) {
+            const auto said = [](const std::optional<bool>& v) {
+                return !v ? std::string("not stated")
+                          : *v ? std::string("pluggable") : std::string("fixed");
+            };
+            if (op && sp && *op == *sp) {
+                params.push_back({{"name", "pluggable"}, {"verdict", PASS}});
+            } else if (op && sp) {
+                params.push_back({{"name", "pluggable"}, {"verdict", FAIL}});
+                notes.push_back("terminal block form differs: " + said(op) + " -> " + said(sp) +
+                                " — a pluggable plug mates onto a header, a fixed block is "
+                                "soldered to the board; not a drop-in");
+                return reject("pluggable vs fixed terminal block (a different form factor)");
+            } else {
+                params.push_back({{"name", "pluggable"}, {"verdict", UNVERIFIED}});
+                connector_pluggable_unverified = true;
+                notes.push_back("pluggable vs fixed not established (original: " + said(op) +
+                                ", substitute: " + said(sp) +
+                                ") — confirm both are the same form (pluggable plug or fixed "
+                                "PCB block) from the datasheets");
             }
         }
     }
@@ -1848,6 +2003,19 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // contact ends up — "pitch differs" is abstract, "pin 13 sits 6.5 mm off its pad"
         // is the reason the board does not accept the part.
         auto o_pitch = num(original, "pitch_mm"), s_pitch = num(cand, "pitch_mm");
+        // A different row count is the same failure (connector_pitch_fit): reported here even
+        // when a record states no pitch, since the arrangement alone settles it.
+        if (connector_pitch.rows_differ && !out.contains("footprint")) {
+            out["footprint"] = "different_land_pattern";
+            params.push_back({{"name", "footprint"}, {"verdict", FAIL}});
+            penalty += opt.footprint_weight * kVerdictFailPenalty;
+            demote();
+            notes.push_back("contact rows differ: " +
+                            std::to_string(static_cast<long>(connector_pitch.o_rows)) + " -> " +
+                            std::to_string(static_cast<long>(connector_pitch.s_rows)) +
+                            " rows — a different pin field, a different land pattern, not a "
+                            "drop-in");
+        }
         if (connector_pitch_conflict && o_pitch && s_pitch && !out.contains("footprint")) {
             out["footprint"] = "different_land_pattern";
             params.push_back({{"name", "footprint"}, {"verdict", FAIL}});
@@ -1855,10 +2023,18 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             std::string note = "pitch differs: " + mm(*o_pitch * 1e-3) + " -> " +
                                mm(*s_pitch * 1e-3) + " mm (" +
                                signed_pct(100.0 * (*s_pitch / *o_pitch - 1.0)) + ")";
-            auto n = num(original, "positions");
+            // The row the verdict was taken over (connector_pitch_fit): the per-row count
+            // when a record states the rows, else the stated position count.
+            std::optional<double> n;
+            if (connector_pitch.per_row > 0.0) n = connector_pitch.per_row;
+            else n = num(original, "positions");
+            // Without a stated row count the verdict rests on the adjacent contact alone
+            // (connector_pitch_fit); the end-pin figure is then for a single row, said so.
             if (n && *n >= 2.0)
-                note += "; over " + std::to_string(static_cast<long>(*n)) +
-                        " positions the last contact sits " +
+                note += (connector_pitch.per_row > 0.0 ? "; over " : "; in a single row of ") +
+                        std::to_string(static_cast<long>(*n)) +
+                        (connector_pitch.per_row > 0.0 ? " positions per row" : " positions") +
+                        " the last contact sits " +
                         mm(std::fabs(*s_pitch - *o_pitch) * (*n - 1.0) * 1e-3) +
                         " mm off its pad";
             notes.push_back(note + " — a different land pattern, not a drop-in");
@@ -2550,6 +2726,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     if (out.value("height_fit", "") == "unknown") footprint_unverified = true;
     // So does a connector orientation that could not be established.
     if (connector_orientation_unverified) footprint_unverified = true;
+    // And a connector pin field whose alignment could not be established.
+    if (connector_pitch_unverified) footprint_unverified = true;
+    // And a pluggable / fixed form stated on one side only.
+    if (connector_pluggable_unverified) footprint_unverified = true;
     // drop_in asserts no rating regressed; a power nobody can state at the original's rating
     // temperature has not been shown not to, so it takes the same minor_review cap.
     out["grade"] = grade_for(status, tier, any_warn, any_fail,
