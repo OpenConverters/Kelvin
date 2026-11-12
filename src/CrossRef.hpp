@@ -2069,10 +2069,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // 21203670). Rules (OWNER DECIDED for the absent case):
     //  * both state Cj: equal or lower PASS, up to 2x WARN, beyond FAIL (counted worse);
     //  * the original states one and the substitute's record does not: UNVERIFIED, noted,
-    //    with the FAIL penalty so a part that states its Cj ranks first. It used to be
-    //    missing required data (capped at major_review); Cj is a SECONDARY electrical under
-    //    the owner's 2026-11-09 rule (only primary ratings cap), so it no longer demotes or
-    //    caps — see the table at the grade site;
+    //    with the missing-required-data consequence (FAIL penalty, capped at major_review) —
+    //    a part whose capacitance may be 100x the original's is never a minor review. This
+    //    is the one secondary electrical that keeps a cap: the owner kept it explicitly on
+    //    2026-11-12 (BAS70JW must not get 3 A / 10 A rectifiers as usable substitutes);
     //  * only the substitute states one: UNVERIFIED, nothing to hold it to.
     if (cat == "diode") {
         const auto oc = num(original, "junction_capacitance"),
@@ -2103,7 +2103,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             }
         } else if (oc) {
             params.push_back({{"name", "junction_capacitance"}, {"verdict", UNVERIFIED}});
+            demote();
             penalty += opt.gate_weight * kVerdictFailPenalty;
+            missing_required_data = true;
             notes.push_back("substitute's record carries no junction capacitance — the "
                             "original states " + pf(*oc) +
                             "; confirm it from the datasheet before this swap");
@@ -3589,7 +3591,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //   operating-temperature range (resistor, magnetic)      secondary  note only
     //   resistor TCR                                          secondary  note only
     //   diode Tj max                                          secondary  note only
-    //   diode junction capacitance (was missing_required)     secondary  note + FAIL penalty
+    //   diode junction capacitance absent (owner kept cap)   missing_required -> major_review
     //   capacitor ESR absent (was missing_required)           secondary  note + FAIL penalty
     //   capacitor ESR basis (esr_basis_unverified)            secondary  note only
     //   capacitance tolerance band                            secondary  note only

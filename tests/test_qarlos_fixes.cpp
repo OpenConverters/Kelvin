@@ -4020,18 +4020,16 @@ TEST_CASE("qarlos 2026-11-09 md9: SOD323 resolves the SOD-323 outline",
 }
 
 // Item 10 (seed 21203670): a 2 pF small-signal Schottky original holds every diode substitute
-// to its junction capacitance; one the substitute does not state is UNVERIFIED with the FAIL
-// penalty (it capped at major_review until the owner's 2026-11-09 secondary-axis rule).
-TEST_CASE("qarlos 2026-11-09 md10: an unstated junction capacitance is unverified and penalised",
+// to its junction capacitance; one the substitute does not state caps at major_review (the
+// owner kept this cap on 2026-11-12 when other secondary axes became note-only).
+TEST_CASE("qarlos 2026-11-09 md10: an unstated junction capacitance caps at major_review",
           "[qarlos][crossref]") {
     auto r = md_rank("diode", "BAS70JW", {"SB3100", "SBL10100A"});
     REQUIRE(r["candidates"].size() == 2);
     for (const auto& c : r["candidates"]) {
         INFO(c["mpn"]);
         CHECK(verdict_of(c, "junction_capacitance") == "unverified");
-        // owner 2026-11-09: Cj is secondary, no longer missing required data; the
-        // minor_review left is the established package change (different_case).
-        CHECK(c["grade"] == "minor_review");
+        CHECK(c["grade"] == "major_review");
         CHECK(has_note(c, "no junction capacitance — the original states 2 pF"));
     }
     // Both stated: CD214A-B360R (135 pF) against BAS70JW (2 pF) is far beyond 2x.
