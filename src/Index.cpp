@@ -503,6 +503,10 @@ void row_io(Ar& ar, ConnectorRow& r) {
     ar.str(r.orientation);  // v19
     ar.dbl(r.rows);         // v20
     ar.str(r.pluggable);    // v20
+    ar.str(r.actuator_type);  // v21
+    ar.str(r.shell_size);     // v21
+    ar.str(r.coding);         // v21
+    ar.str(r.coupling_type);  // v21
     ar.boolean(r.is_production);
 }
 

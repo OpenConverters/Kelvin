@@ -627,6 +627,17 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
         {"polarity", D::ExactMatch, 0.0, std::nullopt, false, false, nullptr},
         {"pitch_mm", D::ExactMatch, 0.02, std::nullopt, false, false, nullptr},
         {"interface_standard", D::ExactMatch, 0.0, std::nullopt, false, false, nullptr},
+        // Family-variant identities (owner 2026-11-12, "Identity when stated"): the
+        // structured CONAS familyFpcFfc.actuatorType and familyCircular.couplingType /
+        // .coding / .shellSize, judged exactly like interface_standard — a stated
+        // difference rejects (is_hard_param), one side only is UNVERIFIED (noted in
+        // CrossRef.hpp, no cap), neither side is not compared. Coupling is checked before
+        // shell size: in the catalogue a threaded and a bayonet circular never share a
+        // shell code, so with shell size first the coupling difference would never be named.
+        {"actuator_type", D::ExactMatch, 0.0, std::nullopt, false, false, nullptr},
+        {"coupling_type", D::ExactMatch, 0.0, std::nullopt, false, false, nullptr},
+        {"coding", D::ExactMatch, 0.0, std::nullopt, false, false, nullptr},
+        {"shell_size", D::ExactMatch, 0.0, std::nullopt, false, false, nullptr},
         // No "mounting" key: the board attach is decided by the shared mount gate
         // (compare_mount in CrossRefDimensions.hpp), the one mount comparison every
         // family goes through — a second copy here pushed two verdicts and two notes.
