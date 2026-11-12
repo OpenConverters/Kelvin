@@ -815,6 +815,50 @@ inline std::string case_identity(const std::string& category, const std::string&
     return normalize_case_code(s);
 }
 
+// A package string that names a MOUNTING STYLE and a pad/lead count but no size and no
+// registered outline: Digi-Key's generic "Package / Case" descriptors such as "4-SMD, No Lead",
+// "2-SMD, No Lead", "SMD", "3-SMD, Non-Standard", "4-SMD, Flat Leads", "Cylindrical Can,
+// Radial", "2 Lead Plastic", "Radial". Two records stating the same such string have NOT been
+// shown to share a land: "4-SMD, No Lead" covers the 1612, 2016, 2520, 3225, 5032 and 7050
+// crystal bodies alike (3,306 TDAS records state exactly that string and no dimensions).
+// The positive "same case = same land" rules therefore do not apply to it (Qarlos r12/r13:
+// 7M-26.000MAHE-T -> FA-20H, SG-210STF -> ECS-3225SMVQ, 7V-62.500MAAV-T -> ECS-625-CDX,
+// ECS-2012MV-327KE-TR -> AUZ-32.768KBE-T were graded footprint 'fits' on that string alone).
+// It is a classification of the case STRING the record states — the same kind of reading as
+// the placeholder rule in Views.cpp fill_dimensions — never a value parsed out of an MPN or a
+// description. Every token must be one of the style words or a bare 1-2 digit count; any size
+// ("3225 4-SMD", "14x9 4-SMD"), outline name (HC-49/US, DIP, SOT-23) or vendor package code
+// (IQXC-42) makes the string specific, and it keeps its old meaning.
+inline bool generic_package_names_no_land(const std::string& code) {
+    static const std::set<std::string> kStyleWords = {
+        "smd", "smt", "no", "lead", "leads", "flat", "non", "standard", "nonstandard",
+        "plastic", "radial", "formed", "cylindrical", "can"};
+    bool any_word = false;
+    std::string tok;
+    auto flush = [&]() -> bool {
+        if (tok.empty()) return true;
+        bool ok;
+        if (std::all_of(tok.begin(), tok.end(), [](unsigned char c) { return std::isdigit(c); }))
+            ok = tok.size() <= 2;
+        else {
+            ok = kStyleWords.count(tok) > 0;
+            any_word = any_word || ok;
+        }
+        tok.clear();
+        return ok;
+    };
+    for (char ch : code) {
+        const unsigned char c = static_cast<unsigned char>(ch);
+        if (std::isalnum(c)) {
+            tok += static_cast<char>(std::tolower(c));
+        } else if (!flush()) {
+            return false;
+        }
+    }
+    if (!flush()) return false;
+    return any_word;
+}
+
 // The EIA imperial chip sizes a MAGNETIC case code can denote, or none when it is not a chip
 // size code. A magnetic's case string is often no size at all ("No Tabs", "Nonstandard",
 // "0805A") and a bare four-digit code may be either system, so only two forms decode:

@@ -468,6 +468,14 @@ struct TimingRow : RowBase {
     // ordinary values here, not absence.
     double temp_min_c = kNaN();
     double temp_max_c = kNaN();
+    // F — electrical.builtInCapacitance (v21): the value of the load capacitors built into a
+    // three-terminal ceramic resonator (TDAS: "absent = no built-in capacitors"). Stated by 335
+    // of the 410 ceramic-resonator records (TAS 0d5241d), none of which states loadCapacitance,
+    // so it is the only load datum a resonator carries. Not folded into load_capacitance: a
+    // crystal's CL is the load the board must present, a resonator's figure is the capacitors
+    // it brings with it, and the two are different quantities. It was not extracted, so a 15 pF
+    // and a 22 pF resonator compared as equals (Qarlos r11/r13). NaN when unstated.
+    double built_in_capacitance = kNaN();
     bool is_production = false;
 };
 

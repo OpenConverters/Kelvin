@@ -129,6 +129,9 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // (DiodeRow.junction_capacitance_vr), both compared by the cross-reference (Qarlos r8/r10:
 // an 800 V HV chip resistor took parts with no voltage check; a Schottky's 250 pF @ 1 V was
 // passed against 170 pF @ 48 V).
+// v21 carries a ceramic resonator's built-in load capacitors (TimingRow.built_in_capacitance,
+// TDAS electrical.builtInCapacitance), compared by the cross-reference (Qarlos r11/r13: a
+// 15 pF resonator took 22 pF and capacitor-less parts with no verdict).
 constexpr uint32_t kFormatVersion = 21;
 
 // Identity of the code that produces rows, so a cached shard can be recognised as
@@ -481,6 +484,7 @@ void row_io(Ar& ar, TimingRow& r) {
     ar.dbl(r.temp_min_c);   // v16
     ar.dbl(r.temp_max_c);   // v16
     ar.str(r.enable_function);  // v20
+    ar.dbl(r.built_in_capacitance);  // v21
     ar.boolean(r.is_production);
 }
 
