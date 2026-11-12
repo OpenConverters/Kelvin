@@ -450,6 +450,7 @@ std::optional<MosfetRow> extract_mosfet(const json& env) {
     r.rds_on = *rds;
     if (pos(qg)) r.qg_total = *qg;
     if (pos(coss_o)) r.coss = *coss_o;
+    if (auto v = get_num(*elec, "capacitanceMeasurementVds"); pos(v)) r.coss_vds = *v;
     if (vgs) r.vgs_threshold_max = *vgs;
     if (vgs_typ) r.vgs_threshold_typ = *vgs_typ;
     if (auto v = rating_magnitude(get_num(*elec, "onResistanceVgs"), p_channel); pos(v))

@@ -64,6 +64,7 @@ inline const FieldTable<MosfetRow>& fields<MosfetRow>() {
          {"rds_on", &MosfetRow::rds_on},
          {"qg_total", &MosfetRow::qg_total},
          {"coss", &MosfetRow::coss},
+         {"coss_vds", &MosfetRow::coss_vds},
          {"vgs_threshold_max", &MosfetRow::vgs_threshold_max},
          {"vgs_threshold_typ", &MosfetRow::vgs_threshold_typ},
          {"rds_on_vgs", &MosfetRow::rds_on_vgs},

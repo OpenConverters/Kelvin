@@ -721,8 +721,14 @@ inline std::string canonical_case_in(const std::vector<std::vector<std::string>>
 //   TO-247 = TO-247-3 / TO-247AC / TO-247AD / PG-TO247-3
 //   SOT-23 = TO-236 / TO-236AB / SOT-23-3;  SOT-223 = TO-261 / TO-261AA / SOT-223-4 / TO-261-4
 //   SO-8   = SOIC-8;  SC-70 = SOT-323;  TOLL = TO-LL / HSOF-8 / PG-HSOF-8
-// Different outlines stay different: Q-DPAK, D2PAK-7 / D2PAK 7-pin / TO-263-7, TO-247-4,
-// sTOLL, DPAK+, ThinDPAK, TO-220SIS each normalise to themselves.
+//   TO-247-4 = TO247-4 / TO-247-4L / TO247-4L / TO247 4-pin / PG-TO247-4 (the four-lead
+//            Kelvin-source TO-247; Qarlos r13 seed 25078643: onsemi FCH023N65S3L4 'TO-247-4'
+//            against Infineon IPZ65R019C7 'TO247 4-pin' / PG-TO247-4 was called a different
+//            package). It is NOT the 3-lead TO-247: the groups stay apart.
+// Different outlines stay different: Q-DPAK, D2PAK-7 / D2PAK 7-pin / TO-263-7, the
+// asymmetric-lead 'TO247 4-pin (asymmetric leads)', 'TO-247-4 HC 8.8mm', Toshiba's
+// TO-247-4L(X), ST's HiP247-4, sTOLL, DPAK+, ThinDPAK, TO-220SIS each normalise to
+// themselves.
 inline std::string canonical_mosfet_case(const std::string& s) {
     static const std::vector<std::vector<std::string>> kGroups = {
         {"DPAK", "TO252", "TO252AA", "DPAK3", "TO2523", "PGTO2523"},
@@ -732,6 +738,7 @@ inline std::string canonical_mosfet_case(const std::string& s) {
         {"TO220", "TO2203", "TO220AB", "PGTO2203"},
         {"TO220FP", "TO220FULLPAK", "TO220F", "TO2203FULLPAK", "TO220FP3"},
         {"TO247", "TO2473", "TO247AC", "TO247AD", "PGTO2473"},
+        {"TO2474", "TO2474L", "TO2474PIN", "PGTO2474"},
         {"SOT23", "TO236", "TO236AB", "SOT233"},
         {"SOT223", "TO261", "TO261AA", "SOT2234", "TO2614"},
         {"SO8", "SOIC8"},

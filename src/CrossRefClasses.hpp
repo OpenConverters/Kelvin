@@ -778,11 +778,27 @@ inline std::string case_token(const std::string& case_code) {
 
 // True when the package IS a single-phase bridge outline. The trailing digits of
 // "GBPC4" are the current rating of the outline, not a lead count, so they are
-// stripped before the family is matched.
+// stripped before the family is matched, after the "-M" / "-W" lead-form suffix of the
+// GBPC variants ("GBPC-W", "GBPC40-M").
+//
+// The list covers every outline the catalogue's bridge records use (Qarlos r12 seed
+// 24659727: Taiwan Semiconductor's TS10P06G-K, a 10 A bridge in TS-6P, took 10A07 / S10CK
+// single diodes as minor_review upgrades, because TS-6P was not in it). Counted over the
+// TAS 0d5241d diode file (47,192 records): the outlines below appear on 630 records, and
+// every one of them is a bridge — 518 carry a manufacturerInfo.family naming a bridge
+// ("Standard Bridge", "Schottky Bridge", ...) and the other 112 are the GBPC / GBU / GBJ /
+// KBPC / KBP / MBS parts already listed; no record outside a bridge family uses any of
+// them. The family string itself is not read: the package is the evidence, as before.
 inline bool bridge_outline(const std::string& case_code) {
     std::string t = case_token(case_code);
+    if (t.size() > 2 && (t.compare(t.size() - 2, 2, "-m") == 0 ||
+                         t.compare(t.size() - 2, 2, "-w") == 0))
+        t.resize(t.size() - 2);
     while (!t.empty() && std::isdigit(static_cast<unsigned char>(t.back()))) t.pop_back();
-    static const char* kBridgeOutlines[] = {"gbpc", "gbu", "gbj", "kbpc", "kbp", "mbs"};
+    static const char* kBridgeOutlines[] = {"gbpc", "gbu",  "gbj",  "kbpc",   "kbp",  "mbs",
+                                            "kbu",  "kbl",  "kbjl", "kbpf",   "gbl",  "dbl",
+                                            "dbls", "abs",  "tbs",  "ybs",    "d3k",  "ts4k",
+                                            "ts-6p", "ts-6pl"};
     for (const char* o : kBridgeOutlines)
         if (t == o) return true;
     return false;

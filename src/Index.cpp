@@ -129,6 +129,9 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // (DiodeRow.junction_capacitance_vr), both compared by the cross-reference (Qarlos r8/r10:
 // an 800 V HV chip resistor took parts with no voltage check; a Schottky's 250 pF @ 1 V was
 // passed against 170 pF @ 48 V).
+// v21 also carries the drain-source voltage a MOSFET's capacitances are stated at
+// (MosfetRow.coss_vds, SAS electrical.capacitanceMeasurementVds), the basis of its Coss
+// (Qarlos r11: a 5 pF Coss read near 400 V was passed against 53 pF at 25 V).
 constexpr uint32_t kFormatVersion = 21;
 
 // Identity of the code that produces rows, so a cached shard can be recognised as
@@ -300,6 +303,7 @@ void row_io(Ar& ar, MosfetRow& r) {
     ar.str(r.technology);
     ar.str(r.channel);      // v14
     ar.dbl(r.vgs_threshold_typ);  // v20
+    ar.dbl(r.coss_vds);           // v21
     ar.boolean(r.is_production);
     ar.boolean(r.datasheet_usable);
 }

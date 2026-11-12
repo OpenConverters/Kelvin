@@ -1244,6 +1244,47 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                               /*primary=*/false);
     if (esr_basis_unverified) params.push_back({{"name", "esr_basis"}, {"verdict", UNVERIFIED}});
 
+    // ── MOSFET Coss basis (the Vds the capacitances are stated at) ───────────
+    // Coss falls by orders of magnitude with Vds, so two Coss figures compare only at a common
+    // drain-source voltage — the diode Cj bias rule, applied to Vds (Qarlos r11 seed 24240811:
+    // IPD95R2K0P7's 5 pF, stated at no Vds and close to its own curve near 400 V, passed
+    // against AOD4N60's 53 pF at 25 V). Rule:
+    //  * both state Coss and the original states its Vds: a substitute stating the same Vds is
+    //    compared as stated; one stating a different Vds or none -> UNVERIFIED (coss and a
+    //    coss_basis row), a note giving both values and voltages, no direction, no penalty.
+    //    Coss is a secondary electrical, so no demotion and no cap (owner's secondary-axis
+    //    rule, 2026-11-09);
+    //  * the original states no Vds -> compared as stated, exactly as before (no basis exists
+    //    for any candidate, so none is skewed against another).
+    // No conversion between voltages is attempted, not even along the record's own Coss(Vds)
+    // curve.
+    bool coss_basis_unverified = false;
+    if (cat == "mosfet") {
+        const auto oc = num(original, "coss"), sc = num(cand, "coss");
+        const auto ov = num(original, "coss_vds"), sv = num(cand, "coss_vds");
+        if (oc && sc && ov &&
+            !(sv && std::fabs(*ov - *sv) <= 1e-9 * std::max(std::fabs(*ov), std::fabs(*sv)))) {
+            coss_basis_unverified = true;
+            params.push_back({{"name", "coss_basis"}, {"verdict", UNVERIFIED}});
+            char buf[400];
+            if (sv)
+                std::snprintf(buf, sizeof buf,
+                              "output capacitance quoted at different drain-source voltages "
+                              "(original %g pF at %g V, substitute %g pF at %g V) — not "
+                              "directly comparable, Coss falls steeply with Vds; confirm the "
+                              "substitute's Coss at the original's Vds from its datasheet",
+                              *oc * 1e12, *ov, *sc * 1e12, *sv);
+            else
+                std::snprintf(buf, sizeof buf,
+                              "the original's output capacitance is %g pF at %g V; the "
+                              "substitute's record states %g pF at no drain-source voltage — "
+                              "not directly comparable, Coss falls steeply with Vds; confirm "
+                              "its Coss at the original's Vds from the datasheet",
+                              *oc * 1e12, *ov, *sc * 1e12);
+            notes.push_back(buf);
+        }
+    }
+
     // ── capacitance tolerance (the band each record guarantees) ─────────────
     // A capacitor's tolerance is the band the circuit was designed around, exactly as a
     // resistor's is: a +/-5 % C0G is not a drop-in for a +/-1 % one in a filter or timing
@@ -1344,6 +1385,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         const bool ripple_blind =
             cat == "capacitor" && ((spec.key == "ripple_current" && ripple_basis_unverified) ||
                                    (spec.key == "esr" && esr_basis_unverified));
+        const bool coss_blind = cat == "mosfet" && spec.key == "coss" && coss_basis_unverified;
         // A diode's breakdown grade is DERIVED, (Vz max - Vz min) / (Vz max + Vz min), from two
         // window figures the datasheet states to 0.1 V. Two 5 % TVS grades therefore come out
         // 4.99419 % (43 V class, 40.9-45.2 V) and 4.99469 % (47 V class, 44.7-49.4 V), and the
@@ -1360,6 +1402,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             pin_field             ? ParamOutcome(connector_pitch.verdict)
             : vz_grade_same       ? ParamOutcome(PASS)
             : ripple_blind        ? ParamOutcome(UNVERIFIED)
+            : coss_blind          ? ParamOutcome(UNVERIFIED)
             : !power_at_t         ? compare_param(spec, original, cand)
             : power_t.subst       ? compare_numeric(spec, power_t.orig, power_t.subst)
             : power_nominal_short ? ParamOutcome(FAIL)
@@ -1469,8 +1512,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             detail::present(original, spec.key) && !detail::present(cand, spec.key))
             magnetic_unweighed.push_back(param_label(spec.key));
         // Two ratings on different bases have no direction between them (ripple basis above).
-        auto o = numeric && !ripple_blind ? detail::jnum(original, spec.key) : std::nullopt;
-        auto s = numeric && !ripple_blind ? detail::jnum(cand, spec.key) : std::nullopt;
+        auto o = numeric && !ripple_blind && !coss_blind ? detail::jnum(original, spec.key)
+                                                         : std::nullopt;
+        auto s = numeric && !ripple_blind && !coss_blind ? detail::jnum(cand, spec.key)
+                                                         : std::nullopt;
         if (power_at_t) {
             using power_detail::celsius;
             using power_detail::watts;
@@ -2096,10 +2141,16 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                             "specified");
         }
 
-        // Polarity.
+        // Polarity. The verdict is always reported for a protection original (Qarlos r13,
+        // seeds 25078643 / 25183372): SMB10J30CAH and SMCG75CA-HRA are bidirectional, but
+        // their series are not among the decoded ones, so SMBJ30A came back with a bare
+        // UNVERIFIED polarity and no word, and SMCG78A-M3/57T (both sides undecodable) with no
+        // polarity row at all. An unknown polarity on either side is UNVERIFIED with a note
+        // saying which side could not be read; like the other one-sided unknowns of a
+        // secondary nature it neither demotes nor caps (no cap existed here before either).
         const TvsPolarity op = tvs_polarity_from_mpn(str(original, "mpn")),
                           sp = tvs_polarity_from_mpn(str(cand, "mpn"));
-        if (op != TvsPolarity::Unknown || sp != TvsPolarity::Unknown) {
+        {
             if (op == TvsPolarity::Bi && sp == TvsPolarity::Uni) {
                 params.push_back({{"name", "polarity"}, {"verdict", FAIL}});
                 demote();
@@ -2127,10 +2178,30 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                 "circuit tolerates below ground");
             } else if (op == TvsPolarity::Unknown || sp == TvsPolarity::Unknown) {
                 params.push_back({{"name", "polarity"}, {"verdict", UNVERIFIED}});
+                auto pol = [](TvsPolarity t) {
+                    return std::string(t == TvsPolarity::Bi ? "bidirectional" : "unidirectional");
+                };
                 if (op == TvsPolarity::Bi)
                     notes.push_back("the original is bidirectional (decoded from its part number); "
                                     "the substitute's polarity cannot be read from its record or "
                                     "part number — confirm it clamps both polarities");
+                else if (op == TvsPolarity::Uni)
+                    notes.push_back("the original is unidirectional (decoded from its part "
+                                    "number); the substitute's polarity cannot be read from its "
+                                    "record or part number — confirm it is unidirectional too "
+                                    "(a bidirectional part no longer clamps a negative "
+                                    "excursion near -1 V)");
+                else if (sp != TvsPolarity::Unknown)
+                    notes.push_back("the substitute is " + pol(sp) +
+                                    " (decoded from its part number); the original's polarity "
+                                    "cannot be read from its record or part number — confirm "
+                                    "from the original's datasheet that it is " + pol(sp) +
+                                    " too before this swap");
+                else
+                    notes.push_back("TVS polarity (unidirectional / bidirectional) is stated by "
+                                    "neither record and decodes from neither part number — "
+                                    "confirm from both datasheets that the substitute clamps the "
+                                    "same polarities as the original");
             } else {
                 params.push_back({{"name", "polarity"}, {"verdict", PASS}});
             }
@@ -2388,6 +2459,36 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         }
         auto v = score_directional(o, s, r.mode, r.warn_factor, r.gate_factor);
         params.push_back({{"name", r.key}, {"verdict", v.verdict}});
+        // A shortfall that is not a rejection must say so (Qarlos r13 seed 25078643: the
+        // 600 V SiHL033N60SF for the 650 V FCH023N65S3L4 carried a 'warn' Vds row and no
+        // word about it, so it read as a mild review). The verdict, penalty and grade are
+        // unchanged; this is the note. A protection diode's standoff (its vrrm) is skipped:
+        // the standoff-band rule above already notes every standoff below the original's.
+        if ((v.verdict == WARN || (v.verdict == FAIL && !(r.hard && o))) && o && s &&
+            !(protection && std::string(r.key) == "vrrm")) {
+            static const std::map<std::string, std::pair<const char*, const char*>> kWhat = {
+                {"vds", {"drain-source voltage rating", "V"}},
+                {"id", {"continuous drain current rating", "A"}},
+                {"vrrm", {"reverse voltage rating", "V"}},
+                {"if_avg", {"average forward current rating", "A"}},
+                {"voltage", {"rated voltage", "V"}},
+                {"vces", {"collector-emitter voltage rating", "V"}},
+                {"ic", {"continuous collector current rating", "A"}}};
+            const auto it = kWhat.find(r.key);
+            const char* what = it != kWhat.end() ? it->second.first : r.key;
+            const char* unit = it != kWhat.end() ? it->second.second : "";
+            char b[320];
+            std::snprintf(b, sizeof b, "%s %g %s against the original's %g %s (%s)", what, *s,
+                          unit, *o, unit, signed_pct(100.0 * (*s / *o - 1.0)).c_str());
+            const bool voltage = std::string(unit) == "V";
+            notes.push_back(std::string(b) +
+                            (voltage ? " — below the original's rating: less margin to the "
+                                       "circuit's peak voltage and its transients; confirm the "
+                                       "application's worst-case voltage is covered"
+                                     : " — below the original's rating: less margin at the "
+                                       "circuit's current; confirm the application's "
+                                       "worst-case current and thermal margin are covered"));
+        }
         if (v.verdict == FAIL) {
             if (r.hard && o) return reject("a critical rating falls far below the original");
             demote();
@@ -3720,6 +3821,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //   timing frequency tolerance / stability unstated       secondary  note only
     //   MOSFET Vgs(th) max, Coss, Qg and other secondary
     //     electricals (table verdicts)                        secondary  note only
+    //   MOSFET Coss Vds basis differs / unstated (coss basis) secondary  note only
     //   magnetic / bead SRF, DCR one-sided                    secondary  direction 'unknown'
     // Identity rows of a connector, the land, and the ratings in the owner's list are
     // primary; every other axis is secondary.
