@@ -4617,3 +4617,187 @@ TEST_CASE("connector identity 2026-11-12: circular coupling (familyCircular.coup
     CHECK(verdict_of(none, "coupling_type") == "");
     CHECK(notes_with(none, "couplingType") == 0);
 }
+
+// ── Qarlos r11-r13, group D (diode + MOSFET) ─────────────────────────────────────────────
+// REAL TAS records: every line of tests/fixtures/qarlos_r11r13_d_{diodes,mosfets}.ndjson is a
+// verbatim line of tools/qarlos/bench/data-0d5241d (TAS 0d5241d), run through the real
+// extractor and browse row, then into the spec web/src/crossref.js builds from that row.
+namespace r11r13_d {
+const json& row(const std::string& family, const std::string& mpn) {
+    static const json mos = [] {
+        auto sh = kelvin::build_mosfet_shard(std::string(KELVIN_TEST_DIR) +
+                                             "/fixtures/qarlos_r11r13_d_mosfets.ndjson");
+        return kelvin::browse::browse_rows(sh, json{{"limit", 100}})["rows"];
+    }();
+    static const json dio = [] {
+        auto sh = kelvin::build_diode_shard(std::string(KELVIN_TEST_DIR) +
+                                            "/fixtures/qarlos_r11r13_d_diodes.ndjson");
+        return kelvin::browse::browse_rows(sh, json{{"limit", 100}})["rows"];
+    }();
+    for (const auto& r : family == "mosfet" ? mos : dio)
+        if (r.value("mpn", "") == mpn) return r;
+    throw std::runtime_error("fixture has no " + family + " record " + mpn);
+}
+// web/src/crossref.js's MOSFET spec, including coss_vds (v21).
+json spec(const std::string& family, const std::string& mpn) {
+    const json& r = row(family, mpn);
+    if (family != "mosfet") return diode_spec(r);
+    json s = mosfet_spec(r);
+    s["coss_vds"] = nz_(r["coss_vds"]);
+    return s;
+}
+json rank(const std::string& family, const std::string& orig,
+          const std::vector<std::string>& cands) {
+    json c = json::array();
+    for (const auto& m : cands) c.push_back(spec(family, m));
+    kelvin::crossref::Options opt;
+    opt.max_results = 20;
+    return kelvin::crossref::cross_reference(family, spec(family, orig), c, opt);
+}
+json find(const json& r, const std::string& mpn) {
+    for (const auto& c : r["candidates"])
+        if (c["mpn"] == mpn) return c;
+    return json(nullptr);
+}
+}  // namespace r11r13_d
+
+// D1 (r13 seeds 25078643 / 25183372): SMB10J30CAH and SMCG75CA-HRA are bidirectional, but
+// neither series is decoded, so SMBJ30A came back with a bare 'unverified' polarity and no
+// note, and SMCG78A-M3/57T with no polarity row at all. Every protection pair now reports the
+// polarity, and an unknown side is UNVERIFIED with a note naming which side could not be read.
+TEST_CASE("qarlos r11r13 D1: an unknown TVS polarity is always reported, with a note",
+          "[qarlos][crossref][r11r13-d]") {
+    using namespace r11r13_d;
+    // Original undecodable, substitute decoded.
+    const json r = rank("diode", "SMB10J30CAH", {"SMBJ30A", "SMBJ30CA"});
+    const json uni = find(r, "SMBJ30A"), bi = find(r, "SMBJ30CA");
+    REQUIRE(!uni.is_null());
+    REQUIRE(!bi.is_null());
+    CHECK(verdict_of(uni, "polarity") == "unverified");
+    CHECK(has_note(uni, "the substitute is unidirectional (decoded from its part number); the "
+                        "original's polarity cannot be read from its record or part number"));
+    CHECK(verdict_of(bi, "polarity") == "unverified");
+    CHECK(has_note(bi, "the substitute is bidirectional (decoded from its part number)"));
+    // Neither side decodable: a row and a note, where there was nothing.
+    const json r2 = rank("diode", "SMCG75CA-HRA", {"SMCG78A-M3/57T"});
+    const json both = find(r2, "SMCG78A-M3/57T");
+    REQUIRE(!both.is_null());
+    CHECK(verdict_of(both, "polarity") == "unverified");
+    CHECK(has_note(both, "TVS polarity (unidirectional / bidirectional) is stated by neither "
+                         "record and decodes from neither part number"));
+    // No cap: the grade stays what the other axes make it (lifecycle + surge warns).
+    CHECK(both["grade"] == "minor_review");
+    // Original decoded unidirectional, substitute undecodable.
+    const json r3 = rank("diode", "SMBJ30A", {"SMB10J30CAH"});
+    const json u = find(r3, "SMB10J30CAH");
+    REQUIRE(!u.is_null());
+    CHECK(verdict_of(u, "polarity") == "unverified");
+    CHECK(has_note(u, "the original is unidirectional (decoded from its part number)"));
+    // Decoded on both sides: unchanged — a uni part for a bi original FAILS.
+    const json r4 = rank("diode", "SMBJ30CA", {"SMBJ30A"});
+    const json f = find(r4, "SMBJ30A");
+    REQUIRE(!f.is_null());
+    CHECK(verdict_of(f, "polarity") == "fail");
+}
+
+// D2 (r12 seed 24659727): TS10P06G-K is a 10 A single-phase bridge in Taiwan Semiconductor's
+// TS-6P outline. TS-6P was not a known bridge outline, so single diodes (10A07 in R-6, S10CK
+// in SMC) came back minor_review upgrades with only a package note.
+TEST_CASE("qarlos r11r13 D2: TS-6P and the other catalogue bridge outlines declare a module",
+          "[qarlos][crossref][r11r13-d]") {
+    using namespace r11r13_d;
+    using kelvin::crossref::bridge_outline;
+    for (const char* c : {"TS-6P", "TS-6PL", "TS4K", "D3K", "DBL", "DBLS", "KBU", "KBL", "KBJL",
+                          "KBPF", "GBL", "ABS", "TBS", "YBS", "GBPC-M", "GBPC-W", "GBPC40-M",
+                          "GBPC4 28.75x28.75x11.10", "GBU", "MBS"})
+        CHECK(bridge_outline(c));
+    for (const char* c : {"R-6", "SMC (DO-214AB)", "DO-214AA (SMB)", "DO-201AD", "TO-220AC 2L",
+                          "SOD-123", "TS", ""})
+        CHECK_FALSE(bridge_outline(c));
+
+    const json r = rank("diode", "TS10P06G-K", {"10A07", "S10CK"});
+    for (const char* m : {"10A07", "S10CK"}) {
+        const json c = find(r, m);
+        REQUIRE(!c.is_null());
+        CHECK(verdict_of(c, "configuration") == "fail");
+        CHECK(c["footprint"] == "different_land_pattern");
+        CHECK(c["grade"] == "major_review");
+        CHECK(has_note(c, "the original is a single-phase BRIDGE RECTIFIER module"));
+    }
+    // Bridge for bridge (same TS-6P outline): no configuration conflict.
+    const json same = find(rank("diode", "TS10P05G-K", {"TS10P06G-K"}), "TS10P06G-K");
+    REQUIRE(!same.is_null());
+    CHECK(verdict_of(same, "configuration") == "");
+}
+
+// D3 (r11 seed 24240811): AOD4N60 states Coss 53 pF at 25 V (capacitanceMeasurementVds);
+// IPD95R2K0P7 states 5 pF at no Vds (its own curve gives that near 400 V), and Coss was graded
+// 'pass'. The diode Cj bias rule, applied to Vds: no common basis -> UNVERIFIED + note, no cap.
+TEST_CASE("qarlos r11r13 D3: MOSFET Coss on different drain-source voltages is not compared",
+          "[qarlos][crossref][views][r11r13-d]") {
+    using namespace r11r13_d;
+    CHECK(row("mosfet", "AOD4N60")["coss_vds"] == 25.0);
+    CHECK(row("mosfet", "XP60CM600EH")["coss_vds"] == 100.0);
+    CHECK(row("mosfet", "IPD95R2K0P7")["coss_vds"].is_null());
+
+    const json r = rank("mosfet", "AOD4N60", {"IPD95R2K0P7", "AOD7N60", "XP60CM600EH"});
+    const json none = find(r, "IPD95R2K0P7");
+    REQUIRE(!none.is_null());
+    CHECK(verdict_of(none, "coss") == "unverified");
+    CHECK(verdict_of(none, "coss_basis") == "unverified");
+    CHECK(has_note(none, "the original's output capacitance is 53 pF at 25 V; the substitute's "
+                         "record states 5 pF at no drain-source voltage"));
+    // Secondary axis: no demotion, no cap.
+    CHECK(none["grade"] == "drop_in");
+    const json other = find(r, "XP60CM600EH");
+    REQUIRE(!other.is_null());
+    CHECK(verdict_of(other, "coss") == "unverified");
+    CHECK(has_note(other, "output capacitance quoted at different drain-source voltages "
+                          "(original 53 pF at 25 V, substitute 20 pF at 100 V)"));
+    // Same 25 V basis: compared as stated (88 pF against 53 pF, inside 2x).
+    const json same = find(r, "AOD7N60");
+    REQUIRE(!same.is_null());
+    CHECK(verdict_of(same, "coss") == "warn");
+    CHECK(verdict_of(same, "coss_basis") == "");
+}
+
+// D4 (r13 seed 25078643): FCH023N65S3L4 'TO-247-4' against IPZ65R019C7 'TO247 4-pin'
+// (package PG-TO247-4) — the same four-lead TO-247 — was called a different package.
+TEST_CASE("qarlos r11r13 D4: TO-247-4 / TO247 4-pin / PG-TO247-4 are one MOSFET outline",
+          "[qarlos][crossref][r11r13-d]") {
+    using namespace r11r13_d;
+    using kelvin::crossref::case_identity;
+    const std::string four = case_identity("mosfet", "TO-247-4");
+    for (const char* c : {"TO247 4-pin", "PG-TO247-4", "TO247-4", "TO-247-4L", "TO247-4L"})
+        CHECK(case_identity("mosfet", c) == four);
+    for (const char* c : {"TO-247", "TO247", "PG-TO247-3", "TO247 4-pin (asymmetric leads)",
+                          "TO-247-4L(X)", "HiP247-4", "TO-247-4 HC 8.8mm"})
+        CHECK(case_identity("mosfet", c) != four);
+
+    const json r = rank("mosfet", "FCH023N65S3L4", {"IPZ65R019C7", "IPW65R019C7"});
+    const json z = find(r, "IPZ65R019C7"), w = find(r, "IPW65R019C7");
+    REQUIRE(!z.is_null());
+    REQUIRE(!w.is_null());
+    CHECK(z["footprint"] == "fits");
+    CHECK(verdict_of(z, "footprint") == "pass");
+    // The 3-lead TO-247 stays a different package.
+    CHECK(w["footprint"] == "different_case");
+}
+
+// D5 (r13 seed 25078643): the 600 V SiHL033N60SF for the 650 V FCH023N65S3L4 carried a 'warn'
+// Vds row and no note. A critical-rating shortfall that is not a rejection now says so.
+TEST_CASE("qarlos r11r13 D5: a critical-rating shortfall carries a note",
+          "[qarlos][crossref][r11r13-d]") {
+    using namespace r11r13_d;
+    const json c = find(rank("mosfet", "FCH023N65S3L4", {"SiHL033N60SF"}), "SiHL033N60SF");
+    REQUIRE(!c.is_null());
+    CHECK(verdict_of(c, "vds") == "warn");
+    CHECK(has_note(c, "drain-source voltage rating 600 V against the original's 650 V (-7.69 %) "
+                      "— below the original's rating"));
+    // Verdict and grade unchanged by the note.
+    CHECK(c["grade"] == "minor_review");
+    // A protection diode's standoff is noted by the standoff-band rule, not twice.
+    const json t = find(rank("diode", "SMBJ30CA", {"SMBJ30A"}), "SMBJ30A");
+    REQUIRE(!t.is_null());
+    CHECK(!has_note(t, "reverse voltage rating"));
+}
