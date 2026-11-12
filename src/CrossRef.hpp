@@ -1138,6 +1138,11 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // one record and not the other (the one-sided identity block after the PARAM_SPECS
     // loop): unverified, and never a drop-in.
     bool connector_identity_unverified = false;
+    // Every connector identity axis that exactly ONE record states (owner, 2026-11-12): the
+    // capped one-sided identities above, the board mount (mount block), and the family-variant
+    // identities (actuator type, shell size, coding, coupling type). Each keeps its own
+    // single-gap treatment; THREE OR MORE together cap the grade at major_review (grade site).
+    std::vector<std::string> connector_identity_gaps;
     // A zener's breakdown WINDOW, captured from the PARAM_SPECS verdict below for the
     // same reason: a bare "vz_tolerance_pct: unverified" beside "vrrm: pass" leaves the
     // engineer with no idea that the original guarantees 3.56-3.64 V and the substitute's
@@ -1158,8 +1163,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // too, but it is a secondary axis: no demotion, no cap (owner, 2026-11-09).
     bool timebase_pin_unverified = false;
     // The footprint is UNVERIFIED because NEITHER record states a land: both name only the
-    // same generic package string (generic_package_names_no_land) and no dimensions. Reported,
-    // noted, not capped (owner, 2026-11-12).
+    // same generic package string (generic_package_names_no_land) and no dimensions, or
+    // neither states any land dimension nor any package / case code at all. Reported, not
+    // capped (owner, 2026-11-12: missing data on both sides is not capped).
     bool footprint_unstated_both = false;
     // A connector orientation that could not be established (see the orientation block
     // after the PARAM_SPECS loop): not a drop-in.
@@ -1727,6 +1733,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             if (std::string(a.key) == "rows")
                 params.push_back({{"name", "rows"}, {"verdict", UNVERIFIED}});
             connector_identity_unverified = true;
+            connector_identity_gaps.push_back(a.what);
             notes.push_back(std::string(a.what) + " not established (original: " +
                             said(original, a.key) + ", substitute: " + said(cand, a.key) +
                             ") — " + a.confirm + " from the datasheets");
@@ -1739,6 +1746,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         for (const char* k : {"actuator_type", "coupling_type", "coding", "shell_size"}) {
             const bool os = stated(original, k), ss = stated(cand, k);
             if (os == ss) continue;
+            // Counted toward the several-gaps cap (grade site) although a single one
+            // stays uncapped: these are identities when stated (owner, 2026-11-12), and
+            // DECISION for the owner: whether they should count is recorded at the cap.
+            connector_identity_gaps.push_back(connector_variant_axis_label(k));
             notes.push_back(std::string(connector_variant_axis_label(k)) +
                             " not established (original: " + said(original, k) +
                             ", substitute: " + said(cand, k) +
@@ -2685,6 +2696,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             // original. Capped like an unverified footprint (minor_review).
             params.push_back({{"name", "mounting"}, {"verdict", UNVERIFIED}});
             mount_unverified = true;
+            connector_identity_gaps.push_back("board mount");
             notes.push_back(!o_cls.empty()
                                 ? "the original is " + mount_src(o_mt, o_pkg) +
                                       "-mounted; the substitute's record states no board mount — "
@@ -3206,6 +3218,15 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 // first for a 120 V P4SMA120CA-Q, ahead of the exact-class 1KSMB120A in a
                 // stated DO-214AA (Qarlos bench 20284866; also r11 24136082, TSM120N06LCS).
                 penalty += opt.footprint_weight * kUnknownDimPenalty;
+                // NEITHER record states anything about the land: no land dimension on either
+                // side (the original's is absent to reach this branch) and no package / case
+                // code on either. The verdict and the penalty stand, but the grade is not
+                // capped for it — missing data on BOTH sides is not capped (owner,
+                // 2026-11-12), exactly as the generic-package branch above. A substitute
+                // that states a land or a package, or an original that states a package,
+                // is one-sided and keeps the cap.
+                if (o_pkg.empty() && s_pkg.empty() && (!s_dims || !has_any_land(*s_dims)))
+                    footprint_unstated_both = true;
                 // Name what the substitute IS, so an engineer can see the two case
                 // sizes for themselves even though the ranker cannot compare them.
                 // Only where the substitute states a package at all: where neither
@@ -3841,6 +3862,33 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         out["original_unverified"] = true;
     }
 
+    // ── several connector identities unverified at once (owner, 2026-11-12) ──
+    // One identity stated by one record only is a gap an engineer closes from one datasheet
+    // (minor_review, or no cap for a family-variant identity). Three or more together mean
+    // the substitute's record establishes almost nothing of what makes it THIS connector:
+    // D38999/20MG11BN (female, panel-mount, shell 21, coding N, threaded) took
+    // YDIV46E21-11PNC009, whose record states none of the five, as minor_review (Qarlos bench
+    // 20365838; it is a wire-to-wire plug). Counted: axes exactly one record states — gender,
+    // wire termination, contact pitch, contact rows, board mount, and the family-variant
+    // identities. DECISION for the owner: the variant identities (actuator type, shell size,
+    // coding, coupling type) count although a single one is uncapped (interface_standard's
+    // treatment, which is NOT counted); orientation and pluggable are capped one-sided
+    // connector axes but not identities in the owner's list, and are not counted either.
+    constexpr size_t kConnectorIdentityGapsMajor = 3;
+    const bool connector_identity_gaps_major =
+        connector_identity_gaps.size() >= kConnectorIdentityGapsMajor;
+    if (connector_identity_gaps_major) {
+        demote();
+        std::string names;
+        for (size_t i = 0; i < connector_identity_gaps.size(); ++i)
+            names += (i ? ", " : "") + connector_identity_gaps[i];
+        notes.push_back(std::to_string(connector_identity_gaps.size()) +
+                        " connector identity axes are unverified (stated on one side only: " +
+                        names +
+                        ") — the substitute's record does not establish that it is the same "
+                        "connector; confirm each from the datasheets");
+    }
+
     out["status"] = status;
     out["penalty"] = penalty;
     out["params"] = params;
@@ -3892,10 +3940,19 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //   axis (flag / site)                                   class      unverified ->
     //   ---------------------------------------------------  ---------  -------------------
     //   land / footprint unknown (footprint_unverified)       primary    cap minor_review
+    //   land / footprint unknown, NEITHER record states a
+    //     land or a package (footprint_unstated_both; also
+    //     both naming one generic package string)             both-unst. UNVERIFIED + penalty,
+    //                                                                    no cap
     //   lead form axial/radial (lead_form_unverified)         primary    cap minor_review
     //   SMD / THT / board mount (mount_unverified)            primary    cap minor_review
     //   connector pitch alignment (connector_pitch_unverif.)  primary    cap minor_review
     //   connector gender/termination/pitch/rows (identity)    primary    cap minor_review
+    //   connector variant identity (actuator type, shell
+    //     size, coding, coupling type), one alone             primary    note only, no cap
+    //   connector identities one-sided, 3 or more of gender,
+    //     termination, pitch, rows, board mount and the
+    //     variant identities (connector_identity_gaps)        primary    cap major_review
     //   connector orientation (connector_orientation_unv.)    primary    cap minor_review
     //   connector pluggable vs fixed (pluggable_unverified)   primary    cap minor_review
     //   diode die configuration / internal connection         primary    cap minor_review
@@ -3940,7 +3997,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                     qualification_unverified || topology_unverified ||
                                     mount_unverified || timebase_pin_unverified;
     out["grade"] = grade_for(status, tier, any_warn, any_fail, primary_unverified,
-                             missing_required_data, hfit);
+                             missing_required_data || connector_identity_gaps_major, hfit);
 
     // Direction: on the directional parameters we could actually compare, did
     // the substitute come out ahead or behind? Mirrors the industry's upgrade /

@@ -480,14 +480,20 @@ TEST_CASE("golden: an original with no land pattern still reports the package ax
         return all;
     };
 
-    // Every candidate carries the axis, and none of them is a drop-in: the claim
-    // "fits the original's land pattern" cannot be made about a land nobody stated.
+    // Every candidate carries the axis, and none that states a package is a drop-in: the
+    // claim "fits the original's land pattern" cannot be made about a land nobody stated.
     for (const char* mpn : {"LQG15HS33NH02D", "LQP02HQ30NHZ2E", "NO_PACKAGE"}) {
         const json c = by_mpn(mpn);
         REQUIRE(!c.is_null());
         CHECK(verdict_of(c, "footprint") == UNVERIFIED);
         CHECK(c["footprint"] == "unknown");
-        CHECK(c["grade"] != "drop_in");
+        // NO_PACKAGE: NEITHER record states a land or a package. Owner decision 2026-11-12:
+        // missing data on BOTH sides is not capped — the axis stays UNVERIFIED and penalised
+        // (above, and kUnknownDimPenalty), but the grade is not held below drop_in for it.
+        if (std::string(mpn) == "NO_PACKAGE")
+            CHECK(c["grade"] == "drop_in");
+        else
+            CHECK(c["grade"] != "drop_in");
     }
 
     // The note names what the substitute IS, so the two case sizes are readable even

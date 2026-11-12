@@ -4629,6 +4629,62 @@ TEST_CASE("connector identity 2026-11-12: circular coupling (familyCircular.coup
     CHECK(notes_with(none, "couplingType") == 0);
 }
 
+// ── Several one-sided connector identities: major_review (owner 2026-11-12) ────────────────
+// One identity stated by one record only keeps its single-gap treatment (minor_review for
+// gender / termination / pitch / rows / board mount, note only for a family-variant identity).
+// THREE OR MORE such axes on one candidate cap the grade at major_review, with a note naming
+// them. Verbatim lines of tools/qarlos/bench/data-0d5241d/connectors.ndjson (TAS 0d5241d).
+namespace identity_gaps {
+// connectors.ndjson line 394489: D38999/20MG11BN
+const char* kD38999_20MG11BN = R"KREC({"connector": {"manufacturerInfo": {"name": "Amphenol Aerospace", "reference": "D38999/20MG11BN", "family": "MIL-DTL-38999 Series III", "description": "MIL-DTL-38999 Series III wall mounting receptacle, shell size 21, insert arrangement 21-11, 11 contacts, socket insert, supplied less contacts", "datasheetUrl": "https://www.amphenol-aerospace.com/resources/literature/view/38999-catalog", "datasheetInfo": {"part": {"partNumber": "D38999/20MG11BN", "series": "MIL-DTL-38999 Series III", "matingPolarity": "female", "description": "MIL-DTL-38999 Series III wall mounting receptacle, shell size 21, insert arrangement 21-11, 11 contacts, socket insert, supplied less contacts"}, "electrical": {"ratedVoltage": 600.0, "dielectricWithstandingVoltage": 1800.0, "ratedCurrentPerContact": 23.0}, "mechanical": {"positions": 11, "mountingStyle": "panel"}, "familyDetails": {"family": "circular", "shellSize": "21", "coding": "N", "couplingType": "threaded"}, "provenance": [{"source": "manufacturerDatasheet", "sourceName": "Amphenol Aerospace MIL-DTL-38999 catalogue", "sourceUrl": "https://www.amphenol-aerospace.com/resources/literature/view/38999-catalog", "retrievedDate": "2026-10-10", "fields": ["part.matingPolarity", "mechanical.positions", "mechanical.mountingStyle", "familyDetails.shellSize", "familyDetails.coding"], "verification": "seriesConfirmed", "verificationDate": "2026-10-10", "verificationMethod": "Insert Availability chart and How to Order (Military) key decoded for this order code"}, {"source": "manufacturerDatasheet", "sourceName": "Amphenol Aerospace MIL-DTL-38999 catalogue", "sourceUrl": "https://www.amphenol-aerospace.com/resources/literature/view/38999-catalog", "retrievedDate": "2026-10-10", "fields": ["electrical.ratedVoltage", "electrical.dielectricWithstandingVoltage"], "verification": "seriesConfirmed", "verificationDate": "2026-10-10", "verificationMethod": "Service rating I: suggested operating voltage 600 VAC rms, test voltage 1800 VRMS at sea level"}, {"source": "manufacturerDatasheet", "sourceName": "Amphenol Aerospace MIL-DTL-38999 catalogue", "sourceUrl": "https://www.amphenol-aerospace.com/resources/literature/view/38999-catalog", "retrievedDate": "2026-10-10", "fields": ["electrical.ratedCurrentPerContact"], "verification": "seriesConfirmed", "verificationDate": "2026-10-10", "verificationMethod": "Contact rating test current for contact sizes 12"}, {"source": "manufacturerDatasheet", "sourceName": "Amphenol Aerospace MIL-DTL-38999 catalogue", "sourceUrl": "https://www.amphenol-aerospace.com/resources/literature/view/38999-catalog", "retrievedDate": "2026-10-10", "fields": ["familyDetails.couplingType"], "verification": "seriesConfirmed", "verificationDate": "2026-10-10", "verificationMethod": "Triple Start Threads"}]}}}})KREC";
+// connectors.ndjson line 136513: YDIV46E21-11PNC009
+const char* kYDIV46E21_11PNC009 = R"KREC({"connector":{"manufacturerInfo":{"name":"TE Connectivity","reference":"YDIV46E21-11PNC009","status":"production","datasheetInfo":{"part":{"partNumber":"YDIV46E21-11PNC009","description":"Wire-to-Wire, Circular Connector Plug, 11 Position, Shell Size G (21), .06 mm [.1 in] Centerline, Sealable, Wire & Cable, DEUTSCH 38999 Series IV","series":"DEUTSCH"},"electrical":{"ratedCurrentPerContact":23.0},"mechanical":{"positions":11},"familyDetails":{"family":"circular"},"environmental":{"operatingTemperature":{"minimum":-65.0,"maximum":200.0}},"provenance":[{"source":"manufacturerParametric","sourceName":"TE Connectivity product catalogue","verification":"valuesReadFromSource","verificationDate":"2026-09-07","retrievedDate":"2026-06-24"}]},"family":"DEUTSCH","description":"Wire-to-Wire, Circular Connector Plug, 11 Position, Shell Size G (21), .06 mm [.1 in] Centerline, Sealable, Wire & Cable, DEUTSCH 38999 Series IV"}}})KREC";
+// connectors.ndjson line 224128: CPM1203-05A-02-FRA-M9-67
+const char* kCPM1203_05A = R"KREC({"connector": {"manufacturerInfo": {"name": "CUI Devices", "reference": "CPM1203-05A-02-FRA-M9-67", "status": "production", "datasheetInfo": {"part": {"partNumber": "CPM1203-05A-02-FRA-M9-67", "description": "Plug, Female", "series": "CPM1203", "matingPolarity": "male"}, "electrical": {"ratedCurrentPerContact": 4.0, "ratedVoltage": 60.0}, "mechanical": {"positions": 5, "mountingStyle": "cable"}, "provenance": [{"source": "manufacturerParametric", "verification": "inferredNotVerified", "verificationDate": "2026-09-06", "sourceName": "Same Sky product catalogue", "sourceUrl": "https://www.sameskydevices.com/catalog/interconnect", "retrievedDate": "2026-07-31"}, {"source": "manufacturerParametric", "sourceName": "Same Sky interconnect catalogue", "sourceUrl": "https://www.sameskydevices.com/product/interconnect/connectors/circular-connectors/cpm1203-05a-02-fra-m9-67", "retrievedDate": "2026-10-18", "fields": ["part.partNumber", "electrical.ratedCurrentPerContact", "electrical.ratedVoltage", "mechanical.positions"], "verification": "partNamed", "verificationDate": "2026-10-18"}], "environmental": {"operatingTemperature": {"minimum": -20.0, "maximum": 80.0}}, "familyDetails": {"family": "circular", "shellSize": "M12", "coding": "A", "shielded": true}}, "description": "Plug, Female", "datasheetUrl": "https://www.sameskydevices.com/product/resource/cpm1203.pdf"}}})KREC";
+}  // namespace identity_gaps
+
+// Qarlos bench 20365838: D38999/20MG11BN (female, panel, shell 21, coding N, threaded) took
+// YDIV46E21-11PNC009 (a wire-to-wire plug whose record states none of the five) as
+// minor_review.
+TEST_CASE("connector identity 2026-11-12: three or more one-sided identities cap major_review",
+          "[qarlos][crossref][connector-identity][identity-gaps]") {
+    using namespace variant_ids;
+    using namespace identity_gaps;
+    const json c = rank_one(kD38999_20MG11BN, kYDIV46E21_11PNC009);
+    CHECK(c["status"] != "no_substitute");
+    CHECK(verdict_of(c, "polarity") == "unverified");
+    CHECK(verdict_of(c, "mounting") == "unverified");
+    CHECK(verdict_of(c, "shell_size") == "unverified");
+    CHECK(verdict_of(c, "coding") == "unverified");
+    CHECK(verdict_of(c, "coupling_type") == "unverified");
+    CHECK(c["grade"] == "major_review");
+    CHECK(has_note(c, "5 connector identity axes are unverified (stated on one side only: "
+                      "mating gender, circular coupling type (familyCircular.couplingType), "
+                      "circular coding (familyCircular.coding), circular shell size "
+                      "(familyCircular.shellSize), board mount)"));
+    // Each single-axis note is still there.
+    CHECK(has_note(c, "mating gender not established (original: female, substitute: not "
+                      "stated)"));
+    CHECK(has_note(c, "the original is panel-mounted"));
+}
+
+// Boundary: two one-sided identities keep the single-gap grade. CPM1203-05A-02-FRA-M9-67 (CUI,
+// male, cable, M12, A-coded) -> CDM1237-05A-01FRA-3M-67 (CUI, cable, A-coded, no gender and no
+// shell size on record): gender (capped) + shell size (a variant identity) = 2.
+TEST_CASE("connector identity 2026-11-12: two one-sided identities stay minor_review",
+          "[qarlos][crossref][connector-identity][identity-gaps]") {
+    using namespace variant_ids;
+    using namespace identity_gaps;
+    const json c = rank_one(kCPM1203_05A, kCDM1237_05A);
+    CHECK(c["status"] != "no_substitute");
+    CHECK(verdict_of(c, "polarity") == "unverified");
+    CHECK(verdict_of(c, "shell_size") == "unverified");
+    CHECK(verdict_of(c, "coding") == "pass");
+    CHECK(verdict_of(c, "mounting") == "pass");
+    CHECK(c["grade"] == "minor_review");
+    CHECK(notes_with(c, "connector identity axes are unverified") == 0);
+}
+
 // ── Qarlos r11-r13, group D (diode + MOSFET) ─────────────────────────────────────────────
 // REAL TAS records: every line of tests/fixtures/qarlos_r11r13_d_{diodes,mosfets}.ndjson is a
 // verbatim line of tools/qarlos/bench/data-0d5241d (TAS 0d5241d), run through the real
@@ -4983,4 +5039,70 @@ TEST_CASE("an unknown footprint costs the ladder's UNVERIFIED rung when the orig
     CHECK(c["footprint"] == "unknown");
     CHECK(verdict_of(c, "footprint") == "unverified");
     CHECK(c["penalty"].get<double>() >= kelvin::crossref::kUnknownDimPenalty - 1e-9);
+}
+
+// ── Footprint stated by NEITHER record: UNVERIFIED, penalised, not capped (owner 2026-11-12) ──
+// Missing data on BOTH sides is not capped. With no land dimension and no package / case code on
+// either record, the footprint verdict stays UNVERIFIED and pays kUnknownDimPenalty, but the
+// grade is not held below drop_in for it (the generic-package case already worked this way). A
+// record on ONE side stating a land or a package keeps the cap. Verbatim lines of
+// tools/qarlos/bench/data-0d5241d/magnetics.ndjson (TAS 0d5241d), through the real extractor.
+namespace footprint_both_unstated {
+// magnetics.ndjson line 78585: ELC09D331DFN
+const char* kELC09D331DFN = R"KREC({"magnetic":{"manufacturerInfo":{"name":"Panasonic","reference":"ELC09D331DFN","status":"obsolete","datasheetUrl":"https://industrial.panasonic.com/cdbs/www-data/pdf/AGB0000/AGB0000C1.pdf","family":"General type 09D, 11D, 12D, 16B, 18B(Ferrite core type)","datasheetInfo":{"part":{"partNumber":"ELC09D331DFN","description":"General type 09D, 11D, 12D, 16B, 18B(Ferrite core type)"},"electrical":[{"subtype":"inductor","inductance":{"nominal":0.00033},"dcResistance":{"nominal":0.65},"ratedCurrents":[0.49]}],"provenance":[{"source":"scrape","sourceName":"Panasonic Industrial parametric search","sourceUrl":"https://industrial.panasonic.com/cdbs/www-data/pdf/AGB0000/AGB0000C1.pdf","retrievedDate":"2026-08-01","verification":"seriesConfirmed","verificationDate":"2026-10-09"}]}}}})KREC";
+// magnetics.ndjson line 5253: SRN6045TA-331K
+const char* kSRN6045TA_331K = R"KREC({"magnetic":{"manufacturerInfo":{"name":"Bourns","reference":"SRN6045TA-331K","status":"production","datasheetUrl":"https://www.mouser.com/datasheet/3/40/1/srn6045ta.pdf","datasheetInfo":{"part":{"description":"Power Inductors - SMD 330uH, 20% Semi-Shielded Power Inductor","shielded":true},"electrical":[{"subtype":"inductor","inductance":{"nominal":0.00033},"dcResistance":{"maximum":0.6},"saturationCurrentPeak":0.6}],"provenance":[{"source":"distributor","sourceName":"datasheet via Mouser listing","sourceUrl":"https://www.mouser.com/datasheet/3/40/1/srn6045ta.pdf"}]}},"distributorsInfo":[{"name":"Mouser","reference":"652-SRN6045TA-331K","link":"https://www.mouser.es/ProductDetail/Bourns/SRN6045TA-331K?qs=5aG0NVq1C4wpF%2F6FOZjLGg%3D%3D","cost":{"value":0.45,"currency":"USD"},"quantity":3546,"updatedAt":"2026-04-08"},{"name":"Digi-Key","link":"https://www.digikey.com/en/products/detail/bourns-inc/SRN6045TA-331K/16360230","reference":null}]}})KREC";
+// magnetics.ndjson line 4666: DO5022P-334MLD
+const char* kDO5022P_334MLD = R"KREC({"magnetic":{"manufacturerInfo":{"name":"Coilcraft","reference":"DO5022P-334MLD","status":"production","datasheetUrl":"https://www.mouser.com/datasheet/3/995/1/do5022p.pdf","datasheetInfo":{"part":{"description":"Power Inductors - SMD 330uH Unshld 20% 1A 560mOhms"},"electrical":[{"subtype":"inductor","inductance":{"nominal":0.00033},"dcResistance":{"nominal":0.56},"saturationCurrentPeak":1.0,"inductancePoints":[{"current":0.0,"inductance":0.00033,"temperature":25.0},{"current":0.1,"inductance":0.000329973800808441,"temperature":25.0},{"current":0.2,"inductance":0.0003297581870362143,"temperature":25.0},{"current":0.3,"inductance":0.0003295097964030583,"temperature":25.0},{"current":0.4,"inductance":0.0003294336515186573,"temperature":25.0},{"current":0.5,"inductance":0.0003290044307207895,"temperature":25.0},{"current":0.6,"inductance":0.00032846751452272985,"temperature":25.0},{"current":0.7,"inductance":0.00032781465296628564,"temperature":25.0},{"current":0.8,"inductance":0.00032703625826220454,"temperature":25.0},{"current":0.9,"inductance":0.0003260975468029716,"temperature":25.0},{"current":1.0,"inductance":0.0003249489073535091,"temperature":25.0},{"current":1.1,"inductance":0.00032378287610028926,"temperature":25.0},{"current":1.2,"inductance":0.0003219814865803041,"temperature":25.0},{"current":1.3,"inductance":0.0003197413999591209,"temperature":25.0},{"current":1.4,"inductance":0.0003166384123053427,"temperature":25.0},{"current":1.5,"inductance":0.00031224452916623713,"temperature":25.0},{"current":1.6,"inductance":0.00030562683635049074,"temperature":25.0},{"current":1.7,"inductance":0.00029569756572179454,"temperature":25.0},{"current":1.8,"inductance":0.000281053221014082,"temperature":25.0},{"current":1.9,"inductance":0.0002611161936679368,"temperature":25.0},{"current":2.0,"inductance":0.0002331693488039749,"temperature":25.0},{"current":2.1,"inductance":0.00019378170718729418,"temperature":25.0},{"current":2.2,"inductance":0.00014585413249595022,"temperature":25.0},{"current":2.3,"inductance":0.00011077965821119112,"temperature":25.0},{"current":2.4,"inductance":9.254152022878252e-05,"temperature":25.0},{"current":2.5,"inductance":8.320320302430892e-05,"temperature":25.0}]}],"provenance":[{"source":"distributor","sourceName":"datasheet via Mouser listing","sourceUrl":"https://www.mouser.com/datasheet/3/995/1/do5022p.pdf"},{"source":"manufacturerParametric","sourceName":"Coilcraft parametric search","retrievedDate":"2026-07-21","fields":["mechanical.height","mechanical.length","mechanical.width"]},{"source":"manufacturerParametric","sourceName":"Coilcraft Power Inductor Finder (L vs DC bias)","sourceUrl":"https://www.coilcraft.com/en-us/products/power/unshielded-inductors/ferrite-drum-surface-mount/do/do5022p/do5022p-334/","retrievedDate":"2026-11-03","fields":["electrical.inductancePoints"],"verification":"valuesReadFromSource","verificationDate":"2026-11-03","verificationMethod":"Typical inductance normalised to nominal vs DC bias current, 25 degC ambient; series data for the tool part DO5022P-334"}],"mechanical":{"length":{"nominal":0.01854},"width":{"nominal":0.01524},"height":{"nominal":0.00711}}}},"distributorsInfo":[{"name":"Mouser","reference":"994-DO5022P-334MLD","link":"https://www.mouser.es/ProductDetail/Coilcraft/DO5022P-334MLD?qs=zCSbvcPd3pb4sas6YUSpOQ%3D%3D","cost":{"value":2.8,"currency":"USD"},"quantity":937,"updatedAt":"2026-04-08"}]}})KREC";
+json spec(const char* line) {
+    auto r = kelvin::extract_magnetic(real_mag(line));
+    REQUIRE(r.has_value());
+    return mag_spec_xref(*r);
+}
+json one(const json& orig, const json& cand) {
+    kelvin::crossref::Options opt;
+    auto r = kelvin::crossref::cross_reference("magnetic", orig, json::array({cand}), opt);
+    REQUIRE(r["candidates"].size() == 1);
+    return r["candidates"][0];
+}
+}  // namespace footprint_both_unstated
+
+// Qarlos bench 20575296: ELC09D331DFN (Panasonic) -> SRN6045TA-331K (Bourns). Neither record
+// states a land or a package; the substitute was capped at minor_review for a gap that is the
+// catalogue's, identical for every candidate.
+TEST_CASE("footprint stated by neither record: UNVERIFIED and penalised, not capped",
+          "[qarlos][crossref][footprint][footprint-both-unstated]") {
+    using namespace footprint_both_unstated;
+    const json o = spec(kELC09D331DFN), s = spec(kSRN6045TA_331K);
+    REQUIRE(o["case_code"] == "");
+    REQUIRE(s["case_code"] == "");
+    REQUIRE(o["length_m"].is_null());
+    REQUIRE(s["length_m"].is_null());
+    const json c = one(o, s);
+    CHECK(c["footprint"] == "unknown");
+    CHECK(verdict_of(c, "footprint") == "unverified");
+    CHECK(c["penalty"].get<double>() >= kelvin::crossref::kUnknownDimPenalty - 1e-9);
+    CHECK(c["grade"] == "drop_in");
+}
+
+// Boundary: ONE record states the land or the package, so the gap is one-sided and keeps its
+// minor_review cap.
+TEST_CASE("footprint stated by one record only keeps its cap",
+          "[qarlos][crossref][footprint][footprint-both-unstated]") {
+    using namespace footprint_both_unstated;
+    const json o = spec(kELC09D331DFN);
+    // DO5022P-334MLD (Coilcraft) states an 18.54 x 15.24 mm body; the original states nothing.
+    const json d = spec(kDO5022P_334MLD);
+    REQUIRE(d["length_m"].is_number());
+    const json c = one(o, d);
+    CHECK(c["footprint"] == "unknown");
+    CHECK(verdict_of(c, "footprint") == "unverified");
+    CHECK(c["grade"] == "minor_review");
+    // The pair above with a package stated on the original only (the field set here, not
+    // taken from the record): one-sided again, capped.
+    json oc = o;
+    oc["case_code"] = "1210";
+    const json p = one(oc, spec(kSRN6045TA_331K));
+    CHECK(p["footprint"] == "unknown");
+    CHECK(p["grade"] == "minor_review");
 }
