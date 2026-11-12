@@ -4161,3 +4161,122 @@ TEST_CASE("owner 2026-11-09: a substitute missing a primary axis is still capped
     CHECK(has_note(cc, "contact pitch not established"));
     CHECK(cc["grade"] == "minor_review");
 }
+
+// ── Qarlos r8-r10, group B (ranking / notes) ─────────────────────────────────────────────
+// Specs below carry the real catalogue values of each reported pair (frozen TAS 2d91b9c).
+
+TEST_CASE("qarlos r9 23088792: two 5 % TVS grades that print the same are not 'looser'",
+          "[qarlos][crossref][diode]") {
+    // P6KE43CA-B (Littelfuse) and P6KE47CA-E3/54 (Vishay): both 5 % grades, derived from 0.1 V
+    // window figures as 4.99419 % and 4.99469 %.
+    auto tvs = [](const char* mpn, double lo, double hi, double vrrm, double vc, double ic,
+                  double ipp) {
+        return json{{"mpn", mpn}, {"technology", "tvs"}, {"vrrm", vrrm},
+                    {"vz_min_V", lo}, {"vz_max_V", hi},
+                    {"vz_tolerance_pct", 100.0 * (hi - lo) / (hi + lo)},
+                    {"clamping_voltage", vc}, {"clamping_current", ic},
+                    {"clamping_waveform", "10/1000"}, {"peak_pulse_power", 600.0},
+                    {"peak_pulse_power_waveform", "10/1000"}, {"peak_pulse_current", ipp},
+                    {"peak_pulse_current_waveform", "10/1000"}, {"tj_max", 175.0},
+                    {"case_code", "DO-15"}, {"is_production", true}};
+    };
+    const json orig = tvs("P6KE43CA-B", 40.9, 45.2, 36.8, 59.3, 10.3, 10.3);
+    const json same_grade = tvs("P6KE47CA-E3/54", 44.7, 49.4, 40.2, 64.8, 9.3, 9.3);
+    // A genuine 10 % grade of the same class still reads looser.
+    const json wider = tvs("P6KE43C", 38.7, 47.3, 34.8, 61.9, 9.7, 9.7);
+    auto r = kelvin::crossref::cross_reference("diode", orig, json::array({same_grade, wider}));
+    json same, loose;
+    for (const auto& c : r["candidates"]) {
+        if (c["mpn"] == "P6KE47CA-E3/54") same = c;
+        if (c["mpn"] == "P6KE43C") loose = c;
+    }
+    REQUIRE(!same.is_null());
+    REQUIRE(!loose.is_null());
+    CHECK(verdict_of(same, "vz_tolerance_pct") == "pass");
+    CHECK_FALSE(has_note(same, "looser breakdown grade"));
+    CHECK(verdict_of(loose, "vz_tolerance_pct") != "pass");
+    CHECK(has_note(loose, "looser breakdown grade"));
+}
+
+TEST_CASE("qarlos bench 20470567: an SRF a fraction lower is stated as a percentage",
+          "[qarlos][crossref][magnetic]") {
+    // IHLP8787MZER101M5A (SRF 2.01 MHz) -> SRP2313AA-101M (2 MHz).
+    const json orig = {{"mpn", "IHLP8787MZER101M5A"}, {"value_si", 1e-4}, {"dcr", 0.0394},
+                       {"rated_current", 9.1}, {"srf", 2.01e6}};
+    json near = {{"mpn", "SRP2313AA-101M"}, {"value_si", 1e-4}, {"dcr", 0.004},
+                 {"rated_current", 11.0}, {"srf", 2.0e6}};
+    json far = near;
+    far["mpn"] = "FAR";
+    far["srf"] = 2.01e6 / 4.5;
+    auto r = kelvin::crossref::cross_reference("magnetic", orig, json::array({near, far}));
+    json n, f;
+    for (const auto& c : r["candidates"]) {
+        if (c["mpn"] == "SRP2313AA-101M") n = c;
+        if (c["mpn"] == "FAR") f = c;
+    }
+    REQUIRE(!n.is_null());
+    REQUIRE(!f.is_null());
+    CHECK(has_note(n, "self-resonant frequency 2 MHz vs the original's 2.01 MHz (-0.5 %)"));
+    CHECK_FALSE(has_note(n, "1x lower"));
+    CHECK(has_note(f, "(4.5x lower)"));
+}
+
+TEST_CASE("qarlos r10 23717166: the Rds(on) basis note keeps a 4.5 V drive",
+          "[qarlos][crossref][mosfet]") {
+    // CSD17304Q3 (8.8 mOhm at 4.5 V) -> BSC059N04LS6 (at 10 V).
+    const json orig = {{"mpn", "CSD17304Q3"}, {"vds", 30.0}, {"id", 16.0}, {"rds_on", 0.0088},
+                       {"rds_on_vgs", 4.5}, {"channel", "nChannel"}};
+    const json cand = {{"mpn", "BSC059N04LS6"}, {"vds", 40.0}, {"id", 50.0}, {"rds_on", 0.0059},
+                       {"rds_on_vgs", 10.0}, {"channel", "nChannel"}};
+    auto r = kelvin::crossref::cross_reference("mosfet", orig, json::array({cand}));
+    const json& c = r["candidates"][0];
+    CHECK(verdict_of(c, "rds_on_basis") == "warn");
+    CHECK(has_note(c, "Rds(on) is specified at a higher Vgs (10 V vs 4.5 V)"));
+}
+
+TEST_CASE("qarlos r10 23507708: a crystal CL note states 8.5 pF, not a rounded 9 pF",
+          "[qarlos][crossref][timing]") {
+    // 7V-25.000MAAB-T (CL 8.5 pF) -> 830051068 (CL 9 pF).
+    const json orig = {{"mpn", "7V-25.000MAAB-T"}, {"subtype", "oscillator"},
+                       {"technology", "quartzCrystal"}, {"device_type", "oscillator"},
+                       {"frequency", 25e6}, {"load_capacitance", 8.5e-12},
+                       {"load_capacitance_pF", 8.5}, {"mode", "fundamental"}};
+    json cand = orig;
+    cand["mpn"] = "830051068";
+    cand["load_capacitance"] = 9e-12;
+    cand["load_capacitance_pF"] = 9.0;
+    auto r = kelvin::crossref::cross_reference("timeBase", orig, json::array({cand}));
+    const json& c = r["candidates"][0];
+    CHECK(c["status"] == "no_substitute");
+    CHECK(has_note(c, "specified for a different load capacitance (9 pF vs 8.5 pF)"));
+}
+
+TEST_CASE("qarlos r9 23088792: a chip bead's operating range is compared",
+          "[qarlos][crossref][magnetic]") {
+    // MFBA3V1608K-471-R (-55..150 degC) -> MMZ1608Y471BTA00 (-55..125 degC).
+    const json orig = {{"mpn", "MFBA3V1608K-471-R"}, {"impedance_100mhz", 470.0},
+                       {"impedance_peak", 470.0}, {"impedance_peak_freq", 1e8}, {"dcr", 0.4},
+                       {"rated_current", 0.35}, {"temp_min_C", -55.0}, {"temp_max_C", 150.0}};
+    json cooler = {{"mpn", "MMZ1608Y471BTA00"}, {"impedance_100mhz", 470.0},
+                   {"impedance_peak", 470.0}, {"impedance_peak_freq", 1e8}, {"dcr", 0.35},
+                   {"rated_current", 0.5}, {"temp_min_C", -55.0}, {"temp_max_C", 125.0}};
+    json silent = cooler;
+    silent["mpn"] = "NO_RANGE";
+    silent.erase("temp_min_C");
+    silent.erase("temp_max_C");
+    auto r = kelvin::crossref::cross_reference("chipBead", orig, json::array({cooler, silent}));
+    json c, s;
+    for (const auto& x : r["candidates"]) {
+        if (x["mpn"] == "MMZ1608Y471BTA00") c = x;
+        if (x["mpn"] == "NO_RANGE") s = x;
+    }
+    REQUIRE(!c.is_null());
+    REQUIRE(!s.is_null());
+    CHECK(verdict_of(c, "temp_max_C") == "fail");
+    CHECK(has_note(c, "rated only to +125 degC vs the original's +150 degC"));
+    CHECK(c["direction"] != "upgrade");
+    CHECK(c["grade"] == "major_review");
+    // Unstated on the substitute: UNVERIFIED and noted, no cap (secondary axis).
+    CHECK(verdict_of(s, "temp_max_C") == "unverified");
+    CHECK(has_note(s, "states no maximum operating temperature"));
+}

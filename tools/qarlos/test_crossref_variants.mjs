@@ -53,4 +53,43 @@ await assert.rejects(runCrossRef({ family: 'magnetic', original: bare, manufactu
 assert.equal(famFor('magnetic', { device_type: 'chipBead' }).category, 'chipBead')
 assert.equal(famFor('magnetic', { device_type: 'inductor', inductance: 1e-5 }).category, 'magnetic')
 
+// 6. A bead's operating range reaches the ranker (Qarlos r9 seed 23088792: MFBA3V1608K-471-R,
+//    -55..150 degC, took a 125 degC MMZ1608 as 'upgrade' with no temperature verdict).
+const bead = famFor('magnetic', { device_type: 'chipBead' })
+const beadSpec = bead.spec({ mpn: 'MFBA3V1608K-471-R', device_type: 'chipBead', impedance_100mhz: 470,
+  temp_min_c: -55, temp_max_c: 150 })
+assert.equal(beadSpec.temp_min_C, -55)
+assert.equal(beadSpec.temp_max_C, 150)
+
+// 7. An active oscillator is not asked for a crystal load capacitance (Qarlos r8 seed 22460418:
+//    the TCXO ATXAIG-H13-F-25.000MHZ-F25-T3 came back unverified for "missing CL"). Row values
+//    are the browse row of the real TAS record.
+const tcxo = { mpn: 'ATXAIG-H13-F-25.000MHZ-F25-T3', manufacturer: 'Abracon', device_type: 'oscillator',
+  technology: 'tcxo', frequency: 25e6, load_capacitance: null, output_type: 'cmos',
+  enable_function: 'outputEnable', vsupply_min: 1.68, vsupply_max: 1.68, frequency_stability: 2.5e-6,
+  temp_min_c: -40, temp_max_c: 85, caseCode: '2016 4-SMD' }
+let opts = null
+const tEngine = {
+  async browse() { return { total: 1, rows: [{ ...tcxo, mpn: 'OTHER-TCXO', manufacturer: 'ECS Inc.' }] } },
+  async crossReference(category, orig, cands, o) { opts = o; return { candidates: [] } },
+}
+const tr = await runCrossRef({ family: 'timing', original: tcxo, manufacturers: ['ECS Inc.'], engine: tEngine })
+assert.deepEqual(tr.missing, [])
+assert.equal(tr.origVerified, true)
+assert.equal(opts.original_verified, true)
+// A crystal (technology quartzCrystal, typed 'oscillator' in its record like 7V-25.000MAAB-T)
+// still needs its CL: without one it is unverified.
+const xtal = { ...tcxo, mpn: '7V-25.000MAAB-T', technology: 'quartzCrystal' }
+const xr = await runCrossRef({ family: 'timing', original: xtal, manufacturers: ['ECS Inc.'], engine: tEngine })
+assert.deepEqual(xr.missing, ['load_capacitance'])
+assert.equal(xr.origVerified, false)
+// The classification mirrors the ranker's is_passive_resonator.
+const { isPassiveResonator } = await import(
+  pathToFileURL(join(here, '..', '..', 'web', 'src', 'crossref.js')).href)
+for (const [t, d, want] of [['tcxo', 'oscillator', false], ['quartzCrystal', 'oscillator', true],
+  ['ceramicResonator', '', true], ['mems', 'crystal', false], ['', 'crystal', true],
+  ['', 'oscillator', false], ['xo', 'oscillator', false]]) {
+  assert.equal(isPassiveResonator(t, d), want, `${t}/${d}`)
+}
+
 console.log('crossref variants: all checks passed')

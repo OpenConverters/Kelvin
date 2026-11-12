@@ -295,6 +295,8 @@ inline constexpr double kUnknownTempGradePenaltyPerC = 0.002;
 // numeric terms so no single categorical miss can outweigh the primary value.
 inline constexpr double kVerdictWarnPenalty = 0.5;
 inline constexpr double kVerdictFailPenalty = 3.0;
+// plain_pct prints a percentage to 0.01 %: the resolution a breakdown-grade note shows.
+inline constexpr double kVzGradePrintResolutionPct = 0.01;
 
 // The footprint term is a LADDER whose rungs must be monotone in how much board
 // work the verdict implies, and the UNVERIFIED rung (kUnknownDimPenalty) is its
@@ -1328,8 +1330,21 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         const bool ripple_blind =
             cat == "capacitor" && ((spec.key == "ripple_current" && ripple_basis_unverified) ||
                                    (spec.key == "esr" && esr_basis_unverified));
+        // A diode's breakdown grade is DERIVED, (Vz max - Vz min) / (Vz max + Vz min), from two
+        // window figures the datasheet states to 0.1 V. Two 5 % TVS grades therefore come out
+        // 4.99419 % (43 V class, 40.9-45.2 V) and 4.99469 % (47 V class, 44.7-49.4 V), and the
+        // strict compare called the second "looser" and warned while its own note printed
+        // "4.99 %" for both (Qarlos r9 seed 23088792, P6KE43CA-B -> P6KE47CA-E3/54). A
+        // difference below the note's 0.01 % print resolution is rounding in the derivation,
+        // not a wider guarantee: the verdict may not claim what its note cannot show.
+        const bool vz_grade_same = [&] {
+            if (cat != "diode" || spec.key != "vz_tolerance_pct") return false;
+            const auto o = detail::jnum(original, spec.key), s = detail::jnum(cand, spec.key);
+            return o && s && std::fabs(*s - *o) < kVzGradePrintResolutionPct / 2.0;
+        }();
         const ParamOutcome outcome =
             pin_field             ? ParamOutcome(connector_pitch.verdict)
+            : vz_grade_same       ? ParamOutcome(PASS)
             : ripple_blind        ? ParamOutcome(UNVERIFIED)
             : !power_at_t         ? compare_param(spec, original, cand)
             : power_t.subst       ? compare_numeric(spec, power_t.orig, power_t.subst)
@@ -1727,7 +1742,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // the original only, they are UNVERIFIED and noted but neither demote nor cap the grade
     // (they used to cap at minor_review; see the table at the grade site). A stated shortfall
     // is still a FAIL from the table loop.
-    if (cat == "resistor" || cat == "magnetic" || cat == "diode") {
+    if (cat == "resistor" || cat == "magnetic" || cat == "chipBead" || cat == "diode") {
         auto verdict_of = [&](const char* name) -> std::string {
             for (const auto& p : params)
                 if (p.value("name", "") == name) return p.value("verdict", "");
@@ -1797,11 +1812,18 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             const std::string v = p.value("verdict", "");
             const auto o_srf = num(original, "srf"), s_srf = num(cand, "srf");
             if ((v == WARN || v == FAIL) && o_srf && s_srf) {
+                // The size of the gap as a ratio only where a ratio reads (2x and more): a
+                // 2.00 vs 2.01 MHz gap printed "(1x lower)" through %.3g (Qarlos bench seed
+                // 20470567, IHLP8787MZER101M5A -> SRP2313AA-101M). Below 2x it is a percentage.
+                const double ratio = *o_srf / *s_srf;
+                char gap[48];
+                if (ratio >= 2.0)
+                    std::snprintf(gap, sizeof gap, "%.3gx lower", ratio);
+                else
+                    std::snprintf(gap, sizeof gap, "%s", signed_pct(100.0 * (*s_srf / *o_srf - 1.0)).c_str());
                 char b[200];
-                std::snprintf(b, sizeof b,
-                              "self-resonant frequency %g MHz vs the original's %g MHz (%.3gx "
-                              "lower)",
-                              *s_srf / 1e6, *o_srf / 1e6, *o_srf / *s_srf);
+                std::snprintf(b, sizeof b, "self-resonant frequency %g MHz vs the original's %g MHz (%s)",
+                              *s_srf / 1e6, *o_srf / 1e6, gap);
                 notes.push_back(std::string(b) +
                                 " — it stops behaving as the same inductor at a lower "
                                 "frequency; verify against the circuit's working frequency");
@@ -3208,9 +3230,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             params.push_back({{"name", "rds_on_basis"}, {"verdict", WARN}});
             demote();
             penalty += opt.gate_weight * kVerdictWarnPenalty;
+            // volts(), not an int cast: a 4.5 V basis printed as "4 V" (Qarlos r10 seed
+            // 23717166, CSD17304Q3 -> BSC059N04LS6, and two more pairs).
             notes.push_back("Rds(on) is specified at a higher Vgs (" +
-                            std::to_string(static_cast<int>(*s_rv)) + " V vs " +
-                            std::to_string(static_cast<int>(*o_rv)) +
+                            volts(*s_rv) + " V vs " + volts(*o_rv) +
                             " V) — it will be higher at the original's drive level");
         }
         // The candidate's Rds(on) with no stated test Vgs, against an original whose is
@@ -3257,11 +3280,17 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         if (auto ppm = crystal_pull_ppm(o_cl, s_cl)) {
             const double mag = std::abs(*ppm);
             if (mag > 5.0) {  // below this the pull is lost in the part's own tolerance
+                // The stated CL, not rounded to a whole pF: 8.5 pF printed as "9 pF vs 9 pF"
+                // beside a FAIL (Qarlos r10 seed 23507708, 7V-25.000MAAB-T -> 830051068).
+                auto pf = [](double farads) {
+                    char b[32];
+                    std::snprintf(b, sizeof b, "%g", farads * 1e12);
+                    return std::string(b);
+                };
                 params.push_back({{"name", "load_capacitance"}, {"verdict", FAIL}});
                 notes.push_back(
                     "specified for a different load capacitance (" +
-                    std::to_string(static_cast<int>(std::llround(*s_cl * 1e12))) + " pF vs " +
-                    std::to_string(static_cast<int>(std::llround(*o_cl * 1e12))) +
+                    pf(*s_cl) + " pF vs " + pf(*o_cl) +
                     " pF): in the original's load network it would run roughly " +
                     std::to_string(static_cast<int>(std::llround(mag))) +
                     " ppm off frequency (estimate, typical C0/C1)");

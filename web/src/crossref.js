@@ -156,6 +156,11 @@ export const XREF = [
     primary: null,
     sameFacet: { f: 'technology', label: 'technology' },
     hardKeys: ['frequency', 'technology', 'load_capacitance'],
+    // ... for a passive resonator only. An active oscillator (XO/TCXO/VCXO/OCXO/MEMS) carries
+    // its own circuit and states no CL, and the ranker skips the CL gate for it; requiring
+    // one marked every such original unverified for a field it cannot have (Qarlos r8 seed
+    // 22460418, ATXAIG-H13-F-25.000MHZ-F25-T3).
+    variantFor: timingVariantFor,
     // Equal within the representation epsilon (1e-9 = 0.001 ppm), never a band: the old
     // 1e-4 (100 ppm) pool let 25.00125 MHz and 24.9987 MHz parts in for a 25 MHz original,
     // and the ranker graded them 'pass' (Qarlos 2026-11-09). Matches the ranker's kTimeBase.
@@ -355,13 +360,20 @@ const BEAD_VARIANT = {
   hardKeys: [],
   spec: (r) => ({ ...base(r), impedance_100mhz: nz(r.impedance_100mhz),
     impedance_peak: nz(r.impedance_peak), impedance_peak_freq: nz(r.impedance_peak_freq),
-    srf: nz(r.srf), dcr: nz(r.dcr), rated_current: nz(r.rated_current) }),
+    srf: nz(r.srf), dcr: nz(r.dcr), rated_current: nz(r.rated_current),
+    // The operating range, compared as for an inductor (the ranker's kChipBead carries the
+    // magnetic rule): MFBA3V1608K-471-R (to 150 degC) took a 125 degC MMZ1608 as 'upgrade'
+    // because the bead spec never passed it (Qarlos r9 seed 23088792). Raw, NOT through
+    // nz(): a cold limit is negative and 0 degC is a real rating.
+    temp_min_C: r.temp_min_c ?? null, temp_max_C: r.temp_max_c ?? null }),
   params: [
     { key: 'impedance_100mhz', label: 'Z@100M', row: 'impedance_100mhz', unit: 'Ω' },
     { key: 'impedance_peak', label: 'peak Z', row: 'impedance_peak', unit: 'Ω' },
     { key: 'impedance_peak_freq', label: 'peak @', row: 'impedance_peak_freq', unit: 'Hz' },
     { key: 'dcr', label: 'DCR', row: 'dcr', unit: 'Ω' },
     { key: 'rated_current', label: 'I rated', row: 'rated_current', unit: 'A' },
+    { key: 'temp_min_C', label: 'T min', row: 'temp_min_c', unit: '°C' },
+    { key: 'temp_max_C', label: 'T max', row: 'temp_max_c', unit: '°C' },
   ],
 }
 
@@ -382,6 +394,24 @@ export function magneticVariantFor(orig) {
   if (orig?.device_type === 'commonModeChoke' && nz(orig.inductance) == null &&
       nz(orig.impedance_100mhz) != null) return CMC_IMPEDANCE_VARIANT
   return null
+}
+
+// The ranker's is_passive_resonator (CrossRefClasses.hpp), on the same two fields: the
+// technology decides when stated, the device type otherwise. Keep the two in step.
+export function isPassiveResonator(technology, deviceType) {
+  const t = String(technology ?? '').toLowerCase()
+  if (t) {
+    if (['oscillator', 'tcxo', 'vcxo', 'ocxo', 'mems', 'programmable'].some((k) => t.includes(k))) return false
+    return ['crystal', 'quartz', 'resonator'].some((k) => t.includes(k))
+  }
+  const d = String(deviceType ?? '').toLowerCase()
+  return d.includes('crystal') || d.includes('resonator')
+}
+
+const ACTIVE_TIMEBASE_VARIANT = { hardKeys: ['frequency', 'technology'] }
+
+export function timingVariantFor(orig) {
+  return orig && !isPassiveResonator(orig.technology, orig.device_type) ? ACTIVE_TIMEBASE_VARIANT : null
 }
 
 // Shard rows carry 0 (fixed fields) or null (nullable fields) for "not in the
