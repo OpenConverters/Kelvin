@@ -527,6 +527,19 @@ struct ConnectorRow : RowBase {
     // PCB block) or "" when unstated. A string, not a bool, because absence is a third state
     // and must never read as false (Qarlos 2026-11-08).
     std::string pluggable;
+    // Family-variant identities, read only from the structured CONAS fields (never from a
+    // description or an MPN), compared as identities when both records state one (owner,
+    // 2026-11-12, "Identity when stated"). Empty when unstated.
+    //   familyFpcFfc.actuatorType   (zif / nonZif / flip / slide / backflip): how the flex is
+    //     locked in — a different actuator is a different insertion and latching design.
+    //   familyCircular.shellSize    (vendor shell code: 'M8', 'M12', '13', '25' …),
+    //   familyCircular.coding       (keying: 'A', 'B', 'D', 'N' …),
+    //   familyCircular.couplingType (threaded / bayonet / pushPull / snap): the shell, the key
+    //     and the coupling decide whether the mating half fits, locks and turns at all.
+    std::string actuator_type;
+    std::string shell_size;
+    std::string coding;
+    std::string coupling_type;
     bool is_production = false;
 };
 

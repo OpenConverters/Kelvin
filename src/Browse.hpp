@@ -290,7 +290,11 @@ inline const FieldTable<ConnectorRow>& fields<ConnectorRow>() {
          {"contact_plating", &ConnectorRow::contact_plating},
          {"termination", &ConnectorRow::termination},
          {"orientation", &ConnectorRow::orientation},
-         {"pluggable", &ConnectorRow::pluggable}},
+         {"pluggable", &ConnectorRow::pluggable},
+         {"actuator_type", &ConnectorRow::actuator_type},
+         {"shell_size", &ConnectorRow::shell_size},
+         {"coding", &ConnectorRow::coding},
+         {"coupling_type", &ConnectorRow::coupling_type}},
         {{"is_production", &ConnectorRow::is_production}},
         {}};
     return t;

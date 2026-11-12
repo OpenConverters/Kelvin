@@ -1636,6 +1636,12 @@ std::optional<ConnectorRow> extract_connector(const json& env) {
         // terminalBlock's pluggable flag, tri-state: unstated stays "" (never "false").
         if (auto it = fd->find("pluggable"); it != fd->end() && it->is_boolean())
             r.pluggable = it->get<bool>() ? "true" : "false";
+        // Variant identities (owner 2026-11-12): only the structured fields, each present on
+        // exactly one familyDetails variant (fpcFfc / circular); unstated stays "".
+        r.actuator_type = get_str(*fd, "actuatorType").value_or("");
+        r.shell_size = get_str(*fd, "shellSize").value_or("");
+        r.coding = get_str(*fd, "coding").value_or("");
+        r.coupling_type = get_str(*fd, "couplingType").value_or("");
     }
     // The separable interface itself: only the mating-area material, which is what decides
     // whether two halves may be mated at all (gold onto tin frets and corrodes). The

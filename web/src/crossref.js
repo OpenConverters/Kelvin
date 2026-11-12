@@ -228,7 +228,7 @@ export const XREF = [
     // What remains genuinely unchecked is the COUNTERPART, not the catalogue: 193,951
     // records name the series they mate with, but those lists are written per vendor and
     // no second source ever appears in one, so they cannot settle a cross-vendor swap.
-    caveat: 'Board mount, contact pitch, plating, termination and mating-cycle rating are compared where both records state one; the counterpart itself is NOT checked — no candidate is verified against the mating half already on your board. Confirm the pair mates before substituting.',
+    caveat: 'Board mount, contact pitch, plating, termination, mating-cycle rating, FPC actuator type and circular shell size, coding and coupling are compared where both records state one; the counterpart itself is NOT checked — no candidate is verified against the mating half already on your board. Confirm the pair mates before substituting.',
     // pitch_mm, not metres: the ranker's ParamSpec is keyed on it and an engineer
     // reads a connector pitch in millimetres. The shard stores SI metres. The
     // temperatures pass through raw, NOT through nz(): a cold limit is negative and
@@ -259,6 +259,12 @@ export const XREF = [
       // familyDetails.pluggable (terminal blocks): true = pluggable plug, false = fixed PCB
       // block, null = unstated. Tri-state on purpose: unstated is never 'fixed'.
       pluggable: r.pluggable === 'true' ? true : r.pluggable === 'false' ? false : null,
+      // Family-variant identities (owner 2026-11-12, "Identity when stated"), straight from
+      // the structured CONAS fields: familyFpcFfc.actuatorType and familyCircular.shellSize /
+      // .coding / .couplingType. A stated difference rejects; one side only is unverified
+      // with a note. null when unstated, never '' (an empty string would read as stated).
+      actuator_type: r.actuator_type || null, shell_size: r.shell_size || null,
+      coding: r.coding || null, coupling_type: r.coupling_type || null,
       mating_cycles: nz(r.mating_cycles) }),
     params: [
       { key: 'positions', label: 'pos', row: 'positions', unit: '' },

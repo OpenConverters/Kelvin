@@ -4376,3 +4376,244 @@ TEST_CASE("qarlos r8r10 A4: junction capacitances on different reverse biases ar
     CHECK(has_note(no_bias, "the original's junction capacitance is 250 pF at 1 V; the "
                             "substitute's record states 135 pF at no reverse voltage"));
 }
+
+
+// ── Connector family-variant identities from real records (owner 2026-11-12) ──────────────
+// "Identity when stated": familyFpcFfc.actuatorType and familyCircular.shellSize / .coding /
+// .couplingType are read from the structured CONAS fields only (never descriptions or MPNs)
+// and judged like interface_standard: both stated and different -> reject; one side only ->
+// UNVERIFIED with a note naming the field and the stated value (no cap: interface_standard's
+// one-sided treatment); neither -> no verdict row, no note. Every record below is a verbatim
+// line of tools/qarlos/bench/data-0d5241d/connectors.ndjson (TAS 0d5241d), run through the
+// real extractor and the spec web/src/crossref.js builds from the shard row.
+namespace variant_ids {
+// connectors.ndjson line 403646: 512810894
+const char* k512810894 = R"KREC({"connector": {"manufacturerInfo": {"name": "Molex", "reference": "512810894", "status": "obsolete", "description": "0.50mm Pitch Easy-On FFC/FPC Connector, Surface Mount, Right-Angle, Non-ZIF, Dual Contact Style, 1.20mm Mated Height, 8 Circuits, Gold (Au) Plating", "family": "Easy-On", "datasheetInfo": {"part": {"partNumber": "512810894", "description": "0.50mm Pitch Easy-On FFC/FPC Connector, Surface Mount, Right-Angle, Non-ZIF, Dual Contact Style, 1.20mm Mated Height, 8 Circuits, Gold (Au) Plating", "series": "Easy-On"}, "electrical": {"ratedCurrentPerContact": 0.5, "ratedVoltage": 50.0}, "mechanical": {"positions": 8, "pitch": 0.0005, "orientation": "rightAngle", "matingCycles": 20}, "familyDetails": {"family": "fpcFfc", "actuatorType": "nonZif"}, "environmental": {"operatingTemperature": {"minimum": -20.0, "maximum": 85.0}}, "provenance": [{"source": "manufacturerParametric", "sourceName": "Molex product catalogue", "sourceUrl": "https://www.molex.com/en-us/products/part-detail/512810894", "retrievedDate": "2026-10-17", "fields": ["part.description", "part.series", "electrical.ratedCurrentPerContact", "electrical.ratedVoltage", "mechanical.positions", "mechanical.pitch", "mechanical.orientation", "mechanical.matingCycles", "familyDetails.family", "familyDetails.actuatorType", "environmental.operatingTemperature"], "verification": "valuesReadFromSource", "verificationDate": "2026-10-17"}]}}}})KREC";
+// connectors.ndjson line 403516: 545500833
+const char* k545500833 = R"KREC({"connector": {"manufacturerInfo": {"name": "Molex", "reference": "545500833", "status": "obsolete", "description": "0.50mm Pitch Easy-On FFC/FPC Connector, 1.20mm Height, Right-Angle, Surface Mount, ZIF, Top Contact Style, 8 Circuits", "family": "Easy-On", "datasheetInfo": {"part": {"partNumber": "545500833", "description": "0.50mm Pitch Easy-On FFC/FPC Connector, 1.20mm Height, Right-Angle, Surface Mount, ZIF, Top Contact Style, 8 Circuits", "series": "Easy-On"}, "electrical": {"ratedCurrentPerContact": 0.5, "ratedVoltage": 50.0}, "mechanical": {"positions": 8, "pitch": 0.0005, "orientation": "rightAngle", "matingCycles": 20}, "familyDetails": {"family": "fpcFfc", "actuatorType": "slide"}, "environmental": {"operatingTemperature": {"minimum": -40.0, "maximum": 85.0}}, "provenance": [{"source": "manufacturerParametric", "sourceName": "Molex product catalogue", "sourceUrl": "https://www.molex.com/en-us/products/part-detail/545500833", "retrievedDate": "2026-10-17", "fields": ["part.description", "part.series", "electrical.ratedCurrentPerContact", "electrical.ratedVoltage", "mechanical.positions", "mechanical.pitch", "mechanical.orientation", "mechanical.matingCycles", "familyDetails.family", "familyDetails.actuatorType", "environmental.operatingTemperature"], "verification": "valuesReadFromSource", "verificationDate": "2026-10-17"}]}}}})KREC";
+// connectors.ndjson line 412054: 512960833
+const char* k512960833 = R"KREC({"connector": {"manufacturerInfo": {"name": "Molex", "reference": "512960833", "status": "obsolete", "description": "0.50mm Pitch Easy-On FFC/FPC Connector, 1.30mm Height, Right-Angle, Surface Mount, ZIF, Bottom Contact Style, 8 Circuits", "family": "Easy-On", "datasheetInfo": {"part": {"partNumber": "512960833", "description": "0.50mm Pitch Easy-On FFC/FPC Connector, 1.30mm Height, Right-Angle, Surface Mount, ZIF, Bottom Contact Style, 8 Circuits", "series": "Easy-On"}, "electrical": {"ratedCurrentPerContact": 0.5, "ratedVoltage": 50.0}, "mechanical": {"positions": 8, "pitch": 0.0005, "orientation": "rightAngle", "matingCycles": 20}, "familyDetails": {"family": "fpcFfc"}, "environmental": {"operatingTemperature": {"minimum": -40.0, "maximum": 85.0}}, "provenance": [{"source": "manufacturerParametric", "sourceName": "Molex product catalogue", "sourceUrl": "https://www.molex.com/en-us/products/part-detail/512960833", "retrievedDate": "2026-10-17", "fields": ["part.description", "part.series", "electrical.ratedCurrentPerContact", "electrical.ratedVoltage", "mechanical.positions", "mechanical.pitch", "mechanical.orientation", "mechanical.matingCycles", "familyDetails.family", "environmental.operatingTemperature"], "verification": "valuesReadFromSource", "verificationDate": "2026-10-17"}]}}}})KREC";
+// connectors.ndjson line 96908: CAT-M5833-M2934
+const char* kCAT_M5833_M2934 = R"KREC({"connector":{"manufacturerInfo":{"name":"TE Connectivity","reference":"CAT-M5833-M2934","status":"production","datasheetInfo":{"part":{"partNumber":"CAT-M5833-M2934","series":null},"electrical":{"ratedCurrentPerContact":1.0},"mechanical":{"positions":4,"pitch":0.00127},"familyDetails":{"family":"fpcFfc"},"environmental":{"operatingTemperature":{"minimum":-40.0,"maximum":105.0}},"provenance":[{"source":"manufacturerParametric","sourceName":"TE Connectivity product catalogue","verification":"valuesReadFromSource","verificationDate":"2026-09-07","retrievedDate":"2026-06-24"}]}}}})KREC";
+// connectors.ndjson line 108113: CAT-M5833-C8684
+const char* kCAT_M5833_C8684 = R"KREC({"connector":{"manufacturerInfo":{"name":"TE Connectivity","reference":"CAT-M5833-C8684","status":"production","datasheetInfo":{"part":{"partNumber":"CAT-M5833-C8684","series":null},"electrical":{"ratedCurrentPerContact":1.5},"mechanical":{"positions":4,"pitch":0.00127},"familyDetails":{"family":"fpcFfc"},"environmental":{"operatingTemperature":{"minimum":-40.0,"maximum":105.0}},"provenance":[{"source":"manufacturerParametric","sourceName":"TE Connectivity product catalogue","verification":"valuesReadFromSource","verificationDate":"2026-09-07","retrievedDate":"2026-06-24"}]}}}})KREC";
+// connectors.ndjson line 380265: 1924950000
+const char* k1924950000 = R"KREC({"connector": {"manufacturerInfo": {"name": "Weidmüller", "reference": "1924950000", "status": "production", "orderCode": "1924950000", "datasheetUrl": "https://eshop.weidmueller.com/en/p/1924950000", "datasheetInfo": {"part": {"partNumber": "1924950000", "description": "Field attachable connector, M12"}, "electrical": {"ratedCurrentPerContact": 1.5, "ratedVoltage": 30.0}, "mechanical": {"positions": 12, "weight": 0.019, "matingCycles": 100}, "environmental": {"ipRating": "IP67", "rohsCompliant": true}, "familyDetails": {"family": "circular", "shellSize": "M12"}, "provenance": [{"source": "manufacturerParametric", "sourceName": "Weidmüller product catalogue", "sourceUrl": "https://eshop.weidmueller.com/en/p/1924950000", "retrievedDate": "2026-07-31", "verification": "partNamed", "verificationDate": "2026-10-10"}, {"source": "manufacturerParametric", "sourceName": "Weidmüller product catalogue", "sourceUrl": "https://eshop.weidmueller.com/en/p/1924950000", "retrievedDate": "2026-09-24", "fields": ["manufacturerInfo.reference"], "verification": "partNamed", "verificationDate": "2026-10-10"}, {"source": "manufacturerParametric", "sourceName": "Weidmüller eShop product catalogue listing", "sourceUrl": "https://eshop.weidmueller.com/en/p/1924950000", "retrievedDate": "2026-10-22", "fields": ["part.partNumber", "part.description"], "verification": "partNamed", "verificationDate": "2026-10-22"}]}, "family": "Circular Connectors"}}})KREC";
+// connectors.ndjson line 380338: 1224150000
+const char* k1224150000 = R"KREC({"connector": {"manufacturerInfo": {"name": "Weidmüller", "reference": "1224150000", "status": "production", "orderCode": "1224150000", "datasheetUrl": "https://eshop.weidmueller.com/en/p/1224150000", "datasheetInfo": {"part": {"partNumber": "1224150000", "description": "Sensor/Actuator plug-in connector"}, "electrical": {"ratedCurrentPerContact": 8.0, "ratedVoltage": 200.0}, "mechanical": {"positions": 12, "weight": 0.01, "matingCycles": 1000}, "environmental": {"rohsCompliant": true}, "familyDetails": {"family": "circular", "shellSize": "M23"}, "provenance": [{"source": "manufacturerParametric", "sourceName": "Weidmüller product catalogue", "sourceUrl": "https://eshop.weidmueller.com/en/p/1224150000", "retrievedDate": "2026-07-31", "verification": "partNamed", "verificationDate": "2026-10-10"}, {"source": "manufacturerParametric", "sourceName": "Weidmüller product catalogue", "sourceUrl": "https://eshop.weidmueller.com/en/p/1224150000", "retrievedDate": "2026-09-24", "fields": ["manufacturerInfo.reference"], "verification": "partNamed", "verificationDate": "2026-10-10"}]}, "family": "Circular Connectors"}}})KREC";
+// connectors.ndjson line 380333: 1224000000
+const char* k1224000000 = R"KREC({"connector": {"manufacturerInfo": {"name": "Weidmüller", "reference": "1224000000", "status": "production", "orderCode": "1224000000", "datasheetUrl": "https://eshop.weidmueller.com/en/p/1224000000", "datasheetInfo": {"part": {"partNumber": "1224000000", "description": "Sensor/Actuator plug-in connector"}, "electrical": {"ratedCurrentPerContact": 20.0, "ratedVoltage": 300.0}, "mechanical": {"positions": 6, "weight": 0.00704, "matingCycles": 1000}, "environmental": {"rohsCompliant": true}, "familyDetails": {"family": "circular", "shellSize": "M23"}, "provenance": [{"source": "manufacturerParametric", "sourceName": "Weidmüller product catalogue", "sourceUrl": "https://eshop.weidmueller.com/en/p/1224000000", "retrievedDate": "2026-07-31", "verification": "partNamed", "verificationDate": "2026-10-10"}, {"source": "manufacturerParametric", "sourceName": "Weidmüller product catalogue", "sourceUrl": "https://eshop.weidmueller.com/en/p/1224000000", "retrievedDate": "2026-09-24", "fields": ["manufacturerInfo.reference"], "verification": "partNamed", "verificationDate": "2026-10-10"}]}, "family": "Circular Connectors"}}})KREC";
+// connectors.ndjson line 136453: DIV40E1706PA-023
+const char* kDIV40E1706PA_023 = R"KREC({"connector":{"manufacturerInfo":{"name":"TE Connectivity","reference":"DIV40E1706PA-023","status":"production","datasheetInfo":{"part":{"partNumber":"DIV40E1706PA-023","description":"Wire-to-Panel, Circular Connector Receptacle, 6 Position, Shell Size D (15), .06 mm [.1 in] Centerline, Sealable, Wire & Cable, Power & Signal","series":null},"electrical":{"ratedCurrentPerContact":23.0},"mechanical":{"positions":6},"familyDetails":{"family":"circular"},"environmental":{"operatingTemperature":{"minimum":-65.0,"maximum":200.0}},"provenance":[{"source":"manufacturerParametric","sourceName":"TE Connectivity product catalogue","verification":"valuesReadFromSource","verificationDate":"2026-09-07","retrievedDate":"2026-06-24"}]},"description":"Wire-to-Panel, Circular Connector Receptacle, 6 Position, Shell Size D (15), .06 mm [.1 in] Centerline, Sealable, Wire & Cable, Power & Signal"}}})KREC";
+// connectors.ndjson line 223386: CDM520-04A-01FRA-3M-67
+const char* kCDM520_04A = R"KREC({"connector": {"manufacturerInfo": {"name": "CUI Devices", "reference": "CDM520-04A-01FRA-3M-67", "status": "production", "datasheetInfo": {"part": {"partNumber": "CDM520-04A-01FRA-3M-67", "description": "Round"}, "electrical": {"ratedCurrentPerContact": 1.0, "ratedVoltage": 60.0}, "mechanical": {"positions": 4, "mountingStyle": "cable"}, "provenance": [{"source": "manufacturerParametric", "verification": "inferredNotVerified", "verificationDate": "2026-09-06", "sourceName": "Same Sky product catalogue", "sourceUrl": "https://www.sameskydevices.com/catalog/interconnect", "retrievedDate": "2026-07-31"}, {"source": "manufacturerParametric", "sourceName": "Same Sky interconnect catalogue", "sourceUrl": "https://www.sameskydevices.com/product/interconnect/cable-assemblies/circular-cable-assemblies/cdm520-04a-01fra-3m-67", "retrievedDate": "2026-10-18", "fields": ["part.partNumber", "electrical.ratedCurrentPerContact", "electrical.ratedVoltage"], "verification": "partNamed", "verificationDate": "2026-10-18"}], "environmental": {"operatingTemperature": {"minimum": -25.0, "maximum": 80.0}}, "familyDetails": {"family": "circular", "coding": "A", "shielded": false}}, "description": "Round", "datasheetUrl": "https://www.sameskydevices.com/product/resource/cdm520.pdf"}}})KREC";
+// connectors.ndjson line 223388: CDM519-04A-01FRA-2M-67
+const char* kCDM519_04A = R"KREC({"connector": {"manufacturerInfo": {"name": "CUI Devices", "reference": "CDM519-04A-01FRA-2M-67", "status": "production", "datasheetInfo": {"part": {"partNumber": "CDM519-04A-01FRA-2M-67", "description": "Round", "series": "CDM519"}, "electrical": {"ratedCurrentPerContact": 1.0, "ratedVoltage": 60.0}, "mechanical": {"positions": 4, "mountingStyle": "cable"}, "provenance": [{"source": "manufacturerParametric", "verification": "inferredNotVerified", "verificationDate": "2026-09-06", "sourceName": "Same Sky product catalogue", "sourceUrl": "https://www.sameskydevices.com/catalog/interconnect", "retrievedDate": "2026-07-31"}, {"source": "manufacturerParametric", "sourceName": "Same Sky interconnect catalogue", "sourceUrl": "https://www.sameskydevices.com/product/interconnect/cable-assemblies/circular-cable-assemblies/cdm519-04a-01fra-2m-67", "retrievedDate": "2026-10-18", "fields": ["part.partNumber", "electrical.ratedCurrentPerContact", "electrical.ratedVoltage"], "verification": "partNamed", "verificationDate": "2026-10-18"}], "environmental": {"operatingTemperature": {"minimum": -25.0, "maximum": 80.0}}, "familyDetails": {"family": "circular", "coding": "A", "shielded": false}}, "description": "Round", "datasheetUrl": "https://www.sameskydevices.com/product/resource/cdm519.pdf"}}})KREC";
+// connectors.ndjson line 223437: CDM818-05B-01FRA-2M-67
+const char* kCDM818_05B = R"KREC({"connector": {"manufacturerInfo": {"name": "CUI Devices", "reference": "CDM818-05B-01FRA-2M-67", "status": "production", "datasheetInfo": {"part": {"partNumber": "CDM818-05B-01FRA-2M-67", "description": "Round", "series": "CDM818"}, "electrical": {"ratedCurrentPerContact": 3.0, "ratedVoltage": 30.0}, "mechanical": {"positions": 5, "mountingStyle": "cable"}, "provenance": [{"source": "manufacturerParametric", "verification": "inferredNotVerified", "verificationDate": "2026-09-06", "sourceName": "Same Sky product catalogue", "sourceUrl": "https://www.sameskydevices.com/catalog/interconnect", "retrievedDate": "2026-07-31"}, {"source": "manufacturerParametric", "sourceName": "Same Sky interconnect catalogue", "sourceUrl": "https://www.sameskydevices.com/product/interconnect/cable-assemblies/circular-cable-assemblies/cdm818-05b-01fra-2m-67", "retrievedDate": "2026-10-18", "fields": ["part.partNumber", "electrical.ratedCurrentPerContact", "electrical.ratedVoltage"], "verification": "partNamed", "verificationDate": "2026-10-18"}], "environmental": {"operatingTemperature": {"minimum": -25.0, "maximum": 80.0}}, "familyDetails": {"family": "circular", "coding": "B", "shielded": false}}, "description": "Round", "datasheetUrl": "https://www.sameskydevices.com/product/resource/cdm818.pdf"}}})KREC";
+// connectors.ndjson line 223499: CDM1237-05A-01FRA-3M-67
+const char* kCDM1237_05A = R"KREC({"connector": {"manufacturerInfo": {"name": "CUI Devices", "reference": "CDM1237-05A-01FRA-3M-67", "status": "production", "datasheetInfo": {"part": {"partNumber": "CDM1237-05A-01FRA-3M-67", "description": "Round", "series": "CDM1237"}, "electrical": {"ratedCurrentPerContact": 4.0, "ratedVoltage": 60.0}, "mechanical": {"positions": 5, "mountingStyle": "cable"}, "provenance": [{"source": "manufacturerParametric", "verification": "inferredNotVerified", "verificationDate": "2026-09-06", "sourceName": "Same Sky product catalogue", "sourceUrl": "https://www.sameskydevices.com/catalog/interconnect", "retrievedDate": "2026-07-31"}, {"source": "manufacturerParametric", "sourceName": "Same Sky interconnect catalogue", "sourceUrl": "https://www.sameskydevices.com/product/interconnect/cable-assemblies/circular-cable-assemblies/cdm1237-05a-01fra-3m-67", "retrievedDate": "2026-10-18", "fields": ["part.partNumber", "electrical.ratedCurrentPerContact", "electrical.ratedVoltage"], "verification": "partNamed", "verificationDate": "2026-10-18"}], "environmental": {"operatingTemperature": {"minimum": -25.0, "maximum": 80.0}}, "familyDetails": {"family": "circular", "coding": "A", "shielded": false}}, "description": "Round", "datasheetUrl": "https://www.sameskydevices.com/product/resource/cdm1237.pdf"}}})KREC";
+// connectors.ndjson line 224473: CDM802-08A-FP-F010-67
+const char* kCDM802_08A = R"KREC({"connector": {"manufacturerInfo": {"name": "CUI Devices", "reference": "CDM802-08A-FP-F010-67", "status": "production", "datasheetInfo": {"part": {"partNumber": "CDM802-08A-FP-F010-67", "description": "Jack, Female", "series": "CDM802", "matingPolarity": "female"}, "electrical": {"ratedCurrentPerContact": 3.0, "ratedVoltage": 60.0}, "mechanical": {"positions": 3, "mountingStyle": "panel"}, "provenance": [{"source": "manufacturerParametric", "verification": "inferredNotVerified", "verificationDate": "2026-09-06", "sourceName": "Same Sky product catalogue", "sourceUrl": "https://www.sameskydevices.com/catalog/interconnect", "retrievedDate": "2026-07-31"}, {"source": "manufacturerParametric", "sourceName": "Same Sky interconnect catalogue", "sourceUrl": "https://www.sameskydevices.com/product/interconnect/connectors/circular-connectors/cdm802-08a-fp-f010-67", "retrievedDate": "2026-10-18", "fields": ["part.partNumber", "electrical.ratedCurrentPerContact", "electrical.ratedVoltage", "mechanical.positions"], "verification": "partNamed", "verificationDate": "2026-10-18"}], "environmental": {"operatingTemperature": {"minimum": -25.0, "maximum": 80.0}}, "familyDetails": {"family": "circular", "coding": "A", "shielded": false}}, "description": "Jack, Female", "datasheetUrl": "https://www.sameskydevices.com/product/resource/cdm802.pdf"}}})KREC";
+// connectors.ndjson line 106571: ZPF000000000005657
+const char* kZPF5657 = R"KREC({"connector": {"manufacturerInfo": {"name": "TE Connectivity", "reference": "ZPF000000000005657", "status": "production", "datasheetInfo": {"part": {"partNumber": "ZPF000000000005657", "matingPolarity": "female", "description": "Circular Connector Plug, Shell Size 12, Sealable, Signal, Panel Mount, Bronze, Code N, 3 Signal Positions, 14 – 12 AWG, 1.91 – 3.18 mm² Wire", "series": "DEUTSCH"}, "electrical": {"ratedCurrentPerContact": 23.0}, "mechanical": {"positions": 3, "mountingStyle": "panel"}, "familyDetails": {"family": "circular"}, "environmental": {"operatingTemperature": {"minimum": -40.0, "maximum": 100.0}}, "provenance": [{"source": "manufacturerParametric", "sourceName": "TE Connectivity product catalogue", "sourceUrl": "https://www.te.com/en/product-ZPF000000000005657.html", "retrievedDate": "2026-09-07", "verification": "valuesReadFromSource", "verificationDate": "2026-09-07", "fields": ["mechanical.positions", "mechanical.mountingStyle"]}, {"source": "manufacturerParametric", "sourceName": "TE Connectivity product catalogue", "verification": "valuesReadFromSource", "verificationDate": "2026-09-07", "retrievedDate": "2026-06-24"}]}, "family": "DEUTSCH", "description": "Circular Connector Plug, Shell Size 12, Sealable, Signal, Panel Mount, Bronze, Code N, 3 Signal Positions, 14 – 12 AWG, 1.91 – 3.18 mm² Wire"}}})KREC";
+// connectors.ndjson line 380347: 1224570000
+const char* k1224570000 = R"KREC({"connector": {"manufacturerInfo": {"name": "Weidmüller", "reference": "1224570000", "status": "production", "orderCode": "1224570000", "datasheetUrl": "https://eshop.weidmueller.com/en/p/1224570000", "datasheetInfo": {"part": {"partNumber": "1224570000", "description": "Sensor/Actuator plug-in connector"}, "electrical": {"ratedCurrentPerContact": 8.0, "ratedVoltage": 200.0}, "mechanical": {"positions": 12, "weight": 0.01, "matingCycles": 1000}, "environmental": {"rohsCompliant": true}, "familyDetails": {"family": "circular", "shellSize": "M23"}, "provenance": [{"source": "manufacturerParametric", "sourceName": "Weidmüller product catalogue", "sourceUrl": "https://eshop.weidmueller.com/en/p/1224570000", "retrievedDate": "2026-07-31", "verification": "partNamed", "verificationDate": "2026-10-10"}, {"source": "manufacturerParametric", "sourceName": "Weidmüller product catalogue", "sourceUrl": "https://eshop.weidmueller.com/en/p/1224570000", "retrievedDate": "2026-09-24", "fields": ["manufacturerInfo.reference"], "verification": "partNamed", "verificationDate": "2026-10-10"}]}, "family": "Circular Connectors"}}})KREC";
+// connectors.ndjson line 395327: D38999/24FA98AN
+const char* kD38999_24FA98AN = R"KREC({"connector": {"manufacturerInfo": {"name": "Amphenol Aerospace", "reference": "D38999/24FA98AN", "family": "MIL-DTL-38999 Series III", "description": "MIL-DTL-38999 Series III jam nut receptacle, shell size 9, insert arrangement 9-98, 3 contacts, pin insert, supplied less contacts", "datasheetUrl": "https://www.amphenol-aerospace.com/resources/literature/view/38999-catalog", "datasheetInfo": {"part": {"partNumber": "D38999/24FA98AN", "series": "MIL-DTL-38999 Series III", "matingPolarity": "male", "description": "MIL-DTL-38999 Series III jam nut receptacle, shell size 9, insert arrangement 9-98, 3 contacts, pin insert, supplied less contacts"}, "electrical": {"ratedVoltage": 600.0, "dielectricWithstandingVoltage": 1800.0, "ratedCurrentPerContact": 7.5}, "mechanical": {"positions": 3, "mountingStyle": "panel"}, "familyDetails": {"family": "circular", "shellSize": "9", "coding": "N", "couplingType": "threaded"}, "provenance": [{"source": "manufacturerDatasheet", "sourceName": "Amphenol Aerospace MIL-DTL-38999 catalogue", "sourceUrl": "https://www.amphenol-aerospace.com/resources/literature/view/38999-catalog", "retrievedDate": "2026-10-10", "fields": ["part.matingPolarity", "mechanical.positions", "mechanical.mountingStyle", "familyDetails.shellSize", "familyDetails.coding"], "verification": "seriesConfirmed", "verificationDate": "2026-10-10", "verificationMethod": "Insert Availability chart and How to Order (Military) key decoded for this order code"}, {"source": "manufacturerDatasheet", "sourceName": "Amphenol Aerospace MIL-DTL-38999 catalogue", "sourceUrl": "https://www.amphenol-aerospace.com/resources/literature/view/38999-catalog", "retrievedDate": "2026-10-10", "fields": ["electrical.ratedVoltage", "electrical.dielectricWithstandingVoltage"], "verification": "seriesConfirmed", "verificationDate": "2026-10-10", "verificationMethod": "Service rating I: suggested operating voltage 600 VAC rms, test voltage 1800 VRMS at sea level"}, {"source": "manufacturerDatasheet", "sourceName": "Amphenol Aerospace MIL-DTL-38999 catalogue", "sourceUrl": "https://www.amphenol-aerospace.com/resources/literature/view/38999-catalog", "retrievedDate": "2026-10-10", "fields": ["electrical.ratedCurrentPerContact"], "verification": "seriesConfirmed", "verificationDate": "2026-10-10", "verificationMethod": "Contact rating test current for contact sizes 20"}, {"source": "manufacturerDatasheet", "sourceName": "Amphenol Aerospace MIL-DTL-38999 catalogue", "sourceUrl": "https://www.amphenol-aerospace.com/resources/literature/view/38999-catalog", "retrievedDate": "2026-10-10", "fields": ["familyDetails.couplingType"], "verification": "seriesConfirmed", "verificationDate": "2026-10-10", "verificationMethod": "Triple Start Threads"}]}}}})KREC";
+// connectors.ndjson line 400553: SJT07RT-8-98P
+const char* kSJT07RT_8_98P = R"KREC({"connector": {"manufacturerInfo": {"name": "Amphenol Aerospace", "reference": "SJT07RT-8-98P", "family": "Amphenol SJT", "description": "Amphenol SJT jam nut receptacle, shell size 8, insert arrangement 8-98, 3 contacts, pin insert", "datasheetUrl": "https://www.amphenol-aerospace.com/resources/literature/view/38999-catalog", "datasheetInfo": {"part": {"partNumber": "SJT07RT-8-98P", "series": "Amphenol SJT", "matingPolarity": "male", "description": "Amphenol SJT jam nut receptacle, shell size 8, insert arrangement 8-98, 3 contacts, pin insert"}, "electrical": {"ratedVoltage": 600.0, "dielectricWithstandingVoltage": 1800.0, "ratedCurrentPerContact": 7.5}, "mechanical": {"positions": 3, "mountingStyle": "panel"}, "familyDetails": {"family": "circular", "shellSize": "8", "coding": "N", "couplingType": "bayonet"}, "provenance": [{"source": "manufacturerDatasheet", "sourceName": "Amphenol Aerospace MIL-DTL-38999 catalogue", "sourceUrl": "https://www.amphenol-aerospace.com/resources/literature/view/38999-catalog", "retrievedDate": "2026-10-10", "fields": ["part.matingPolarity", "mechanical.positions", "mechanical.mountingStyle", "familyDetails.shellSize", "familyDetails.coding"], "verification": "seriesConfirmed", "verificationDate": "2026-10-10", "verificationMethod": "Insert Availability chart and How to Order (Military) key decoded for this order code"}, {"source": "manufacturerDatasheet", "sourceName": "Amphenol Aerospace MIL-DTL-38999 catalogue", "sourceUrl": "https://www.amphenol-aerospace.com/resources/literature/view/38999-catalog", "retrievedDate": "2026-10-10", "fields": ["electrical.ratedVoltage", "electrical.dielectricWithstandingVoltage"], "verification": "seriesConfirmed", "verificationDate": "2026-10-10", "verificationMethod": "Service rating I: suggested operating voltage 600 VAC rms, test voltage 1800 VRMS at sea level"}, {"source": "manufacturerDatasheet", "sourceName": "Amphenol Aerospace MIL-DTL-38999 catalogue", "sourceUrl": "https://www.amphenol-aerospace.com/resources/literature/view/38999-catalog", "retrievedDate": "2026-10-10", "fields": ["electrical.ratedCurrentPerContact"], "verification": "seriesConfirmed", "verificationDate": "2026-10-10", "verificationMethod": "Contact rating test current for contact sizes 20"}, {"source": "manufacturerDatasheet", "sourceName": "Amphenol Aerospace MIL-DTL-38999 catalogue", "sourceUrl": "https://www.amphenol-aerospace.com/resources/literature/view/38999-catalog", "retrievedDate": "2026-10-10", "fields": ["familyDetails.couplingType"], "verification": "seriesConfirmed", "verificationDate": "2026-10-10", "verificationMethod": "bayonet-lock coupling"}]}}}})KREC";
+// connectors.ndjson line 400178: SJT06RT-12-22S
+const char* kSJT06RT_12_22S = R"KREC({"connector": {"manufacturerInfo": {"name": "Amphenol Aerospace", "reference": "SJT06RT-12-22S", "family": "Amphenol SJT", "description": "Amphenol SJT straight plug, shell size 12, insert arrangement 12-22, 22 contacts, socket insert", "datasheetUrl": "https://www.amphenol-aerospace.com/resources/literature/view/38999-catalog", "datasheetInfo": {"part": {"partNumber": "SJT06RT-12-22S", "series": "Amphenol SJT", "matingPolarity": "female", "description": "Amphenol SJT straight plug, shell size 12, insert arrangement 12-22, 22 contacts, socket insert"}, "electrical": {"ratedVoltage": 400.0, "dielectricWithstandingVoltage": 1300.0, "ratedCurrentPerContact": 3.0}, "mechanical": {"positions": 22, "mountingStyle": "cable"}, "familyDetails": {"family": "circular", "shellSize": "12", "coding": "N", "couplingType": "bayonet"}, "provenance": [{"source": "manufacturerDatasheet", "sourceName": "Amphenol Aerospace MIL-DTL-38999 catalogue", "sourceUrl": "https://www.amphenol-aerospace.com/resources/literature/view/38999-catalog", "retrievedDate": "2026-10-10", "fields": ["part.matingPolarity", "mechanical.positions", "mechanical.mountingStyle", "familyDetails.shellSize", "familyDetails.coding"], "verification": "seriesConfirmed", "verificationDate": "2026-10-10", "verificationMethod": "Insert Availability chart and How to Order (Military) key decoded for this order code"}, {"source": "manufacturerDatasheet", "sourceName": "Amphenol Aerospace MIL-DTL-38999 catalogue", "sourceUrl": "https://www.amphenol-aerospace.com/resources/literature/view/38999-catalog", "retrievedDate": "2026-10-10", "fields": ["electrical.ratedVoltage", "electrical.dielectricWithstandingVoltage"], "verification": "seriesConfirmed", "verificationDate": "2026-10-10", "verificationMethod": "Service rating M: suggested operating voltage 400 VAC rms, test voltage 1300 VRMS at sea level"}, {"source": "manufacturerDatasheet", "sourceName": "Amphenol Aerospace MIL-DTL-38999 catalogue", "sourceUrl": "https://www.amphenol-aerospace.com/resources/literature/view/38999-catalog", "retrievedDate": "2026-10-10", "fields": ["electrical.ratedCurrentPerContact"], "verification": "seriesConfirmed", "verificationDate": "2026-10-10", "verificationMethod": "Contact rating test current for contact sizes 22M"}, {"source": "manufacturerDatasheet", "sourceName": "Amphenol Aerospace MIL-DTL-38999 catalogue", "sourceUrl": "https://www.amphenol-aerospace.com/resources/literature/view/38999-catalog", "retrievedDate": "2026-10-10", "fields": ["familyDetails.couplingType"], "verification": "seriesConfirmed", "verificationDate": "2026-10-10", "verificationMethod": "bayonet-lock coupling"}]}}}})KREC";
+// connectors.ndjson line 399671: MS27484T12B22B
+const char* kMS27484T12B22B = R"KREC({"connector": {"manufacturerInfo": {"name": "Amphenol Aerospace", "reference": "MS27484T12B22B", "family": "MIL-DTL-38999 Series II", "description": "MIL-DTL-38999 Series II crimp straight plug with grounding fingers, shell size 12, insert arrangement 12-22, 22 contacts, socket insert, supplied less contacts", "datasheetUrl": "https://www.amphenol-aerospace.com/resources/literature/view/38999-catalog", "datasheetInfo": {"part": {"partNumber": "MS27484T12B22B", "series": "MIL-DTL-38999 Series II", "matingPolarity": "female", "description": "MIL-DTL-38999 Series II crimp straight plug with grounding fingers, shell size 12, insert arrangement 12-22, 22 contacts, socket insert, supplied less contacts"}, "electrical": {"ratedVoltage": 400.0, "dielectricWithstandingVoltage": 1300.0, "ratedCurrentPerContact": 3.0}, "mechanical": {"positions": 22, "mountingStyle": "cable"}, "familyDetails": {"family": "circular", "shellSize": "12", "coding": "N"}, "provenance": [{"source": "manufacturerDatasheet", "sourceName": "Amphenol Aerospace MIL-DTL-38999 catalogue", "sourceUrl": "https://www.amphenol-aerospace.com/resources/literature/view/38999-catalog", "retrievedDate": "2026-10-10", "fields": ["part.matingPolarity", "mechanical.positions", "mechanical.mountingStyle", "familyDetails.shellSize", "familyDetails.coding"], "verification": "seriesConfirmed", "verificationDate": "2026-10-10", "verificationMethod": "Insert Availability chart and How to Order (Military) key decoded for this order code"}, {"source": "manufacturerDatasheet", "sourceName": "Amphenol Aerospace MIL-DTL-38999 catalogue", "sourceUrl": "https://www.amphenol-aerospace.com/resources/literature/view/38999-catalog", "retrievedDate": "2026-10-10", "fields": ["electrical.ratedVoltage", "electrical.dielectricWithstandingVoltage"], "verification": "seriesConfirmed", "verificationDate": "2026-10-10", "verificationMethod": "Service rating M: suggested operating voltage 400 VAC rms, test voltage 1300 VRMS at sea level"}, {"source": "manufacturerDatasheet", "sourceName": "Amphenol Aerospace MIL-DTL-38999 catalogue", "sourceUrl": "https://www.amphenol-aerospace.com/resources/literature/view/38999-catalog", "retrievedDate": "2026-10-10", "fields": ["electrical.ratedCurrentPerContact"], "verification": "seriesConfirmed", "verificationDate": "2026-10-10", "verificationMethod": "Contact rating test current for contact sizes 22M"}]}}}})KREC";
+
+// The connector spec exactly as web/src/crossref.js builds it from a shard row: every
+// unstated optional string is null, never "".
+json nul_or(const std::string& s) { return s.empty() ? json(nullptr) : json(s); }
+json nz(double v) { return std::isfinite(v) && v > 0 ? json(v) : json(nullptr); }
+json fin(double v) { return std::isfinite(v) ? json(v) : json(nullptr); }
+json spec_of(const char* line) {
+    auto row = kelvin::extract_connector(json::parse(line));
+    REQUIRE(row.has_value());
+    const kelvin::ConnectorRow& r = *row;
+    return json{{"mpn", r.mpn},
+                {"length_m", nz(r.length_m)},
+                {"width_m", nz(r.width_m)},
+                {"height_m", nz(r.height_m)},
+                {"case_code", r.case_code},
+                {"mount", r.mount},
+                {"lead_pitch_m", nz(r.lead_pitch_m)},
+                {"is_production", r.is_production},
+                {"provenance_retracted", r.provenance_retracted},
+                {"box_axes_ambiguous", r.box_axes_ambiguous},
+                {"family", r.family},
+                {"positions", nz(r.positions)},
+                {"polarity", nul_or(r.polarity)},
+                {"interface_standard", nul_or(r.interface_standard)},
+                {"pitch_mm", std::isfinite(r.pitch) && r.pitch > 0 ? json(r.pitch * 1e3)
+                                                                   : json(nullptr)},
+                {"rows", nz(r.rows)},
+                {"rated_current_A", nz(r.rated_current)},
+                {"rated_voltage_V", nz(r.rated_voltage)},
+                {"temp_min_C", fin(r.temp_min_c)},
+                {"temp_max_C", fin(r.temp_max_c)},
+                {"contact_plating", nul_or(r.contact_plating)},
+                {"termination", nul_or(r.termination)},
+                {"mounting", nul_or(r.mount)},
+                {"orientation", nul_or(r.orientation)},
+                {"pluggable", r.pluggable == "true"    ? json(true)
+                              : r.pluggable == "false" ? json(false)
+                                                       : json(nullptr)},
+                {"actuator_type", nul_or(r.actuator_type)},
+                {"shell_size", nul_or(r.shell_size)},
+                {"coding", nul_or(r.coding)},
+                {"coupling_type", nul_or(r.coupling_type)},
+                {"mating_cycles", nz(r.mating_cycles)}};
+}
+json rank_one(const char* orig, const char* cand) {
+    kelvin::crossref::Options opt;
+    opt.max_results = 10;
+    auto r = kelvin::crossref::cross_reference("connector", spec_of(orig),
+                                               json::array({spec_of(cand)}), opt);
+    REQUIRE(r["candidates"].size() == 1);
+    return r["candidates"][0];
+}
+size_t notes_with(const json& c, const std::string& needle) {
+    size_t n = 0;
+    if (c.contains("notes"))
+        for (const auto& s : c["notes"])
+            if (s.get<std::string>().find(needle) != std::string::npos) ++n;
+    return n;
+}
+}  // namespace variant_ids
+
+TEST_CASE("connector identity 2026-11-12: the extractor reads the variant fields as stated",
+          "[qarlos][views][connector-identity]") {
+    using namespace variant_ids;
+    auto a = kelvin::extract_connector(json::parse(k545500833));
+    auto b = kelvin::extract_connector(json::parse(k512960833));
+    auto c = kelvin::extract_connector(json::parse(kD38999_24FA98AN));
+    auto d = kelvin::extract_connector(json::parse(k1224150000));
+    REQUIRE((a && b && c && d));
+    CHECK(a->actuator_type == "slide");
+    CHECK(b->actuator_type.empty());
+    CHECK(c->shell_size == "9");
+    CHECK(c->coding == "N");
+    CHECK(c->coupling_type == "threaded");
+    CHECK(d->shell_size == "M23");
+    CHECK(d->coding.empty());
+    CHECK(d->coupling_type.empty());
+}
+
+TEST_CASE("connector identity 2026-11-12: FPC actuator type (familyFpcFfc.actuatorType)",
+          "[qarlos][crossref][connector-identity]") {
+    using namespace variant_ids;
+    // 512810894 (Molex Easy-On, nonZif) -> 545500833 (Molex, slide): both stated, different.
+    const json diff = rank_one(k512810894, k545500833);
+    CHECK(verdict_of(diff, "actuator_type") == "fail");
+    CHECK(diff["status"] == "no_substitute");
+    CHECK(has_note(diff, "FPC actuator type (familyFpcFfc.actuatorType) differs: nonZif -> slide"));
+    // 545500833 (slide) -> 512960833 (no actuatorType on record): one side only.
+    const json one = rank_one(k545500833, k512960833);
+    CHECK(verdict_of(one, "actuator_type") == "unverified");
+    CHECK(one["status"] != "no_substitute");
+    // Partial only because the substitute is not marked production (lifecycle), not for
+    // this axis: a one-sided variant identity does not cap (interface_standard's treatment).
+    CHECK(has_note(one, "substitute is not marked production status"));
+    CHECK(has_note(one, "FPC actuator type (familyFpcFfc.actuatorType) not established "
+                        "(original: slide, substitute: not stated)"));
+    // CAT-M5833-M2934 -> CAT-M5833-C8684 (TE): neither states it.
+    const json none = rank_one(kCAT_M5833_M2934, kCAT_M5833_C8684);
+    CHECK(verdict_of(none, "actuator_type") == "");
+    CHECK(notes_with(none, "actuatorType") == 0);
+}
+
+TEST_CASE("connector identity 2026-11-12: circular shell size (familyCircular.shellSize)",
+          "[qarlos][crossref][connector-identity]") {
+    using namespace variant_ids;
+    // 1924950000 (Weidmüller, M12) -> 1224150000 (Weidmüller, M23), both 12-way.
+    const json diff = rank_one(k1924950000, k1224150000);
+    CHECK(verdict_of(diff, "shell_size") == "fail");
+    CHECK(diff["status"] == "no_substitute");
+    CHECK(has_note(diff, "circular shell size (familyCircular.shellSize) differs: M12 -> M23"));
+    // 1224000000 (Weidmüller, M23) -> DIV40E1706PA-023 (TE, no shellSize): one side only.
+    const json one = rank_one(k1224000000, kDIV40E1706PA_023);
+    CHECK(verdict_of(one, "shell_size") == "unverified");
+    CHECK(one["status"] != "no_substitute");
+    // No cap: the one-sided variant identity leaves drop_in reachable, exactly as a
+    // one-sided interface_standard does (below).
+    CHECK(one["grade"] == "drop_in");
+    CHECK(has_note(one, "circular shell size (familyCircular.shellSize) not established "
+                        "(original: M23, substitute: not stated)"));
+    // The treatment mirrored: the same pair with interface_standard stated on the original
+    // only (the field added to the spec here, not taken from the record) is also UNVERIFIED,
+    // carries no note and keeps drop_in.
+    {
+        json o = spec_of(k1224000000), c = spec_of(kDIV40E1706PA_023);
+        o["shell_size"] = nullptr;
+        o["interface_standard"] = "M23";
+        kelvin::crossref::Options opt;
+        auto r = kelvin::crossref::cross_reference("connector", o, json::array({c}), opt);
+        const json& m = r["candidates"][0];
+        CHECK(verdict_of(m, "interface_standard") == "unverified");
+        CHECK(m["grade"] == "drop_in");
+        CHECK(notes_with(m, "M23") == 0);
+    }
+    // CDM520-04A-01FRA-3M-67 -> CDM519-04A-01FRA-2M-67 (CUI, coding A, no shell size on
+    // either record).
+    const json none = rank_one(kCDM520_04A, kCDM519_04A);
+    CHECK(verdict_of(none, "shell_size") == "");
+    CHECK(notes_with(none, "shellSize") == 0);
+}
+
+TEST_CASE("connector identity 2026-11-12: circular coding (familyCircular.coding)",
+          "[qarlos][crossref][connector-identity]") {
+    using namespace variant_ids;
+    // CDM818-05B-01FRA-2M-67 (CUI, B-coded) -> CDM1237-05A-01FRA-3M-67 (CUI, A-coded).
+    const json diff = rank_one(kCDM818_05B, kCDM1237_05A);
+    CHECK(verdict_of(diff, "coding") == "fail");
+    CHECK(diff["status"] == "no_substitute");
+    CHECK(has_note(diff, "circular coding (familyCircular.coding) differs: B -> A"));
+    // CDM802-08A-FP-F010-67 (CUI, A) -> ZPF000000000005657 (TE, no coding): one side only.
+    const json one = rank_one(kCDM802_08A, kZPF5657);
+    CHECK(verdict_of(one, "coding") == "unverified");
+    CHECK(one["status"] != "no_substitute");
+    // No cap: the one-sided variant identity leaves drop_in reachable, exactly as a
+    // one-sided interface_standard does (below).
+    CHECK(one["grade"] == "drop_in");
+    CHECK(has_note(one, "circular coding (familyCircular.coding) not established "
+                        "(original: A, substitute: not stated)"));
+    // 1224150000 -> 1224570000 (Weidmüller M23, no coding on either).
+    const json none = rank_one(k1224150000, k1224570000);
+    CHECK(verdict_of(none, "coding") == "");
+    CHECK(notes_with(none, "coding)") == 0);
+}
+
+TEST_CASE("connector identity 2026-11-12: circular coupling (familyCircular.couplingType)",
+          "[qarlos][crossref][connector-identity]") {
+    using namespace variant_ids;
+    // D38999/24FA98AN (threaded, shell 9) -> SJT07RT-8-98P (bayonet, shell 8). No catalogue
+    // pair differs in coupling alone (a threaded and a bayonet part never share a shell
+    // code), so the shell differs too; coupling is checked first and is the reason named.
+    const json diff = rank_one(kD38999_24FA98AN, kSJT07RT_8_98P);
+    CHECK(verdict_of(diff, "coupling_type") == "fail");
+    CHECK(diff["status"] == "no_substitute");
+    CHECK(has_note(diff, "circular coupling type (familyCircular.couplingType) differs: "
+                         "threaded -> bayonet"));
+    // SJT06RT-12-22S (bayonet, 12, N) -> MS27484T12B22B (12, N, no couplingType).
+    const json one = rank_one(kSJT06RT_12_22S, kMS27484T12B22B);
+    CHECK(verdict_of(one, "coupling_type") == "unverified");
+    CHECK(verdict_of(one, "shell_size") == "pass");
+    CHECK(verdict_of(one, "coding") == "pass");
+    CHECK(one["status"] != "no_substitute");
+    // Partial only because the substitute is not marked production (lifecycle), not for
+    // this axis: a one-sided variant identity does not cap (interface_standard's treatment).
+    CHECK(has_note(one, "substitute is not marked production status"));
+    CHECK(has_note(one, "circular coupling type (familyCircular.couplingType) not established "
+                        "(original: bayonet, substitute: not stated)"));
+    // 1224150000 -> 1224570000: neither states a coupling.
+    const json none = rank_one(k1224150000, k1224570000);
+    CHECK(verdict_of(none, "coupling_type") == "");
+    CHECK(notes_with(none, "couplingType") == 0);
+}

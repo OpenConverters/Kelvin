@@ -242,8 +242,12 @@ inline bool is_hard_param(const std::string& cat, const std::string& key) {
     // parameter of the part — so a STATED difference rejects like the other identities
     // (Qarlos 2026-11-09, HIF3B-10D-2.54R(63)). One side only: unverified and capped below
     // drop_in (the one-sided identity block after the PARAM_SPECS loop).
-    static const std::set<std::string> connector{"family", "positions", "polarity",
-                                                 "interface_standard", "termination"};
+    // The family-variant identities (familyFpcFfc.actuatorType, familyCircular.couplingType /
+    // .coding / .shellSize) follow interface_standard exactly (owner 2026-11-12, "Identity
+    // when stated"): a stated difference rejects; one side only is unverified with a note.
+    static const std::set<std::string> connector{
+        "family",        "positions",     "polarity", "interface_standard", "termination",
+        "actuator_type", "coupling_type", "coding",   "shell_size"};
     static const std::set<std::string> analog{"subtype", "channels"};
     // mode: a 3rd-overtone crystal cannot cross with a fundamental one in either
     // direction — an overtone circuit's LC tank is inductive at the fundamental,
@@ -263,6 +267,16 @@ inline bool is_hard_param(const std::string& cat, const std::string& key) {
     if (cat == "analog") return analog.count(key) > 0;
     if (cat == "timeBase") return timebase.count(key) > 0;
     return false;
+}
+
+// The family-variant connector identities (owner 2026-11-12): the label a note uses,
+// naming the CONAS field it was read from. nullptr for any other key.
+inline const char* connector_variant_axis_label(const std::string& key) {
+    if (key == "actuator_type") return "FPC actuator type (familyFpcFfc.actuatorType)";
+    if (key == "coupling_type") return "circular coupling type (familyCircular.couplingType)";
+    if (key == "coding") return "circular coding (familyCircular.coding)";
+    if (key == "shell_size") return "circular shell size (familyCircular.shellSize)";
+    return nullptr;
 }
 
 struct Options {
@@ -1367,6 +1381,14 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                 " -> " + str(cand, "termination") +
                                 " — a different wire-attach method, not a drop-in for a built "
                                 "harness");
+            // The family-variant identities reject like interface_standard (is_hard_param);
+            // their note names the CONAS field and both stated values (owner 2026-11-12).
+            if (const char* what = connector_variant_axis_label(spec.key))
+                notes.push_back(std::string(what) + " differs: " +
+                                str(original, spec.key.c_str()) + " -> " +
+                                str(cand, spec.key.c_str()) +
+                                " — the counterpart the original mates with does not fit, "
+                                "lock or key into it; not a substitute");
             if (spec.key == "polarity")
                 notes.push_back("mating gender differs: " + str(original, "polarity") + " -> " +
                                 str(cand, "polarity") +
@@ -1641,6 +1663,19 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             notes.push_back(std::string(a.what) + " not established (original: " +
                             said(original, a.key) + ", substitute: " + said(cand, a.key) +
                             ") — " + a.confirm + " from the datasheets");
+        }
+        // Family-variant identities stated on one side only (owner 2026-11-12, "Identity when
+        // stated"): the PARAM_SPECS loop has pushed UNVERIFIED; this adds the note naming the
+        // field and the stated value. No cap and no demotion: that is interface_standard's
+        // one-sided treatment (UNVERIFIED verdict, no note, no penalty, no cap), mirrored
+        // exactly except for the note the owner asked for.
+        for (const char* k : {"actuator_type", "coupling_type", "coding", "shell_size"}) {
+            const bool os = stated(original, k), ss = stated(cand, k);
+            if (os == ss) continue;
+            notes.push_back(std::string(connector_variant_axis_label(k)) +
+                            " not established (original: " + said(original, k) +
+                            ", substitute: " + said(cand, k) +
+                            ") — confirm it from the datasheets");
         }
     }
 
