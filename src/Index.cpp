@@ -124,7 +124,12 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // v20 carries RowBase.box_axes_ambiguous: a leaded L x W x T body with no height whose record
 // does not say which of L and W stands up from the board (vendors' drawings disagree), so
 // the cross-reference reports its footprint UNVERIFIED instead of guessing (2026-11-09).
-constexpr uint32_t kFormatVersion = 20;
+// v21 carries a resistor's maximum working voltage (ResistorRow.max_voltage, RAS
+// electrical.maxVoltage) and the reverse voltage a diode's junction capacitance is stated at
+// (DiodeRow.junction_capacitance_vr), both compared by the cross-reference (Qarlos r8/r10:
+// an 800 V HV chip resistor took parts with no voltage check; a Schottky's 250 pF @ 1 V was
+// passed against 170 pF @ 48 V).
+constexpr uint32_t kFormatVersion = 21;
 
 // Identity of the code that produces rows, so a cached shard can be recognised as
 // having been built by a DIFFERENT extractor than the one running now (ABT #426).
@@ -326,6 +331,7 @@ void row_io(Ar& ar, DiodeRow& r) {
     ar.str(r.peak_pulse_power_waveform);    // v17
     ar.str(r.peak_pulse_current_waveform);  // v17
     ar.str(r.qualification);           // v20
+    ar.dbl(r.junction_capacitance_vr); // v21
     ar.boolean(r.is_production);
 }
 
@@ -373,6 +379,7 @@ void row_io(Ar& ar, ResistorRow& r) {
     ar.dbl(r.temp_max_c);                // v19
     ar.boolean(r.current_sense);         // v19
     ar.boolean(r.pulse_withstanding);    // v19
+    ar.dbl(r.max_voltage);               // v21
 }
 
 template <class Ar>

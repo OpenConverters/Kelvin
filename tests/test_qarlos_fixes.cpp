@@ -1,6 +1,7 @@
 // Regression tests for the Qarlos cross-reference audit of 2026-10-24
 // (ABT #2029-#2051). Each case reproduces the reported row in miniature.
 #include <cmath>
+#include <fstream>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -2310,7 +2311,8 @@ json res_record_spec(const char* raw) {
               {"temp_min_C", num_or_null(row->temp_min_c)},
               {"temp_max_C", num_or_null(row->temp_max_c)},
               {"current_sense", row->current_sense},
-              {"pulse_withstanding", row->pulse_withstanding}};
+              {"pulse_withstanding", row->pulse_withstanding},
+              {"max_voltage_V", pos_or_null(row->max_voltage)}};
     s["derating_temperature"] =
         row->derating_temperature.empty() ? json(nullptr) : json(row->derating_temperature);
     s["derating_amplitude"] =
@@ -3841,6 +3843,7 @@ json diode_spec(const json& r) {
                           "peak_pulse_current_waveform", "qualification"})
         s[k] = r.value(k, "");
     s["tj_max"] = raw_(r["tj_max"]);
+    s["junction_capacitance_vr"] = raw_(r["junction_capacitance_vr"]);
     return s;
 }
 std::string fixture_(const char* f) {
@@ -4160,4 +4163,98 @@ TEST_CASE("owner 2026-11-09: a substitute missing a primary axis is still capped
     CHECK(verdict_of(cc, "pitch_mm") == "unverified");
     CHECK(has_note(cc, "contact pitch not established"));
     CHECK(cc["grade"] == "minor_review");
+}
+
+
+// ── Qarlos r8-r10, group A: fields the originals lost on the way to the ranker ──────────────
+// REAL TAS records (verbatim lines of the frozen bench resistors.ndjson / diodes.ndjson, TAS
+// 2d91b9c) in tests/fixtures/qarlos_r8r10_*.ndjson.
+namespace {
+std::string r8r10_line(const char* file, const std::string& mpn) {
+    std::ifstream in(std::string(KELVIN_TEST_DIR) + "/fixtures/qarlos_r8r10_" + file);
+    std::string line;
+    while (std::getline(in, line))
+        if (line.find("\"reference\": \"" + mpn + "\"") != std::string::npos ||
+            line.find("\"reference\":\"" + mpn + "\"") != std::string::npos)
+            return line;
+    throw std::runtime_error(std::string("fixture has no record ") + mpn);
+}
+json r8r10_res(const std::string& mpn) {
+    return res_record_spec(r8r10_line("resistors.ndjson", mpn).c_str());
+}
+const json& r8r10_diode_row(const std::string& mpn) {
+    static const json rows = [] {
+        auto sh = kelvin::build_diode_shard(std::string(KELVIN_TEST_DIR) +
+                                            "/fixtures/qarlos_r8r10_diodes.ndjson");
+        return kelvin::browse::browse_rows(sh, json{{"limit", 100}})["rows"];
+    }();
+    for (const auto& r : rows)
+        if (r.value("mpn", "") == mpn) return r;
+    throw std::runtime_error("fixture has no diode " + mpn);
+}
+json r8r10_diode_rank(const std::string& orig, const std::vector<std::string>& cands) {
+    json c = json::array();
+    for (const auto& m : cands) c.push_back(diode_spec(r8r10_diode_row(m)));
+    return kelvin::crossref::cross_reference("diode", diode_spec(r8r10_diode_row(orig)), c);
+}
+}  // namespace
+
+// A2 (r10 seed 23612437) / A3 (r8 seed 22565147): RAS electrical.maxVoltage never reached the
+// resistor row, so an 800 V KOA HV73V high-voltage chip took substitutes with no voltage verdict.
+TEST_CASE("qarlos r8r10 A2/A3: a resistor's maximum working voltage is carried and compared",
+          "[qarlos][crossref][views]") {
+    CHECK(r8r10_res("HV73V2BTTD3483F")["max_voltage_V"] == 800.0);
+    CHECK(r8r10_res("CMF604M7000JLEA")["max_voltage_V"] == 500.0);
+    CHECK(r8r10_res("ERJUP8F3483V")["max_voltage_V"].is_null());
+
+    auto r = kelvin::crossref::cross_reference(
+        "resistor", r8r10_res("HV73V2BTTD3483F"),
+        json::array({r8r10_res("RK73H2BTTD3483F"), r8r10_res("ERJUP8F3483V")}), res_opt());
+    // 200 V against 800 V: a FAIL, counted against the part, with both voltages named.
+    const json lower = res_find(r, "RK73H2BTTD3483F");
+    REQUIRE(!lower.is_null());
+    CHECK(verdict_of(lower, "max_voltage_V") == "fail");
+    CHECK(has_note(lower, "lower maximum working voltage: the substitute is rated 200 V against "
+                          "the original's 800 V"));
+    CHECK(lower["grade"] != "drop_in");
+    CHECK(lower["direction"] != "upgrade");
+    // Not stated by the substitute: UNVERIFIED and noted.
+    const json unknown = res_find(r, "ERJUP8F3483V");
+    REQUIRE(!unknown.is_null());
+    CHECK(verdict_of(unknown, "max_voltage_V") == "unverified");
+    CHECK(has_note(unknown, "the original's maximum working voltage is 800 V; the substitute's "
+                            "record states none"));
+}
+
+// A4 (r8 seed 22774605): PMEG6020EPAF states 250 pF at 1 V, MBRS2560T3G 170 pF at 48 V; the
+// junction capacitance was graded 'pass' on those two numbers. Cj falls with reverse bias, so
+// they compare only on a common bias (the ESR/ripple frequency-basis rule).
+TEST_CASE("qarlos r8r10 A4: junction capacitances on different reverse biases are not compared",
+          "[qarlos][crossref][views]") {
+    CHECK(r8r10_diode_row("PMEG6020EPAF")["junction_capacitance_vr"] == 1.0);
+    CHECK(r8r10_diode_row("MBRS2560T3G")["junction_capacitance_vr"] == 48.0);
+    CHECK(r8r10_diode_row("CD214A-B360R")["junction_capacitance_vr"].is_null());
+
+    auto r = r8r10_diode_rank("PMEG6020EPAF", {"MBRS2560T3G", "PMEG6020ELRX", "CD214A-B360R"});
+    auto find = [&](const std::string& m) {
+        for (const auto& c : r["candidates"])
+            if (c["mpn"] == m) return c;
+        return json(nullptr);
+    };
+    const json other_bias = find("MBRS2560T3G");
+    REQUIRE(!other_bias.is_null());
+    CHECK(verdict_of(other_bias, "junction_capacitance") == "unverified");
+    CHECK(verdict_of(other_bias, "junction_capacitance_basis") == "unverified");
+    CHECK(has_note(other_bias, "junction capacitance quoted at different reverse voltages "
+                               "(original 250 pF at 1 V, substitute 170 pF at 48 V)"));
+    // Same 1 V basis: compared as stated (110 pF <= 250 pF).
+    const json same_bias = find("PMEG6020ELRX");
+    REQUIRE(!same_bias.is_null());
+    CHECK(verdict_of(same_bias, "junction_capacitance") == "pass");
+    // A Cj at no stated bias against an original that states one: not comparable either.
+    const json no_bias = find("CD214A-B360R");
+    REQUIRE(!no_bias.is_null());
+    CHECK(verdict_of(no_bias, "junction_capacitance") == "unverified");
+    CHECK(has_note(no_bias, "the original's junction capacitance is 250 pF at 1 V; the "
+                            "substitute's record states 135 pF at no reverse voltage"));
 }

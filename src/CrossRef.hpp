@@ -1758,6 +1758,25 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                             "; the substitute's record states none — its drift over temperature "
                             "is unknown; confirm it from the datasheet");
         }
+        // A resistor's maximum working voltage (max_voltage_V in kResistor, the power-rating
+        // band): a WARN / FAIL is already counted worse by the table loop; name both voltages,
+        // because the verdict alone does not say how much headroom went. One the original
+        // states and the substitute's record does not is UNVERIFIED and noted, no demotion and
+        // no cap (Qarlos r10 seed 23612437, r8 seed 22565147).
+        if (cat == "resistor") {
+            const auto o_v = num(original, "max_voltage_V"), s_v = num(cand, "max_voltage_V");
+            const std::string v = verdict_of("max_voltage_V");
+            if ((v == WARN || v == FAIL) && o_v && s_v) {
+                notes.push_back("lower maximum working voltage: the substitute is rated " +
+                                volts(*s_v) + " V against the original's " + volts(*o_v) +
+                                " V — check the voltage the resistor actually sees in the "
+                                "design");
+            } else if (v == UNVERIFIED && o_v && !s_v) {
+                notes.push_back("the original's maximum working voltage is " + volts(*o_v) +
+                                " V; the substitute's record states none — confirm it from the "
+                                "datasheet");
+            }
+        }
         for (const char* k : {"temp_min_C", "temp_max_C"}) {
             if (verdict_of(k) == UNVERIFIED && num(original, k) && !num(cand, k)) {
                 notes.push_back(std::string("the original states its operating range to ") +
@@ -2074,9 +2093,24 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //    is the one secondary electrical that keeps a cap: the owner kept it explicitly on
     //    2026-11-12 (BAS70JW must not get 3 A / 10 A rectifiers as usable substitutes);
     //  * only the substitute states one: UNVERIFIED, nothing to hold it to.
+    // Cj is stated AT a reverse bias (junction_capacitance_vr) and falls steeply with it, so
+    // two values compare only on a common bias — the ESR / ripple frequency-basis rule
+    // (basis_unverified above), applied to the bias (Qarlos r8 seed 22774605: PMEG6020EPAF,
+    // 250 pF at 1 V, passed against MBRS2560T3G's 170 pF at 48 V):
+    //  * both state the bias and it is the same -> compared as stated;
+    //  * both state it and it differs, or the original states it and the substitute does
+    //    not -> UNVERIFIED (junction_capacitance and a junction_capacitance_basis row), a
+    //    note giving both values and biases, no direction, no penalty; Cj is a secondary
+    //    electrical, so no demotion and no cap (owner's secondary-axis rule, 2026-11-09);
+    //  * the original states no bias -> compared as stated, exactly as before (no basis
+    //    exists for any candidate, so none is skewed against another).
+    // No conversion between biases is attempted: never a C(V) model with an assumed
+    // built-in potential and grading coefficient.
     if (cat == "diode") {
         const auto oc = num(original, "junction_capacitance"),
                    sc = num(cand, "junction_capacitance");
+        const auto ovr = num(original, "junction_capacitance_vr"),
+                   svr = num(cand, "junction_capacitance_vr");
         auto pf = [](double f) {
             char b[48];
             std::snprintf(b, sizeof b, "%g pF", f * 1e12);
@@ -2087,7 +2121,28 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                             : "more capacitance across the junction; check "
                                               "switching speed and signal loading in the "
                                               "original's circuit";
-        if (oc && sc) {
+        auto bias = [](double v) {
+            char b[32];
+            std::snprintf(b, sizeof b, "%g V", v);
+            return std::string(b);
+        };
+        const bool cj_basis_differs =
+            oc && sc && ovr &&
+            !(svr && std::fabs(*ovr - *svr) <= 1e-9 * std::max(std::fabs(*ovr), std::fabs(*svr)));
+        if (cj_basis_differs) {
+            params.push_back({{"name", "junction_capacitance"}, {"verdict", UNVERIFIED}});
+            params.push_back({{"name", "junction_capacitance_basis"}, {"verdict", UNVERIFIED}});
+            notes.push_back(
+                svr ? "junction capacitance quoted at different reverse voltages (original " +
+                          pf(*oc) + " at " + bias(*ovr) + ", substitute " + pf(*sc) + " at " +
+                          bias(*svr) +
+                          ") — not directly comparable, Cj falls with reverse bias; confirm the "
+                          "substitute's Cj at the original's bias from its datasheet"
+                    : "the original's junction capacitance is " + pf(*oc) + " at " + bias(*ovr) +
+                          "; the substitute's record states " + pf(*sc) +
+                          " at no reverse voltage — not directly comparable; confirm its Cj at "
+                          "the original's bias from the datasheet");
+        } else if (oc && sc) {
             const ParamSpec spec{"junction_capacitance", Dir::Lower, 2.0, std::nullopt, false,
                                  false, nullptr};
             const char* v = compare_numeric(spec, oc, sc).verdict;
@@ -3592,6 +3647,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //   resistor TCR                                          secondary  note only
     //   diode Tj max                                          secondary  note only
     //   diode junction capacitance absent (owner kept cap)   missing_required -> major_review
+    //   diode Cj bias basis differs / unstated (cj basis)     secondary  note only
+    //   resistor maximum working voltage                      secondary  note only
     //   capacitor ESR absent (was missing_required)           secondary  note + FAIL penalty
     //   capacitor ESR basis (esr_basis_unverified)            secondary  note only
     //   capacitance tolerance band                            secondary  note only

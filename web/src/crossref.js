@@ -120,13 +120,17 @@ export const XREF = [
       // stated values. Absent -> null -> UNVERIFIED in the ranker.
       technology: r.technology ?? '', tcr: r.tcr ?? null,
       temp_min_C: r.temp_min_c ?? null, temp_max_C: r.temp_max_c ?? null,
-      current_sense: r.current_sense === true, pulse_withstanding: r.pulse_withstanding === true }),
+      current_sense: r.current_sense === true, pulse_withstanding: r.pulse_withstanding === true,
+      // v21 (Qarlos r8/r10): the maximum continuous working voltage (RAS electrical.maxVoltage),
+      // which the substitute must reach. Absent -> null -> UNVERIFIED in the ranker.
+      max_voltage_V: nz(r.max_voltage) }),
     params: [
       { key: 'value', label: 'R', row: 'resistance', unit: 'Ω' },
       { key: 'power_rating', label: 'P', row: 'power_rating', unit: 'W' },
       { key: 'tolerance_pct', label: 'tol', row: 'tolerance', unit: '%', scale: 100 },
       { key: 'tcr', label: 'TCR', row: 'tcr', unit: 'ppm/K' },
       { key: 'temp_max_C', label: 'T max', row: 'temp_max_c', unit: '°C' },
+      { key: 'max_voltage_V', label: 'V max', row: 'max_voltage', unit: 'V' },
     ],
   },
   {
@@ -303,6 +307,9 @@ export const XREF = [
       clamping_voltage: nz(r.clamping_voltage), clamping_current: nz(r.clamping_current),
       peak_pulse_power: nz(r.peak_pulse_power), peak_pulse_current: nz(r.peak_pulse_current),
       junction_capacitance: nz(r.junction_capacitance),
+      // v21 (Qarlos r8 seed 22774605): the reverse voltage Cj is stated at — the ranker compares
+      // two capacitances only on a common bias. Raw, NOT through nz(): 0 V is a real basis.
+      junction_capacitance_vr: r.junction_capacitance_vr ?? null,
       clamping_waveform: r.clamping_waveform ?? '',
       peak_pulse_power_waveform: r.peak_pulse_power_waveform ?? '',
       peak_pulse_current_waveform: r.peak_pulse_current_waveform ?? '',

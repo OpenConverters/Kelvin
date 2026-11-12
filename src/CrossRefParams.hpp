@@ -549,6 +549,12 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
         // is not rated at 160 degC however close the numbers look. Absent -> UNVERIFIED.
         {"temp_min_C", D::Lower, 0.0, 0.0, false, false, nullptr},
         {"temp_max_C", D::Higher, 0.0, 0.0, false, false, nullptr},
+        // Maximum continuous working voltage (Qarlos r10 seed 23612437 / r8 seed 22565147: an
+        // 800 V KOA HV73V and a 500 V CMF60 took substitutes with no voltage verdict, the row
+        // never carried the rating). The band of the resistor power rating and the connector
+        // rated voltage: equal or higher passes, down to 90 % warns, lower FAILs. Absent ->
+        // UNVERIFIED and noted (CrossRef.hpp), no cap.
+        {"max_voltage_V", D::Higher, 0.9, std::nullopt, false, false, nullptr},
     };
     static const std::vector<ParamSpec> kMagnetic = {
         {"saturation_current", D::Higher, 0.9, std::nullopt, false, true, nullptr},
@@ -760,6 +766,7 @@ inline std::string param_label(const std::string& key) {
         {"channels", "channel count"},
         {"rated_current_A", "rated current"},
         {"rated_voltage_V", "rated voltage"},
+        {"max_voltage_V", "maximum working voltage"},
         {"vz_tolerance_pct", "breakdown-voltage tolerance"},
     };
     for (const auto& [k, label] : kLabels)

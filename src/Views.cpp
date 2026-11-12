@@ -585,6 +585,9 @@ std::optional<DiodeRow> extract_diode(const json& env) {
     if (auto v = get_num(*elec, "peakPulsePower"); pos(v)) r.peak_pulse_power = *v;
     if (auto v = get_num(*elec, "peakPulseCurrent"); pos(v)) r.peak_pulse_current = *v;
     if (auto v = get_num(*elec, "junctionCapacitance"); pos(v)) r.junction_capacitance = *v;
+    // Its bias basis (v21): 0 V is a real basis, so not `pos`; a negative is unreadable.
+    if (auto v = get_num(*elec, "junctionCapacitanceVr"); v && *v >= 0.0)
+        r.junction_capacitance_vr = *v;
     r.clamping_waveform = get_str(*elec, "clampingWaveform").value_or("");
     r.peak_pulse_power_waveform = get_str(*elec, "peakPulsePowerWaveform").value_or("");
     r.peak_pulse_current_waveform = get_str(*elec, "peakPulseCurrentWaveform").value_or("");
@@ -906,6 +909,8 @@ std::optional<ResistorRow> extract_resistor(const json& env) {
     const ResistorFunction fn = resistor_function_class(r.technology, class_texts);
     r.current_sense = fn.current_sense;
     r.pulse_withstanding = fn.pulse_withstanding;
+    // v21: the maximum continuous working voltage, as stated. Absent / non-positive stays NaN.
+    if (auto v = get_num(*elec, "maxVoltage"); pos(v)) r.max_voltage = *v;
     return r;
 }
 

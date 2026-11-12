@@ -210,6 +210,12 @@ struct DiodeRow : RowBase {
     double clamping_voltage = kNaN(), clamping_current = kNaN();
     double peak_pulse_power = kNaN(), peak_pulse_current = kNaN();
     double junction_capacitance = kNaN();
+    // The reverse voltage the junction capacitance is stated AT (electrical.
+    // junctionCapacitanceVr, V). Cj falls steeply with reverse bias, so 250 pF at 1 V and
+    // 170 pF at 48 V say nothing about which part loads the line more: PMEG6020EPAF against
+    // MBRS2560T3G was graded 'pass' on exactly that pair (Qarlos r8, seed 22774605). NaN =
+    // not stated; 0 V is a real basis (Cj at zero bias), never read as absent. v21.
+    double junction_capacitance_vr = kNaN();
     std::string clamping_waveform, peak_pulse_power_waveform, peak_pulse_current_waveform;
     // part.qualification verbatim ("Automotive (AEC-Q101)", 5,352 of 47,193 diode records);
     // empty = the record states none. Not carried, an AEC-Q101 original (ROHM
@@ -331,6 +337,11 @@ struct ResistorRow : RowBase {
     double temp_max_c = kNaN();
     bool current_sense = false;
     bool pulse_withstanding = false;
+    // electrical.maxVoltage, the maximum continuous working voltage (RAS), in V. NaN = not
+    // stated. Not carried, a KOA HV73V 800 V high-voltage chip took 200 V general-purpose
+    // chips with no voltage verdict at all (Qarlos r10 seed 23612437; r8 seed 22565147: a
+    // 500 V CMF60). v21.
+    double max_voltage = kNaN();
 };
 
 struct IgbtRow : RowBase {
