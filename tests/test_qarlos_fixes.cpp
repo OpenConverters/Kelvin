@@ -4211,16 +4211,27 @@ TEST_CASE("qarlos bench 20470567: an SRF a fraction lower is stated as a percent
     json far = near;
     far["mpn"] = "FAR";
     far["srf"] = 2.01e6 / 4.5;
-    auto r = kelvin::crossref::cross_reference("magnetic", orig, json::array({near, far}));
-    json n, f;
+    // Owner, 2026-11-12: down to 0.95x of the original's SRF passes, so the real 0.5 % pair
+    // above no longer warns. The percentage wording is exercised by a candidate inside the
+    // warn band (0.9x, owner-approved addition to this test).
+    json mid = near;
+    mid["mpn"] = "MID";
+    mid["srf"] = 1.809e6;
+    auto r = kelvin::crossref::cross_reference("magnetic", orig, json::array({near, far, mid}));
+    json n, f, m;
     for (const auto& c : r["candidates"]) {
         if (c["mpn"] == "SRP2313AA-101M") n = c;
         if (c["mpn"] == "FAR") f = c;
+        if (c["mpn"] == "MID") m = c;
     }
     REQUIRE(!n.is_null());
     REQUIRE(!f.is_null());
-    CHECK(has_note(n, "self-resonant frequency 2 MHz vs the original's 2.01 MHz (-0.5 %)"));
-    CHECK_FALSE(has_note(n, "1x lower"));
+    REQUIRE(!m.is_null());
+    CHECK(verdict_of(n, "srf") == "pass");
+    CHECK_FALSE(has_note(n, "self-resonant frequency"));
+    CHECK(verdict_of(m, "srf") == "warn");
+    CHECK(has_note(m, "self-resonant frequency 1.809 MHz vs the original's 2.01 MHz (-10 %)"));
+    CHECK_FALSE(has_note(m, "1x lower"));
     CHECK(has_note(f, "(4.5x lower)"));
 }
 
@@ -4953,4 +4964,23 @@ TEST_CASE("qarlos r11/r13 group E: ceramic resonator built-in capacitors are com
                       "record states none"));
     CHECK(verdict_of(s, "built_in_capacitance") == "pass");
     CHECK_FALSE(has_note(s, "built-in"));
+}
+
+TEST_CASE("an unknown footprint costs the ladder's UNVERIFIED rung when the original has no land",
+          "[qarlos][crossref][footprint]") {
+    // Owner, 2026-11-12 (Qarlos bench 20284866, P4SMA120CA-Q -> 1KSMBJ160A; r11 24136082,
+    // TSM120N06LCS -> BSC160N15NS5ATMA1): with no land on the original, a substitute stating
+    // NO package paid nothing for its unknown fit, while one whose package was KNOWN to
+    // differ paid unknown + a warn — so knowing less ranked better. Unknown now costs
+    // kUnknownDimPenalty here as it does in every other unknown-footprint branch.
+    const json orig = {{"mpn", "ORIG"}, {"vds", 60.0}, {"id", 10.0}, {"rds_on", 0.012},
+                       {"channel", "nChannel"}};  // no package, no land
+    json unknown = {{"mpn", "NOCASE"}, {"vds", 60.0}, {"id", 10.0}, {"rds_on", 0.012},
+                    {"channel", "nChannel"}};
+    auto r = kelvin::crossref::cross_reference("mosfet", orig, json::array({unknown}));
+    REQUIRE(r["candidates"].size() == 1);
+    const json& c = r["candidates"][0];
+    CHECK(c["footprint"] == "unknown");
+    CHECK(verdict_of(c, "footprint") == "unverified");
+    CHECK(c["penalty"].get<double>() >= kelvin::crossref::kUnknownDimPenalty - 1e-9);
 }

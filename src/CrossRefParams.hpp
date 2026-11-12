@@ -574,9 +574,12 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
         // substitute resonating well below the original is a downgrade at the working
         // frequency. Band: the chip bead's existing SRF spec (below), the one SRF rule Kelvin
         // already had — at or above the original's passes, down to 0.8x warns, below 0.8x
-        // FAILs (DECISION for the owner to confirm). A higher SRF is never a regression.
+        // FAILs. A higher SRF is never a regression.
+        // Pass band (owner, 2026-11-12, Qarlos bench 20470567: 2.00 vs 2.01 MHz warned): down
+        // to 0.95x of the original still PASSES — a few percent is datasheet rounding of a
+        // typical figure, not a regression. 0.8x-0.95x warns, below 0.8x fails.
         // One side unstated -> UNVERIFIED, uncapped: most power-inductor records state none.
-        {"srf", D::Higher, 0.8, std::nullopt, false, false, nullptr},
+        {"srf", D::Higher, 0.8, std::nullopt, false, false, nullptr, 0.95},
     };
     static const std::vector<ParamSpec> kChipBead = {
         // exclude_missing_sub: impedance IS what a bead is. A candidate with no

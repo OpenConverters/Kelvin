@@ -3188,6 +3188,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             } else if (generic_code && (!s_dims || !has_any_land(*s_dims))) {
                 out["footprint"] = "unknown";
                 params.push_back({{"name", "footprint"}, {"verdict", UNVERIFIED}});
+                // The ladder's UNVERIFIED rung (see kEstablishedFootprintMismatchPenalty):
+                // an unknown fit costs what an unknown fit costs everywhere else.
+                penalty += opt.footprint_weight * kUnknownDimPenalty;
                 footprint_unstated_both = true;
                 notes.push_back("both records state only the generic package '" + oc +
                                 "', which names a pad count, not a body size, and neither "
@@ -3196,6 +3199,13 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             } else {
                 out["footprint"] = "unknown";
                 params.push_back({{"name", "footprint"}, {"verdict", UNVERIFIED}});
+                // The ladder's UNVERIFIED rung, as in every other unknown-footprint branch
+                // (owner, 2026-11-12). This branch used to add nothing, so a candidate whose
+                // package was unknown outranked one whose package was KNOWN to differ (which
+                // pays unknown + a warn): an obsolete 160 V-class TVS stating no case ranked
+                // first for a 120 V P4SMA120CA-Q, ahead of the exact-class 1KSMB120A in a
+                // stated DO-214AA (Qarlos bench 20284866; also r11 24136082, TSM120N06LCS).
+                penalty += opt.footprint_weight * kUnknownDimPenalty;
                 // Name what the substitute IS, so an engineer can see the two case
                 // sizes for themselves even though the ranker cannot compare them.
                 // Only where the substitute states a package at all: where neither
