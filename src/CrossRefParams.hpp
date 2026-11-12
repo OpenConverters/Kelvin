@@ -606,6 +606,14 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
         // unknown grade on the substitute is UNVERIFIED, which the caller treats
         // as demoting rather than passing (ABT #884).
         {"automotive", D::ClassMatch, 0.0, std::nullopt, false, false, &automotive_rank()},
+        // Operating range: the magnetic table's rule (above), because a bead or a signal CMC
+        // is a part of the same magnetic catalogue ranked by its impedance instead of its
+        // inductance. MFBA3V1608K-471-R (-55..150 degC) took MMZ1608Y471BTA00 (to 125 degC)
+        // as 'upgrade' with nothing said: the bead table carried no temperature at all
+        // (Qarlos r9 seed 23088792). A lower maximum or a warmer minimum is a FAIL; absent
+        // -> UNVERIFIED and noted (secondary axis: no grade cap, owner 2026-11-09).
+        {"temp_min_C", D::Lower, 0.0, 0.0, false, false, nullptr},
+        {"temp_max_C", D::Higher, 0.0, 0.0, false, false, nullptr},
     };
     static const std::vector<ParamSpec> kConnector = {
         {"family", D::ExactMatch, 0.0, std::nullopt, false, true, &connector_family_rank()},
