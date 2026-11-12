@@ -1542,6 +1542,7 @@ std::optional<TimingRow> extract_timing(const json& env) {
         set_if_pos(r.frequency_tolerance, get_num(*elec, "frequencyTolerance"));
         set_if_pos(r.frequency_stability, get_num(*elec, "frequencyStability"));
         set_if_pos(r.load_capacitance, get_num(*elec, "loadCapacitance"));
+        set_if_pos(r.built_in_capacitance, get_num(*elec, "builtInCapacitance"));
         set_if_pos(r.esr, get_num(*elec, "equivalentSeriesResistance"));
         set_if_pos(r.rms_phase_jitter, get_num(*elec, "rmsPhaseJitter"));
         const json* supply = obj_get(*elec, "supply");

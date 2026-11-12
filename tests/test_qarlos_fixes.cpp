@@ -4801,3 +4801,156 @@ TEST_CASE("qarlos r11r13 D5: a critical-rating shortfall carries a note",
     REQUIRE(!t.is_null());
     CHECK(!has_note(t, "reverse voltage rating"));
 }
+// ── Qarlos r11-r13 group E (timing + capacitor) ─────────────────────────────
+
+namespace group_e {
+// The flat spec web/src/crossref.js builds for a timing row (base() + the timing spec).
+json timing_spec(const std::string& mpn, const std::string& technology, double frequency,
+                 const std::string& case_code) {
+    return {{"mpn", mpn},           {"subtype", "oscillator"}, {"device_type", "oscillator"},
+            {"technology", technology}, {"frequency", frequency}, {"case_code", case_code},
+            {"mount", ""},          {"is_production", true}};
+}
+}  // namespace group_e
+
+TEST_CASE("qarlos r12/r13 group E: a generic package string names no land",
+          "[qarlos][crossref][timing][footprint]") {
+    using kelvin::crossref::generic_package_names_no_land;
+    // The style descriptors the TDAS catalogue states with no size (survey of TAS 0d5241d).
+    CHECK(generic_package_names_no_land("4-SMD, No Lead"));
+    CHECK(generic_package_names_no_land("2-SMD, No Lead"));
+    CHECK(generic_package_names_no_land("SMD"));
+    CHECK(generic_package_names_no_land("3-SMD, Non-Standard"));
+    CHECK(generic_package_names_no_land("4-SMD, Flat Leads"));
+    CHECK(generic_package_names_no_land("Cylindrical Can, Radial"));
+    CHECK(generic_package_names_no_land("2 Lead Plastic"));
+    // A size, a registered outline or a vendor package code makes the string specific.
+    CHECK_FALSE(generic_package_names_no_land("3225 4-SMD"));
+    CHECK_FALSE(generic_package_names_no_land("14x9 4-SMD"));
+    CHECK_FALSE(generic_package_names_no_land("HC-49/US"));
+    CHECK_FALSE(generic_package_names_no_land("IQXC-42"));
+    CHECK_FALSE(generic_package_names_no_land("14-DIP, 4 Leads (Full Size, Metal Can)"));
+    CHECK_FALSE(generic_package_names_no_land("0603"));
+    CHECK_FALSE(generic_package_names_no_land(""));
+}
+
+TEST_CASE("qarlos r12 24659727: '4-SMD, No Lead' on both records is not a footprint fit",
+          "[qarlos][crossref][timing][footprint]") {
+    using group_e::timing_spec;
+    // 7M-26.000MAHE-T (TXC) -> FA-20H 26.0000MF10Z-W (EPSON): both TDAS records state the
+    // package "4-SMD, No Lead" and no mechanical block (TAS 0d5241d timing_devices.ndjson).
+    json orig = timing_spec("7M-26.000MAHE-T", "quartzCrystal", 26e6, "4-SMD, No Lead");
+    orig["load_capacitance"] = 12e-12;
+    orig["load_capacitance_pF"] = 12.0;
+    orig["esr"] = 60.0;
+    orig["mode"] = "fundamental";
+    orig["tolerance_ppm"] = 30.0;
+    orig["stability_ppm"] = 30.0;
+    json cand = orig;
+    cand["mpn"] = "FA-20H 26.0000MF10Z-W";
+    cand["tolerance_ppm"] = 10.0;
+    cand["stability_ppm"] = 10.0;
+    auto r = kelvin::crossref::cross_reference("timeBase", orig, json::array({cand}));
+    const json& c = r["candidates"][0];
+    CHECK(c["footprint"] == "unknown");
+    CHECK(verdict_of(c, "footprint") == "unverified");
+    CHECK(has_note(c, "both records state only the generic package '4-SMD, No Lead'"));
+    // Neither record states the datum: noted, not capped (owner 2026-11-12).
+    CHECK(c["grade"] == "drop_in");
+
+    // A size-bearing code still names the land: "3225 4-SMD" on both is a fit.
+    json o2 = orig, c2 = cand;
+    o2["case_code"] = "3225 4-SMD";
+    c2["case_code"] = "3225 4-SMD";
+    auto r2 = kelvin::crossref::cross_reference("timeBase", o2, json::array({c2}));
+    CHECK(r2["candidates"][0]["footprint"] == "fits");
+    CHECK(verdict_of(r2["candidates"][0], "footprint") == "pass");
+
+    // The substitute states a land while the original names only the generic string: the
+    // one-sided rung, which keeps its cap.
+    json c3 = cand;
+    c3["length_m"] = 2.0e-3;
+    c3["width_m"] = 1.6e-3;
+    auto r3 = kelvin::crossref::cross_reference("timeBase", orig, json::array({c3}));
+    CHECK(r3["candidates"][0]["footprint"] == "unknown");
+    CHECK(r3["candidates"][0]["grade"] == "minor_review");
+}
+
+TEST_CASE("qarlos bench 20284866: a crystal's higher ESR carries a note",
+          "[qarlos][crossref][timing]") {
+    using group_e::timing_spec;
+    // ABMM-14.7456MHZ-D2X-T (50 ohm) -> ECS-147.4-18-23A-JGN-TR (80 ohm), same CL 18 pF.
+    json orig = timing_spec("ABMM-14.7456MHZ-D2X-T", "quartzCrystal", 14745600.0, "");
+    orig["load_capacitance"] = 18e-12;
+    orig["load_capacitance_pF"] = 18.0;
+    orig["esr"] = 50.0;
+    orig["mode"] = "fundamental";
+    json cand = orig;
+    cand["mpn"] = "ECS-147.4-18-23A-JGN-TR";
+    cand["esr"] = 80.0;
+    auto r = kelvin::crossref::cross_reference("timeBase", orig, json::array({cand}));
+    const json& c = r["candidates"][0];
+    CHECK(verdict_of(c, "esr") == "fail");
+    CHECK(has_note(c, "higher ESR: the substitute's maximum is 80 ohm against the original's "
+                      "50 ohm"));
+    // A lower ESR passes with no ESR note.
+    json better = orig;
+    better["mpn"] = "LOW-ESR";
+    better["esr"] = 40.0;
+    auto rb = kelvin::crossref::cross_reference("timeBase", orig, json::array({better}));
+    CHECK(verdict_of(rb["candidates"][0], "esr") == "pass");
+    CHECK_FALSE(has_note(rb["candidates"][0], "higher ESR"));
+}
+
+TEST_CASE("qarlos r11/r13 group E: a ceramic resonator's built-in capacitance is extracted",
+          "[qarlos][views][timing]") {
+    // Verbatim electrical block of CSTNE16M0VH3C000R0 (TAS 0d5241d timing_devices.ndjson).
+    const json env = {{"timeBase", {{"oscillator", {{"manufacturerInfo",
+        {{"name", "Murata"}, {"reference", "CSTNE16M0VH3C000R0"},
+         {"datasheetInfo",
+          {{"part", {{"partNumber", "CSTNE16M0VH3C000R0"}, {"series", "CSTNE16M0VH3C000R0"},
+                     {"case", "SMD"}}},
+           {"electrical", {{"technology", "ceramicResonator"}, {"outputType", "none"},
+                           {"frequency", 16000000.0}, {"frequencyTolerance", 0.0007},
+                           {"frequencyStability", 0.0013}, {"resonantImpedance", 40.0},
+                           {"builtInCapacitance", 1.5e-11}}}}}}}}}}}};
+    auto row = kelvin::extract_timing(env);
+    REQUIRE(row.has_value());
+    CHECK(row->built_in_capacitance == Approx(1.5e-11));
+    // Still not a crystal CL: the two are different quantities.
+    CHECK(std::isnan(row->load_capacitance));
+}
+
+TEST_CASE("qarlos r11/r13 group E: ceramic resonator built-in capacitors are compared",
+          "[qarlos][crossref][timing]") {
+    using group_e::timing_spec;
+    // CSTNE16M0VH3C000R0 (15 pF built in) against AWSCR-16.00CV-T (22 pF built in) and
+    // AWSZT-16.00CV-T (no builtInCapacitance on record), TAS 0d5241d.
+    json orig = timing_spec("CSTNE16M0VH3C000R0", "ceramicResonator", 16e6, "SMD");
+    orig["built_in_capacitance"] = 15e-12;
+    json c22 = timing_spec("AWSCR-16.00CV-T", "ceramicResonator", 16e6, "");
+    c22["built_in_capacitance"] = 22e-12;
+    json none = timing_spec("AWSZT-16.00CV-T", "ceramicResonator", 16e6, "");
+    json same = timing_spec("CSTNE16M0V53C000R0", "ceramicResonator", 16e6, "");
+    same["built_in_capacitance"] = 15e-12;
+    auto r = kelvin::crossref::cross_reference("timeBase", orig, json::array({c22, none, same}));
+    json a, b, s;
+    for (const auto& c : r["candidates"]) {
+        if (c["mpn"] == "AWSCR-16.00CV-T") a = c;
+        if (c["mpn"] == "AWSZT-16.00CV-T") b = c;
+        if (c["mpn"] == "CSTNE16M0V53C000R0") s = c;
+    }
+    REQUIRE(!a.is_null());
+    REQUIRE(!b.is_null());
+    REQUIRE(!s.is_null());
+    CHECK(a["status"] == "no_substitute");
+    CHECK(verdict_of(a, "built_in_capacitance") == "fail");
+    CHECK(has_note(a, "different built-in load capacitors (22 pF vs 15 pF)"));
+    CHECK_FALSE(has_note(a, "ppm off frequency"));
+    CHECK(b["status"] != "no_substitute");
+    CHECK(verdict_of(b, "built_in_capacitance") == "unverified");
+    CHECK(has_note(b, "the original has 15 pF built-in load capacitors; the substitute's "
+                      "record states none"));
+    CHECK(verdict_of(s, "built_in_capacitance") == "pass");
+    CHECK_FALSE(has_note(s, "built-in"));
+}

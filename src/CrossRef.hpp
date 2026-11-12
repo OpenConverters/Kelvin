@@ -1157,6 +1157,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // stability the original states and the substitute does not is UNVERIFIED and noted
     // too, but it is a secondary axis: no demotion, no cap (owner, 2026-11-09).
     bool timebase_pin_unverified = false;
+    // The footprint is UNVERIFIED because NEITHER record states a land: both name only the
+    // same generic package string (generic_package_names_no_land) and no dimensions. Reported,
+    // noted, not capped (owner, 2026-11-12).
+    bool footprint_unstated_both = false;
     // A connector orientation that could not be established (see the orientation block
     // after the PARAM_SPECS loop): not a drop-in.
     bool connector_orientation_unverified = false;
@@ -1496,6 +1500,24 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                               "none",
                               what, *o_p);
                 notes.push_back(std::string(buf) + " — confirm it from the datasheet");
+            }
+        }
+        // A crystal's ESR (its maximum motional resistance) is what the original's oscillator
+        // stage must overcome to start: a higher one eats the negative-resistance margin the
+        // board was designed with. The WARN / FAIL verdict was printed with no note, so the
+        // engineer saw a demotion and no reason (Qarlos bench 20284866,
+        // ABMM-14.7456MHZ-D2X-T 50 ohm -> ECS-147.4-18-23A-JGN-TR 80 ohm).
+        if (cat == "timeBase" && spec.key == "esr" && (verdict == WARN || verdict == FAIL)) {
+            const auto o_r = detail::jnum(original, "esr"), s_r = detail::jnum(cand, "esr");
+            if (o_r && s_r) {
+                char buf[256];
+                std::snprintf(buf, sizeof buf,
+                              "higher ESR: the substitute's maximum is %g ohm against the "
+                              "original's %g ohm",
+                              *s_r, *o_r);
+                notes.push_back(std::string(buf) +
+                                " — less start-up (negative-resistance) margin in the original's "
+                                "oscillator circuit; confirm the margin with the substitute");
             }
         }
         if (cat == "diode" && spec.key == "vz_tolerance_pct") {
@@ -2894,9 +2916,13 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 }
             } else {
                 const std::string oc = str(original, "case_code"), sc = str(cand, "case_code");
+                // A generic style string ("Radial", "Cylindrical Can, Radial") names no hole
+                // pattern, so two records stating it have not shown the same land
+                // (generic_package_names_no_land, Qarlos r12/r13).
                 const bool same_case = cat != "magnetic" && cat != "chipBead" && !oc.empty() &&
                                        !sc.empty() &&
-                                       case_identity(cat, oc) == case_identity(cat, sc);
+                                       case_identity(cat, oc) == case_identity(cat, sc) &&
+                                       !generic_package_names_no_land(oc);
                 lead_land_unverified = !same_case;
             }
         }
@@ -3145,10 +3171,28 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             // chip beads are excluded here exactly as they are there — a magnetic
             // "1210" is an EIA chip or a molded power inductor, so equal codes are not
             // an equal land.
-            if (cat != "magnetic" && cat != "chipBead" && !oc.empty() && !sc.empty() &&
-                case_identity(cat, oc) == case_identity(cat, sc)) {
+            const bool same_code = cat != "magnetic" && cat != "chipBead" && !oc.empty() &&
+                                   !sc.empty() && case_identity(cat, oc) == case_identity(cat, sc);
+            // ... unless the shared code is a generic style string ("4-SMD, No Lead", "SMD")
+            // that names a pad count, not a size: it establishes nothing, so the fit is
+            // UNVERIFIED, never 'fits' (generic_package_names_no_land; Qarlos r12/r13,
+            // 7M-26.000MAHE-T -> FA-20H 26.0000MF10Z-W and three more timing pairs). When the
+            // substitute states no land either, NEITHER record states the datum: the verdict
+            // and the note stand, but the grade is not capped for it (owner, 2026-11-12:
+            // missing data on BOTH sides is not capped). A substitute that does state a land
+            // falls through to the one-sided branch below, which keeps its cap.
+            const bool generic_code = same_code && generic_package_names_no_land(oc);
+            if (same_code && !generic_code) {
                 out["footprint"] = "fits";
                 params.push_back({{"name", "footprint"}, {"verdict", PASS}});
+            } else if (generic_code && (!s_dims || !has_any_land(*s_dims))) {
+                out["footprint"] = "unknown";
+                params.push_back({{"name", "footprint"}, {"verdict", UNVERIFIED}});
+                footprint_unstated_both = true;
+                notes.push_back("both records state only the generic package '" + oc +
+                                "', which names a pad count, not a body size, and neither "
+                                "states its dimensions — footprint fit is UNVERIFIED, confirm "
+                                "the land pattern from both datasheets");
             } else {
                 out["footprint"] = "unknown";
                 params.push_back({{"name", "footprint"}, {"verdict", UNVERIFIED}});
@@ -3490,6 +3534,56 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         }
     }
 
+    // ── ceramic resonator built-in load capacitors ──────────────────────────
+    // A three-terminal ceramic resonator carries its load capacitors inside
+    // (TDAS electrical.builtInCapacitance): the board has no load network of its own, so
+    // these capacitors ARE the load the resonator oscillates into — the same fact the crystal
+    // CL gate above guards, and judged the same way. Not extracted before, so CSTNE16M0VH3C
+    // (15 pF) took 22 pF and capacitor-less parts with no verdict at all (Qarlos r11 24031353,
+    // r13 25288101, bench 20575296). Rule, between two ceramic resonators:
+    //   both stated, different -> FAIL, rejected like a crystal with a different CL, with a
+    //     note giving both values. No ppm estimate: the crystal pull formula's typical C0/C1
+    //     are quartz figures and say nothing about a ceramic resonator;
+    //   both stated, equal     -> PASS;
+    //   one side only          -> UNVERIFIED, with a note naming the stated value. TDAS says
+    //     an absent value means "no built-in capacitors", but Kelvin does not read silence as
+    //     a value: the note says what the record does and does not state. No cap (the CL axis
+    //     is not one of the owner's primary axes);
+    //   neither                -> silent.
+    if (cat == "timeBase" && str(original, "technology") == "ceramicResonator" &&
+        str(cand, "technology") == "ceramicResonator") {
+        const auto o_b = num(original, "built_in_capacitance"),
+                   s_b = num(cand, "built_in_capacitance");
+        auto pf = [](double farads) {
+            char b[32];
+            std::snprintf(b, sizeof b, "%g", farads * 1e12);
+            return std::string(b);
+        };
+        if (o_b && s_b) {
+            // 1e-6 relative: the records' farads are decimal renderings, not a tolerance.
+            if (std::fabs(*s_b - *o_b) > 1e-6 * std::max(*o_b, *s_b)) {
+                params.push_back({{"name", "built_in_capacitance"}, {"verdict", FAIL}});
+                notes.push_back("different built-in load capacitors (" + pf(*s_b) + " pF vs " +
+                                pf(*o_b) +
+                                " pF): the resonator oscillates into its own capacitors, so it "
+                                "would run under a different load in the original's circuit");
+                return reject("ceramic resonator with different built-in load capacitors");
+            }
+            params.push_back({{"name", "built_in_capacitance"}, {"verdict", PASS}});
+        } else if (o_b || s_b) {
+            params.push_back({{"name", "built_in_capacitance"}, {"verdict", UNVERIFIED}});
+            notes.push_back(o_b ? "the original has " + pf(*o_b) +
+                                      " pF built-in load capacitors; the substitute's record "
+                                      "states none — confirm from its datasheet whether it has "
+                                      "built-in capacitors (a two-terminal part needs an "
+                                      "external load network)"
+                                : "the substitute has " + pf(*s_b) +
+                                      " pF built-in load capacitors; the original's record "
+                                      "states none — confirm both parts' load capacitors and "
+                                      "terminal count from the datasheets");
+        }
+    }
+
     // ── automotive grade (AEC-Q), decoded from the MPN ───────────────────────
     // Fires even when the original is not in the catalogue, which is exactly
     // when an engineer most needs to be told.
@@ -3761,7 +3855,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // Only a literal "unknown" (dims/case-code missing) is UNVERIFIED and blocks
         // a drop-in via grade_for; "different_case" already carries a WARN param
         // (any_warn -> minor_review), so it must not also read as unverified.
-        footprint_unverified = (f == "unknown");
+        footprint_unverified = (f == "unknown") && !footprint_unstated_both;
     }
     // The clearance axis, carried alongside the land one: a body that no longer
     // clears the enclosure is outside the original's board space just as surely as

@@ -132,6 +132,9 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // v21 also carries the drain-source voltage a MOSFET's capacitances are stated at
 // (MosfetRow.coss_vds, SAS electrical.capacitanceMeasurementVds), the basis of its Coss
 // (Qarlos r11: a 5 pF Coss read near 400 V was passed against 53 pF at 25 V).
+// v21 also carries a ceramic resonator's built-in load capacitors (TimingRow.built_in_capacitance,
+// TDAS electrical.builtInCapacitance), compared by the cross-reference (Qarlos r11/r13: a
+// 15 pF resonator took 22 pF and capacitor-less parts with no verdict).
 constexpr uint32_t kFormatVersion = 21;
 
 // Identity of the code that produces rows, so a cached shard can be recognised as
@@ -485,6 +488,7 @@ void row_io(Ar& ar, TimingRow& r) {
     ar.dbl(r.temp_min_c);   // v16
     ar.dbl(r.temp_max_c);   // v16
     ar.str(r.enable_function);  // v20
+    ar.dbl(r.built_in_capacitance);  // v21
     ar.boolean(r.is_production);
 }
 

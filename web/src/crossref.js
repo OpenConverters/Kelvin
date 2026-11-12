@@ -175,6 +175,9 @@ export const XREF = [
       device_type: r.device_type ?? '', frequency: nz(r.frequency),
       load_capacitance: nz(r.load_capacitance),
       load_capacitance_pF: r.load_capacitance != null ? r.load_capacitance * 1e12 : null,
+      // v21: a three-terminal ceramic resonator's built-in load capacitors (TDAS
+      // builtInCapacitance), compared by the ranker between two ceramic resonators.
+      built_in_capacitance: nz(r.built_in_capacitance),
       // output_type and mode are hard identity keys in the ranker. Blank falls back to
       // null, NOT '': the ranker's ExactMatch counts '' as a stated value whenever the
       // other side states one, so an oscillator record with no outputType was REJECTED
@@ -197,6 +200,7 @@ export const XREF = [
     params: [
       { key: 'frequency', label: 'f', row: 'frequency', unit: 'Hz' },
       { key: 'load_capacitance_pF', label: 'CL', row: 'load_capacitance', unit: 'F' },
+      { key: 'built_in_capacitance', label: 'C built-in', row: 'built_in_capacitance', unit: 'F' },
       { key: 'esr', label: 'ESR', row: 'esr', unit: 'Ω' },
       { key: 'tolerance_ppm', label: 'tol', row: 'frequency_tolerance', unit: 'ppm', scale: 1e6 },
       { key: 'supply_min_V', label: 'Vdd min', row: 'vsupply_min', unit: 'V' },
