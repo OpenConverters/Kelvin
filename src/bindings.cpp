@@ -5,6 +5,8 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 
+#include <mutex>
+
 #include <nlohmann/json.hpp>
 #include <pybind11_json/pybind11_json.hpp>
 
@@ -18,6 +20,21 @@
 
 namespace py = pybind11;
 using nlohmann::json;
+
+namespace {
+// Engine calls run without the GIL. A cold shard load or a rebuild takes tens of seconds; holding
+// the GIL that long froze every other Python thread of the host, including the MCP server's event
+// loop, so its /health stopped answering and the watchdog restarted it mid-load, in a loop (prod,
+// 2026-11-12, after the 2.29M-part catalogue). The GIL used to serialise engine calls as a side
+// effect, and the Engine's lazy shard state is not thread-safe, so this mutex keeps them
+// serialised. Order matters: drop the GIL first, then wait for the engine, so a thread waiting
+// here never blocks Python; on exit the engine is released before the GIL is taken back.
+std::mutex g_engine_mutex;
+struct EngineCall {
+    py::gil_scoped_release no_gil;
+    std::lock_guard<std::mutex> engine{g_engine_mutex};
+};
+}  // namespace
 
 PYBIND11_MODULE(PyKelvin, m) {
     m.doc() = "Kelvin — deterministic TAS component selection (parity-locked to HS selector.py)";
@@ -49,25 +66,41 @@ PYBIND11_MODULE(PyKelvin, m) {
         .def(
             "select",
             [](kelvin::api::Engine& e, const std::string& category, const json& req,
-               const json& options) { return e.select(category, req, options); },
+               const json& options) {
+                EngineCall call;
+                return e.select(category, req, options);
+            },
             py::arg("category"), py::arg("design_requirements"), py::arg("options") = json::object())
         .def(
             "browse",
             [](kelvin::api::Engine& e, const std::string& category, const json& query) {
+                EngineCall call;
                 return e.browse(category, query);
             },
             py::arg("category"), py::arg("query") = json::object())
         .def(
             "fetch_record",
             [](kelvin::api::Engine& e, const std::string& category, uint64_t offset,
-               uint32_t length) { return e.fetch_record(category, offset, length); },
+               uint32_t length) {
+                EngineCall call;
+                return e.fetch_record(category, offset, length);
+            },
             py::arg("category"), py::arg("offset"), py::arg("length"))
-        .def("build_index", &kelvin::api::Engine::build_index, py::arg("family"))
+        .def(
+            "build_index",
+            [](kelvin::api::Engine& e, const std::string& family) {
+                EngineCall call;
+                return e.build_index(family);
+            },
+            py::arg("family"))
         .def(
             "load_shard_bytes",
             [](kelvin::api::Engine& e, const std::string& family, const py::bytes& b) {
-                std::string bytes = b;  // copy the buffer
-                kelvin::ShardMeta m = e.load_shard_bytes(family, bytes);
+                std::string bytes = b;  // copy the buffer (needs the GIL)
+                kelvin::ShardMeta m = [&] {
+                    EngineCall call;
+                    return e.load_shard_bytes(family, bytes);
+                }();
                 return json{{"family", kelvin::family_name(m.family)},
                             {"rowCount", m.row_count},
                             {"buildId", m.build_id}};
@@ -76,6 +109,7 @@ PYBIND11_MODULE(PyKelvin, m) {
         .def(
             "select_components",
             [](kelvin::api::Engine& e, const json& tas, const json& options) {
+                EngineCall call;
                 return kelvin::api::select_components(e, tas, options);
             },
             py::arg("tas"), py::arg("options") = json::object());
