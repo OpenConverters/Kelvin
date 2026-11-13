@@ -74,6 +74,7 @@ inline const FieldTable<MosfetRow>& fields<MosfetRow>() {
          {"tj_max", &MosfetRow::tj_max}},
         {{"technology", &MosfetRow::technology},
          {"channel", &MosfetRow::channel},
+         {"die_configuration", &MosfetRow::die_configuration},
          {"qualification", &MosfetRow::qualification}},
         {{"is_production", &MosfetRow::is_production},
          {"datasheet_usable", &MosfetRow::datasheet_usable}},

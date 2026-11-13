@@ -747,8 +747,9 @@ TEST_CASE("magnetic view: a bead measured at 100 MHz keeps its 100 MHz figure",
     auto exact = kelvin::extract_magnetic(bead({{1e8, 120.0}, {4e8, 180.0}}));
     REQUIRE(exact.has_value());
     CHECK(exact->impedance_100mhz == 120.0);   // the headline, not the peak
-    CHECK(exact->impedance_peak == 180.0);
-    CHECK(exact->impedance_peak_freq == 4e8);
+    // a curve still rising at its last sample has no seen peak (owner 2026-11-13)
+    CHECK_FALSE(kelvin::present(exact->impedance_peak));
+    CHECK_FALSE(kelvin::present(exact->impedance_peak_freq));
     CHECK(exact->device_type == "chipBead");
 
     // order must not matter either — the far sample first was the case that
@@ -766,7 +767,45 @@ TEST_CASE("magnetic view: a bead measured at 100 MHz keeps its 100 MHz figure",
     auto far = kelvin::extract_magnetic(bead({{1e6, 5.0}, {1e9, 300.0}}));
     REQUIRE(far.has_value());
     CHECK_FALSE(kelvin::present(far->impedance_100mhz));
-    CHECK(far->impedance_peak == 300.0);
+    CHECK_FALSE(kelvin::present(far->impedance_peak));  // rising: no seen peak
+}
+
+// ---------------------------------------------------------------------------
+// The largest sample is a peak only when lower samples bracket it on both
+// sides. 2,159 beads carry a single 100 MHz point; that point became their
+// "peak" and "peak frequency", and the exact match on peak frequency then
+// FAILed every substitute (MMZ1005Y121BT000 -> BLM15BX121SN1, r18 seed 28011055).
+// ---------------------------------------------------------------------------
+TEST_CASE("magnetic view: a bead impedance peak needs a fall on both sides",
+          "[index][views]") {
+    auto bead = [](std::vector<std::pair<double, double>> pts) {
+        nlohmann::json arr = nlohmann::json::array();
+        for (auto [f, z] : pts)
+            arr.push_back({{"frequency", f}, {"impedance", {{"magnitude", z}}}});
+        return nlohmann::json{{"magnetic", {{"manufacturerInfo",
+            {{"name", "TDK"}, {"reference", "MMZ1005Y121BT000"},
+             {"status", "production"},
+             {"datasheetInfo",
+              {{"part", {{"partNumber", "MMZ1005Y121BT000"}}},
+               {"electrical", nlohmann::json::array({
+                   {{"subtype", "chipBead"}, {"impedancePoints", arr}}})}}}}}}}};
+    };
+    // one catalogue point at 100 MHz: a headline, not a peak
+    auto one = kelvin::extract_magnetic(bead({{1e8, 120.0}}));
+    REQUIRE(one.has_value());
+    CHECK(one->impedance_100mhz == 120.0);
+    CHECK_FALSE(kelvin::present(one->impedance_peak));
+    CHECK_FALSE(kelvin::present(one->impedance_peak_freq));
+    // falling from the first sample: the peak lies below the measured range
+    auto falling = kelvin::extract_magnetic(bead({{1e8, 300.0}, {1e9, 100.0}}));
+    REQUIRE(falling.has_value());
+    CHECK_FALSE(kelvin::present(falling->impedance_peak));
+    // a real measured curve (unsorted on purpose): rise, peak, fall
+    auto curve = kelvin::extract_magnetic(
+        bead({{1e9, 150.0}, {1e7, 20.0}, {4e8, 260.0}, {1e8, 120.0}}));
+    REQUIRE(curve.has_value());
+    CHECK(curve->impedance_peak == 260.0);
+    CHECK(curve->impedance_peak_freq == 4e8);
 }
 
 // ---------------------------------------------------------------------------

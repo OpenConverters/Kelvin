@@ -366,18 +366,41 @@ std::optional<MosfetRow> extract_mosfet(const json& env) {
     if (!mi) return std::nullopt;
     const json* di = obj_get(*mi, "datasheetInfo");
     if (!di) return std::nullopt;
-    const json* elec = obj_get(*di, "electrical");
-    if (!elec) return std::nullopt;
     const json empty = json::object();
     const json* part = obj_get(*di, "part");
     if (!part) part = &empty;
+    const json* elec = obj_get(*di, "electrical");
+    // A multi-die package (part.dieConfiguration 'dual' / 'complementary') carries `dies`, one
+    // full electrical block per die, INSTEAD of a package-level block (SAS mosfet.json). The
+    // row holds one value per field, so it is read from the dies only when they state the
+    // SAME thing: every die's electrical block and channel identical (owner 2026-11-13) —
+    // then that die's values are the part's, per die, as for a dual diode. Dies that differ
+    // (every complementary pair, asymmetric power blocks) state no single value for the
+    // part's Vds / Id / Rds(on) and are left unread rather than given one die's numbers.
+    std::optional<std::string> die_channel;
+    if (!elec) {
+        const json* dies = obj_get(*di, "dies");
+        if (!dies || !dies->is_array() || dies->size() < 2) return std::nullopt;
+        const json& first = (*dies)[0];
+        const json* e0 = obj_get(first, "electrical");
+        auto ch0 = get_str(first, "subType");
+        if (!e0 || !ch0) return std::nullopt;
+        for (const auto& d : *dies) {
+            const json* e = obj_get(d, "electrical");
+            auto ch = get_str(d, "subType");
+            if (!e || !ch || *e != *e0 || *ch != *ch0) return std::nullopt;
+        }
+        elec = e0;
+        die_channel = ch0;
+    }
 
     auto mpn = get_str(*mi, "reference");
     if (!mpn) mpn = get_str(*part, "partNumber");
     auto manuf = get_str(*mi, "name");
     if (!mpn || !manuf) return std::nullopt;
 
-    const std::string channel = get_str(*part, "subType").value_or("");
+    const std::string channel =
+        die_channel ? *die_channel : get_str(*part, "subType").value_or("");
     const bool p_channel = channel == "pChannel";
     auto vds = rating_magnitude(get_num(*elec, "drainSourceVoltage"), p_channel);
     auto id = rating_magnitude(get_num(*elec, "continuousDrainCurrent"), p_channel);
@@ -458,6 +481,7 @@ std::optional<MosfetRow> extract_mosfet(const json& env) {
     if (auto v = rating_magnitude(get_num(*elec, "gateSourceVoltageMax"), p_channel); pos(v))
         r.vgs_max = *v;
     r.channel = channel;
+    r.die_configuration = get_str(*part, "dieConfiguration").value_or("");
     r.qualification = get_str(*part, "qualification").value_or("");
     r.technology = get_str(*part, "technology").value_or("");
     auto status = get_str(*mi, "status");
@@ -1372,8 +1396,9 @@ std::optional<MagneticRow> extract_magnetic(const json& env) {
             // unset, so the next point overwrote it and the 5 MHz proximity
             // test then failed. Every bead measured at the conventional test
             // point — which is most of them — lost its headline figure.
-            double best_z = 0.0, best_f = 0.0, at_100m = 0.0, closest = 0.0;
+            double at_100m = 0.0, closest = 0.0;
             bool have_closest = false;
+            std::vector<std::pair<double, double>> curve;  // (frequency, |Z|)
             for (const auto& pt : *pts) {
                 if (!pt.is_object()) continue;
                 auto f = get_num(pt, "frequency");
@@ -1381,14 +1406,32 @@ std::optional<MagneticRow> extract_magnetic(const json& env) {
                 if (!f || !z) continue;
                 auto mag = get_num(*z, "magnitude");
                 if (!mag || *mag <= 0 || *f <= 0) continue;
-                if (*mag > best_z) { best_z = *mag; best_f = *f; }
+                curve.emplace_back(*f, *mag);
                 // nearest sample to the conventional 100 MHz test point
                 const double d = std::fabs(*f - 1e8);
                 if (!have_closest || d < closest) {
                     closest = d; at_100m = *mag; have_closest = true;
                 }
             }
-            if (best_z > 0) { r.impedance_peak = best_z; r.impedance_peak_freq = best_f; }
+            // A peak is only a peak when the curve is seen to fall on BOTH
+            // sides of it. The largest sample of a curve that ends while still
+            // rising (or starts while falling) is just where the measurement
+            // stopped: a bead catalogued with a single 100 MHz point carried
+            // that point as its "peak" and its "peak frequency", and the exact
+            // match on peak frequency then failed every substitute whose real
+            // peak was known. Unbracketed maximum -> no peak (UNVERIFIED).
+            std::sort(curve.begin(), curve.end());
+            if (!curve.empty()) {
+                std::size_t first = 0, last = 0;
+                for (std::size_t k = 1; k < curve.size(); ++k) {
+                    if (curve[k].second > curve[first].second) first = last = k;
+                    else if (curve[k].second == curve[first].second) last = k;
+                }
+                if (first > 0 && last + 1 < curve.size()) {
+                    r.impedance_peak = curve[first].second;
+                    r.impedance_peak_freq = curve[first].first;
+                }
+            }
             // Only claim a 100 MHz value when a sample is actually near it —
             // extrapolating from a distant point would invent a datum.
             if (have_closest && at_100m > 0 && closest <= 5e6)
