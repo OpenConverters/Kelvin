@@ -4961,8 +4961,17 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // The ORIGINAL's whole-record retraction was stated only as the original_unverified flag
     // and the site's banner: a consumer of the candidate (the MCP tool, the harness) got no
     // caveat and no reason (Qarlos r26 31990757, Vishay RGF1K). Named here, with the reason
-    // the record gives. The grading treatment is unchanged (status capped below).
-    if (flag(original, "provenance_retracted")) {
+    // the record gives. Owner 2026-11-13, Z2: the same treatment as a per-field retraction —
+    // no PASS can be verified against the original's data, so each reads UNVERIFIED (a
+    // 'fits' reads 'unknown') and the direction cannot read 'upgrade' or 'equivalent' (it was
+    // PASS / 'upgrade' before: Vishay RGF1K -> 1N4006RLG). Regressions stay as they are. The
+    // status stays capped as below; no grade cap beyond what UNVERIFIED implies.
+    const bool orig_retracted_blind = flag(original, "provenance_retracted");
+    if (orig_retracted_blind) {
+        for (auto& p : params)
+            if (p.value("verdict", "") == PASS) p["verdict"] = UNVERIFIED;
+        if (out.value("footprint", "") == "fits") out["footprint"] = "unknown";
+        if (out.value("height_fit", "") == "fits") out["height_fit"] = "unknown";
         const std::string why = str(original, "retraction_reason");
         notes.push_back("every source cited by the original's record is retracted" +
                         (why.empty() ? std::string() : " (" + why + ")") +
@@ -5222,7 +5231,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // on evidence that never covered the parameter the match turns on. A measured regression
     // stands — blindness elsewhere cannot make a regression we did see disappear — and so does
     // "mixed", which already carries one.
-    out["direction"] = (cand_retracted || ((direction_blind || field_retraction_blind || isat_basis_blind || surge_blind ||
+    out["direction"] = (cand_retracted || ((direction_blind || field_retraction_blind || orig_retracted_blind || isat_basis_blind || surge_blind ||
                                             current_basis_blind || !magnetic_unweighed.empty() ||
                                             magnetic_rated_absent || timing_accuracy_unweighed) &&
                                            (dir == "upgrade" || dir == "equivalent")) ||

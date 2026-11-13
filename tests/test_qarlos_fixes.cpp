@@ -7901,3 +7901,41 @@ TEST_CASE("owner 2026-11-13 Z4: capacitance outside the original's stated tolera
     CHECK(verdict_of(c3, "value") == "pass");
     CHECK_FALSE(c3.value("value_differs", false));
 }
+
+// ── Owner 2026-11-13 Z2: a wholly retracted ORIGINAL — candidates' PASSes read UNVERIFIED ──
+// The Vishay RGF1K's only provenance entry is retracted (r26 X3 above). Its candidates kept
+// PASS verdicts and 'upgrade' (only the status was capped); now every PASS reads UNVERIFIED
+// and the direction 'unknown', as for a per-field retraction. Specs: web/src/crossref.js's
+// diode spec of v22 shard rows built from tools/qarlos/bench/data-6bd04c7/diodes.ndjson
+// (kelvin-index -> browse -> famFor().spec).
+namespace dec_1113_z2 {
+const char* kSpecRGF1K_Vishay = R"KSPEC({"mpn":"RGF1K","length_m":null,"width_m":null,"height_m":null,"case_code":"GF1 (DO-214BA)","mount":"","lead_pitch_m":null,"is_production":true,"provenance_retracted":true,"retracted_fields":[],"retraction_reason":"category browse page cited no exact order code; no part-specific document found","box_axes_ambiguous":false,"vrrm":800,"if_avg":1,"vf":1.3,"power_dissipation":null,"qrr":null,"trr":1.5e-07,"technology":"rectifier","die_configuration":null,"internal_connection":null,"vz_min_V":null,"vz_max_V":null,"vz_tolerance_pct":null,"clamping_voltage":null,"clamping_current":null,"peak_pulse_power":null,"peak_pulse_current":null,"junction_capacitance":null,"junction_capacitance_vr":null,"clamping_waveform":"","peak_pulse_power_waveform":"","peak_pulse_current_waveform":"","tj_max":175,"qualification":""})KSPEC";
+const char* kSpec1N4006RLG = R"KSPEC({"mpn":"1N4006RLG","length_m":null,"width_m":null,"height_m":null,"case_code":"Axial Lead-2","mount":"","lead_pitch_m":0.01016,"is_production":true,"provenance_retracted":false,"retracted_fields":[],"retraction_reason":"","box_axes_ambiguous":false,"vrrm":800,"if_avg":1,"vf":1.1,"power_dissipation":null,"qrr":null,"trr":null,"technology":"rectifier","die_configuration":null,"internal_connection":null,"vz_min_V":null,"vz_max_V":null,"vz_tolerance_pct":null,"clamping_voltage":null,"clamping_current":null,"peak_pulse_power":null,"peak_pulse_current":null,"junction_capacitance":null,"junction_capacitance_vr":null,"clamping_waveform":"","peak_pulse_power_waveform":"","peak_pulse_current_waveform":"","tj_max":null,"qualification":""})KSPEC";
+}  // namespace dec_1113_z2
+
+TEST_CASE("owner 2026-11-13 Z2: a wholly retracted original verifies no candidate PASS",
+          "[qarlos][crossref][diode][dec-z2]") {
+    using namespace dec_1113_z2;
+    const json orig = json::parse(kSpecRGF1K_Vishay), cand = json::parse(kSpec1N4006RLG);
+    REQUIRE(orig["provenance_retracted"] == true);
+    kelvin::crossref::Options opt;
+    opt.original_verified = false;  // web/src/crossref.js: origVerified is false when retracted
+    auto r = kelvin::crossref::cross_reference("diode", orig, json::array({cand}), opt);
+    REQUIRE(r["candidates"].size() == 1);
+    const json c = r["candidates"][0];
+    INFO(c.dump());
+    REQUIRE(c["status"] != "no_substitute");
+    CHECK(c["direction"] == "unknown");
+    for (const auto& p : c["params"]) CHECK(p["verdict"] != "pass");
+    CHECK(verdict_of(c, "vrrm") == "unverified");
+    CHECK(c["footprint"] != "fits");
+    CHECK(has_note(c, "every source cited by the original's record is retracted"));
+    // Premise: the same original with a live source reads the candidate as an upgrade.
+    json live = orig;
+    live["provenance_retracted"] = false;
+    live["retraction_reason"] = "";
+    const json c2 = kelvin::crossref::cross_reference("diode", live, json::array({cand}))["candidates"][0];
+    INFO(c2.dump());
+    CHECK(c2["direction"] == "upgrade");
+    CHECK(verdict_of(c2, "vrrm") == "pass");
+}
