@@ -641,13 +641,15 @@ TEST_CASE("qarlos 2026-11-08: oscillator supply range must cover the original's"
     const json* c33 = cand_by_mpn(r, "ASG2-D-V-A-644.53125MHZ");
     REQUIRE(c33);
     CHECK(verdict_of(*c33, "supply_min_V") == "fail");
-    CHECK((*c33)["grade"] == "major_review");
+    // Owner decision 2026-11-13: a supply range that does not cover the original's is
+    // REJECTED (was capped at major_review). Fixture unchanged; only the expected grade.
+    CHECK((*c33)["grade"] == "no_substitute");
     CHECK(has_note(*c33, "the original runs from 2.5 V, the substitute from 3.3 V"));
 
     const json* c18 = cand_by_mpn(r, "XO-18");
     REQUIRE(c18);
     CHECK(verdict_of(*c18, "supply_max_V") == "fail");
-    CHECK((*c18)["grade"] == "major_review");
+    CHECK((*c18)["grade"] == "no_substitute");  // owner 2026-11-13, as above
 
     // Inside the analog family's old 0.3 V / 10 % warn bands: still a different rail.
     const json* c27 = cand_by_mpn(r, "XO-27");
@@ -5439,6 +5441,224 @@ TEST_CASE("qarlos r14-r16 H3: connector positions stated by the substitute only 
     json o5 = orig;
     o5["positions"] = 5.0;
     CHECK(conn_one(o5, cand)["status"] == "no_substitute");
+}
+
+// ── Qarlos r14-r16 owner decisions 2026-11-13, agent J (diode, timing, capacitor) ──
+// Ranker specs exactly as web/src/crossref.js builds them from the shard rows of the frozen
+// bench data (TAS 9cb6cf8; <file>.ndjson line N), captured with famFor(...).spec(row).
+namespace dec_1113_j {
+// diodes.ndjson line 8468: BZV55-C5V6
+const char* kBZV55_C5V6 = R"KSPEC({"mpn":"BZV55-C5V6","length_m":null,"width_m":null,"height_m":null,"case_code":"LLDS; MiniMelf","mount":"","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"box_axes_ambiguous":false,"vrrm":5.6,"if_avg":0.25,"vf":null,"power_dissipation":0.5,"qrr":null,"trr":null,"technology":"zener","die_configuration":null,"internal_connection":null,"vz_min_V":5.2,"vz_max_V":6,"vz_tolerance_pct":7.1428571428571415,"clamping_voltage":null,"clamping_current":null,"peak_pulse_power":null,"peak_pulse_current":null,"junction_capacitance":null,"junction_capacitance_vr":null,"clamping_waveform":"","peak_pulse_power_waveform":"","peak_pulse_current_waveform":"","tj_max":null,"qualification":""})KSPEC";
+// diodes.ndjson line 5958: 1N5233B
+const char* k1N5233B = R"KSPEC({"mpn":"1N5233B","length_m":null,"width_m":null,"height_m":null,"case_code":"Axial Lead","mount":"","lead_pitch_m":0.01016,"is_production":true,"provenance_retracted":false,"box_axes_ambiguous":false,"vrrm":6,"if_avg":null,"vf":null,"power_dissipation":0.5,"qrr":null,"trr":null,"technology":"zener","die_configuration":null,"internal_connection":null,"vz_min_V":null,"vz_max_V":null,"vz_tolerance_pct":null,"clamping_voltage":null,"clamping_current":null,"peak_pulse_power":null,"peak_pulse_current":null,"junction_capacitance":null,"junction_capacitance_vr":null,"clamping_waveform":"","peak_pulse_power_waveform":"","peak_pulse_current_waveform":"","tj_max":null,"qualification":""})KSPEC";
+// diodes.ndjson line 5953: 1N5232B
+const char* k1N5232B = R"KSPEC({"mpn":"1N5232B","length_m":null,"width_m":null,"height_m":null,"case_code":"Axial Lead","mount":"","lead_pitch_m":0.01016,"is_production":true,"provenance_retracted":false,"box_axes_ambiguous":false,"vrrm":5.6,"if_avg":null,"vf":null,"power_dissipation":0.5,"qrr":null,"trr":null,"technology":"zener","die_configuration":null,"internal_connection":null,"vz_min_V":null,"vz_max_V":null,"vz_tolerance_pct":null,"clamping_voltage":null,"clamping_current":null,"peak_pulse_power":null,"peak_pulse_current":null,"junction_capacitance":null,"junction_capacitance_vr":null,"clamping_waveform":"","peak_pulse_power_waveform":"","peak_pulse_current_waveform":"","tj_max":null,"qualification":""})KSPEC";
+// diodes.ndjson line 28299: SA6.5CA
+const char* kSA6_5CA = R"KSPEC({"mpn":"SA6.5CA","length_m":null,"width_m":null,"height_m":null,"case_code":"DO-15","mount":"","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"box_axes_ambiguous":false,"vrrm":6.5,"if_avg":null,"vf":null,"power_dissipation":null,"qrr":null,"trr":null,"technology":"tvs","die_configuration":null,"internal_connection":null,"vz_min_V":7.22,"vz_max_V":7.98,"vz_tolerance_pct":5.000000000000004,"clamping_voltage":11.2,"clamping_current":45.5,"peak_pulse_power":500,"peak_pulse_current":45.5,"junction_capacitance":null,"junction_capacitance_vr":null,"clamping_waveform":"10/1000","peak_pulse_power_waveform":"10/1000","peak_pulse_current_waveform":"10/1000","tj_max":175,"qualification":""})KSPEC";
+// diodes.ndjson line 16850: 1.5KE16CA-E3/54
+const char* k1_5KE16CA_E3_54 = R"KSPEC({"mpn":"1.5KE16CA-E3/54","length_m":null,"width_m":null,"height_m":null,"case_code":"1.5KE","mount":"","lead_pitch_m":null,"is_production":false,"provenance_retracted":false,"box_axes_ambiguous":false,"vrrm":13.6,"if_avg":null,"vf":null,"power_dissipation":null,"qrr":null,"trr":null,"technology":"tvs","die_configuration":null,"internal_connection":null,"vz_min_V":15.2,"vz_max_V":16.8,"vz_tolerance_pct":5.000000000000004,"clamping_voltage":22.5,"clamping_current":66.7,"peak_pulse_power":1500,"peak_pulse_current":66.7,"junction_capacitance":null,"junction_capacitance_vr":null,"clamping_waveform":"10/1000","peak_pulse_power_waveform":"10/1000","peak_pulse_current_waveform":"10/1000","tj_max":175,"qualification":""})KSPEC";
+// diodes.ndjson line 16838: 1.5KE10CA-E3/54
+const char* k1_5KE10CA_E3_54 = R"KSPEC({"mpn":"1.5KE10CA-E3/54","length_m":null,"width_m":null,"height_m":null,"case_code":"1.5KE","mount":"","lead_pitch_m":null,"is_production":false,"provenance_retracted":false,"box_axes_ambiguous":false,"vrrm":8.55,"if_avg":null,"vf":null,"power_dissipation":null,"qrr":null,"trr":null,"technology":"tvs","die_configuration":null,"internal_connection":null,"vz_min_V":9.5,"vz_max_V":10.5,"vz_tolerance_pct":5,"clamping_voltage":14.5,"clamping_current":103,"peak_pulse_power":1500,"peak_pulse_current":103,"junction_capacitance":null,"junction_capacitance_vr":null,"clamping_waveform":"10/1000","peak_pulse_power_waveform":"10/1000","peak_pulse_current_waveform":"10/1000","tj_max":175,"qualification":""})KSPEC";
+// timing_devices.ndjson line 6507: AK2F3PBQ1-312.5000
+const char* kAK2F3PBQ1_312_5000 = R"KSPEC({"mpn":"AK2F3PBQ1-312.5000","length_m":null,"width_m":null,"height_m":null,"case_code":"2520 6-SMD","mount":"","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"box_axes_ambiguous":false,"subtype":"oscillator","technology":"crystalOscillator","device_type":"oscillator","frequency":312500000,"load_capacitance":null,"load_capacitance_pF":null,"built_in_capacitance":null,"esr":null,"output_type":"lvpecl","mode":null,"enable_function":"standby","supply_min_V":2.5,"supply_max_V":2.5,"tolerance_ppm":null,"stability_ppm":20,"temp_min_C":-40,"temp_max_C":85})KSPEC";
+// timing_devices.ndjson line 12579: ECX-P35BN-312.500
+const char* kECX_P35BN_312_500 = R"KSPEC({"mpn":"ECX-P35BN-312.500","length_m":null,"width_m":null,"height_m":null,"case_code":"6-SMD, No Lead","mount":"","lead_pitch_m":null,"is_production":false,"provenance_retracted":false,"box_axes_ambiguous":false,"subtype":"oscillator","technology":"crystalOscillator","device_type":"oscillator","frequency":312500000,"load_capacitance":null,"load_capacitance_pF":null,"built_in_capacitance":null,"esr":null,"output_type":"lvpecl","mode":null,"enable_function":null,"supply_min_V":3.3,"supply_max_V":3.3,"tolerance_ppm":null,"stability_ppm":49.99999999999999,"temp_min_C":-40,"temp_max_C":85})KSPEC";
+// timing_devices.ndjson line 12553: ECX-P27BN-312.500
+const char* kECX_P27BN_312_500 = R"KSPEC({"mpn":"ECX-P27BN-312.500","length_m":null,"width_m":null,"height_m":null,"case_code":"6-SMD, No Lead","mount":"","lead_pitch_m":null,"is_production":false,"provenance_retracted":false,"box_axes_ambiguous":false,"subtype":"oscillator","technology":"crystalOscillator","device_type":"oscillator","frequency":312500000,"load_capacitance":null,"load_capacitance_pF":null,"built_in_capacitance":null,"esr":null,"output_type":"lvpecl","mode":null,"enable_function":null,"supply_min_V":2.5,"supply_max_V":2.5,"tolerance_ppm":null,"stability_ppm":49.99999999999999,"temp_min_C":-40,"temp_max_C":85})KSPEC";
+// capacitors.ndjson line 476527: CWR06DC155JCA
+const char* kCWR06DC155JCA = R"KSPEC({"mpn":"CWR06DC155JCA","length_m":null,"width_m":null,"height_m":null,"case_code":"A","mount":"SMT","lead_pitch_m":null,"is_production":false,"provenance_retracted":false,"box_axes_ambiguous":false,"value_si":1.5e-06,"voltage":6,"esr":8,"ripple_current":null,"technology":"tantalum-mno2","dielectric_code":"","family":"CWR06","voltage_ac":null,"esr_frequency":100000,"temp_min_C":-55,"temp_max_C":125,"ripple_current_frequency":null,"safety_class":null,"capacitance_min":1.425e-06,"capacitance_max":1.575e-06,"lead_form":null,"qualified_spec":null,"qualified_grade":null,"qualified_failure_rate":null})KSPEC";
+// capacitors.ndjson line 8327: T499A225K010ATE8K0
+const char* kT499A225K010ATE8K0 = R"KSPEC({"mpn":"T499A225K010ATE8K0","length_m":null,"width_m":null,"height_m":null,"case_code":"1206","mount":"SMT","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"box_axes_ambiguous":false,"value_si":2.2e-06,"voltage":10,"esr":4.738103,"ripple_current":null,"technology":"tantalum-mno2","dielectric_code":"","family":"","voltage_ac":null,"esr_frequency":100000,"temp_min_C":-55,"temp_max_C":125,"ripple_current_frequency":null,"safety_class":null,"capacitance_min":null,"capacitance_max":null,"lead_form":null,"qualified_spec":null,"qualified_grade":null,"qualified_failure_rate":null})KSPEC";
+// capacitors.ndjson line 431833: 293D105X9016A2TE3
+const char* k293D105X9016A2TE3 = R"KSPEC({"mpn":"293D105X9016A2TE3","length_m":null,"width_m":null,"height_m":null,"case_code":"A","mount":"SMT","lead_pitch_m":null,"is_production":false,"provenance_retracted":false,"box_axes_ambiguous":false,"value_si":1e-06,"voltage":16,"esr":9.3,"ripple_current":0.09,"technology":"tantalum-mno2","dielectric_code":"","family":"293D","voltage_ac":null,"esr_frequency":100000,"temp_min_C":-55,"temp_max_C":125,"ripple_current_frequency":100000,"safety_class":null,"capacitance_min":9e-07,"capacitance_max":1.1e-06,"lead_form":null,"qualified_spec":null,"qualified_grade":null,"qualified_failure_rate":null})KSPEC";
+// capacitors.ndjson line 439622: T95A685M016EBBL
+const char* kT95A685M016EBBL = R"KSPEC({"mpn":"T95A685M016EBBL","length_m":null,"width_m":null,"height_m":null,"case_code":"A","mount":"SMT","lead_pitch_m":null,"is_production":false,"provenance_retracted":false,"box_axes_ambiguous":false,"value_si":6.8e-06,"voltage":16,"esr":1.4,"ripple_current":null,"technology":"tantalum-mno2","dielectric_code":"","family":"T95","voltage_ac":null,"esr_frequency":100000,"temp_min_C":-55,"temp_max_C":125,"ripple_current_frequency":null,"safety_class":null,"capacitance_min":5.44e-06,"capacitance_max":8.16e-06,"lead_form":null,"qualified_spec":null,"qualified_grade":null,"qualified_failure_rate":null})KSPEC";
+// capacitors.ndjson line 433729: 293D685X9016A2TE3
+const char* k293D685X9016A2TE3 = R"KSPEC({"mpn":"293D685X9016A2TE3","length_m":null,"width_m":null,"height_m":null,"case_code":"A","mount":"SMT","lead_pitch_m":null,"is_production":false,"provenance_retracted":false,"box_axes_ambiguous":false,"value_si":6.8e-06,"voltage":16,"esr":4.2,"ripple_current":0.13,"technology":"tantalum-mno2","dielectric_code":"","family":"293D","voltage_ac":null,"esr_frequency":100000,"temp_min_C":-55,"temp_max_C":125,"ripple_current_frequency":100000,"safety_class":null,"capacitance_min":6.12e-06,"capacitance_max":7.48e-06,"lead_form":null,"qualified_spec":null,"qualified_grade":null,"qualified_failure_rate":null})KSPEC";
+json sp(const char* s) { return json::parse(s); }
+json rank(const char* cat, const json& orig, const json& cands) {
+    return kelvin::crossref::cross_reference(cat, orig, cands);
+}
+json by_mpn(const json& r, const std::string& mpn) {
+    for (const auto& c : r.at("candidates"))
+        if (c.value("mpn", "") == mpn) return c;
+    FAIL("candidate " << mpn << " not in the ranking");
+    return json();
+}
+int rank_of(const json& r, const std::string& mpn) {
+    int i = 0;
+    for (const auto& c : r.at("candidates")) {
+        if (c.value("mpn", "") == mpn) return i;
+        ++i;
+    }
+    return -1;
+}
+}  // namespace dec_1113_j
+
+// J1 — Qarlos bench 20680025: 1N5233B (Vz 6.0 V) sat inside BZV55-C5V6's 5.2-6.0 V window, 7 %
+// above its 5.6 V nominal, and ranked level with the exact 5.6 V 1N5232B. Owner 2026-11-13: a
+// zener more than 1 % off the original's nominal sorts after every exact-nominal zener (the
+// resistor near-value tier, value_differs); its grade is unchanged.
+TEST_CASE("qarlos r14-r16 J1: an off-nominal zener ranks after every exact-nominal one",
+          "[qarlos][crossref][zener][dec-1113-j]") {
+    using namespace dec_1113_j;
+    const json orig = sp(kBZV55_C5V6);
+    // The off-nominal part FIRST in the pool: only the tier can put it behind.
+    const json r = rank("diode", orig, json::array({sp(k1N5233B), sp(k1N5232B)}));
+    const json off = by_mpn(r, "1N5233B"), exact = by_mpn(r, "1N5232B");
+    CHECK(rank_of(r, "1N5232B") < rank_of(r, "1N5233B"));
+    CHECK(off.value("value_differs", false));
+    CHECK_FALSE(exact.value("value_differs", false));
+    // Grade and direction unchanged: the same as the exact part's (both minor_review /
+    // equivalent on this pair, the footprint WARN), not the resistor cap.
+    CHECK(off["grade"] == "minor_review");
+    CHECK(off["direction"] == exact["direction"]);
+    CHECK(off["grade"] == exact["grade"]);
+    CHECK(has_note(off, "a different nominal"));
+
+    // Boundary: 1 % off the nominal is the same marking (no tier); 1.1 % is not.
+    json at1 = sp(k1N5232B), past1 = sp(k1N5232B);
+    at1["mpn"] = "VZ+1.0%";
+    at1["vrrm"] = 5.6 * 1.0099;
+    past1["mpn"] = "VZ+1.1%";
+    past1["vrrm"] = 5.6 * 1.011;
+    const json rb = rank("diode", orig, json::array({past1, at1}));
+    CHECK_FALSE(by_mpn(rb, "VZ+1.0%").value("value_differs", false));
+    CHECK(by_mpn(rb, "VZ+1.1%").value("value_differs", false));
+    CHECK(rank_of(rb, "VZ+1.0%") < rank_of(rb, "VZ+1.1%"));
+    CHECK(by_mpn(rb, "VZ+1.1%")["grade"] == by_mpn(rb, "VZ+1.0%")["grade"]);
+}
+
+// J2 — Qarlos bench 20575296: 1.5KE16CA-E3/54 (13.6 V standoff) for SA6.5CA (6.5 V, 2.09x)
+// came back a WARN / minor_review like a 1.2x part. Owner 2026-11-13: a TVS standoff more than
+// 1.5x the original's is a FAIL (major_review) with a note; 1.1x-1.5x stays WARN.
+TEST_CASE("qarlos r14-r16 J2: a TVS standoff above 1.5x the original's is a FAIL",
+          "[qarlos][crossref][tvs][dec-1113-j]") {
+    using namespace dec_1113_j;
+    const json orig = sp(kSA6_5CA);
+    const json r = rank("diode", orig, json::array({sp(k1_5KE16CA_E3_54), sp(k1_5KE10CA_E3_54)}));
+    const json far = by_mpn(r, "1.5KE16CA-E3/54"), near = by_mpn(r, "1.5KE10CA-E3/54");
+    CHECK(verdict_of(far, "standoff_band") == "fail");
+    CHECK(far["grade"] == "major_review");
+    CHECK(far["status"] != "no_substitute");
+    CHECK(has_note(far, "standoff 13.6 V against the original's 6.5 V"));
+    CHECK(has_note(far, "more than 1.5x the original's standoff"));
+    // 8.55 V is 1.32x: still the WARN.
+    CHECK(verdict_of(near, "standoff_band") == "warn");
+    CHECK_FALSE(has_note(near, "more than 1.5x"));
+    CHECK(rank_of(r, "1.5KE10CA-E3/54") < rank_of(r, "1.5KE16CA-E3/54"));
+
+    // Boundary at 1.4x / 1.6x on the same real candidate.
+    json x14 = sp(k1_5KE10CA_E3_54), x16 = sp(k1_5KE10CA_E3_54);
+    x14["mpn"] = "SO-1.4x";
+    x14["vrrm"] = 6.5 * 1.4;
+    x16["mpn"] = "SO-1.6x";
+    x16["vrrm"] = 6.5 * 1.6;
+    const json rb = rank("diode", orig, json::array({x14, x16}));
+    CHECK(verdict_of(by_mpn(rb, "SO-1.4x"), "standoff_band") == "warn");
+    CHECK(verdict_of(by_mpn(rb, "SO-1.6x"), "standoff_band") == "fail");
+    CHECK(by_mpn(rb, "SO-1.6x")["grade"] == "major_review");
+    CHECK(by_mpn(rb, "SO-1.4x")["grade"] != "major_review");
+}
+
+// J3 — Qarlos r16 26859036: ECX-P35BN-312.500 (3.3 V only) for AK2F3PBQ1-312.5000 (2.5 V)
+// was major_review. Owner 2026-11-13: a supply range that does not cover the original's is
+// REJECTED, a hard key like output_type, with the reason visible.
+TEST_CASE("qarlos r14-r16 J3: an oscillator whose supply does not cover the original's is rejected",
+          "[qarlos][crossref][timing][dec-1113-j]") {
+    using namespace dec_1113_j;
+    const json orig = sp(kAK2F3PBQ1_312_5000);
+    const json r = rank("timeBase", orig,
+                        json::array({sp(kECX_P35BN_312_500), sp(kECX_P27BN_312_500)}));
+    const json p35 = by_mpn(r, "ECX-P35BN-312.500"), p27 = by_mpn(r, "ECX-P27BN-312.500");
+    CHECK(p35["status"] == "no_substitute");
+    CHECK(p35["reason"] == "supply range does not cover the original's rail");
+    CHECK(verdict_of(p35, "supply_min_V") == "fail");
+    CHECK(has_note(p35, "the original runs from 2.5 V, the substitute from 3.3 V"));
+    // The covering part is still ranked.
+    CHECK(p27["status"] != "no_substitute");
+    CHECK(verdict_of(p27, "supply_min_V") == "pass");
+    CHECK(verdict_of(p27, "supply_max_V") == "pass");
+
+    // Boundary: the same candidate with its supply unstated is UNVERIFIED, not rejected.
+    json unstated = sp(kECX_P35BN_312_500);
+    unstated["mpn"] = "NO-SUPPLY";
+    unstated["supply_min_V"] = nullptr;
+    unstated["supply_max_V"] = nullptr;
+    // A range that covers 2.5 V on both ends passes.
+    json wide = sp(kECX_P35BN_312_500);
+    wide["mpn"] = "WIDE";
+    wide["supply_min_V"] = 1.71;
+    wide["supply_max_V"] = 3.63;
+    // MEMS crossing: covering -> still the crossing's major_review; not covering -> rejected.
+    json mems_ok = wide, mems_short = sp(kECX_P35BN_312_500);
+    mems_ok["mpn"] = "MEMS-WIDE";
+    mems_ok["technology"] = "mems";
+    mems_short["mpn"] = "MEMS-3V3";
+    mems_short["technology"] = "mems";
+    const json rb = rank("timeBase", orig, json::array({unstated, wide, mems_ok, mems_short}));
+    const json u = by_mpn(rb, "NO-SUPPLY");
+    CHECK(u["status"] != "no_substitute");
+    CHECK(verdict_of(u, "supply_min_V") == "unverified");
+    CHECK(has_note(u, "states no supply range"));
+    CHECK(by_mpn(rb, "WIDE")["status"] != "no_substitute");
+    CHECK(verdict_of(by_mpn(rb, "WIDE"), "supply_min_V") == "pass");
+    CHECK(by_mpn(rb, "MEMS-WIDE")["status"] != "no_substitute");
+    CHECK(by_mpn(rb, "MEMS-WIDE")["grade"] == "major_review");
+    CHECK(by_mpn(rb, "MEMS-3V3")["status"] == "no_substitute");
+    CHECK(by_mpn(rb, "MEMS-3V3")["reason"] == "supply range does not cover the original's rail");
+}
+
+// J4 — Qarlos r16 26859036: CWR06DC155JCA (case "A") was sized as the EIA 3216 tantalum and
+// came out different_case against T499A225K010ATE8K0 ("1206" = 3216) only because the two
+// strings differ. CWR06 (MIL-PRF-55365/4) draws its own case table: its A is 2.54 x 1.27 mm.
+// Owner 2026-11-13: the letter -> EIA mapping applies only to series known to use EIA letters;
+// other series use stated dimensions, or are UNVERIFIED. The CWR06 / 194D table and the EIA
+// series list come from the Vishay datasheets (CrossRefDimensions.hpp).
+TEST_CASE("qarlos r14-r16 J4: a tantalum case letter is sized by its series, never EIA by default",
+          "[qarlos][crossref][tantalum][dec-1113-j]") {
+    using namespace dec_1113_j;
+    using kelvin::crossref::resolve_tantalum_letter;
+    // The series tables.
+    auto a_eia = resolve_tantalum_letter("A", "293D");
+    REQUIRE(a_eia);
+    CHECK(*a_eia->length == Approx(3.2e-3));
+    CHECK(*a_eia->width == Approx(1.6e-3));
+    auto a_cwr = resolve_tantalum_letter("A", "CWR06");
+    REQUIRE(a_cwr);
+    CHECK(*a_cwr->length == Approx(2.54e-3));
+    CHECK(*a_cwr->width == Approx(1.27e-3));
+    auto e_cwr = resolve_tantalum_letter("E", "194D");
+    REQUIRE(e_cwr);
+    CHECK(*e_cwr->length == Approx(5.08e-3));
+    CHECK(*e_cwr->width == Approx(2.54e-3));
+    CHECK_FALSE(resolve_tantalum_letter("A", "T95").has_value());  // its own A: 3.7 x 1.8
+    CHECK_FALSE(resolve_tantalum_letter("A", "").has_value());     // no series named
+    CHECK_FALSE(resolve_tantalum_letter("E", "293D").has_value()); // not in the A-D table
+
+    // The real pair: still different_case, now for the bodies.
+    const json cwr = sp(kCWR06DC155JCA);
+    const json r = rank("capacitor", cwr, json::array({sp(kT499A225K010ATE8K0)}));
+    const json t499 = by_mpn(r, "T499A225K010ATE8K0");
+    CHECK(t499["footprint"] == "different_case");
+    CHECK(has_note(t499, "different package/case (A -> 1206) — 2.54 x 1.27 mm against 3.2 x 1.6 mm"));
+
+    // Same letter string, different series: CWR06 "A" against 293D "A" is not the same land.
+    const json r2 = rank("capacitor", cwr, json::array({sp(k293D105X9016A2TE3)}));
+    CHECK(by_mpn(r2, "293D105X9016A2TE3")["footprint"] != "fits");
+
+    // Boundary: a series outside the checked list (T95, whose A is 3.7 x 1.8 mm) with no drawing
+    // is UNVERIFIED against a 293D "A" of the same 6.8 uF / 16 V — not 'fits' on the shared
+    // letter.
+    const json eia = sp(k293D685X9016A2TE3);
+    const json r3 = rank("capacitor", eia, json::array({sp(kT95A685M016EBBL)}));
+    const json t95 = by_mpn(r3, "T95A685M016EBBL");
+    CHECK(verdict_of(t95, "footprint") == "unverified");
+    CHECK(t95["footprint"] != "fits");
+    // And an EIA-series letter still resolves as before: 293D "A" against itself fits.
+    json twin = eia;
+    twin["mpn"] = "293D-TWIN";
+    CHECK(by_mpn(rank("capacitor", eia, json::array({twin})), "293D-TWIN")["footprint"] == "fits");
 }
 
 

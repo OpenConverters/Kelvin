@@ -721,7 +721,8 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
         // does not start on a 2.5 V rail, and a 1.8 V-only one is overstressed on it.
         // The analog family's 0.3 V / 10 % warn bands were copied here and let a
         // 2.7 V-minimum part pass as a warning for a 2.5 V original. A shortfall is a
-        // FAIL (a different rail is a board change); an unstated range is UNVERIFIED.
+        // FAIL (a different rail is a board change), which CrossRef.hpp turns into a
+        // rejection (owner 2026-11-13); an unstated range is UNVERIFIED.
         // Not applied to passive resonators (quartzCrystal / ceramicResonator), which
         // have no supply — CrossRef.hpp skips both keys for them.
         {"supply_min_V", D::Lower, 0.0, 0.0, false, false, nullptr},

@@ -421,7 +421,13 @@ inline std::optional<Dims> dims_of(const json& p, const std::string& category) {
     // sized from a chip case table (resolve_dimensions, leaded_body).
     const bool leaded_body = category == "capacitor" && (normalize_mount(str(p, "mount")) == "leaded" ||
                                                          !str(p, "lead_form").empty());
-    if (auto coded = resolve_dimensions(code, category, leaded_body)) {
+    // A single-letter capacitor case is a tantalum case letter, and a letter means a size
+    // only within its series (owner 2026-11-13): CWR06's "A" is 2.54 x 1.27 mm, the EIA "A"
+    // 3.2 x 1.6. Resolved through the series' own table, or not at all — then the record's
+    // drawing stands, or the footprint is unverified. Never the EIA table by default.
+    const bool letter_code = category == "capacitor" && !leaded_body && is_case_letter(code);
+    if (auto coded = letter_code ? resolve_tantalum_letter(code, str(p, "family"))
+                                 : resolve_dimensions(code, category, leaded_body)) {
         // The drawing's own height still stands where the table fixes no height —
         // a chip's height is not encoded in its case code.
         //
@@ -1165,8 +1171,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // the note can state both ranges in volts: a bare "supply_min_V: fail" does not say that
     // a 3.3 V-only part was offered for a 2.5 V rail. It was never compared at all (the
     // spec builder did not pass the range), so a 3.3 V and a 1.8 V XO were graded
-    // minor_review / upgrade for a 2.5 V EPSON original.
-    bool timebase_supply_fail = false;
+    // minor_review / upgrade for a 2.5 V EPSON original. (A range that does not cover the
+    // original's is rejected inside the loop, owner 2026-11-13; this flag is the one-sided
+    // unstated case.)
     bool timebase_supply_unverified = false;
     // A timing part's control-pin function stated on one side only: UNVERIFIED, noted, and
     // the grade capped below drop_in — the pin function is the part's pinout, a primary axis,
@@ -1526,7 +1533,18 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                 "with");
         }
         if (cat == "timeBase" && supply_key) {
-            if (verdict == FAIL) timebase_supply_fail = true;
+            // A supply range that does not cover the original's is REJECTED, a hard key like
+            // output_type (owner 2026-11-13): the part will not run, or is overstressed, on
+            // the rail the board provides — a 3.3 V-only ECX-P35BN offered for a 2.5-3.3 V
+            // AK2F3PBQ1 came back major_review (Qarlos r16 26859036). The note names both
+            // ranges so the rejection says why. One side unstated stays UNVERIFIED (below).
+            if (verdict == FAIL) {
+                notes.push_back("supply range does not cover the original's: the original runs "
+                                "from " + supply_range(original) + ", the substitute from " +
+                                supply_range(cand) +
+                                " — it will not run correctly from the original's rail");
+                return reject("supply range does not cover the original's rail");
+            }
             if (verdict == UNVERIFIED && detail::present(original, spec.key))
                 timebase_supply_unverified = true;
         }
@@ -2083,11 +2101,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                         "surface; dissimilar finishes fret and corrode at a separable joint");
 
     if (timebase_pin_unverified) demote();
-    if (timebase_supply_fail)
-        notes.push_back("supply range does not cover the original's: the original runs from " +
-                        supply_range(original) + ", the substitute from " + supply_range(cand) +
-                        " — it will not run correctly from the original's rail");
-    else if (timebase_supply_unverified)
+    if (timebase_supply_unverified)
         notes.push_back("the original runs from " + supply_range(original) +
                         "; the substitute's record states no supply range, so the rail could "
                         "not be checked — confirm it from the datasheet");
@@ -2243,17 +2257,28 @@ inline json score_candidate(const std::string& cat, const json& original, const 
 
         // Standoff band, two-sided (Alf 2026-10-25, ABT #2034): the standoff is the rail the
         // part guards, so one more than 10 % above the original's clamps too late for it —
-        // a 12 V part on a 5.5 V line. WARN, not FAIL.
+        // a 12 V part on a 5.5 V line. WARN; for a TVS original, above kStandoffFailRatio a
+        // FAIL (caps at major_review), owner 2026-11-13: a 13.6 V-standoff 1.5KE16CA for a
+        // 6.5 V SA6.5CA (2.09x) came back a WARN like a 1.2x part (Qarlos bench 20575296).
+        // The decision names TVS; an ESD original keeps the WARN at any ratio (a question
+        // left for the owner).
+        constexpr double kStandoffWarnRatio = 1.10;
+        constexpr double kStandoffFailRatio = 1.50;
         if (const auto ov = num(original, "vrrm"), sv = num(cand, "vrrm");
-            ov && sv && *sv > *ov * 1.10) {
-            params.push_back({{"name", "standoff_band"}, {"verdict", WARN}});
+            ov && sv && *sv > *ov * kStandoffWarnRatio) {
+            const bool far_above = o_tech == "tvs" && *sv > *ov * kStandoffFailRatio;
+            params.push_back({{"name", "standoff_band"}, {"verdict", far_above ? FAIL : WARN}});
             demote();
-            penalty += opt.gate_weight * kVerdictWarnPenalty;
+            penalty += opt.gate_weight * (far_above ? kVerdictFailPenalty : kVerdictWarnPenalty);
             ++worse;
             notes.push_back("standoff " + volts(*sv) + " V against the original's " + volts(*ov) +
                             " V (" + signed_pct(100.0 * (*sv / *ov - 1.0)) +
                             ") — a protection part for a higher rail; it clamps later than the "
-                            "protected circuit expects");
+                            "protected circuit expects" +
+                            (far_above ? std::string("; more than 1.5x the original's standoff, "
+                                                     "so its clamping voltage is far above what "
+                                                     "the protected circuit was designed to see")
+                                       : std::string()));
         }
         // Standoff BELOW the original's (Qarlos 2026-11-08): the original's standoff is the
         // circuit's working voltage, and a part whose standoff is lower is outside its
@@ -2462,6 +2487,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //    capped as missing required data.
     // web/src/crossref.js pre-filters the pool at exactly these edges (kZenerEdgeTol, kZenerPointTol).
     const bool zener = cat == "diode" && o_tech == "zener";
+    bool zener_off_nominal = false;
     if (zener) {
         constexpr double kZenerEdgeTol = 1e-3;   // rounding slack on a stated band edge
         constexpr double kZenerPointTol = 0.01;  // window of a band-less original
@@ -2518,12 +2544,18 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // with no word (Qarlos bench 20680025). Note only — the verdict and grade are those
         // decided above; an offset within kZenerPointTol is the same marking.
         if (wlo && s_center && oc && *oc > 0.0 &&
-            std::fabs(*s_center / *oc - 1.0) > kZenerPointTol)
+            std::fabs(*s_center / *oc - 1.0) > kZenerPointTol) {
+            // Owner 2026-11-13: such a part also RANKS after every exact-nominal zener — the
+            // resistor near-value tier (value_differs sort key in cross_reference), not a
+            // penalty another term could outweigh. Its grade and direction stay those
+            // decided above (zener_off_nominal does not take the resistor's grade cap).
+            zener_off_nominal = true;
             notes.push_back("the substitute's Vz " + volts(*s_center) + " V is " +
                             signed_pct(100.0 * (*s_center / *oc - 1.0)) +
                             " from the original's " + volts(*oc) + " V, inside its " + o_window +
                             " window but a different nominal — check the circuit tolerates "
                             "the shift");
+        }
     }
 
     // ── forward-current basis (multi-die diode packages) ─────────────────────
@@ -3008,8 +3040,14 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 // An ESTABLISHED land-pattern change, so it sits above the
                 // unverified rung of the footprint ladder — never below it.
                 penalty += opt.footprint_weight * kEstablishedFootprintMismatchPenalty;
-                notes.push_back("different package/case (" + oc + " -> " + sc +
-                                ") — different land pattern; a substitute to re-lay-out, not a "
+                // Name the two bodies when both resolve, so the note carries the reason and
+                // not just two strings: CWR06DC155JCA's case "A" is CWR06's 2.54 x 1.27 mm,
+                // not the EIA 3216 (owner 2026-11-13, r16 26859036).
+                std::string bodies;
+                if (o_dims && s_dims && has_land(*o_dims) && has_land(*s_dims))
+                    bodies = " — " + land_mm(*o_dims) + " against " + land_mm(*s_dims);
+                notes.push_back("different package/case (" + oc + " -> " + sc + ")" + bodies +
+                                " — different land pattern; a substitute to re-lay-out, not a "
                                 "drop-in (verify pads/pinout)");
             }
         }
@@ -4226,6 +4264,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         const std::string d = out["direction"];
         if (d == "upgrade" || d == "equivalent") out["direction"] = "downgrade";
     }
+    // A zener off the original's nominal (see zener_off_nominal): the same sort tier, and
+    // nothing else — grade and direction unchanged (owner 2026-11-13).
+    if (zener_off_nominal) out["value_differs"] = true;
     return out;
 }
 
@@ -4250,7 +4291,8 @@ inline json cross_reference(const std::string& category, const json& original,
     scored.reserve(candidates.size());
     for (const auto& c : candidates) scored.push_back(score_candidate(category, original, c, opt));
     // Order: viable candidates before rejects, then exact-value candidates before
-    // different-value alternatives (resistors, "value_differs"), then penalty. The
+    // different-value alternatives (resistors and off-nominal zeners, "value_differs"),
+    // then penalty. The
     // value tier is a sort key, not a penalty, so no combination of other penalties
     // can lift a different-value part above an exact-value one.
     std::stable_sort(scored.begin(), scored.end(), [](const json& a, const json& b) {
