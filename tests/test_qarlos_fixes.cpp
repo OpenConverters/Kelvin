@@ -6696,14 +6696,19 @@ TEST_CASE("owner 2026-11-13 N2c: MOSFET die configuration is graded like the dio
     }
 }
 
-// ── Owner decisions 2026-11-13 (c): R1 inductance tolerance ──
+// ── Owner decisions 2026-11-13 (c): R1 inductance tolerance, R2 transformer turns ratio ──
 // Every record below is the REAL TAS magnetics.ndjson line (data 3d2be2e, distributorsInfo
 // dropped). The spec block is the one web/src/crossref.js builds from the browse row: the v20
-// magnetic spec plus the v22 tolerance band.
+// magnetic spec plus the v22 tolerance band and turns-ratio array.
 namespace {
 const char* kRecLQW15AN7N2G00B = R"KREC({"magnetic":{"manufacturerInfo":{"name":"Murata","reference":"LQW15AN7N2G00B","status":"production","family":"LQW15AN_00","datasheetUrl":"https://www.murata.com/en-us/products/productdetail?partno=LQW15AN7N2G00B","datasheetInfo":{"part":{"partNumber":"LQW15AN7N2G00B","description":"Wire Wound RF Inductor","shielded":false,"family":"LQW15AN_00","caseCode":"1005/0402"},"electrical":[{"subtype":"inductor","inductance":{"nominal":7.2e-09,"minimum":7.056e-09,"maximum":7.344e-09},"dcResistance":{"maximum":0.13},"ratedCurrents":[0.57],"selfResonantFrequency":6000000000.0}],"mechanical":{"length":{"nominal":0.001,"minimum":0.0009,"maximum":0.0011},"width":{"nominal":0.0006,"minimum":0.0005,"maximum":0.0007},"height":{"nominal":0.0005,"minimum":0.0004,"maximum":0.0006},"weight":{"nominal":8e-07}},"thermal":{"operatingTemperature":{"minimum":-55.0,"maximum":125.0}},"provenance":[{"source":"manufacturerParametric","sourceName":"Murata product detail page (rendered)","sourceUrl":"https://www.murata.com/en-us/products/productdetail?partno=LQW15AN7N2G00B","retrievedDate":"2026-11-13","fields":["part.partNumber","part.description","electrical.inductance","electrical.dcResistance","electrical.ratedCurrents","electrical.selfResonantFrequency","part.shielded","part.family","part.caseCode","mechanical","thermal.operatingTemperature","manufacturerInfo.status"],"verification":"valuesReadFromSource","verificationDate":"2026-11-13","verificationMethod":"Rendered (browser) productdetail page for this exact part number read; every value is the one the page prints for the part; the page lists the part's packaging code in its packaging table."}]}}}})KREC";
 const char* kRecMHQ1005P6N2 = R"KREC({"magnetic":{"manufacturerInfo":{"name":"TDK","reference":"MHQ1005P6N2BT000","status":"production","family":"MHQ-P","datasheetUrl":"https://www.tdk.com/en/search/compass/part_no/MHQ1005P6N2BT000","datasheetInfo":{"part":{"description":"MHQ-P MHQ1005P6N2BT000 6.2nH","caseCode":"0402","windingStyle":"multilayer"},"electrical":[{"subtype":"inductor","inductance":{"nominal":6.2e-09},"dcResistance":{"maximum":0.13,"nominal":0.08947},"selfResonantFrequency":5858000000.0,"ratedCurrents":[0.7]}],"mechanical":{"length":{"nominal":0.001},"width":{"nominal":0.0005},"height":{"nominal":0.0005},"weight":{"nominal":1e-06}},"thermal":{"operatingTemperature":{"minimum":-55.0,"maximum":125.0}},"provenance":[{"source":"manufacturerDatabase","sourceName":"TDK product database","retrievedDate":"2026-07-31"},{"source":"manufacturerDatabase","sourceName":"TDK Meister database","retrievedDate":"2026-09-24","verification":"valuesReadFromSource","verificationDate":"2026-09-24","fields":["part.windingStyle"],"verificationMethod":"TDK Meister classifies this part's product class as multilayer construction."},{"source":"manufacturerDatabase","sourceName":"TDK product center (part search listing)","sourceUrl":"https://product.tdk.com/en/search/inductor/inductor/smd/info?part_no=MHQ1005P6N2BT000","retrievedDate":"2026-10-17","fields":["electrical.inductance","electrical.dcResistance","electrical.ratedCurrents","thermal.operatingTemperature","mechanical.length","mechanical.width"],"verification":"valuesReadFromSource","verificationDate":"2026-10-17"}]}}}})KREC";
 const char* kRecLQW15AN7N1G80D = R"KREC({"magnetic":{"manufacturerInfo":{"name":"Murata","reference":"LQW15AN7N1G80D","status":"production","datasheetUrl":"https://search.murata.co.jp/Ceramy/image/img/P02/JELF243A-0100.pdf","datasheetInfo":{"part":{"caseCode":"0402 (1005 Metric)","shielded":true},"electrical":[{"subtype":"inductor","inductance":{"nominal":7.1e-09,"minimum":6.958e-09,"maximum":7.242e-09},"dcResistance":{"maximum":0.069},"ratedCurrents":[1.42]}],"mechanical":{"mounting":"smt","length":{"nominal":0.001},"width":{"nominal":0.0006}},"thermal":{"operatingTemperature":{"minimum":-55.0,"maximum":125.0}},"provenance":[{"source":"manufacturerParametric","sourceName":"Murata SimSurfing","sourceUrl":"https://search.murata.co.jp/Ceramy/image/img/P02/JELF243A-0100.pdf","retrievedDate":"2026-06-20"},{"source":"manufacturerParametric","sourceName":"Murata parametric search","retrievedDate":"2026-07-21","fields":["mechanical.length","mechanical.width"]},{"source":"manufacturerParametric","sourceName":"Murata product catalogue (PIM API, values also printed on the productdetail page)","sourceUrl":"https://www.murata.com/en-us/products/productdetail?partno=LQW15AN7N1G80D","retrievedDate":"2026-10-17","fields":["mechanical.length","thermal.operatingTemperature","electrical.inductance","electrical.dcResistance","electrical.ratedCurrents","part.partNumber","mechanical.width"],"verification":"valuesReadFromSource","verificationDate":"2026-10-17"},{"source":"manufacturerParametric","sourceName":"Murata productdetail page","sourceUrl":"https://www.murata.com/en-us/products/productdetail?partno=LQW15AN7N1G80D","retrievedDate":"2026-11-13","fields":["electrical.0.inductance.maximum","electrical.0.inductance.minimum"],"verification":"valuesReadFromSource","verificationDate":"2026-11-13","verificationMethod":"Product page prints Inductance 7.1nH ±2%; minimum and maximum set from that nominal and tolerance; stored values used a different tolerance than the one printed"}]}},"distributorsInfo":[{"name":"Digi-Key","reference":"490-7671-2-ND","link":"https://www.digikey.com/en/products/detail/murata-electronics/LQW15AN7N1G80D/4292384","cost":{"value":0.0,"currency":"USD"},"quantity":20000,"updatedAt":"2026-04-12"}]}})KREC";
+const char* kRecIT213TH = R"KREC({"magnetic":{"manufacturerInfo":{"name":"Vanguard Electronics","reference":"IT213TH","status":"production","series":"IT200","family":"IT200","datasheetInfo":{"part":{"description":"IT200 Isolation Transformers (Hi-Reliability)","family":"IT200"},"electrical":[{"subtype":"transformer","inductance":{"nominal":0.0008100000000000001},"dcResistances":[{"maximum":0.27},{"maximum":0.32}],"turnsRatios":[{"nominal":0.8333333333333334}],"insulationTestVoltageAC":300.0}],"mechanical":{"assemblyType":"THT"},"thermal":{"operatingTemperature":{"minimum":-55.0,"maximum":125.0}},"provenance":[{"source":"scrape","sourceName":"Vanguard Electronics product catalogue","retrievedDate":"2026-06-22"},{"source":"manufacturerParametric","sourceName":"Vanguard Electronics product page","sourceUrl":"https://www.ve1.com/products/transformers/isolation-transformers/it200/it213th/","retrievedDate":"2026-10-09","verification":"partNamed","verificationDate":"2026-10-09"}]}}}})KREC";
+const char* kRecIT212TH = R"KREC({"magnetic":{"manufacturerInfo":{"name":"Vanguard Electronics","reference":"IT212TH","status":"production","series":"IT200","family":"IT200","datasheetInfo":{"part":{"description":"IT200 Isolation Transformers (Hi-Reliability)","family":"IT200"},"electrical":[{"subtype":"transformer","inductance":{"nominal":0.0008100000000000001},"dcResistances":[{"maximum":0.27},{"maximum":0.3}],"turnsRatios":[{"nominal":0.9090909090909091}],"insulationTestVoltageAC":300.0}],"mechanical":{"assemblyType":"THT"},"thermal":{"operatingTemperature":{"minimum":-55.0,"maximum":125.0}},"provenance":[{"source":"scrape","sourceName":"Vanguard Electronics product catalogue","retrievedDate":"2026-06-22"},{"source":"manufacturerParametric","sourceName":"Vanguard Electronics product page","sourceUrl":"https://www.ve1.com/products/transformers/isolation-transformers/it200/it212th/","retrievedDate":"2026-10-09","verification":"partNamed","verificationDate":"2026-10-09"}]}}}})KREC";
+const char* kRecIT211TH = R"KREC({"magnetic":{"manufacturerInfo":{"name":"Vanguard Electronics","reference":"IT211TH","status":"production","series":"IT200","family":"IT200","datasheetInfo":{"part":{"description":"IT200 Isolation Transformers (Hi-Reliability)","family":"IT200"},"electrical":[{"subtype":"transformer","inductance":{"nominal":0.0008100000000000001},"dcResistances":[{"maximum":0.27},{"maximum":0.27}],"turnsRatios":[{"nominal":1.0}],"insulationTestVoltageAC":300.0}],"mechanical":{"assemblyType":"THT"},"thermal":{"operatingTemperature":{"minimum":-55.0,"maximum":125.0}},"provenance":[{"source":"scrape","sourceName":"Vanguard Electronics product catalogue","retrievedDate":"2026-06-22"},{"source":"manufacturerParametric","sourceName":"Vanguard Electronics product page","sourceUrl":"https://www.ve1.com/products/transformers/isolation-transformers/it200/it211th/","retrievedDate":"2026-10-09","verification":"partNamed","verificationDate":"2026-10-09"}]}}}})KREC";
+const char* kRec749252100 = R"KREC({"magnetic":{"manufacturerInfo":{"name":"Würth Elektronik","reference":"749252100","status":"production","family":"WE-CST","datasheetInfo":{"part":{"description":"WE-CST Current Sense Transformer, SMT, EE4.4, 820uH, 1:100, 80V","caseCode":"EE4.4"},"electrical":[{"subtype":"transformer","inductance":{"nominal":0.00082},"dcResistances":[{"nominal":0.003,"maximum":9.5}],"ratedCurrents":[7.0]}],"mechanical":{"length":{"nominal":0.0047},"width":{"nominal":0.0046500000000000005},"height":{"nominal":0.0035499999999999998}},"thermal":{"operatingTemperature":{"minimum":-40.0,"maximum":125.0}},"provenance":[{"source":"manufacturerDatabase","sourceName":"Würth Elektronik database","sourceUrl":"https://www.we-online.com/redexpert/spec/749252100?ad","retrievedDate":"2026-08-01","verification":"partNamed","verificationDate":"2026-09-07"}]},"datasheetUrl":"https://www.we-online.com/redexpert/spec/749252100?ad"},"distributorsInfo":[{"name":"Würth Elektronik","packaging":"Tape and Reel"}]}})KREC";
+const char* kRec750310849 = R"KREC({"magnetic":{"manufacturerInfo":{"name":"Würth Elektronik","reference":"750310849","status":"production","datasheetUrl":"https://www.we-online.com/components/products/datasheet/750310849.pdf","family":"MID-OLPI","datasheetInfo":{"part":{"insulationGrade":"reinforced","numberOfWindings":3},"electrical":[{"subtype":"transformer","name":"all windings","inductance":{"nominal":0.0009},"turnsRatios":[{"nominal":8.0},{"nominal":4.0}],"dcResistances":[{"nominal":0.62},{"nominal":0.021},{"nominal":0.37}],"leakageInductance":{"maximum":1.2e-05},"saturationCurrentPeak":0.9,"saturationCurrents":[{"percentInductanceDrop":20.0,"current":0.9}],"insulationTestVoltageAC":4000,"ratedVoltageAC":282},{"subtype":"transformer","name":"auxiliary windings open","inductance":{"nominal":0.0009},"turnsRatios":[{"nominal":8.0}],"dcResistances":[{"nominal":0.62},{"nominal":0.021}],"leakageInductance":{"maximum":1.2e-05},"saturationCurrentPeak":0.9,"saturationCurrents":[{"percentInductanceDrop":20.0,"current":0.9}],"insulationTestVoltageAC":4000,"ratedVoltageAC":282}],"mechanical":{"mounting":"tht","length":{"nominal":0.021},"width":{"nominal":0.025},"height":{"nominal":0.016}},"provenance":[{"source":"manufacturerDatabase","sourceName":"Würth Elektronik Midcom Smart Transformer Selector","retrievedDate":"2026-09-13","verification":"valuesReadFromSource","verificationDate":"2026-09-13","fields":["electrical.inductance","electrical.leakageInductance","electrical.dcResistances","electrical.insulationTestVoltageAC","electrical.ratedVoltageAC","part.insulationGrade","mechanical"]},{"source":"derived","retrievedDate":"2026-09-13","fields":["electrical.turnsRatios","electrical.dcResistances","electrical.name","part.numberOfWindings"],"derivation":"windings from the transformer selector winding sections"},{"source":"manufacturerDatasheet","sourceUrl":"https://www.we-online.com/components/products/datasheet/750310849.pdf","retrievedDate":"2026-09-13","verification":"valuesReadFromSource","verificationDate":"2026-09-13","verificationMethod":"ISAT at |dL/L| < 20 %","fields":["electrical.saturationCurrentPeak","electrical.saturationCurrents"]},{"source":"manufacturerDatasheet","sourceUrl":"https://www.we-online.com/components/products/datasheet/750310849.pdf","retrievedDate":"2026-09-13","verification":"valuesReadFromSource","verificationDate":"2026-09-13","fields":["electrical.inductance","electrical.leakageInductance","electrical.dcResistances"]},{"source":"manufacturerDatabase","sourceName":"Würth Elektronik database","sourceUrl":"https://www.we-online.com/components/products/datasheet/750310849.pdf","retrievedDate":"2026-08-01","retracted":true,"retractionReason":"superseded by Würth Elektronik Midcom Smart Transformer Selector"}]}}}})KREC";
 json mag_spec_r(const kelvin::MagneticRow& r) {
     json s = mag_spec_xref(r);
     json row;
@@ -6711,6 +6716,7 @@ json mag_spec_r(const kelvin::MagneticRow& r) {
     auto raw = [](double v) { return std::isnan(v) ? json(nullptr) : json(v); };
     s["tolerance_minus_pct"] = raw(r.inductance_tol_minus_pct);
     s["tolerance_plus_pct"] = raw(r.inductance_tol_plus_pct);
+    s["turns_ratios"] = row["turns_ratios"];
     return s;
 }
 kelvin::MagneticRow real_row(const char* text) {
@@ -6756,4 +6762,54 @@ TEST_CASE("owner 2026-11-13 R1: an inductance outside the original's stated tole
     REQUIRE(c2);
     CHECK(verdict_of(*c2, "value") == "pass");
     CHECK_FALSE(c2->value("value_differs", false));
+}
+
+// R2: IT213TH (Vanguard IT200, 0.833 primary:secondary) against real transformers of the same
+// family and inductance: IT213 (0.833, the non-TH sibling) passes, IT212TH (0.909, +9.1 %) warns
+// with a note, IT211TH (1.0, +20 %) fails, Würth 750310849 (two secondaries, 8 and 4) is a
+// different winding structure (fail), and Würth 749252100 (no turnsRatios on record) is
+// unverified with a note.
+TEST_CASE("owner 2026-11-13 R2: the transformer turns ratio is compared",
+          "[qarlos][views][crossref][magnetic][turns_ratio]") {
+    const auto it213th = real_row(kRecIT213TH);
+    const auto it212th = real_row(kRecIT212TH);
+    const auto it211th = real_row(kRecIT211TH);
+    const auto we_none = real_row(kRec749252100);
+    const auto we_two = real_row(kRec750310849);
+    REQUIRE(it213th.turns_ratios.size() == 1);
+    CHECK(it213th.turns_ratios[0] == Approx(0.8333333333));
+    CHECK(we_none.turns_ratios.empty());
+    REQUIRE(we_two.turns_ratios.size() == 2);
+    CHECK(we_two.turns_ratios[1] == 4.0);
+
+    json same = mag_spec_r(it213th);  // the identical record: an exact ratio
+    same["mpn"] = "SELF";
+    auto r = kelvin::crossref::cross_reference(
+        "magnetic", mag_spec_r(it213th),
+        json::array({same, mag_spec_r(it212th), mag_spec_r(it211th), mag_spec_r(we_none),
+                     mag_spec_r(we_two)}));
+    const json* self = cand_by_mpn(r, "SELF");
+    const json* warn = cand_by_mpn(r, "IT212TH");
+    const json* fail = cand_by_mpn(r, "IT211TH");
+    const json* none = cand_by_mpn(r, "749252100");
+    const json* two = cand_by_mpn(r, "750310849");
+    REQUIRE(self);
+    REQUIRE(warn);
+    REQUIRE(fail);
+    REQUIRE(none);
+    REQUIRE(two);
+    CHECK(verdict_of(*self, "turns_ratio") == "pass");
+    CHECK(verdict_of(*warn, "turns_ratio") == "warn");
+    CHECK(has_note(*warn, "turns ratio 0.9091 vs the original's 0.8333 (+9.09 %) — check the "
+                          "circuit tolerates it"));
+    CHECK(warn->value("grade", "") != "drop_in");
+    CHECK(verdict_of(*fail, "turns_ratio") == "fail");
+    CHECK(has_note(*fail, "turns ratio 1 vs the original's 0.8333 (+20 %)"));
+    CHECK(fail->value("grade", "") == "major_review");
+    CHECK(verdict_of(*none, "turns_ratio") == "unverified");
+    CHECK(has_note(*none, "the substitute's turns ratio is") == false);
+    CHECK(has_note(*none, "the original's turns ratio is 0.8333; the substitute's record states "
+                          "none"));
+    CHECK(verdict_of(*two, "turns_ratio") == "fail");
+    CHECK(has_note(*two, "winding structure differs"));
 }

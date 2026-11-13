@@ -409,6 +409,10 @@ struct MagneticRow : RowBase {
     double dcr = kNaN();                  // Ω  — dcResistance (worst-case / maximum), else dcResistances[0]
     double srf = kNaN();                  // Hz — selfResonantFrequency
     double turns_ratio = kNaN();          // —  electrical[0].turnsRatios[0] (transformers): primary:secondary
+    // v22: the WHOLE electrical[0].turnsRatios array (primary:secondary for each secondary, record
+    // order), each resolved with PEAS::resolve_dimensional_values. Empty when the record states
+    // none. The cross-reference compares it element-wise (owner 2026-11-13, R2).
+    std::vector<double> turns_ratios;
     // v22: the inductance tolerance band the record STATES, as percent below / above the nominal:
     // electrical[0].inductance.minimum and .maximum (both required, resolved with the PEAS
     // resolver at MINIMUM / MAXIMUM) against the resolved nominal. NaN when the record states no

@@ -54,9 +54,13 @@ export const XREF = [
       // the value PASS window; null = no band stated -> the +/-15 % window stands. Raw: a
       // 0 % side is a stated value, not absence.
       tolerance_minus_pct: r.inductance_tol_minus_pct ?? null,
-      tolerance_plus_pct: r.inductance_tol_plus_pct ?? null }),
+      tolerance_plus_pct: r.inductance_tol_plus_pct ?? null,
+      // v22 (R2): the whole turnsRatios array (primary:secondary per secondary winding),
+      // compared element-wise. null = not stated.
+      turns_ratios: Array.isArray(r.turns_ratios) && r.turns_ratios.length ? r.turns_ratios : null }),
     params: [
       { key: 'value', label: 'L', row: 'inductance', unit: 'H' },
+      { key: 'turns_ratio', label: 'N', row: 'turns_ratio', unit: '' },
       { key: 'saturation_current', label: 'Isat', row: 'saturation_current', unit: 'A' },
       { key: 'rated_current', label: 'I rated', row: 'rated_current', unit: 'A' },
       { key: 'dcr', label: 'DCR', row: 'dcr', unit: 'Ω' },

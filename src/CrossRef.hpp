@@ -82,6 +82,11 @@ inline std::string plain_pct(double v) {
 // The same, sign always shown — a shift has a direction and it matters.
 inline std::string signed_pct(double v) { return (v >= 0 ? "+" : "") + plain_pct(v); }
 
+//: Transformer turns ratio (owner 2026-11-13, R2): equal within print rounding passes, up to
+//: 15 % off warns ("turns ratio can be +-15%, but with care"), beyond that fails.
+inline constexpr double kTurnsRatioPassRel = 0.01;
+inline constexpr double kTurnsRatioWarnRel = 0.15;
+
 // A resistance as an engineer writes it: SI prefix, up to six significant digits,
 // no trailing zeros ("14.7 kΩ", "15 kΩ", "0.5 Ω").
 inline std::string ohms(double v) {
@@ -2006,6 +2011,91 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         if (numeric && is_hard_param(cat, spec.key) && !o && s && !isat_vs_rating) {
             direction_blind = true;
             blind_axes.push_back(param_label(spec.key));
+        }
+    }
+
+    // ── transformer turns ratio (owner 2026-11-13, R2) ───────────────────────
+    // MagneticRow carried the ratio but the ranker never compared it, so a 1:1.2 part and a
+    // 1:2 part were the same candidate. Owner: "turns ratio can be +-15%, but with care".
+    //   both stated, every ratio within 1 % (print rounding)      -> PASS
+    //   worst ratio off by more than 1 %, up to 15 %              -> WARN + note
+    //   worst ratio off by more than 15 %                         -> FAIL (+ note)
+    //   different number of ratios (a different winding structure) -> FAIL + note
+    //   stated on one side only                                   -> UNVERIFIED + note, no cap
+    // The arrays are electrical[0].turnsRatios in record order (primary:secondary for each
+    // secondary), compared element-wise. The deviation is |sub/orig - 1| per element.
+    if (cat == "magnetic") {
+        auto ratios = [](const json& p) {
+            std::vector<double> v;
+            const json* a = (p.is_object() && p.contains("turns_ratios")) ? &p.at("turns_ratios")
+                                                                           : nullptr;
+            if (a && a->is_array())
+                for (const auto& x : *a)
+                    if (x.is_number() && x.get<double>() > 0) v.push_back(x.get<double>());
+            return v;
+        };
+        const std::vector<double> o_tr = ratios(original), s_tr = ratios(cand);
+        auto list = [](const std::vector<double>& v) {
+            std::string out;
+            char buf[32];
+            for (size_t i = 0; i < v.size(); ++i) {
+                std::snprintf(buf, sizeof buf, "%.4g", v[i]);
+                out += (i ? ", " : "") + std::string(buf);
+            }
+            return v.size() > 1 ? "[" + out + "]" : out;
+        };
+        if (!o_tr.empty() && !s_tr.empty()) {
+            const char* v = PASS;
+            if (o_tr.size() != s_tr.size()) {
+                v = FAIL;
+                notes.push_back("winding structure differs: the original states " +
+                                std::to_string(o_tr.size()) + " turns ratio(s) " + list(o_tr) +
+                                ", the substitute " + std::to_string(s_tr.size()) + " " +
+                                list(s_tr) +
+                                " — a different number of secondaries, not a drop-in");
+            } else {
+                double worst = 0.0;
+                size_t wi = 0;
+                for (size_t i = 0; i < o_tr.size(); ++i) {
+                    const double d = std::fabs(s_tr[i] / o_tr[i] - 1.0);
+                    if (d > worst) { worst = d; wi = i; }
+                }
+                if (worst > kTurnsRatioPassRel + kEdgeEps) {
+                    v = worst > kTurnsRatioWarnRel + kEdgeEps ? FAIL : WARN;
+                    char buf[200];
+                    std::snprintf(buf, sizeof buf, "turns ratio %.4g vs the original's %.4g",
+                                  s_tr[wi], o_tr[wi]);
+                    std::string note = std::string(buf);
+                    if (o_tr.size() > 1)
+                        note += " (secondary " + std::to_string(wi + 1) + " of " +
+                                std::to_string(o_tr.size()) + ")";
+                    note += " (" + signed_pct((s_tr[wi] / o_tr[wi] - 1.0) * 100.0) + ")";
+                    note += v == WARN ? " — check the circuit tolerates it"
+                                      : " — beyond the 15 % a transformer swap can absorb; a "
+                                        "different ratio, not a substitute without a redesign";
+                    notes.push_back(note);
+                }
+            }
+            params.push_back({{"name", "turns_ratio"}, {"verdict", v}});
+            if (v == FAIL) {
+                demote();
+                penalty += opt.gate_weight * kVerdictFailPenalty;
+                ++worse;
+            } else if (v == WARN) {
+                demote();
+                penalty += opt.gate_weight * kVerdictWarnPenalty;
+                ++worse;
+            }
+        } else if (!o_tr.empty() || !s_tr.empty()) {
+            // Secondary-axis missing data: note only, no cap, no penalty (owner policy).
+            params.push_back({{"name", "turns_ratio"}, {"verdict", UNVERIFIED}});
+            notes.push_back(!o_tr.empty()
+                                ? "the original's turns ratio is " + list(o_tr) +
+                                      "; the substitute's record states none — confirm it "
+                                      "from the datasheet"
+                                : "the substitute's turns ratio is " + list(s_tr) +
+                                      "; the original's record states none — confirm both "
+                                      "ratios match from the datasheets");
         }
     }
 

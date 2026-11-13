@@ -1469,6 +1469,21 @@ std::optional<MagneticRow> extract_magnetic(const json& env) {
                 if (tr > 0) r.turns_ratio = tr;
             } catch (const std::exception&) {
             }
+            // The whole array (v22), all-or-nothing: one unreadable or non-positive entry
+            // leaves the structure unknown rather than a shorter, wrong one.
+            std::vector<double> all;
+            bool ok = true;
+            for (const auto& t : *trs) {
+                try {
+                    const double v = PEAS::resolve_dimensional_values(t);
+                    if (!(v > 0)) { ok = false; break; }
+                    all.push_back(v);
+                } catch (const std::exception&) {
+                    ok = false;
+                    break;
+                }
+            }
+            if (ok) r.turns_ratios = std::move(all);
         }
         r.device_type = get_str(elec, "subtype").value_or("");
 

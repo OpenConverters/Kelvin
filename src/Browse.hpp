@@ -348,6 +348,8 @@ inline void extra_row_json(const ResistorRow& r, json& o) {
 // [{current, percent_drop, temperature}], a criterion or temperature the record does not state
 // is null. null when the record states no Isat at all — never an empty table.
 inline void extra_row_json(const MagneticRow& r, json& o) {
+    // The whole turns-ratio array (v22), null when the record states none.
+    o["turns_ratios"] = r.turns_ratios.empty() ? json(nullptr) : json(r.turns_ratios);
     if (r.sat_table_current.empty()) {
         o["saturation_points"] = nullptr;
         return;
