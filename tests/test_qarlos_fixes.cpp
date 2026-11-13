@@ -5106,3 +5106,105 @@ TEST_CASE("footprint stated by one record only keeps its cap",
     CHECK(p["footprint"] == "unknown");
     CHECK(p["grade"] == "minor_review");
 }
+
+
+// ── Qarlos r14-r16 group H (2026-11-13) ──────────────────────────────────────
+// Records are the REAL lines of tools/qarlos/bench/data-9cb6cf8 (TAS 9cb6cf8), distributorsInfo
+// dropped, run through the real extractor and the spec block web/src/crossref.js builds.
+namespace isat_both_unstated {
+// magnetics.ndjson line 81403: IHSM5832ER151L
+const char* kIHSM5832ER151L = R"KREC({"magnetic":{"manufacturerInfo":{"name":"Vishay","reference":"IHSM5832ER151L","status":"production","family":"IHSM-5832","datasheetUrl":"https://www.vishay.com/docs/34020/ihsm-5832.pdf","datasheetInfo":{"part":{"partNumber":"IHSM5832ER151L","family":"IHSM-5832","description":"Power Inductors"},"electrical":[{"subtype":"inductor","inductance":{"nominal":0.00015},"dcResistance":{"maximum":0.609},"ratedCurrents":[0.82]}],"thermal":{"operatingTemperature":{"minimum":-55.0,"maximum":125.0}},"mechanical":{"mounting":"smt"},"provenance":[{"source":"manufacturerDatasheet","sourceName":"Vishay datasheet","sourceUrl":"https://www.vishay.com/docs/34020/ihsm-5832.pdf","retrievedDate":"2026-09-11","verification":"valuesReadFromSource","verificationDate":"2026-09-11","fields":["manufacturerInfo.reference","datasheetInfo.part.partNumber","datasheetInfo.electrical.0.inductance","datasheetInfo.electrical.0.dcResistance","datasheetInfo.electrical.0.ratedCurrents"]}]}}}})KREC";
+// magnetics.ndjson line 21860: B82477G2154M000
+const char* kB82477G2154M000 = R"KREC({"magnetic":{"manufacturerInfo":{"name":"TDK","reference":"B82477G2154M000","status":"production","family":"B82477G2","datasheetUrl":"https://www.tdk.com/en/search/compass/part_no/B82477G2154M000","datasheetInfo":{"part":{"description":"B82477G2 B82477G2154M000 150.0μH","caseCode":"","windingStyle":"wireWound"},"electrical":[{"subtype":"inductor","inductance":{"nominal":0.00015,"minimum":0.00011999999999999999,"maximum":0.00017999999999999998},"dcResistance":{"maximum":0.23},"ratedCurrents":[1.0]}],"mechanical":{"weight":{"nominal":0.0036},"height":{"nominal":0.006},"length":{"nominal":0.0123},"width":{"nominal":0.0123}},"thermal":{"operatingTemperature":{"minimum":-55.0,"maximum":125.0}},"provenance":[{"source":"manufacturerDatabase","sourceName":"TDK product database","sourceUrl":"https://www.tdk.com/en/search/compass/part_no/B82477G2154M000","retrievedDate":"2026-06-22"},{"source":"manufacturerDatabase","sourceName":"TDK product database","retrievedDate":"2026-07-21","fields":["mechanical.height","mechanical.length","mechanical.width"]},{"source":"manufacturerDatabase","sourceName":"TDK Meister database","retrievedDate":"2026-09-24","verification":"valuesReadFromSource","verificationDate":"2026-09-24","fields":["part.windingStyle"],"verificationMethod":"TDK Meister classifies this part's product class as wire-wound construction."},{"source":"manufacturerDatabase","sourceName":"TDK product center (part search listing)","sourceUrl":"https://product.tdk.com/en/search/inductor/inductor/smd/info?part_no=B82477G2154M000","retrievedDate":"2026-10-17","fields":["electrical.inductance","electrical.dcResistance","electrical.ratedCurrents","thermal.operatingTemperature","mechanical.length","mechanical.width"],"verification":"valuesReadFromSource","verificationDate":"2026-10-17"}]}}}})KREC";
+// magnetics.ndjson line 31936: LSQCA201616T680M
+const char* kLSQCA201616T680M = R"KREC({"magnetic":{"manufacturerInfo":{"name":"Taiyo Yuden","reference":"LSQCA201616T680M","status":"production","family":"Wire-wound Ferrite Inductors LSQB/LSQC/LSQE series for General Purpose","datasheetUrl":"https://ds.yuden.co.jp/TYCOMPAS/or/detail?pn=LSQCA201616T680M","datasheetInfo":{"part":{"description":"Wire-wound Ferrite Inductors LSQB/LSQC/LSQE series for General Purpose LSQCA201616T680M 68.0μH","caseCode":"0806","material":"Ferrite","windingStyle":"wireWound","shielded":false},"electrical":[{"subtype":"inductor","inductance":{"nominal":6.8e-05,"minimum":5.44e-05,"maximum":8.159999999999999e-05},"dcResistance":{"maximum":9.1,"nominal":7.0},"ratedCurrents":[0.095]}],"mechanical":{"length":{"nominal":0.002},"width":{"nominal":0.0016},"height":{"nominal":0.0018}},"thermal":{"operatingTemperature":{"minimum":-40.0,"maximum":105.0}},"provenance":[{"source":"manufacturerParametric","sourceName":"Taiyo Yuden TY-COMPAS","sourceUrl":"https://ds.yuden.co.jp/TYCOMPAS/or/detail?pn=LSQCA201616T680M","retrievedDate":"2026-07-31","verification":"partNamed","verificationDate":"2026-10-09"}]}}}})KREC";
+// magnetics.ndjson line 23081: LQH2MCN680K02
+const char* kLQH2MCN680K02 = R"KREC({"magnetic":{"manufacturerInfo":{"name":"Murata","reference":"LQH2MCN680K02","status":"production","datasheetUrl":"https://pim.murata.com/en-global/pim/details/?partNum=LQH2MCN680K02","family":"LQH2MCN","description":"General","datasheetInfo":{"part":{"partNumber":"LQH2MCN680K02","family":"LQH2MCN","description":"General"},"electrical":[{"subtype":"inductor","inductance":{"nominal":6.8e-05},"dcResistance":{"maximum":6.6,"nominal":6.6},"ratedCurrents":[0.1],"inductancePoints":[{"current":0.0,"inductance":6.44452e-05,"temperature":-40.0},{"current":0.01,"inductance":6.58003e-05,"temperature":-40.0},{"current":0.02,"inductance":6.61596e-05,"temperature":-40.0},{"current":0.03,"inductance":6.61472e-05,"temperature":-40.0},{"current":0.04,"inductance":6.60037e-05,"temperature":-40.0},{"current":0.05,"inductance":6.5789e-05,"temperature":-40.0},{"current":0.06,"inductance":6.54503e-05,"temperature":-40.0},{"current":0.07,"inductance":6.50437e-05,"temperature":-40.0},{"current":0.08,"inductance":6.45555e-05,"temperature":-40.0},{"current":0.09,"inductance":6.40031e-05,"temperature":-40.0},{"current":0.1,"inductance":6.33262e-05,"temperature":-40.0},{"current":0.0,"inductance":6.78896e-05,"temperature":20.0},{"current":0.01,"inductance":6.79949e-05,"temperature":20.0},{"current":0.02,"inductance":6.80107e-05,"temperature":20.0},{"current":0.03,"inductance":6.79553e-05,"temperature":20.0},{"current":0.04,"inductance":6.78525e-05,"temperature":20.0},{"current":0.05,"inductance":6.77309e-05,"temperature":20.0},{"current":0.06,"inductance":6.74924e-05,"temperature":20.0},{"current":0.07,"inductance":6.71718e-05,"temperature":20.0},{"current":0.08,"inductance":6.66966e-05,"temperature":20.0},{"current":0.09,"inductance":6.6031e-05,"temperature":20.0},{"current":0.1,"inductance":6.49599e-05,"temperature":20.0},{"current":0.0,"inductance":7.16968e-05,"temperature":85.0},{"current":0.01,"inductance":7.17586e-05,"temperature":85.0},{"current":0.02,"inductance":7.17701e-05,"temperature":85.0},{"current":0.03,"inductance":7.17209e-05,"temperature":85.0},{"current":0.04,"inductance":7.14592e-05,"temperature":85.0},{"current":0.05,"inductance":7.10108e-05,"temperature":85.0},{"current":0.06,"inductance":7.02835e-05,"temperature":85.0},{"current":0.07,"inductance":6.92204e-05,"temperature":85.0},{"current":0.08,"inductance":6.73426e-05,"temperature":85.0},{"current":0.09,"inductance":6.43549e-05,"temperature":85.0},{"current":0.1,"inductance":5.81183e-05,"temperature":85.0}]}],"thermal":{"operatingTemperature":{"minimum":-40,"maximum":125}},"mechanical":{"length":{"nominal":0.002},"width":{"nominal":0.0016},"height":{"nominal":0.00095}},"provenance":[{"source":"manufacturerParametric","sourceName":"Murata product catalogue","sourceUrl":"https://pimapi.murata.com/public/api/pim/v1/products/search/cross-categories?partNum=LQH2MCN680K02&languageRegion=en-global","retrievedDate":"2026-07-31"},{"source":"manufacturerParametric","sourceName":"Murata product catalogue (PIM)","sourceUrl":"https://www.murata.com/en-us/products/productdetail?partno=LQH2MCN680K02","retrievedDate":"2026-10-09","fields":["electrical.inductance","electrical.dcResistance","electrical.ratedCurrents","mechanical.length","mechanical.width","mechanical.height","thermal.operatingTemperature"],"verification":"partNamed","verificationDate":"2026-10-31"}]}}}})KREC";
+json spec(const char* line) {
+    auto r = kelvin::extract_magnetic(real_mag(line));
+    REQUIRE(r.has_value());
+    return mag_spec_xref(*r);
+}
+json one(const json& orig, const json& cand) {
+    kelvin::crossref::Options opt;
+    auto r = kelvin::crossref::cross_reference("magnetic", orig, json::array({cand}), opt);
+    REQUIRE(r["candidates"].size() == 1);
+    return r["candidates"][0];
+}
+int rows_named(const json& c, const std::string& name) {
+    int n = 0;
+    for (const auto& p : c.at("params"))
+        if (p.value("name", "") == name) ++n;
+    return n;
+}
+}  // namespace isat_both_unstated
+
+// Qarlos bench 20269028 (IHSM5832ER151L -> B82477G2154M000) and r16 26859036
+// (LSQCA201616T680M -> LQH2MCN680K02): neither record states a saturation current, and the
+// verdict table carried no Isat row at all, so the candidate read drop_in / 'upgrade' with
+// nothing showing that Isat was never compared. Both-missing is not capped (owner 2026-11-12),
+// but the axis is reported UNVERIFIED.
+TEST_CASE("qarlos r14-r16 H2: Isat stated on neither record is an UNVERIFIED row, uncapped",
+          "[qarlos][crossref][isat][isat-both-unstated]") {
+    using namespace isat_both_unstated;
+    struct Pair { const char* o; const char* s; const char* grade; };
+    for (const Pair& p : {Pair{kIHSM5832ER151L, kB82477G2154M000, "minor_review"},
+                          Pair{kLSQCA201616T680M, kLQH2MCN680K02, "drop_in"}}) {
+        const json o = spec(p.o), s = spec(p.s);
+        // The premise: no Isat in any form on either side.
+        REQUIRE(o["saturation_current"].is_null());
+        REQUIRE(s["saturation_current"].is_null());
+        REQUIRE(o["saturation_points"].is_null());
+        REQUIRE(s["saturation_points"].is_null());
+        const json c = one(o, s);
+        CHECK(verdict_of(c, "saturation_current") == "unverified");
+        CHECK(rows_named(c, "saturation_current") == 1);
+        // Not capped: the grade is what the other axes give (B82477G2154M000's footprint is
+        // unverified against an original with no land, hence minor_review).
+        CHECK(c["grade"] == p.grade);
+    }
+    // Boundary: Isat stated on one side goes through the normal compare, one row only.
+    json o = spec(kLSQCA201616T680M);
+    o["saturation_current"] = 0.2;
+    json s = spec(kLQH2MCN680K02);
+    s["saturation_current"] = 0.25;
+    const json c = one(o, s);
+    CHECK(verdict_of(c, "saturation_current") == "pass");
+    CHECK(rows_named(c, "saturation_current") == 1);
+}
+
+// Qarlos r15 26440120: 05FHJ-SM1-TB (JST FHJ FPC; its record states no position count) took
+// the 20-position Molex 2250190200 as a clean drop_in, 'equivalent', penalty 0, positions
+// 'unverified' and no note. Positions is a connector identity; stated by one record only it
+// takes the one-sided identity treatment (note + cap below drop_in). Spec blocks exactly as
+// web/src/crossref.js builds them from the shard rows.
+TEST_CASE("qarlos r14-r16 H3: connector positions stated by the substitute only caps drop_in",
+          "[qarlos][crossref][connector][positions-one-sided]") {
+    const json orig = conn_spec("05FHJ-SM1-TB",
+                                {{"family", "fpcFfc"}, {"pitch_mm", 0.5}, {"rated_current_A", 0.5},
+                                 {"rated_voltage_V", 50.0}, {"temp_min_C", -25.0},
+                                 {"temp_max_C", 85.0}, {"mounting", "smt"},
+                                 {"orientation", "rightAngle"}});
+    const json cand = conn_spec("2250190200",
+                                {{"family", "fpcFfc"}, {"positions", 20.0}, {"pitch_mm", 0.5},
+                                 {"rated_current_A", 0.5}, {"rated_voltage_V", 50.0},
+                                 {"temp_min_C", -40.0}, {"temp_max_C", 85.0},
+                                 {"contact_plating", "au-gold"}, {"mounting", "smt"},
+                                 {"orientation", "rightAngle"}, {"mating_cycles", 20.0}});
+    REQUIRE(orig["positions"].is_null());
+    const json c = conn_one(orig, cand);
+    CHECK(verdict_of(c, "positions") == "unverified");
+    CHECK(c["grade"] == "minor_review");
+    CHECK(has_note(c, "contact positions not established (original: not stated, substitute: 20)"));
+    // Boundary: the same pair with the position count on both sides and equal is a drop_in.
+    json o20 = orig;
+    o20["positions"] = 20.0;
+    const json same = conn_one(o20, cand);
+    CHECK(verdict_of(same, "positions") == "pass");
+    CHECK(same["grade"] == "drop_in");
+    CHECK_FALSE(has_note(same, "contact positions not established"));
+    // Stated on both sides and different still rejects (unchanged).
+    json o5 = orig;
+    o5["positions"] = 5.0;
+    CHECK(conn_one(o5, cand)["status"] == "no_substitute");
+}

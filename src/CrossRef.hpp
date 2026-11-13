@@ -1384,6 +1384,19 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         if (spec.key == "saturation_current")
             has_data = has_data || detail::present(original, "saturation_points") ||
                        detail::present(cand, "saturation_points");
+        // A magnetic's saturation current stated on NEITHER record (Qarlos bench 20269028
+        // IHSM5832ER151L -> B82477G2154M000, r16 26859036 LSQCA201616T680M -> LQH2MCN680K02):
+        // the axis was skipped without a row, so a part came back drop_in / 'upgrade' with
+        // nothing saying Isat was never compared. Missing on both sides is not capped and not
+        // penalised (owner 2026-11-12: identical for every candidate, it cannot skew one against
+        // another), but the gap is shown as an UNVERIFIED row — the treatment a footprint
+        // stated by neither record gets (row, no note: test_crossref_ranking_golden ABT #545
+        // asserts such a candidate carries no notes; whether a note may be added is a question
+        // for the owner, Qarlos r14-r16 group H).
+        if (!has_data && cat == "magnetic" && spec.key == "saturation_current") {
+            params.push_back({{"name", spec.key}, {"verdict", UNVERIFIED}});
+            continue;
+        }
         if (!has_data) continue;
         const bool power_at_t = cat == "resistor" && spec.key == "power_rating" && power_t.applies;
         // With no basis for the substitute's power at T_ref, a nominal rating below the
@@ -1737,6 +1750,23 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             notes.push_back(std::string(a.what) + " not established (original: " +
                             said(original, a.key) + ", substitute: " + said(cand, a.key) +
                             ") — " + a.confirm + " from the datasheets");
+        }
+        // Position count stated by the SUBSTITUTE only (Qarlos r15 26440120: 05FHJ-SM1-TB, whose
+        // record states no positions, took the 20-position Molex 2250190200 as a clean drop_in,
+        // 'equivalent', no note). Positions is an identity (is_hard_param): stated on both
+        // sides and different it rejects, and a substitute that omits it while the original
+        // states it is rejected in the PARAM_SPECS loop (missing required data on a hard
+        // axis), so only this direction reaches here. It takes the one-sided identity
+        // treatment of gender / termination / pitch / rows: the UNVERIFIED verdict the loop
+        // pushed, a note naming both sides, and the cap below drop_in. It is NOT counted toward
+        // the several-gaps major_review cap below: that list is the owner's, and positions is
+        // not on it (question recorded for the owner, Qarlos r14-r16 group H).
+        if (!stated(original, "positions") && stated(cand, "positions")) {
+            connector_identity_unverified = true;
+            notes.push_back("contact positions not established (original: " +
+                            said(original, "positions") + ", substitute: " +
+                            said(cand, "positions") +
+                            ") — confirm the position count from the datasheets");
         }
         // Family-variant identities stated on one side only (owner 2026-11-12, "Identity when
         // stated"): the PARAM_SPECS loop has pushed UNVERIFIED; this adds the note naming the
