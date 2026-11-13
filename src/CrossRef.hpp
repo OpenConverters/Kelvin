@@ -1644,9 +1644,14 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 // the direction; stability keeps its own comparison and a regression there
                 // still turns the direction to 'mixed'.
                 ++better;
+                // No claim about the supply current: "at a higher supply current and cost" was
+                // printed for every TCXO, including ASDAIG-48.000MHZ-X-K-T (13 mA) ->
+                // 7N48071001 (10 mA) (Qarlos r22 30000906). Neither current nor cost is on the
+                // timing row (TimingRow carries no currentConsumption), so the note asks for the
+                // check instead of asserting its outcome.
                 notes.push_back("technology differs: " + name(s_t) + " offered for " + name(o_t) +
-                                " — a temperature-compensated upgrade, at a higher supply current "
-                                "and cost; confirm the rail's current budget");
+                                " — a temperature-compensated upgrade; its supply current is not "
+                                "compared here, so confirm the rail's current budget");
             }
         }
         if (pin_field && verdict == UNVERIFIED) {
