@@ -6052,6 +6052,31 @@ TEST_CASE("dec-1113 K2: fixed-frequency oscillators are unaffected by the progra
 }
 
 
+// ── Owner decision 2026-11-13, group M0: a blank for a fixed frequency needs ordering ──
+// A programmable blank admitted for an original that states one fixed frequency inside the
+// blank's range must be ORDERED programmed to that frequency: it is capped at minor_review,
+// never a plain drop_in, and keeps the 'order it programmed to X Hz' note. The pair below is
+// the same SiT3901 record on both sides — ordered at 10 MHz against its own 1-26 MHz blank —
+// so nothing but the ordering step stands between it and drop_in.
+TEST_CASE("dec-1113 M0: a programmable blank for a fixed-frequency original is capped at minor_review",
+          "[qarlos][crossref][timing][programmable][dec-1113-m]") {
+    using namespace dec_1113_k;
+    const json orig = spec(with_range(kSiT3901, 1e6, 26e6, 10e6), "SiT3901@10MHz");
+    const json blank = spec(with_range(kSiT3901, 1e6, 26e6), "SiT3901 1-26");
+    const json r = rank(orig, json::array({blank}));
+    const json c = by_mpn(r, "SiT3901 1-26");
+    CHECK(c["status"] != "no_substitute");
+    CHECK(verdict_of(c, "frequency") == "pass");
+    CHECK(c["grade"] == "minor_review");
+    CHECK(c["status"] == "partial");
+    CHECK(has_note(c, "order it programmed to 10000000 Hz"));
+    // A blank whose range covers a programmable original's RANGE is not an ordering step
+    // for a fixed frequency: the M0 cap does not apply (that original was a blank itself).
+    const json borig = spec(with_range(kSiT3901, 1e6, 26e6), "SiT3901 blank");
+    const json rb = rank(borig, json::array({blank}));
+    CHECK(by_mpn(rb, "SiT3901 1-26")["grade"] == "drop_in");
+}
+
 // ── Owner decisions 2026-11-13, agent K: tantalum EIA letter = EIA size code ────
 // Within an EIA-letter series (293D, 593D, T83, T55, T50, T51, TMCH) a case letter and its EIA
 // size code are one case identity: A = 1206 / 3216, B = 1210 / 3528, C = 2312 / 6032,
@@ -6123,4 +6148,106 @@ TEST_CASE("dec-1113 K1: an EIA-series tantalum letter and its EIA size code are 
                             "T499A225K010ATE8K0");
     CHECK(cwr["footprint"] == "different_case");
     CHECK(has_note(cwr, "different package/case (A -> 1206) — 2.54 x 1.27 mm against 3.2 x 1.6 mm"));
+}
+
+
+// ── Qarlos r17-r19, group M: diode Cj bound, breakdown window, reject direction ───────────
+// Specs below are the cross-reference specs web/src/crossref.js builds from the shard rows of
+// the real records (TAS 3d2be2e, tools/qarlos/bench/data-3d2be2e), as the probe printed them.
+namespace r17m {
+// diodes: CDSOD323-T12C-DSL (Bourns ESD, 3 pF at 0 V)
+const char* kCDSOD323_T12C_DSL = R"KSPEC({"mpn": "CDSOD323-T12C-DSL", "length_m": null, "width_m": null, "height_m": null, "case_code": "SOD-323", "mount": "", "lead_pitch_m": null, "is_production": false, "provenance_retracted": false, "box_axes_ambiguous": false, "vrrm": 12, "if_avg": null, "vf": null, "power_dissipation": null, "qrr": null, "trr": null, "technology": "esd", "die_configuration": null, "internal_connection": null, "vz_min_V": 13.3, "vz_max_V": null, "vz_tolerance_pct": null, "clamping_voltage": null, "clamping_current": null, "peak_pulse_power": null, "peak_pulse_current": null, "junction_capacitance": 3e-12, "junction_capacitance_vr": 0, "clamping_waveform": "", "peak_pulse_power_waveform": "", "peak_pulse_current_waveform": "", "tj_max": 150, "qualification": ""})KSPEC";
+// diodes: SD12T1G (onsemi ESD, 150 pF at no stated bias) and SD12CT1G (64 pF)
+const char* kSD12T1G = R"KSPEC({"mpn": "SD12T1G", "length_m": null, "width_m": null, "height_m": null, "case_code": "SOD-323", "mount": "", "lead_pitch_m": null, "is_production": true, "provenance_retracted": false, "box_axes_ambiguous": false, "vrrm": 12, "if_avg": null, "vf": null, "power_dissipation": null, "qrr": null, "trr": null, "technology": "esd", "die_configuration": null, "internal_connection": null, "vz_min_V": 13.3, "vz_max_V": null, "vz_tolerance_pct": null, "clamping_voltage": null, "clamping_current": null, "peak_pulse_power": 350, "peak_pulse_current": null, "junction_capacitance": 1.5e-10, "junction_capacitance_vr": null, "clamping_waveform": "", "peak_pulse_power_waveform": "", "peak_pulse_current_waveform": "", "tj_max": null, "qualification": ""})KSPEC";
+// diodes: 5.0SMDJ100A-QH (Bourns TVS, breakdown 111-123 V)
+const char* k5_0SMDJ100A_QH = R"KSPEC({"mpn": "5.0SMDJ100A-QH", "length_m": null, "width_m": null, "height_m": null, "case_code": "DO-214AB", "mount": "", "lead_pitch_m": null, "is_production": false, "provenance_retracted": false, "box_axes_ambiguous": false, "vrrm": 100, "if_avg": null, "vf": null, "power_dissipation": null, "qrr": null, "trr": null, "technology": "tvs", "die_configuration": null, "internal_connection": null, "vz_min_V": 111, "vz_max_V": 123, "vz_tolerance_pct": 5.128205128205128, "clamping_voltage": 162, "clamping_current": 30.9, "peak_pulse_power": 5000, "peak_pulse_current": 30.9, "junction_capacitance": null, "junction_capacitance_vr": null, "clamping_waveform": "10/1000", "peak_pulse_power_waveform": "10/1000", "peak_pulse_current_waveform": "10/1000", "tj_max": 150, "qualification": ""})KSPEC";
+// diodes: 15KP100A (Littelfuse TVS, breakdown minimum 111 V, no maximum on record)
+const char* k15KP100A = R"KSPEC({"mpn": "15KP100A", "length_m": null, "width_m": null, "height_m": null, "case_code": "P600", "mount": "", "lead_pitch_m": null, "is_production": false, "provenance_retracted": false, "box_axes_ambiguous": false, "vrrm": 100, "if_avg": null, "vf": null, "power_dissipation": null, "qrr": null, "trr": null, "technology": "tvs", "die_configuration": null, "internal_connection": null, "vz_min_V": 111, "vz_max_V": null, "vz_tolerance_pct": null, "clamping_voltage": 162, "clamping_current": 93, "peak_pulse_power": 15000, "peak_pulse_current": 93, "junction_capacitance": null, "junction_capacitance_vr": null, "clamping_waveform": "10/1000", "peak_pulse_power_waveform": "10/1000", "peak_pulse_current_waveform": "10/1000", "tj_max": 150, "qualification": ""})KSPEC";
+// diodes: 15KPA100A (Littelfuse TVS, breakdown 111.7-122.3 V)
+const char* k15KPA100A = R"KSPEC({"mpn": "15KPA100A", "length_m": null, "width_m": null, "height_m": null, "case_code": "P600", "mount": "", "lead_pitch_m": null, "is_production": true, "provenance_retracted": false, "box_axes_ambiguous": false, "vrrm": 100, "if_avg": null, "vf": null, "power_dissipation": null, "qrr": null, "trr": null, "technology": "tvs", "die_configuration": null, "internal_connection": null, "vz_min_V": 111.7, "vz_max_V": 122.3, "vz_tolerance_pct": 4.529914529914528, "clamping_voltage": 161.3, "clamping_current": 93.6, "peak_pulse_power": 15000, "peak_pulse_current": 93.6, "junction_capacitance": null, "junction_capacitance_vr": null, "clamping_waveform": "10/1000", "peak_pulse_power_waveform": "10/1000", "peak_pulse_current_waveform": "10/1000", "tj_max": 175, "qualification": ""})KSPEC";
+// magnetics: AISC-0402HP-21NJ-T (Abracon, 21 nH, full land) and AC2218SQ-23NG (Bourns, 23 nH,
+// no dimensions on record)
+const char* kAISC_0402HP_21NJ_T = R"KSPEC({"mpn": "AISC-0402HP-21NJ-T", "length_m": 0.001, "width_m": 0.00055, "height_m": 0.0005, "case_code": "", "mount": "", "lead_pitch_m": null, "is_production": true, "provenance_retracted": false, "box_axes_ambiguous": false, "value_si": 2.1e-08, "saturation_current": 0.8, "saturation_points": [{"current": 0.8, "percent_drop": null, "temperature": null}], "rated_current": 0.8, "dcr": 0.16, "srf": 3300000000, "temp_min_C": -40, "temp_max_C": 125})KSPEC";
+const char* kAC2218SQ_23NG = R"KSPEC({"mpn": "AC2218SQ-23NG", "length_m": null, "width_m": null, "height_m": null, "case_code": "", "mount": "", "lead_pitch_m": null, "is_production": true, "provenance_retracted": false, "box_axes_ambiguous": false, "value_si": 2.3e-08, "saturation_current": 4.4, "saturation_points": [{"current": 4.4, "percent_drop": null, "temperature": null}], "rated_current": null, "dcr": 0.1, "srf": null, "temp_min_C": -40, "temp_max_C": 125})KSPEC";
+
+json one(const std::string& cat, const char* orig, const json& cand) {
+    const json r = kelvin::crossref::cross_reference(cat, json::parse(orig), json::array({cand}));
+    REQUIRE(r["candidates"].size() == 1);
+    return r["candidates"][0];
+}
+}  // namespace r17m
+
+// Finding M1 (Qarlos bench 20300704): CDSOD323-T12C-DSL states 3 pF at 0 V; SD12T1G states
+// 150 pF at no bias and came back drop_in with "not directly comparable". Cj only falls as the
+// reverse bias rises and every bias is >= 0 V, so at 0 V SD12T1G's Cj is at least 150 pF:
+// 50x the original's, a FAIL on the both-state rule.
+TEST_CASE("r17 M1: a Cj above the original's 0 V figure is worse whatever its unstated bias",
+          "[qarlos][crossref][diode][r17-m]") {
+    using namespace r17m;
+    const json c = one("diode", kCDSOD323_T12C_DSL, json::parse(kSD12T1G));
+    CHECK(verdict_of(c, "junction_capacitance") == "fail");
+    CHECK(c["grade"] == "major_review");
+    CHECK(c["direction"] != "equivalent");
+    CHECK(has_note(c, "junction capacitance 150 pF at no stated reverse voltage against the "
+                      "original's 3 pF at 0 V — Cj only falls as reverse bias rises"));
+    CHECK_FALSE(has_note(c, "not directly comparable"));
+    // Inside 2x the bound is only a lower bound: WARN, said so.
+    json near = json::parse(kSD12T1G);
+    near["mpn"] = "SD12T1G 5pF (variant)";
+    near["junction_capacitance"] = 5e-12;
+    const json w = one("diode", kCDSOD323_T12C_DSL, near);
+    CHECK(verdict_of(w, "junction_capacitance") == "warn");
+    CHECK(has_note(w, "(a lower bound: it may be more than 2x)"));
+    // At or below the original's figure with the bias unstated: still not comparable (at
+    // 0 V it could be larger).
+    json lower = json::parse(kSD12T1G);
+    lower["mpn"] = "SD12T1G 2pF (variant)";
+    lower["junction_capacitance"] = 2e-12;
+    const json u = one("diode", kCDSOD323_T12C_DSL, lower);
+    CHECK(verdict_of(u, "junction_capacitance") == "unverified");
+    CHECK(has_note(u, "not directly comparable"));
+    // The mirror bound: a substitute stated at a LOWER bias than the original's and already no
+    // larger is no larger at the original's bias either — PASS.
+    json orig5 = json::parse(kCDSOD323_T12C_DSL);
+    orig5["junction_capacitance_vr"] = 5.0;
+    json at0 = json::parse(kSD12T1G);
+    at0["mpn"] = "SD12T1G 2pF@0V (variant)";
+    at0["junction_capacitance"] = 2e-12;
+    at0["junction_capacitance_vr"] = 0.0;
+    const json r = kelvin::crossref::cross_reference("diode", orig5, json::array({at0}));
+    CHECK(verdict_of(r["candidates"][0], "junction_capacitance") == "pass");
+}
+
+// Finding M2 (Qarlos bench 20575296): 5.0SMDJ100A-QH guarantees 111-123 V; 15KP100A states
+// only its 111 V minimum. Equal minimums were a breakdown_window PASS although nothing says
+// the substitute's window stays under 123 V.
+TEST_CASE("r17 M2: breakdown window is unverified when the substitute states no upper end",
+          "[qarlos][crossref][diode][r17-m]") {
+    using namespace r17m;
+    const json c = one("diode", k5_0SMDJ100A_QH, json::parse(k15KP100A));
+    CHECK(verdict_of(c, "breakdown_window") == "unverified");
+    CHECK(has_note(c, "the original's breakdown window tops out at 123 V; the substitute's "
+                      "record states only its minimum (111 V)"));
+    // Both upper ends stated: compared as before (122.3 V <= 123 V passes).
+    const json p = one("diode", k5_0SMDJ100A_QH, json::parse(k15KPA100A));
+    CHECK(verdict_of(p, "breakdown_window") == "pass");
+}
+
+// Finding M8 (Qarlos r17 27173223): AC2218SQ-23NG is rejected for having no land pattern on
+// record, and read 'downgrade' although every parameter compared (23 vs 21 nH, Isat 4.4 vs
+// 0.8 A, DCR 0.1 vs 0.16 ohm) is equal or better. A rejection for an absent datum measures
+// no regression: direction 'unknown'.
+TEST_CASE("r17 M8: a candidate rejected for missing data reads direction 'unknown'",
+          "[qarlos][crossref][magnetic][r17-m]") {
+    using namespace r17m;
+    const json c = one("magnetic", kAISC_0402HP_21NJ_T, json::parse(kAC2218SQ_23NG));
+    CHECK(c["status"] == "no_substitute");
+    CHECK(c["reason"] == "no dimensional data — cannot verify footprint fit");
+    CHECK(c["direction"] == "unknown");
+    // A rejection for a compared mismatch keeps 'downgrade': the 12 V ESD part (breakdown
+    // minimum 13.3 V) under the 100 V TVS original's working voltage.
+    const json m = one("diode", k5_0SMDJ100A_QH, json::parse(kCDSOD323_T12C_DSL));
+    CHECK(m["status"] == "no_substitute");
+    CHECK(m["reason"] == "breakdown minimum at or below the original's working voltage");
+    CHECK(m["direction"] == "downgrade");
 }
