@@ -114,6 +114,43 @@ inline const std::map<std::string, LWH>& tantalum_letter() {
     return t;
 }
 
+// A tantalum case LETTER means a size only within the series that defines it (owner
+// 2026-11-13). The EIA letters above (A 3216, B 3528, C 6032, D 7343) are what a datasheet
+// tabulates under "EIA SIZE"; the MIL extended-range CWR06 system reuses the same letters for
+// other bodies (its A is 2.54 x 1.27 mm, not 3.2 x 1.6), and 595D / T95 / 594D draw their own
+// A-D bodies (A 3.7 x 1.8 mm). A letter is therefore resolved only for a series whose
+// datasheet was checked (Vishay datasheets, retrieved 2026-11-13, against the TAS data-9cb6cf8
+// catalogue, where every letter-coded tantalum record is a Vishay series):
+//  * EIA letters: 293D, 593D, T83 (doc 40002 / 40005 / 40077, "EIA SIZE" column A 3216-18,
+//    B 3528-21, C 6032-28, D 7343-31); T55, T50, T51, TMCH (polymer, docs 40174 / 40254 /
+//    40259 / 40182, same EIA column; T55 C is drawn 5.8 mm long under "6032-28").
+//  * CWR06 (MIL-PRF-55365/4, doc 40009) and 194D (its commercial twin, doc 40000): the
+//    datasheet's own A-H table below.
+// Any other series — or a record naming none — resolves no letter: the footprint is then the
+// record's own drawing, or unverified. Never the EIA table by default.
+inline const std::set<std::string>& tantalum_eia_letter_series() {
+    static const std::set<std::string> t{"293D", "593D", "T83", "T55", "T50", "T51", "TMCH"};
+    return t;
+}
+
+// CWR06 / 194D case table, L x W x H in mm (datasheet nominal; the inch figures are the
+// governing ones, L/W/H +/-0.015 in).
+inline const std::map<std::string, LWH>& tantalum_cwr06_letter() {
+    static const std::map<std::string, LWH> t{
+        {"A", {2.54, 1.27, 1.27}}, {"B", {3.81, 1.27, 1.27}}, {"C", {5.08, 1.27, 1.27}},
+        {"D", {3.81, 2.54, 1.27}}, {"E", {5.08, 2.54, 1.27}}, {"F", {5.59, 3.43, 1.78}},
+        {"G", {6.73, 2.79, 2.79}}, {"H", {7.24, 3.81, 2.79}},
+    };
+    return t;
+}
+
+inline const std::map<std::string, LWH>* tantalum_series_letter_table(const std::string& series) {
+    const std::string s = upper(trim(series));
+    if (tantalum_eia_letter_series().count(s)) return &tantalum_letter();
+    if (s == "CWR06" || s == "194D") return &tantalum_cwr06_letter();
+    return nullptr;
+}
+
 inline const std::map<std::string, LWH>& tantalum_metric() {
     static const std::map<std::string, LWH> t{
         {"1608", {1.60, 0.80, -1}}, {"2012", {2.00, 1.25, -1}}, {"3216", {3.20, 1.60, -1}},
@@ -228,6 +265,30 @@ inline std::optional<LWH> resolve_package(const std::string& code) {
 
 }  // namespace dims_detail
 
+// A capacitor case code that is a single letter: a tantalum case letter, whose meaning is
+// series-specific (see tantalum_series_letter_table).
+inline bool is_case_letter(const std::string& case_code) {
+    const std::string raw = dims_detail::trim(case_code);
+    return raw.size() == 1 && std::isalpha(static_cast<unsigned char>(raw[0]));
+}
+
+// The body a tantalum case letter names WITHIN its series, metres; nullopt when the series is
+// not one whose letter system was checked, or the letter is not in its table. The land and
+// height are flagged as table values, exactly as resolve_dimensions flags the EIA letters.
+inline std::optional<Dims> resolve_tantalum_letter(const std::string& case_code,
+                                                   const std::string& series) {
+    using namespace dims_detail;
+    if (!is_case_letter(case_code)) return std::nullopt;
+    const auto* table = tantalum_series_letter_table(series);
+    if (!table) return std::nullopt;
+    auto it = table->find(upper(trim(case_code)));
+    if (it == table->end()) return std::nullopt;
+    Dims d = to_metres(it->second);
+    d.height_from_table = d.height.has_value();
+    d.land_from_table = true;
+    return d;
+}
+
 // Resolve a case/package code to physical dimensions (metres), category-aware.
 // nullopt when the code is not recognised — never a guess.
 //
@@ -256,7 +317,9 @@ inline std::optional<Dims> resolve_dimensions(const std::string& case_code,
     // 1) Named packages (SOT/SOD/TO/DPAK/SOIC/...) and their aliases.
     if (auto pkg = resolve_package(raw)) return from_table(*pkg);
 
-    // 2) Molded tantalum EIA letter (single A-D), capacitors only.
+    // 2) Molded tantalum EIA letter (single A-D), capacitors only. This lookup has no series
+    //    to go on; the ranker (CrossRef.hpp dims_of) never reaches it for a letter code — it
+    //    resolves letters through resolve_tantalum_letter, which honours the series.
     if (cat == "capacitor" && !leaded_body) {
         auto it = tantalum_letter().find(upper(raw));
         if (it != tantalum_letter().end()) return from_table(it->second);

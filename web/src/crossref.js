@@ -194,7 +194,7 @@ export const XREF = [
       // identity key in the ranker; blank -> null for the same reason as output_type.
       enable_function: r.enable_function || null,
       // The supply range of an active oscillator: the substitute's must cover the
-      // original's (the ranker FAILs a shortfall at either end and skips the keys for a
+      // original's (the ranker REJECTS a shortfall at either end and skips the keys for a
       // passive crystal or resonator, which has no supply). Neither was passed, so a
       // 3.3 V-only and a 1.8 V-only XO ranked minor_review / upgrade for a 2.5 V original.
       supply_min_V: nz(r.vsupply_min), supply_max_V: nz(r.vsupply_max),
