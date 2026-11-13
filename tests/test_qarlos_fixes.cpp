@@ -3906,6 +3906,7 @@ json diode_spec(const json& r) {
         s[k] = r.value(k, "");
     s["tj_max"] = raw_(r["tj_max"]);
     s["junction_capacitance_vr"] = raw_(r["junction_capacitance_vr"]);
+    s["vf_test_current"] = nz_(r["vf_test_current"]);
     return s;
 }
 std::string fixture_(const char* f) {
@@ -7862,4 +7863,50 @@ TEST_CASE("owner 2026-11-13 Y4: a grossly over-rated substitute pays a small pen
     const double d = big["penalty"].get<double>() - ref["penalty"].get<double>();
     CHECK(d >= kelvin::crossref::kGrossOverRatingPenalty - 1e-9);
     CHECK(d < kelvin::crossref::kVerdictWarnPenalty);
+}
+
+// Y5: diode Vf compared only at a common test current (electrical.forwardVoltageAt). REAL
+// records (TAS 6bd04c7, verbatim lines of data-6bd04c7/diodes.ndjson in
+// tests/fixtures/qarlos_1113_y_diodes.ndjson), through the real extractor and shard.
+namespace dec1113y {
+json drow(const std::string& mpn) {
+    static const json rows = [] {
+        auto sh = kelvin::build_diode_shard(std::string(KELVIN_TEST_DIR) +
+                                            "/fixtures/qarlos_1113_y_diodes.ndjson");
+        return kelvin::browse::browse_rows(sh, json{{"limit", 100}})["rows"];
+    }();
+    for (const auto& r : rows)
+        if (r.value("mpn", "") == mpn) return r;
+    throw std::runtime_error("fixture has no diode " + mpn);
+}
+}  // namespace dec1113y
+
+TEST_CASE("owner 2026-11-13 Y5: diode Vf is compared only at a common test current",
+          "[qarlos][crossref][diode][dec-1113y]") {
+    using dec1113y::drow;
+    // The row carries the test current; unstated is null, never 0.
+    CHECK(drow("SS34")["vf_test_current"] == 3.0);
+    CHECK(drow("RB050LAM-40TR")["vf_test_current"] == 1.5);
+    CHECK(drow("BAS316")["vf_test_current"].is_null());
+    // Vishay SS34 (0.5 V at 3 A) -> ROHM RB050LAM-40TR (0.5 V at 1.5 A): not comparable.
+    const json ss34 = diode_spec(drow("SS34"));
+    const json r = kelvin::crossref::cross_reference(
+        "diode", ss34,
+        json::array({diode_spec(drow("RB050LAM-40TR")), diode_spec(drow("B340A"))}));
+    const json rb = find_mpn(r, "RB050LAM-40TR");
+    CHECK(verdict_of(rb, "vf") == "unverified");
+    CHECK(verdict_of(rb, "vf_basis") == "unverified");
+    CHECK(has_note(rb, "forward voltage quoted at different forward currents (original 0.5 V "
+                       "at 3 A, substitute 0.5 V at 1.5 A)"));
+    // Diodes Inc. B340A states its 0.5 V at the same 3 A: compared as stated.
+    const json b = find_mpn(r, "B340A");
+    CHECK(verdict_of(b, "vf") == "pass");
+    CHECK(verdict_of(b, "vf_basis") == "");
+    // onsemi NSVBAV70TT3G states no test current: compared as stated (1.25 V vs 1.0 V).
+    CHECK(drow("NSVBAV70TT3G")["vf_test_current"].is_null());
+    const json n = kelvin::crossref::cross_reference(
+        "diode", diode_spec(drow("NSVBAV70TT3G")), json::array({diode_spec(drow("BAS316"))}))
+        ["candidates"][0];
+    CHECK(verdict_of(n, "vf_basis") == "");
+    CHECK(verdict_of(n, "vf") != "unverified");
 }

@@ -623,6 +623,8 @@ std::optional<DiodeRow> extract_diode(const json& env) {
     // Its bias basis (v21): 0 V is a real basis, so not `pos`; a negative is unreadable.
     if (auto v = get_num(*elec, "junctionCapacitanceVr"); v && *v >= 0.0)
         r.junction_capacitance_vr = *v;
+    // The Vf test current (v22): a current, so only a positive value is a basis.
+    if (auto v = get_num(*elec, "forwardVoltageAt"); pos(v)) r.vf_test_current = *v;
     r.clamping_waveform = get_str(*elec, "clampingWaveform").value_or("");
     r.peak_pulse_power_waveform = get_str(*elec, "peakPulsePowerWaveform").value_or("");
     r.peak_pulse_current_waveform = get_str(*elec, "peakPulseCurrentWaveform").value_or("");

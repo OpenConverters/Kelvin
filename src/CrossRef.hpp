@@ -1842,6 +1842,42 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         }
     }
 
+    // ── diode Vf basis (the forward current the forward voltage is stated at) ─
+    // Owner 2026-11-13 (Y5): Vf rises with forward current, so two forward voltages compare only
+    // at a common test current — the Cj / Coss basis rule, applied to the current:
+    //  * both state Vf and the original states its test current: a substitute stating the same
+    //    current is compared as stated; one stating a different current or none -> UNVERIFIED
+    //    (vf and a vf_basis row), a note giving both values and currents, no direction, no
+    //    penalty, no demotion and no cap (Vf is a secondary electrical);
+    //  * the original states no test current -> compared as stated, exactly as before.
+    // No conversion along the record's Vf(If) curve is attempted.
+    bool vf_basis_unverified = false;
+    if (cat == "diode") {
+        const auto ov = num(original, "vf"), sv = num(cand, "vf");
+        const auto oi = num(original, "vf_test_current"), si = num(cand, "vf_test_current");
+        if (ov && sv && oi &&
+            !(si && std::fabs(*oi - *si) <= 1e-9 * std::max(std::fabs(*oi), std::fabs(*si)))) {
+            vf_basis_unverified = true;
+            params.push_back({{"name", "vf_basis"}, {"verdict", UNVERIFIED}});
+            char buf[400];
+            if (si)
+                std::snprintf(buf, sizeof buf,
+                              "forward voltage quoted at different forward currents (original "
+                              "%g V at %g A, substitute %g V at %g A) — not directly comparable, "
+                              "Vf rises with current; confirm the substitute's Vf at the "
+                              "original's current from its datasheet",
+                              *ov, *oi, *sv, *si);
+            else
+                std::snprintf(buf, sizeof buf,
+                              "the original's forward voltage is %g V at %g A; the substitute's "
+                              "record states %g V at no forward current — not directly "
+                              "comparable, Vf rises with current; confirm its Vf at the "
+                              "original's current from the datasheet",
+                              *ov, *oi, *sv);
+            notes.push_back(buf);
+        }
+    }
+
     // ── capacitance tolerance (the band each record guarantees) ─────────────
     // A capacitor's tolerance is the band the circuit was designed around, exactly as a
     // resistor's is: a +/-5 % C0G is not a drop-in for a +/-1 % one in a filter or timing
@@ -1981,7 +2017,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             cat == "capacitor" && ((spec.key == "ripple_current" &&
                                     (ripple_basis_unverified || ripple_temp_basis_unverified)) ||
                                    (spec.key == "esr" && esr_basis_unverified));
-        const bool coss_blind = cat == "mosfet" && spec.key == "coss" && coss_basis_unverified;
+        const bool coss_blind = (cat == "mosfet" && spec.key == "coss" && coss_basis_unverified) ||
+                                (cat == "diode" && spec.key == "vf" && vf_basis_unverified);
         const bool work_v_basis = spec.key == "max_voltage_V" && work_v.applies;
         // A diode's breakdown grade is DERIVED, (Vz max - Vz min) / (Vz max + Vz min), from two
         // window figures the datasheet states to 0.1 V. Two 5 % TVS grades therefore come out
