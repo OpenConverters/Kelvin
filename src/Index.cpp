@@ -228,6 +228,11 @@ struct WriteAr {
         u32(n);
         for (auto& d : v) dbl(d);
     }
+    void dblvecvec(std::vector<std::vector<double>>& v) {  // v22
+        uint32_t n = static_cast<uint32_t>(v.size());
+        u32(n);
+        for (auto& x : v) dblvec(x);
+    }
 };
 
 struct ReadAr {
@@ -277,6 +282,13 @@ struct ReadAr {
         need(static_cast<size_t>(n) * 8);
         v.resize(n);
         for (auto& d : v) dbl(d);
+    }
+    void dblvecvec(std::vector<std::vector<double>>& v) {  // v22
+        uint32_t n;
+        u32(n);
+        need(static_cast<size_t>(n) * 4);  // each inner array carries at least its count
+        v.resize(n);
+        for (auto& x : v) dblvec(x);
     }
 };
 
@@ -462,6 +474,7 @@ void row_io(Ar& ar, MagneticRow& r) {
     ar.dblvec(r.sat_table_percent_drop);  // v20
     ar.dblvec(r.sat_table_temperature);   // v20
     ar.dblvec(r.turns_ratios);             // v22
+    ar.dblvecvec(r.turns_ratio_configs);   // v22 (W4)
     ar.dbl(r.inductance_tol_minus_pct);    // v22
     ar.dbl(r.inductance_tol_plus_pct);     // v22
     ar.boolean(r.is_production);

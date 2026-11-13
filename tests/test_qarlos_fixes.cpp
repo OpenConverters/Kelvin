@@ -6000,8 +6000,10 @@ TEST_CASE("dec 2026-11-13 I4: a one-sided positions gap counts toward the identi
     REQUIRE(orig["polarity"].is_null());
     REQUIRE(orig["rows"].is_null());
     const json c = conn_one(orig, cand);
-    CHECK(c["grade"] == "major_review");
-    CHECK(has_note(c, "3 connector identity axes are unverified (stated on one side only: "));
+    // Owner 2026-11-13 (W1): only axes the ORIGINAL states count toward the 3+ gap cap. Every gap
+    // here is stated by the candidate alone, so the cap no longer applies.
+    CHECK(c["grade"] == "minor_review");
+    CHECK_FALSE(has_note(c, "3 connector identity axes are unverified (stated on one side only: "));
     CHECK(has_note(c, "contact positions"));
     // Boundary: with the gender stated alike on both sides only two gaps remain (positions,
     // rows) — the one-sided cap below drop_in, not major_review.
@@ -7080,6 +7082,7 @@ json mag_spec_r(const kelvin::MagneticRow& r) {
     s["tolerance_minus_pct"] = raw(r.inductance_tol_minus_pct);
     s["tolerance_plus_pct"] = raw(r.inductance_tol_plus_pct);
     s["turns_ratios"] = row["turns_ratios"];
+    s["turns_ratio_configs"] = row["turns_ratio_configs"];  // v22 (W4), as web/src/crossref.js
     return s;
 }
 kelvin::MagneticRow real_row(const char* text) {
@@ -7168,13 +7171,16 @@ TEST_CASE("owner 2026-11-13 R2: the transformer turns ratio is compared",
     CHECK(warn->value("grade", "") != "drop_in");
     CHECK(verdict_of(*fail, "turns_ratio") == "fail");
     CHECK(has_note(*fail, "turns ratio 1 vs the original's 0.8333 (+20 %)"));
-    CHECK(fail->value("grade", "") == "major_review");
+    // Owner 2026-11-13 (W4a): beyond 15 % is a rejection, not a listed FAIL.
+    CHECK(fail->value("grade", "") == "no_substitute");
     CHECK(verdict_of(*none, "turns_ratio") == "unverified");
     CHECK(has_note(*none, "the substitute's turns ratio is") == false);
     CHECK(has_note(*none, "the original's turns ratio is 0.8333; the substitute's record states "
                           "none"));
     CHECK(verdict_of(*two, "turns_ratio") == "fail");
-    CHECK(has_note(*two, "winding structure differs"));
+    // Owner 2026-11-13 (W4b): every listed configuration is compared, so 750310849's one-ratio
+    // configuration [8] is paired with 0.833 and the ratio itself rejects it.
+    CHECK(has_note(*two, "turns ratio 8 vs the original's 0.8333"));
 }
 
 // ── Owner decisions 2026-11-13, agent S ──────────────────────────────────────
@@ -7595,4 +7601,141 @@ TEST_CASE("Qarlos r26 X3: a wholly retracted original is named, with its reason,
     const json c = r["candidates"][0];
     CHECK(c["original_unverified"] == true);
     CHECK(has_note(c, "every source cited by the original's record is retracted (" + why + ")"));
+}
+
+// ── Owner 2026-11-13 W1: only axes the ORIGINAL states count toward the 3+ identity-gap cap ──
+// Stating extra data must never hurt a candidate. Molex 397360004 (Eurostyle plug, male,
+// 4 positions, no pitch / rows on record) took TE 1546931-4 (4 positions, 5 mm pitch, 1 row,
+// no gender on record) at major_review: gender (original only) + pitch and rows (substitute
+// only) made three gaps. Now only the gender counts. Verbatim lines of
+// tools/qarlos/bench/data-6bd04c7/connectors.ndjson (TAS 6bd04c7).
+namespace dec_1113_w1 {
+// connectors.ndjson line 67161: 397360004
+const char* k397360004 = R"KREC({"connector": {"manufacturerInfo": {"name": "Molex", "reference": "397360004", "status": "production", "datasheetInfo": {"part": {"partNumber": "397360004", "matingPolarity": "male", "description": "5.08mm Pitch Eurostyle Horizontal PC Board Plug, with Retention Ends, 4 Circuits", "series": "Eurostyle Pluggable"}, "electrical": {"ratedCurrentPerContact": 12.0, "ratedVoltage": 300.0}, "mechanical": {"positions": 4}, "familyDetails": {"family": "terminalBlock", "pluggable": true}, "environmental": {"operatingTemperature": {"minimum": -40.0, "maximum": 105.0}}, "provenance": [{"source": "manufacturerParametric", "sourceName": "Molex product catalogue", "verification": "valuesReadFromSource", "verificationDate": "2026-09-07", "retrievedDate": "2026-06-24"}, {"source": "manufacturerParametric", "sourceName": "Molex product catalogue (part detail)", "sourceUrl": "https://www.molex.com/en-us/products/part-detail/397360004", "retrievedDate": "2026-11-06", "fields": ["part.partNumber", "part.series", "mechanical.positions", "electrical.ratedCurrentPerContact", "electrical.ratedVoltage", "environmental.operatingTemperature", "familyDetails.family"], "verification": "valuesReadFromSource", "verificationMethod": "Compared the stored values with the values printed in Molex's own per-part product-detail record, which names this exact part number; only the listed fields agree.", "verificationDate": "2026-11-06"}]}, "family": "Eurostyle Pluggable", "description": "5.08mm Pitch Eurostyle Horizontal PC Board Plug, with Retention Ends, 4 Circuits", "datasheetUrl": "https://www.molex.com/content/dam/molex/molex-dot-com/products/automated/en-us/salesdrawingpdf/397/39736/397360004_sd.pdf"}}})KREC";
+// connectors.ndjson line 120517: 1546931-4
+const char* k1546931_4 = R"KREC({"connector":{"manufacturerInfo":{"name":"TE Connectivity","reference":"1546931-4","status":"production","datasheetInfo":{"part":{"partNumber":"1546931-4","description":"4 Position, Header, Wire-to-Board, 5 mm [.197 in] Centerline, 1 Row, 300 VAC, Printed Circuit Board, Vertical, Through Hole - Solder, Power & Signal","series":null},"electrical":{"ratedCurrentPerContact":12.0,"ratedVoltage":300.0},"mechanical":{"positions":4,"pitch":0.005,"rows":1},"familyDetails":{"family":"terminalBlock"},"environmental":{"operatingTemperature":{"minimum":-40.0,"maximum":105.0}},"provenance":[{"source":"manufacturerParametric","sourceName":"TE Connectivity product catalogue","verification":"valuesReadFromSource","verificationDate":"2026-09-07","retrievedDate":"2026-06-24"},{"source":"manufacturerParametric","sourceName":"TE Connectivity product page","sourceUrl":"https://www.te.com/en/product-1546931-4.html","retrievedDate":"2026-11-09","fields":["mechanical.rows"],"verification":"valuesReadFromSource","verificationDate":"2026-11-09","verificationMethod":"Compared the stored value of each listed field with the attribute list printed on the saved TE product page for this part number (page text names the part): \"Number of Rows : 1\". Unit conversion only: mm to m, um to m, V and A as printed."}]},"description":"4 Position, Header, Wire-to-Board, 5 mm [.197 in] Centerline, 1 Row, 300 VAC, Printed Circuit Board, Vertical, Through Hole - Solder, Power & Signal","datasheetUrl":"https://www.te.com/commerce/DocumentDelivery/DDEController?Action=srchrtrv&DocNm=108-20166&DocType=Specification%20Or%20Standard&DocLang=English&DocFormat=pdf&PartCntxt=1546931-4"}}})KREC";
+}  // namespace dec_1113_w1
+
+TEST_CASE("owner 2026-11-13 W1: axes stated only by the substitute are not identity gaps",
+          "[qarlos][crossref][connector-identity][dec-w1]") {
+    using namespace variant_ids;
+    using namespace dec_1113_w1;
+    const json orig = spec_of(k397360004), cand = spec_of(k1546931_4);
+    REQUIRE(orig["pitch_mm"].is_null());
+    REQUIRE(orig["rows"].is_null());
+    REQUIRE(cand["polarity"].is_null());
+    REQUIRE(cand["pitch_mm"].is_number());
+    REQUIRE(cand["rows"].is_number());
+    const json c = rank_one(k397360004, k1546931_4);
+    REQUIRE(c["status"] != "no_substitute");
+    CHECK(c["grade"] != "major_review");
+    CHECK(notes_with(c, "connector identity axes are unverified") == 0);
+    // The per-axis notes stay: each one-sided axis is still named.
+    CHECK(has_note(c, "mating gender not established (original: male, substitute: not stated)"));
+    // The same candidate with its pitch and rows left unstated must not rank above it.
+    json less = cand;
+    less["mpn"] = "1546931-4-less";
+    less["pitch_mm"] = nullptr;
+    less["rows"] = nullptr;
+    kelvin::crossref::Options opt;
+    opt.max_results = 10;
+    const json r = kelvin::crossref::cross_reference("connector", orig,
+                                                     json::array({less, cand}), opt);
+    REQUIRE(r["candidates"].size() == 2);
+    const json& stated = r["candidates"][0]["mpn"] == "1546931-4" ? r["candidates"][0]
+                                                                  : r["candidates"][1];
+    const json& silent = r["candidates"][0]["mpn"] == "1546931-4" ? r["candidates"][1]
+                                                                  : r["candidates"][0];
+    const auto grade_rank = [](const std::string& g) {
+        return g == "drop_in" ? 0 : g == "minor_review" ? 1 : g == "major_review" ? 2 : 3;
+    };
+    CHECK(grade_rank(stated["grade"]) <= grade_rank(silent["grade"]));
+    CHECK(stated["penalty"].get<double>() <= silent["penalty"].get<double>());
+}
+
+// ── Owner 2026-11-13 W2: case codes from different systems that resolve to the same body ──
+// CWR06FC475KC/HR (case "D", series CWR06: the CWR06 table's 3.81 x 2.54 mm) against
+// CWR09FC475KR (case "1510", body drawn 3.81 x 2.54 mm) was a "different_case" WARN whose own
+// note named two identical bodies. Both bodies resolve and agree within kSameChipCodeBodySpread,
+// so the case is the same and the footprint passes on the body. Specs as web/src/crossref.js
+// builds them from the rows of capacitors.ndjson lines 473306 and 5505 (TAS 6bd04c7).
+namespace dec_1113_w2 {
+const char* kCWR06FC475KC_HR = R"KSPEC({"mpn":"CWR06FC475KC/HR","length_m":null,"width_m":null,"height_m":null,"case_code":"D","mount":"SMT","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"box_axes_ambiguous":false,"value_si":4.7e-06,"voltage":10,"esr":4.5,"ripple_current":null,"technology":"tantalum-mno2","dielectric_code":"","family":"CWR06","voltage_ac":null,"esr_frequency":100000,"temp_min_C":-55,"temp_max_C":125,"ripple_current_frequency":null,"safety_class":null,"capacitance_min":4.23e-06,"capacitance_max":5.17e-06,"lead_form":null,"qualified_spec":null,"qualified_grade":null,"qualified_failure_rate":null})KSPEC";
+const char* kCWR09FC475KR = R"KSPEC({"mpn":"CWR09FC475KR","length_m":0.00381,"width_m":0.00254,"height_m":0.00127,"case_code":"1510","mount":"SMT","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"box_axes_ambiguous":false,"value_si":4.7e-06,"voltage":10,"esr":4.5,"ripple_current":0.133,"technology":"tantalum-mno2","dielectric_code":"","family":"T409 CWR09","voltage_ac":null,"esr_frequency":100000,"temp_min_C":-55,"temp_max_C":125,"ripple_current_frequency":100000,"safety_class":null,"capacitance_min":4.23e-06,"capacitance_max":5.17e-06,"lead_form":null,"qualified_spec":null,"qualified_grade":null,"qualified_failure_rate":null})KSPEC";
+}  // namespace dec_1113_w2
+
+TEST_CASE("owner 2026-11-13 W2: different case systems, the same resolved body, are one case",
+          "[qarlos][crossref][capacitor][dec-w2]") {
+    using namespace dec_1113_w2;
+    const json orig = json::parse(kCWR06FC475KC_HR), cand = json::parse(kCWR09FC475KR);
+    auto r = kelvin::crossref::cross_reference("capacitor", orig, json::array({cand}));
+    REQUIRE(r["candidates"].size() == 1);
+    const json& c = r["candidates"][0];
+    CHECK(c["footprint"] == "fits");
+    CHECK(verdict_of(c, "footprint") == "pass");
+    CHECK_FALSE(has_note(c, "different package/case"));
+    // Boundary: a body more than 10 % longer is still a different case.
+    json longer = cand;
+    longer["length_m"] = 0.00381 * 1.15;
+    auto r2 = kelvin::crossref::cross_reference("capacitor", orig, json::array({longer}));
+    REQUIRE(r2["candidates"].size() == 1);
+    CHECK(r2["candidates"][0]["footprint"] == "different_case");
+    CHECK(has_note(r2["candidates"][0], "different package/case (D -> 1510)"));
+}
+
+// ── Owner 2026-11-13 W4: transformer turns ratio rejects beyond 15 %; every configuration ──
+// (a) beyond 15 % (or a different number of ratios in every configuration pair) is a
+// rejection with the reason, not a listed FAIL: IT213TH (0.833) -> IT211TH (1.0, +20 %).
+// (b) a record may list several wiring configurations; every configuration of the original is
+// set against every configuration of the substitute and the best pair decides. iNRCORE PL10533
+// (one configuration, 8) -> Würth 750370024 ("all windings" [8, 6], "auxiliary windings open"
+// [8]): only the second configuration matches, and it is credited;
+// the same with the original listing the configurations (750310742 -> 750315126). Verbatim lines of
+// tools/qarlos/bench/data-6bd04c7/magnetics.ndjson (TAS 6bd04c7).
+namespace dec_1113_w4 {
+const char* kRecPL10533 = R"KREC({"magnetic": {"manufacturerInfo": {"name": "iNRCORE", "reference": "PL10533", "status": "production", "datasheetInfo": {"part": {"family": "planar-transformers", "description": "iNRCORE planar transformers"}, "electrical": [{"subtype": "transformer", "inductance": {"nominal": 0.00145}, "dcResistances": [{"maximum": 0.024}, {"maximum": 0.0005}], "turnsRatios": [{"nominal": 8.0}], "leakageInductance": {"nominal": 1.1e-06}}], "mechanical": {"assemblyType": "THT"}, "thermal": {"operatingTemperature": {"minimum": -55.0, "maximum": 130.0}}, "provenance": [{"source": "scrape", "sourceName": "iNRCORE product catalogue", "retrievedDate": "2026-06-22"}, {"source": "manufacturerParametric", "sourceName": "iNRCORE product page", "sourceUrl": "https://inrcore.com/products/power/planar-transformers/pl10533/", "retrievedDate": "2026-10-09", "verification": "partNamed", "verificationDate": "2026-10-09"}]}}}})KREC";
+const char* kRec750370024 = R"KREC({"magnetic":{"manufacturerInfo":{"name":"Würth Elektronik","reference":"750370024","status":"production","datasheetUrl":"https://www.we-online.com/components/products/datasheet/750370024.pdf","family":"MID-OLSTM","datasheetInfo":{"part":{"insulationGrade":"reinforced","numberOfWindings":3},"electrical":[{"subtype":"transformer","name":"all windings","inductance":{"nominal":0.0015999999999999999},"turnsRatios":[{"nominal":8.0},{"nominal":6.0}],"dcResistances":[{"nominal":6.2},{"nominal":0.1},{"nominal":1}],"leakageInductance":{"maximum":4.9999999999999996e-05},"saturationCurrentPeak":0.34,"saturationCurrents":[{"percentInductanceDrop":20.0,"current":0.34}],"insulationTestVoltageAC":4000,"ratedVoltageAC":169},{"subtype":"transformer","name":"auxiliary windings open","inductance":{"nominal":0.0015999999999999999},"turnsRatios":[{"nominal":8.0}],"dcResistances":[{"nominal":6.2},{"nominal":0.1}],"leakageInductance":{"maximum":4.9999999999999996e-05},"saturationCurrentPeak":0.34,"saturationCurrents":[{"percentInductanceDrop":20.0,"current":0.34}],"insulationTestVoltageAC":4000,"ratedVoltageAC":169}],"mechanical":{"mounting":"tht","length":{"nominal":0.013720000000000001},"width":{"nominal":0.02045},"height":{"nominal":0.0108}},"provenance":[{"source":"manufacturerDatabase","sourceName":"Würth Elektronik Midcom Smart Transformer Selector","retrievedDate":"2026-09-13","verification":"valuesReadFromSource","verificationDate":"2026-09-13","fields":["electrical.inductance","electrical.leakageInductance","electrical.dcResistances","electrical.insulationTestVoltageAC","electrical.ratedVoltageAC","part.insulationGrade","mechanical"]},{"source":"derived","retrievedDate":"2026-09-13","fields":["electrical.turnsRatios","electrical.dcResistances","electrical.name","part.numberOfWindings"],"derivation":"windings from the transformer selector winding sections"},{"source":"manufacturerDatasheet","sourceUrl":"https://www.we-online.com/components/products/datasheet/750370024.pdf","retrievedDate":"2026-09-13","verification":"valuesReadFromSource","verificationDate":"2026-09-13","verificationMethod":"ISAT at |dL/L| < 20 %","fields":["electrical.saturationCurrentPeak","electrical.saturationCurrents"]},{"source":"manufacturerDatasheet","sourceUrl":"https://www.we-online.com/components/products/datasheet/750370024.pdf","retrievedDate":"2026-09-13","verification":"valuesReadFromSource","verificationDate":"2026-09-13","fields":["electrical.inductance","electrical.leakageInductance","electrical.dcResistances"]},{"source":"manufacturerDatabase","sourceName":"Würth Elektronik database","sourceUrl":"https://www.we-online.com/components/products/datasheet/750370024.pdf","retrievedDate":"2026-08-01","retracted":true,"retractionReason":"superseded by Würth Elektronik Midcom Smart Transformer Selector"}]}}}})KREC";
+// magnetics.ndjson line 1844: 750310742 ("all windings" [2, 1.818], "auxiliary windings open" [2])
+const char* kRec750310742 = R"KREC({"magnetic":{"manufacturerInfo":{"name":"Würth Elektronik","reference":"750310742","status":"production","datasheetUrl":"https://www.we-online.com/components/products/datasheet/750310742.pdf","family":"WE-PoE-PLUS","datasheetInfo":{"part":{"insulationGrade":"functional","numberOfWindings":3},"electrical":[{"subtype":"transformer","name":"all windings","inductance":{"nominal":3.7999999999999995e-05},"turnsRatios":[{"nominal":2.0},{"nominal":1.8181818181818181}],"dcResistances":[{"nominal":0.085},{"nominal":0.025},{"nominal":0.155}],"leakageInductance":{"maximum":4.6999999999999995e-07},"saturationCurrentPeak":3.5,"saturationCurrents":[{"percentInductanceDrop":20.0,"current":3.5}],"insulationTestVoltageAC":1500},{"subtype":"transformer","name":"auxiliary windings open","inductance":{"nominal":3.7999999999999995e-05},"turnsRatios":[{"nominal":2.0}],"dcResistances":[{"nominal":0.085},{"nominal":0.025}],"leakageInductance":{"maximum":4.6999999999999995e-07},"saturationCurrentPeak":3.5,"saturationCurrents":[{"percentInductanceDrop":20.0,"current":3.5}],"insulationTestVoltageAC":1500}],"mechanical":{"mounting":"smt","length":{"nominal":0.013460000000000001},"width":{"nominal":0.017750000000000002},"height":{"nominal":0.0127}},"provenance":[{"source":"manufacturerDatabase","sourceName":"Würth Elektronik Midcom Smart Transformer Selector","retrievedDate":"2026-09-13","verification":"valuesReadFromSource","verificationDate":"2026-09-13","fields":["electrical.inductance","electrical.leakageInductance","electrical.dcResistances","electrical.insulationTestVoltageAC","electrical.ratedVoltageAC","part.insulationGrade","mechanical"]},{"source":"derived","retrievedDate":"2026-09-13","fields":["electrical.turnsRatios","electrical.dcResistances","electrical.name","part.numberOfWindings"],"derivation":"windings from the transformer selector winding sections"},{"source":"manufacturerDatasheet","sourceUrl":"https://www.we-online.com/components/products/datasheet/750310742.pdf","retrievedDate":"2026-09-13","verification":"valuesReadFromSource","verificationDate":"2026-09-13","verificationMethod":"ISAT at |dL/L| < 20 %","fields":["electrical.saturationCurrentPeak","electrical.saturationCurrents"]},{"source":"manufacturerDatasheet","sourceUrl":"https://www.we-online.com/components/products/datasheet/750310742.pdf","retrievedDate":"2026-09-13","verification":"valuesReadFromSource","verificationDate":"2026-09-13","fields":["electrical.inductance","electrical.leakageInductance","electrical.dcResistances"]},{"source":"manufacturerDatabase","sourceName":"Würth Elektronik database","sourceUrl":"https://www.we-online.com/components/products/datasheet/750310742.pdf","retrievedDate":"2026-08-01","retracted":true,"retractionReason":"superseded by Würth Elektronik Midcom Smart Transformer Selector"}]}}}})KREC";
+// magnetics.ndjson line 82514: 750315126 (one configuration, 2)
+const char* kRec750315126 = R"KREC({"magnetic":{"manufacturerInfo":{"name":"Würth Elektronik","reference":"750315126","status":"production","datasheetUrl":"https://www.we-online.com/components/products/datasheet/750315126.pdf","family":"MID-FLYLT","datasheetInfo":{"part":{"insulationGrade":"functional","numberOfWindings":2},"electrical":[{"subtype":"transformer","inductance":{"nominal":3.9999999999999996e-05},"turnsRatios":[{"nominal":2.0}],"dcResistances":[{"nominal":0.075},{"nominal":0.0309}],"leakageInductance":{"maximum":1e-06},"saturationCurrentPeak":3.8,"saturationCurrents":[{"percentInductanceDrop":20.0,"current":3.8}],"insulationTestVoltageAC":1500}],"mechanical":{"mounting":"smt","length":{"nominal":0.013460000000000001},"width":{"nominal":0.017750000000000002},"height":{"nominal":0.0127}},"provenance":[{"source":"manufacturerDatabase","sourceName":"Würth Elektronik Midcom Smart Transformer Selector","retrievedDate":"2026-09-13","verification":"valuesReadFromSource","verificationDate":"2026-09-13","fields":["electrical.inductance","electrical.leakageInductance","electrical.dcResistances","electrical.insulationTestVoltageAC","electrical.ratedVoltageAC","part.insulationGrade","mechanical"]},{"source":"derived","retrievedDate":"2026-09-13","fields":["electrical.turnsRatios","electrical.dcResistances","electrical.name","part.numberOfWindings"],"derivation":"windings from the transformer selector winding sections"},{"source":"manufacturerDatasheet","sourceUrl":"https://www.we-online.com/components/products/datasheet/750315126.pdf","retrievedDate":"2026-09-13","verification":"valuesReadFromSource","verificationDate":"2026-09-13","verificationMethod":"ISAT at |dL/L| < 20 %","fields":["electrical.saturationCurrentPeak","electrical.saturationCurrents"]},{"source":"manufacturerDatasheet","sourceUrl":"https://www.we-online.com/components/products/datasheet/750315126.pdf","retrievedDate":"2026-09-13","verification":"valuesReadFromSource","verificationDate":"2026-09-13","fields":["electrical.inductance","electrical.leakageInductance"]}]}}}})KREC";
+}  // namespace dec_1113_w4
+
+TEST_CASE("owner 2026-11-13 W4: turns ratio beyond 15 % rejects; the best configuration "
+          "pair is credited",
+          "[qarlos][views][crossref][magnetic][turns_ratio][dec-w4]") {
+    using namespace dec_1113_w4;
+    // (a)
+    auto ra = kelvin::crossref::cross_reference(
+        "magnetic", mag_spec_r(real_row(kRecIT213TH)),
+        json::array({mag_spec_r(real_row(kRecIT211TH))}));
+    const json* it211 = cand_by_mpn(ra, "IT211TH");
+    REQUIRE(it211);
+    CHECK(it211->value("status", "") == "no_substitute");
+    CHECK(it211->value("reason", "") ==
+          "transformer turns ratio more than 15 % from the original's");
+    CHECK(has_note(*it211, "turns ratio 1 vs the original's 0.8333 (+20 %)"));
+    // (b)
+    const auto pl = real_row(kRecPL10533), we = real_row(kRec750370024);
+    REQUIRE(we.turns_ratio_configs.size() == 2);
+    REQUIRE(we.turns_ratio_configs[0].size() == 2);
+    REQUIRE(we.turns_ratio_configs[1].size() == 1);
+    auto rb = kelvin::crossref::cross_reference("magnetic", mag_spec_r(pl),
+                                                json::array({mag_spec_r(we)}));
+    const json* c = cand_by_mpn(rb, "750370024");
+    REQUIRE(c);
+    CHECK(c->value("status", "") != "no_substitute");
+    CHECK(verdict_of(*c, "turns_ratio") == "pass");
+    CHECK(has_note(*c, "turns ratio 8 matches the original's 8 on the substitute's wiring "
+                       "configuration 2 of 2"));
+    // The other direction: the original's second configuration against the substitute's one.
+    // 750310742 ([2, 1.818] or [2]) -> 750315126 ([2]).
+    auto rc = kelvin::crossref::cross_reference(
+        "magnetic", mag_spec_r(real_row(kRec750310742)),
+        json::array({mag_spec_r(real_row(kRec750315126))}));
+    const json* c2 = cand_by_mpn(rc, "750315126");
+    REQUIRE(c2);
+    CHECK(c2->value("status", "") != "no_substitute");
+    CHECK(verdict_of(*c2, "turns_ratio") == "pass");
+    CHECK(has_note(*c2, "on the original's wiring configuration 2 of 2"));
 }

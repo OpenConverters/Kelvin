@@ -2275,28 +2275,45 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         }
     }
 
-    // ── transformer turns ratio (owner 2026-11-13, R2) ───────────────────────
+    // ── transformer turns ratio (owner 2026-11-13, R2; W4) ───────────────────
     // MagneticRow carried the ratio but the ranker never compared it, so a 1:1.2 part and a
     // 1:2 part were the same candidate. Owner: "turns ratio can be +-15%, but with care".
     //   both stated, every ratio within 1 % (print rounding)      -> PASS
     //   worst ratio off by more than 1 %, up to 15 %              -> WARN + note
-    //   worst ratio off by more than 15 %                         -> FAIL (+ note)
-    //   different number of ratios (a different winding structure) -> FAIL + note
+    //   worst ratio off by more than 15 %                         -> rejected (W4), reason given
+    //   different number of ratios (a different winding structure) -> rejected (W4), reason given
     //   stated on one side only                                   -> UNVERIFIED + note, no cap
-    // The arrays are electrical[0].turnsRatios in record order (primary:secondary for each
-    // secondary), compared element-wise. The deviation is |sub/orig - 1| per element.
+    // Each array is one electrical[] wiring configuration's turnsRatios in record order
+    // (primary:secondary for each secondary), compared element-wise; the deviation is
+    // |sub/orig - 1| per element. A record may list several configurations (Würth's "all
+    // windings" and "auxiliary windings open"): every configuration of the original is set
+    // against every configuration of the substitute and the best pair decides (owner
+    // 2026-11-13, W4) — the pair of equal size with the smallest worst deviation. A row without
+    // turns_ratio_configs (an older caller) is read as its one turns_ratios configuration.
     if (cat == "magnetic") {
-        auto ratios = [](const json& p) {
-            std::vector<double> v;
-            const json* a = (p.is_object() && p.contains("turns_ratios")) ? &p.at("turns_ratios")
-                                                                           : nullptr;
-            if (a && a->is_array())
-                for (const auto& x : *a)
-                    if (x.is_number() && x.get<double>() > 0) v.push_back(x.get<double>());
+        using Cfg = std::vector<double>;
+        auto one = [](const json& a) {
+            Cfg v;
+            if (!a.is_array()) return v;
+            for (const auto& x : a) {
+                if (!x.is_number() || !(x.get<double>() > 0)) return Cfg{};  // all-or-nothing
+                v.push_back(x.get<double>());
+            }
             return v;
         };
-        const std::vector<double> o_tr = ratios(original), s_tr = ratios(cand);
-        auto list = [](const std::vector<double>& v) {
+        auto configs = [&](const json& p) {
+            std::vector<Cfg> out;
+            if (!p.is_object()) return out;
+            if (auto it = p.find("turns_ratio_configs"); it != p.end() && it->is_array())
+                for (const auto& c : *it)
+                    if (Cfg v = one(c); !v.empty()) out.push_back(std::move(v));
+            if (out.empty())
+                if (auto it = p.find("turns_ratios"); it != p.end())
+                    if (Cfg v = one(*it); !v.empty()) out.push_back(std::move(v));
+            return out;
+        };
+        const std::vector<Cfg> o_cf = configs(original), s_cf = configs(cand);
+        auto list = [](const Cfg& v) {
             std::string out;
             char buf[32];
             for (size_t i = 0; i < v.size(); ++i) {
@@ -2305,56 +2322,92 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             }
             return v.size() > 1 ? "[" + out + "]" : out;
         };
-        if (!o_tr.empty() && !s_tr.empty()) {
+        auto lists = [&](const std::vector<Cfg>& cf) {
+            std::string out;
+            for (size_t i = 0; i < cf.size(); ++i) out += (i ? " or " : "") + list(cf[i]);
+            return out;
+        };
+        auto which = [](size_t i, size_t n) {
+            return "wiring configuration " + std::to_string(i + 1) + " of " + std::to_string(n);
+        };
+        if (!o_cf.empty() && !s_cf.empty()) {
+            // Best pair: equal size, smallest worst deviation.
+            bool any_pair = false;
+            double best = 0.0;
+            size_t bo = 0, bs = 0, bw = 0;
+            for (size_t i = 0; i < o_cf.size(); ++i)
+                for (size_t j = 0; j < s_cf.size(); ++j) {
+                    if (o_cf[i].size() != s_cf[j].size()) continue;
+                    double worst = 0.0;
+                    size_t wi = 0;
+                    for (size_t k = 0; k < o_cf[i].size(); ++k) {
+                        const double d = std::fabs(s_cf[j][k] / o_cf[i][k] - 1.0);
+                        if (d > worst) { worst = d; wi = k; }
+                    }
+                    if (!any_pair || worst < best) {
+                        any_pair = true;
+                        best = worst;
+                        bo = i;
+                        bs = j;
+                        bw = wi;
+                    }
+                }
+            if (!any_pair) {
+                params.push_back({{"name", "turns_ratio"}, {"verdict", FAIL}});
+                notes.push_back("winding structure differs: the original states turns ratio(s) " +
+                                lists(o_cf) + ", the substitute " + lists(s_cf) +
+                                " — a different number of secondaries in every listed wiring "
+                                "configuration, not a substitute");
+                return reject("transformer winding structure differs (a different number of "
+                              "turns ratios)");
+            }
+            const Cfg& o_tr = o_cf[bo];
+            const Cfg& s_tr = s_cf[bs];
+            // Which configurations the verdict was taken on, when either record lists several.
+            std::string on;
+            if (o_cf.size() > 1 || s_cf.size() > 1) {
+                if (o_cf.size() > 1) on += "the original's " + which(bo, o_cf.size());
+                if (s_cf.size() > 1)
+                    on += (on.empty() ? "" : " against ") + std::string("the substitute's ") +
+                          which(bs, s_cf.size());
+            }
             const char* v = PASS;
-            if (o_tr.size() != s_tr.size()) {
-                v = FAIL;
-                notes.push_back("winding structure differs: the original states " +
-                                std::to_string(o_tr.size()) + " turns ratio(s) " + list(o_tr) +
-                                ", the substitute " + std::to_string(s_tr.size()) + " " +
-                                list(s_tr) +
-                                " — a different number of secondaries, not a drop-in");
-            } else {
-                double worst = 0.0;
-                size_t wi = 0;
-                for (size_t i = 0; i < o_tr.size(); ++i) {
-                    const double d = std::fabs(s_tr[i] / o_tr[i] - 1.0);
-                    if (d > worst) { worst = d; wi = i; }
-                }
-                if (worst > kTurnsRatioPassRel + kEdgeEps) {
-                    v = worst > kTurnsRatioWarnRel + kEdgeEps ? FAIL : WARN;
-                    char buf[200];
-                    std::snprintf(buf, sizeof buf, "turns ratio %.4g vs the original's %.4g",
-                                  s_tr[wi], o_tr[wi]);
-                    std::string note = std::string(buf);
-                    if (o_tr.size() > 1)
-                        note += " (secondary " + std::to_string(wi + 1) + " of " +
-                                std::to_string(o_tr.size()) + ")";
-                    note += " (" + signed_pct((s_tr[wi] / o_tr[wi] - 1.0) * 100.0) + ")";
-                    note += v == WARN ? " — check the circuit tolerates it"
-                                      : " — beyond the 15 % a transformer swap can absorb; a "
-                                        "different ratio, not a substitute without a redesign";
-                    notes.push_back(note);
-                }
+            if (best > kTurnsRatioPassRel + kEdgeEps) {
+                v = best > kTurnsRatioWarnRel + kEdgeEps ? FAIL : WARN;
+                char buf[200];
+                std::snprintf(buf, sizeof buf, "turns ratio %.4g vs the original's %.4g",
+                              s_tr[bw], o_tr[bw]);
+                std::string note = std::string(buf);
+                if (o_tr.size() > 1)
+                    note += " (secondary " + std::to_string(bw + 1) + " of " +
+                            std::to_string(o_tr.size()) + ")";
+                note += " (" + signed_pct((s_tr[bw] / o_tr[bw] - 1.0) * 100.0) + ")";
+                if (!on.empty()) note += ", closest pair: " + on;
+                note += v == WARN ? " — check the circuit tolerates it"
+                                  : " — beyond the 15 % a transformer swap can absorb; a "
+                                    "different ratio, not a substitute without a redesign";
+                notes.push_back(note);
+            } else if (!on.empty() && (bo != 0 || bs != 0)) {
+                notes.push_back("turns ratio " + list(s_tr) + " matches the original's " +
+                                list(o_tr) + " on " + on +
+                                " — confirm the circuit wires it that way");
             }
             params.push_back({{"name", "turns_ratio"}, {"verdict", v}});
-            if (v == FAIL) {
-                demote();
-                penalty += opt.gate_weight * kVerdictFailPenalty;
-                ++worse;
-            } else if (v == WARN) {
+            if (v == FAIL)
+                return reject("transformer turns ratio more than 15 % from the original's");
+            if (v == WARN) {
                 demote();
                 penalty += opt.gate_weight * kVerdictWarnPenalty;
                 ++worse;
             }
-        } else if (!o_tr.empty() || !s_tr.empty()) {
+        } else if (!o_cf.empty() || !s_cf.empty()) {
             // Secondary-axis missing data: note only, no cap, no penalty (owner policy).
             params.push_back({{"name", "turns_ratio"}, {"verdict", UNVERIFIED}});
-            notes.push_back(!o_tr.empty()
-                                ? "the original's turns ratio is " + list(o_tr) +
+            notes.push_back(!o_cf.empty()
+                                ? "the original's turns ratio is " + lists(o_cf) +
                                       "; the substitute's record states none — confirm it "
                                       "from the datasheet"
-                                : "the substitute's turns ratio is " + list(s_tr) +
+                                : "the substitute's turns ratio is " + lists(s_cf) +
                                       "; the original's record states none — confirm both "
                                       "ratios match from the datasheets");
         }
@@ -2412,7 +2465,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             if (std::string(a.key) == "rows")
                 params.push_back({{"name", "rows"}, {"verdict", UNVERIFIED}});
             connector_identity_unverified = true;
-            connector_identity_gaps.push_back(a.what);
+            // Only an axis the ORIGINAL states and the substitute does not is a gap toward the
+            // several-gaps cap (owner 2026-11-13, W1): stating extra data never hurts a candidate.
+            if (os) connector_identity_gaps.push_back(a.what);
             notes.push_back(std::string(a.what) + " not established (original: " +
                             said(original, a.key) + ", substitute: " + said(cand, a.key) +
                             ") — " + a.confirm + " from the datasheets");
@@ -2424,11 +2479,11 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // states it is rejected in the PARAM_SPECS loop (missing required data on a hard
         // axis), so only this direction reaches here. It takes the one-sided identity
         // treatment of gender / termination / pitch / rows: the UNVERIFIED verdict the loop
-        // pushed, a note naming both sides, and the cap below drop_in. It also counts toward
-        // the several-gaps major_review cap below (owner, 2026-11-13).
+        // pushed, a note naming both sides, and the cap below drop_in. It does NOT count toward
+        // the several-gaps major_review cap below: only axes the original states count (owner
+        // 2026-11-13 W1, reversing the earlier I4 choice that counted it).
         if (!stated(original, "positions") && stated(cand, "positions")) {
             connector_identity_unverified = true;
-            connector_identity_gaps.push_back("contact positions");
             notes.push_back("contact positions not established (original: " +
                             said(original, "positions") + ", substitute: " +
                             said(cand, "positions") +
@@ -2445,7 +2500,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             // Counted toward the several-gaps cap (grade site) although a single one
             // stays uncapped: these are identities when stated (owner, 2026-11-12), and
             // DECISION for the owner: whether they should count is recorded at the cap.
-            connector_identity_gaps.push_back(connector_variant_axis_label(k));
+            // Only when the original states it (owner 2026-11-13, W1).
+            if (os) connector_identity_gaps.push_back(connector_variant_axis_label(k));
             notes.push_back(std::string(connector_variant_axis_label(k)) +
                             " not established (original: " + said(original, k) +
                             ", substitute: " + said(cand, k) +
@@ -2496,8 +2552,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 else {
                     // One-sided orientation is one of the identity gaps counted towards the
                     // 3+ cap (owner decision 2026-11-13); the horizontal/rightAngle pair is
-                    // stated on both sides and is not a gap.
-                    connector_identity_gaps.push_back("orientation");
+                    // stated on both sides and is not a gap. Only the original's stated
+                    // orientation is a gap (owner 2026-11-13, W1).
+                    if (!oo.empty()) connector_identity_gaps.push_back("orientation");
                     notes.push_back("orientation not established (original: " + said(oo) +
                                     ", substitute: " + said(so) +
                                     ") — confirm vertical / right-angle from the datasheets");
@@ -3530,7 +3587,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             // original. Capped like an unverified footprint (minor_review).
             params.push_back({{"name", "mounting"}, {"verdict", UNVERIFIED}});
             mount_unverified = true;
-            connector_identity_gaps.push_back("board mount");
+            // A gap toward the several-gaps cap only when the original states the board
+            // mount (owner 2026-11-13, W1).
+            if (!o_cls.empty()) connector_identity_gaps.push_back("board mount");
             notes.push_back(!o_cls.empty()
                                 ? "the original is " + mount_src(o_mt, o_pkg) +
                                       "-mounted; the substitute's record states no board mount — "
@@ -3608,7 +3667,21 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     if (opt.check_footprint) {
         auto o_dims = dims_of(original, cat), s_dims = dims_of(cand, cat);
         // The case identities every case-kept gate below compares (series-aware for capacitors).
-        const auto case_ids = case_identities_of(cat, original, cand);
+        auto case_ids = case_identities_of(cat, original, cand);
+        // Capacitor case codes from different systems that resolve to the same body (owner
+        // 2026-11-13, W2): when both bodies resolve (drawn, or from the series' own table) and
+        // agree within kSameChipCodeBodySpread on both axes, orientation-agnostic, the case is
+        // the same and the footprint is decided on the body. CWR06FC475KC/HR ("D", the CWR06
+        // table's 3.81 x 2.54 mm) against CWR09FC475KR ("1510", drawn 3.81 x 2.54 mm) was a
+        // "different_case" WARN naming two identical bodies. Chip bodies only: a leaded body's
+        // land is its lead pitch, never its outline (capacitor_case_side letter_ok).
+        if (cat == "capacitor" && case_ids.first != case_ids.second && o_dims && s_dims &&
+            has_land(*o_dims) && has_land(*s_dims) && capacitor_case_side(original).letter_ok &&
+            capacitor_case_side(cand).letter_ok) {
+            const LandCompare lc = compare_land(*o_dims, *s_dims);
+            if (lc.overflow <= kSameChipCodeBodySpread && lc.lin >= 1.0 - kSameChipCodeBodySpread)
+                case_ids.second = case_ids.first;
+        }
         // A part with NO dimensions must not be offered as a substitute for an
         // original whose footprint we DO know: its fit can never be verified. For
         // families where the footprint is the mechanical fit and the case code is
@@ -4930,10 +5003,13 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // the substitute's record establishes almost nothing of what makes it THIS connector:
     // D38999/20MG11BN (female, panel-mount, shell 21, coding N, threaded) took
     // YDIV46E21-11PNC009, whose record states none of the five, as minor_review (Qarlos bench
-    // 20365838; it is a wire-to-wire plug). Counted: axes exactly one record states — gender,
-    // wire termination, contact pitch, contact rows, contact positions (owner, 2026-11-13),
-    // board mount, orientation stated on one side only (owner, 2026-11-13; TW-03-05-F-Q-365-090
-    // -> WT12PD9), and the family-variant identities. DECISION for the owner: the variant
+    // 20365838; it is a wire-to-wire plug). Counted: axes the ORIGINAL states and the
+    // substitute's record does not (owner 2026-11-13, W1: an axis stated only by the
+    // substitute is not a gap; stating extra data never hurts a candidate) — gender,
+    // wire termination, contact pitch, contact rows, board mount, orientation (owner,
+    // 2026-11-13; TW-03-05-F-Q-365-090 -> WT12PD9), and the family-variant identities. Contact
+    // positions never counts: an original that states them against a silent substitute is
+    // rejected (hard identity), so only the substitute-only direction reaches here. DECISION for the owner: the variant
     // identities (actuator type, shell size, coding, coupling type) count although a single one
     // is uncapped (interface_standard's treatment, which is NOT counted); pluggable is a capped
     // one-sided connector axis but not an identity in the owner's list, and is not counted.
@@ -5015,9 +5091,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //   connector gender/termination/pitch/rows (identity)    primary    cap minor_review
     //   connector variant identity (actuator type, shell
     //     size, coding, coupling type), one alone             primary    note only, no cap
-    //   connector identities one-sided, 3 or more of gender,
-    //     termination, pitch, rows, positions, board mount,
-    //     orientation and the variant identities (connector_identity_gaps) primary   cap major_review
+    //   connector identities stated by the ORIGINAL only, 3
+    //     or more of gender, termination, pitch, rows, board
+    //     mount, orientation and the variant identities
+    //     (connector_identity_gaps; owner 2026-11-13 W1)    primary    cap major_review
     //   connector orientation (connector_orientation_unv.)    primary    cap minor_review
     //   connector pluggable vs fixed (pluggable_unverified)   primary    cap minor_review
     //   diode / MOSFET die configuration, internal connection primary  cap minor_review

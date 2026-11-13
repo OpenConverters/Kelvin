@@ -1647,6 +1647,24 @@ std::optional<MagneticRow> extract_magnetic(const json& env) {
         // adds nothing.
         for (const auto& e : *elec_arr) {
             if (!e.is_object()) continue;
+            // Every configuration's turns ratios (v22, owner 2026-11-13 W4), all-or-nothing per
+            // configuration exactly as turns_ratios: an unreadable or non-positive entry leaves
+            // that configuration out rather than a shorter, wrong array.
+            if (const json* cr = obj_get(e, "turnsRatios"); cr && cr->is_array() && !cr->empty()) {
+                std::vector<double> cfg;
+                bool ok = true;
+                for (const auto& t : *cr) {
+                    try {
+                        const double v = PEAS::resolve_dimensional_values(t);
+                        if (!(v > 0)) { ok = false; break; }
+                        cfg.push_back(v);
+                    } catch (const std::exception&) {
+                        ok = false;
+                        break;
+                    }
+                }
+                if (ok) r.turns_ratio_configs.push_back(std::move(cfg));
+            }
             const std::string st = get_str(e, "subtype").value_or("");
             if (st == "inductor" || st == "chipBead") {
                 r.secondary_counts |= 1u;
