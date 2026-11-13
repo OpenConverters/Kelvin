@@ -2641,11 +2641,16 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         notes.push_back("the original runs from " + supply_range(original) +
                         "; the substitute's record states no supply range, so the rail could "
                         "not be checked — confirm it from the datasheet");
-    if (timebase_current_unverified)
-        notes.push_back("the original draws " + volts(*num(original, "current_consumption") * 1000.0) + " mA" +
+    if (timebase_current_unverified) {
+        // %g, not volts()'s three decimals: a 32 kHz oscillator draws microamps (1.5 uA would
+        // print as "0.002 mA").
+        char cur[32];
+        std::snprintf(cur, sizeof cur, "%g mA", *num(original, "current_consumption") * 1000.0);
+        notes.push_back("the original draws " + std::string(cur) +
                         " from its supply; the substitute's record states no supply current, so "
                         "the rail's current budget could not be checked — confirm it from the "
                         "datasheet");
+    }
 
     // Say WHAT the two parts guarantee, in volts. The Vrrm verdict above compares the
     // MARKED voltage, which two grades of the same zener share; the window is what the
