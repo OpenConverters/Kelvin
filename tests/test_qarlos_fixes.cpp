@@ -8195,3 +8195,153 @@ TEST_CASE("owner 2026-11-13 Z5: Isat read at the same drop on both curves",
     CHECK(verdict_of(c4, "saturation_current") == "pass");
 }
 
+
+// ── Owner 2026-11-13 (C): a retracted-only PRIMARY VALUE is not stated ───────────────────────
+// The per-field retracted-only rule (Z1, voltage ratings) extends to each family's primary value:
+// capacitance, resistance, varistor voltage, inductance / chip-bead impedance, timing frequency
+// (and a programmable blank's span) and connector positions. Real records, verbatim lines of
+// tools/qarlos/bench/data-6bd04c7/capacitors.ndjson: Samsung CL10C020BB8NNNC (line 5202) states
+// 2 pF / 50 V, but its only source for them is a Digi-Key datasheet entry RETRACTED ("cited
+// document is for a different part"; the live entries cover only part.dielectricCode /
+// part.technology and the derived land pattern). CL10C1R5CB8NNNC (line 5206, 1.5 pF, same
+// series) rests on live sources. Of the frozen bench (data-6bd04c7), it is the only record whose
+// primary value rests on retracted sources only: capacitors 1 of 112 records with a retracted
+// entry, connectors 0 of 1532, magnetics 0 of 2338, resistors and timing 0 (no retracted entry).
+namespace dec_1113_c {
+// capacitors.ndjson line 5202: CL10C020BB8NNNC
+const char* kCL10C020BB8NNNC = R"KREC({"capacitor":{"manufacturerInfo":{"name":"Samsung Electro-Mechanics","reference":"CL10C020BB8NNNC","status":"production","datasheetInfo":{"part":{"partNumber":"CL10C020BB8NNNC","technology":"ceramic-class-1","case":"0603 (1608 Metric)","series":"","dielectricCode":"C0G"},"electrical":{"capacitance":{"nominal":2e-12,"minimum":1.9e-12,"maximum":2.1e-12},"ratedVoltage":50.0,"dissipationFactorFrequency":1000.0,"voltageRatedDcMax":50.0},"thermal":{"temperature":{"minimum":-55.0,"maximum":125.0}},"mechanical":{"dimensions":{"length":{"nominal":0.0016},"width":{"nominal":0.0008}},"shape":{"assembly":"SMT","shapeType":"SMD Chip"},"landPattern":{"pattern":"singleRow","originDatum":"padCentroid","pads":[{"id":"1","x":-0.000775,"y":0.0,"shape":"rectangle","width":0.0009,"height":0.00095},{"id":"2","x":0.000775,"y":0.0,"shape":"rectangle","width":0.0009,"height":0.00095}]}},"provenance":[{"source":"distributor","sourceName":"datasheet via Digi-Key listing","sourceUrl":"https://mm.digikey.com/Volume0/opasdata/d220001/medias/docus/658/CL10C020CB8NNNC_Spec.pdf","verification":"disproven","verificationDate":"2026-09-05","retracted":true,"retractionReason":"cited document is for a different part"},{"source":"manufacturerDatasheet","sourceName":"Samsung Electro-Mechanics MLCC catalogue, December 2025","sourceUrl":"https://product.samsungsem.com/resources/file/product-catalog/MLCC_2512.pdf","retrievedDate":"2026-08-01","fields":["part.dielectricCode","part.technology"]},{"source":"derived","sourceName":"IPC-7351B","retrievedDate":"2026-08-02","fields":["mechanical.landPattern"],"derivation":"IPC-7351B nominal land pattern for the case code"}]}},"distributorsInfo":[{"name":"Digi-Key","reference":"1276-1815-2-ND","link":"https://www.digikey.com/en/products/detail/samsung-electro-mechanics/CL10C020BB8NNNC/3887473","cost":{"value":0.0,"currency":"USD"},"quantity":0,"updatedAt":"2026-04-12"}]}})KREC";
+// capacitors.ndjson line 5206: CL10C1R5CB8NNNC
+const char* kCL10C1R5CB8NNNC = R"KREC({"capacitor":{"manufacturerInfo":{"name":"Samsung Electro-Mechanics","reference":"CL10C1R5CB8NNNC","status":"production","datasheetUrl":"https://weblib.samsungsem.com/mlcc/mlcc-ec-data-sheet.do?partNumber=CL05Y105KP6VPN","datasheetInfo":{"part":{"partNumber":"CL10C1R5CB8NNNC","technology":"ceramic-class-1","case":"0603 (1608 Metric)","series":"","dielectricCode":"C0G"},"electrical":{"capacitance":{"nominal":1.5e-12,"minimum":1.425e-12,"maximum":1.575e-12},"ratedVoltage":50.0,"dissipationFactorFrequency":1000.0,"voltageRatedDcMax":50.0},"thermal":{"temperature":{"minimum":-55.0,"maximum":125.0}},"mechanical":{"dimensions":{"length":{"nominal":0.0016},"width":{"nominal":0.0008}},"shape":{"assembly":"SMT","shapeType":"SMD Chip"},"landPattern":{"pattern":"singleRow","originDatum":"padCentroid","pads":[{"id":"1","x":-0.000775,"y":0.0,"shape":"rectangle","width":0.0009,"height":0.00095},{"id":"2","x":0.000775,"y":0.0,"shape":"rectangle","width":0.0009,"height":0.00095}]}},"provenance":[{"source":"manufacturerDatasheet","sourceName":"Samsung Electro-Mechanics datasheet","sourceUrl":"https://weblib.samsungsem.com/mlcc/mlcc-ec-data-sheet.do?partNumber=CL05Y105KP6VPN"},{"source":"manufacturerDatasheet","sourceName":"Samsung Electro-Mechanics MLCC catalogue, December 2025","sourceUrl":"https://product.samsungsem.com/resources/file/product-catalog/MLCC_2512.pdf","retrievedDate":"2026-08-01","fields":["part.dielectricCode","part.technology"]},{"source":"derived","sourceName":"IPC-7351B","retrievedDate":"2026-08-02","fields":["mechanical.landPattern"],"derivation":"IPC-7351B nominal land pattern for the case code"}]}},"distributorsInfo":[{"name":"Digi-Key","reference":"1276-1819-2-ND","link":"https://www.digikey.com/en/products/detail/samsung-electro-mechanics/CL10C1R5CB8NNNC/3887477","cost":{"value":0.0,"currency":"USD"},"quantity":0,"updatedAt":"2026-04-12"}]}})KREC";
+}  // namespace dec_1113_c
+
+TEST_CASE("owner 2026-11-13 C: a retracted-only capacitance is not stated: no original, out of "
+          "the pool",
+          "[qarlos][index][browse][dec-c]") {
+    using namespace dec_1113_c;
+    namespace fs = std::filesystem;
+    const std::string path = (fs::temp_directory_path() / "kelvin_dec_c_caps.ndjson").string();
+    {
+        std::ofstream o(path);
+        o << kCL10C1R5CB8NNNC << "\n" << kCL10C020BB8NNNC << "\n";
+    }
+    const auto shard = kelvin::build_capacitor_shard(path);
+    fs::remove(path);
+    const json all = kelvin::browse::browse_rows(shard, json{{"limit", 10}});
+    REQUIRE(all.at("total") == 2);  // the record is still indexed and browsable
+    double live_c = 0;
+    for (const json& r : all.at("rows")) {
+        if (r.at("mpn") == "CL10C020BB8NNNC") {
+            // Not stated: web/src/crossref.js spec() reads value_si = nz(capacitance) = null,
+            // so runCrossRef refuses it as an original ("has no C value in the catalogue").
+            CHECK(r.at("capacitance").is_null());
+        } else {
+            live_c = r.at("capacitance").get<double>();
+        }
+    }
+    REQUIRE(live_c == 1.5e-12);
+    // CL10C1R5CB8NNNC's pool on the primary value alone, cut as runCrossRef cuts it
+    // (filters[primary.row] = {min: C x acceptLo 0.80, max: C x acceptHi 4.00}): the stated 2 pF
+    // would be inside it; not stated, it is left out like a record stating no capacitance.
+    const json pool = kelvin::browse::browse_rows(
+        shard, json{{"filters", {{"capacitance", {{"min", live_c * 0.80}, {"max", live_c * 4.00}}}}},
+                    {"limit", 10}});
+    REQUIRE(pool.at("total") == 1);
+    CHECK(pool.at("rows")[0].at("mpn") == "CL10C1R5CB8NNNC");
+}
+
+TEST_CASE("owner 2026-11-13 C: each family's primary value on retracted sources only",
+          "[qarlos][views][dec-c]") {
+    kelvin::CapacitorRow c;
+    c.capacitance = 2e-12;
+    c.capacitance_min = 1.9e-12;
+    c.capacitance_max = 2.1e-12;
+    c.retracted_fields = {"electrical.esr"};
+    CHECK(kelvin::unstate_retracted_ratings(c) == 0);
+    CHECK(c.capacitance == 2e-12);
+    c.retracted_fields = {"electrical.capacitance"};
+    CHECK(kelvin::unstate_retracted_ratings(c) == 1);
+    CHECK(std::isnan(c.capacitance));
+    CHECK(std::isnan(c.capacitance_min));  // the band is read from the same field
+    CHECK(std::isnan(c.capacitance_max));
+
+    kelvin::ResistorRow r;
+    r.resistance = 1000;
+    r.retracted_fields = {"electrical.powerRating"};
+    CHECK(kelvin::unstate_retracted_ratings(r) == 0);
+    r.retracted_fields = {"electrical.resistance"};
+    CHECK(kelvin::unstate_retracted_ratings(r) == 1);
+    CHECK(std::isnan(r.resistance));
+
+    kelvin::VaristorRow v;
+    v.varistor_voltage = 470;
+    v.retracted_fields = {"electrical.varistorVoltage"};
+    CHECK(kelvin::unstate_retracted_ratings(v) == 1);
+    CHECK(std::isnan(v.varistor_voltage));
+
+    kelvin::MagneticRow m;
+    m.inductance = 1e-6;
+    m.inductance_tol_minus_pct = 20;
+    m.inductance_tol_plus_pct = 20;
+    m.impedance_100mhz = 600;
+    m.retracted_fields = {"electrical.dcResistance"};
+    CHECK(kelvin::unstate_retracted_ratings(m) == 0);
+    m.retracted_fields = {"electrical.inductance"};
+    CHECK(kelvin::unstate_retracted_ratings(m) == 1);
+    CHECK(std::isnan(m.inductance));
+    CHECK(std::isnan(m.inductance_tol_minus_pct));
+    CHECK(m.impedance_100mhz == 600);
+    m.retracted_fields = {"electrical.impedancePoints"};
+    CHECK(kelvin::unstate_retracted_ratings(m) == 1);
+    CHECK(std::isnan(m.impedance_100mhz));
+
+    kelvin::TimingRow t;
+    t.frequency = 25e6;
+    t.frequency_min = 1e6;
+    t.frequency_max = 100e6;
+    t.retracted_fields = {"electrical.frequencyTolerance"};
+    CHECK(kelvin::unstate_retracted_ratings(t) == 0);
+    t.retracted_fields = {"electrical.frequency"};
+    CHECK(kelvin::unstate_retracted_ratings(t) == 1);
+    CHECK(std::isnan(t.frequency));
+    CHECK(t.frequency_min == 1e6);
+    t.retracted_fields = {"electrical.frequencyRange"};
+    CHECK(kelvin::unstate_retracted_ratings(t) == 1);
+    CHECK(std::isnan(t.frequency_min));
+    CHECK(std::isnan(t.frequency_max));
+
+    kelvin::ConnectorRow k;
+    k.positions = 20;
+    k.retracted_fields = {"mechanical.pitch"};
+    CHECK(kelvin::unstate_retracted_ratings(k) == 0);
+    k.retracted_fields = {"mechanical.positions"};
+    CHECK(kelvin::unstate_retracted_ratings(k) == 1);
+    CHECK(std::isnan(k.positions));
+}
+
+// The selectors' own value filters: a NaN primary value compares false against both bounds, so
+// without its own reason it would pass the capacitance window and the resistance deviation.
+TEST_CASE("owner 2026-11-13 C: a not-stated primary value fails the selector filters",
+          "[qarlos][select][dec-c]") {
+    kelvin::Shard<kelvin::CapacitorRow> cs;
+    kelvin::CapacitorRow c;
+    c.mpn = "C-RETRACTED";
+    c.is_production = true;
+    c.v_rated = 50;
+    c.capacitance = kelvin::kNaN();  // unstated, as unstate_retracted_ratings leaves it
+    cs.rows.push_back(c);
+    kelvin::CapacitorConstraints cc;
+    cc.capacitance_min = 1e-12;
+    cc.capacitance_max = 3e-12;
+    cc.v_rated_min = 10;
+    CHECK_THROWS_AS(kelvin::select_capacitor(cs, cc, kelvin::CapacitorTiebreaker::LowestEsr),
+                    kelvin::NoCandidates);
+    kelvin::Shard<kelvin::ResistorRow> rs;
+    kelvin::ResistorRow r;
+    r.mpn = "R-RETRACTED";
+    r.tolerance = 0.01;
+    r.resistance = kelvin::kNaN();
+    rs.rows.push_back(r);
+    kelvin::ResistorConstraints rc;
+    rc.target_ohms = 1000;
+    CHECK_THROWS_AS(kelvin::select_resistor(rs, rc), kelvin::NoCandidates);
+}

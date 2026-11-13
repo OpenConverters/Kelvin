@@ -56,12 +56,27 @@ FieldRetraction retracted_only_fields(const json& env);
 // vds_rated (drainSourceVoltage), capacitor v_rated (ratedVoltage) and v_rated_ac
 // (voltageRatedAcMax). Reads row.retracted_fields (retracted_only_fields above), so it applies
 // to the per-field rule only; a wholly retracted record keeps its values (its own rule, CrossRef.hpp).
-// Returns how many ratings were removed.
+//
+// The same holds for each family's PRIMARY VALUE (owner 2026-11-13, C): a value resting only on
+// retracted sources is not stated, so an original is refused by the missing-primary rules and a
+// candidate is left out by every filter on it, exactly as a record that states none. The values:
+// capacitor capacitance (electrical.capacitance, with the band read from it), resistor
+// resistance (electrical.resistance), varistor voltage (electrical.varistorVoltage), magnetic
+// inductance (electrical[].inductance, with its tolerance band) and chip-bead impedance
+// (electrical[].impedancePoints: Z@100 MHz and the peak), timing frequency
+// (electrical.frequency) and the programmable span (electrical.frequencyRange), and connector
+// positions (mechanical.positions).
+// Returns how many ratings / values were removed.
 template <class Row>
 int unstate_retracted_ratings(Row&) { return 0; }
 int unstate_retracted_ratings(DiodeRow& r);
 int unstate_retracted_ratings(MosfetRow& r);
 int unstate_retracted_ratings(CapacitorRow& r);
+int unstate_retracted_ratings(ResistorRow& r);
+int unstate_retracted_ratings(VaristorRow& r);
+int unstate_retracted_ratings(MagneticRow& r);
+int unstate_retracted_ratings(TimingRow& r);
+int unstate_retracted_ratings(ConnectorRow& r);
 
 // The function a resistor record STATES for itself (ResistorRow.current_sense /
 // pulse_withstanding). Read from the RAS technology enum and the record's own class text
