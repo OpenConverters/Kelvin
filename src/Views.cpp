@@ -1545,6 +1545,15 @@ std::optional<TimingRow> extract_timing(const json& env) {
         set_if_pos(r.built_in_capacitance, get_num(*elec, "builtInCapacitance"));
         set_if_pos(r.esr, get_num(*elec, "equivalentSeriesResistance"));
         set_if_pos(r.rms_phase_jitter, get_num(*elec, "rmsPhaseJitter"));
+        // v22: the programmable span. Both ends or neither (the schema requires both); a
+        // range whose minimum exceeds its maximum states no span and is left unset.
+        if (const json* fr = obj_get(*elec, "frequencyRange")) {
+            const auto lo = get_num(*fr, "minimum"), hi = get_num(*fr, "maximum");
+            if (lo && hi && *lo > 0 && *hi > 0 && *lo <= *hi) {
+                r.frequency_min = *lo;
+                r.frequency_max = *hi;
+            }
+        }
         const json* supply = obj_get(*elec, "supply");
         if (supply) {
             set_if_pos(r.vsupply_min, get_num(*supply, "minimumSupplyVoltage"));

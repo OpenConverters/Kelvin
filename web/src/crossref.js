@@ -177,8 +177,16 @@ export const XREF = [
     // 1e-4 (100 ppm) pool let 25.00125 MHz and 24.9987 MHz parts in for a 25 MHz original,
     // and the ranker graded them 'pass' (Qarlos 2026-11-09). Matches the ranker's kTimeBase.
     exactNum: [{ row: 'frequency', tol: 1e-9 }],
+    // A programmable original that states only its range takes candidates whose range covers
+    // it; one that states a frequency also takes programmable blanks whose range contains it
+    // (extraPool). Both mirror the ranker's programmable_frequency_fit (owner 2026-11-13).
+    rangeFilters: timingProgrammableRangeFilters,
+    extraPool: timingProgrammableBlankPool,
     spec: (r) => ({ ...base(r), subtype: r.device_type ?? '', technology: r.technology ?? '',
       device_type: r.device_type ?? '', frequency: nz(r.frequency),
+      // v22: a programmable part's configurable span (TDAS electrical.frequencyRange), read by
+      // the ranker between two programmable parts only.
+      frequency_range_min: nz(r.frequency_min), frequency_range_max: nz(r.frequency_max),
       load_capacitance: nz(r.load_capacitance),
       load_capacitance_pF: r.load_capacitance != null ? r.load_capacitance * 1e12 : null,
       // v21: a three-terminal ceramic resonator's built-in load capacitors (TDAS
@@ -462,16 +470,52 @@ export function timingTechnologiesAdmitted(technology) {
 
 // Frequency is a timing part's primary value (owner, 2026-11-13): an oscillator original with
 // none on record is refused, as any family refuses an original missing its primary value. Not
-// for a 555 timer (timeBase.timer), which has no frequency of its own, nor for a 'programmable'
-// blank, whose frequency is set when it is ordered (no programmable record states one).
+// for a 555 timer (timeBase.timer), which has no frequency of its own. A 'programmable' blank
+// is refused the same way unless it states its programmable range (TDAS
+// electrical.frequencyRange, shard v22), which is then its frequency datum (owner 2026-11-13;
+// this replaced a blanket exemption for programmable parts).
+export function timingHasProgrammableRange(orig) {
+  return orig?.technology === 'programmable' && nz(orig?.frequency_min) != null &&
+    nz(orig?.frequency_max) != null
+}
 export function timingNeedsFrequency(orig) {
-  return orig?.device_type === 'oscillator' && orig?.technology !== 'programmable'
+  return orig?.device_type === 'oscillator' && !timingHasProgrammableRange(orig)
+}
+
+// The ranker's programmable_frequency_fit, as pool filters. Range ends are widened by the
+// representation epsilon the ranker compares them within (same_stated_value), so the pre-gate
+// never drops a part the ranker would keep.
+const RANGE_EPS = 1e-9
+// A programmable original stating only a range: the candidate's range must cover it.
+export function timingProgrammableRangeFilters(orig) {
+  if (!timingHasProgrammableRange(orig) || nz(orig.frequency) != null) return {}
+  return { frequency_min: { max: orig.frequency_min * (1 + RANGE_EPS) },
+           frequency_max: { min: orig.frequency_max * (1 - RANGE_EPS) } }
+}
+// A programmable original stating a frequency: besides the exact-frequency pool, programmable
+// BLANKS (no frequency of their own) whose range contains it. Returns the second pool's
+// filters, derived from the first pool's, and the row predicate that keeps only blanks; null
+// when it does not apply.
+export function timingProgrammableBlankPool(orig, filters) {
+  const f0 = nz(orig?.frequency)
+  if (orig?.technology !== 'programmable' || f0 == null) return null
+  const alt = { ...filters }
+  delete alt.frequency
+  alt.technology = ['programmable']
+  alt.frequency_min = { max: f0 * (1 + RANGE_EPS) }
+  alt.frequency_max = { min: f0 * (1 - RANGE_EPS) }
+  return { filters: alt, keep: (r) => nz(r.frequency) == null }
 }
 
 const ACTIVE_TIMEBASE_VARIANT = { hardKeys: ['frequency', 'technology'] }
+// A programmable blank original stating its range and no frequency: the range is the datum
+// the comparison turns on, so its absence (not the frequency's) is what makes it unverified.
+const PROGRAMMABLE_RANGE_VARIANT = { hardKeys: ['frequency_range_min', 'frequency_range_max', 'technology'] }
 
 export function timingVariantFor(orig) {
-  return orig && !isPassiveResonator(orig.technology, orig.device_type) ? ACTIVE_TIMEBASE_VARIANT : null
+  if (!orig || isPassiveResonator(orig.technology, orig.device_type)) return null
+  if (timingHasProgrammableRange(orig) && nz(orig.frequency) == null) return PROGRAMMABLE_RANGE_VARIANT
+  return ACTIVE_TIMEBASE_VARIANT
 }
 
 // Shard rows carry 0 (fixed fields) or null (nullable fields) for "not in the
@@ -599,7 +643,19 @@ export async function runCrossRef({ family, original, manufacturers, sameType = 
   }
 
   const pool = await browse(f.key, { filters, sort: { field: 'lineno', dir: 'asc' }, limit: poolLimit })
-  const rows = pool.rows.filter((r) => !(r.mpn === original.mpn && r.manufacturer === original.manufacturer))
+  // A second pool a family adds beside the first (timing: programmable blanks whose range
+  // holds a programmable original's frequency). Merged by key; its count is reported too.
+  const extra = f.extraPool?.(original, filters)
+  let poolRows = pool.rows
+  let poolTotal = pool.total
+  if (extra) {
+    const more = await browse(f.key, { filters: extra.filters, sort: { field: 'lineno', dir: 'asc' }, limit: poolLimit })
+    const seen = new Set(poolRows.map(keyOf))
+    const add = more.rows.filter((r) => extra.keep(r) && !seen.has(keyOf(r)))
+    poolRows = poolRows.concat(add)
+    poolTotal += add.length
+  }
+  const rows = poolRows.filter((r) => !(r.mpn === original.mpn && r.manufacturer === original.manufacturer))
   const rowByKey = new Map(rows.map((r) => [keyOf(r), r]))
   const missing = originalMissing(f, origSpec)
   // An original whose every source is retracted is not a verified spec either (ABT #2035).
@@ -609,7 +665,7 @@ export async function runCrossRef({ family, original, manufacturers, sameType = 
         rows.map((r) => ({ ...f.spec(r), _key: keyOf(r) })),
         { original_verified: origVerified, max_results: Number(maxResults) })).candidates
     : []
-  return { fam: f, origSpec, ranked, rowByKey, poolTotal: pool.total,
+  return { fam: f, origSpec, ranked, rowByKey, poolTotal,
            poolScored: rows.length, origVerified, missing,
            originalRetracted: original.provenanceRetracted === true }
 }

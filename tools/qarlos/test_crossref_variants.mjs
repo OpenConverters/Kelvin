@@ -167,11 +167,75 @@ const ne555 = osc({ mpn: 'NE555', manufacturer: 'Texas Instruments', device_type
   technology: 'bipolar555', frequency: null, frequency_stability: null, output_type: '',
   enable_function: '', caseCode: 'PDIP', vsupply_min: 4.5, vsupply_max: 16, temp_min_c: 0, temp_max_c: 70 })
 assert.deepEqual(await pool(ne555), ['bipolar555'])
-// A programmable blank states no frequency either (it is set when ordered): SiT3901 still runs.
+// 10. Programmable oscillators (owner 2026-11-13, K2). SiT3901 as TAS 9cb6cf8 has it states
+//     neither a frequency nor a frequencyRange: refused like every no-frequency original (this
+//     replaced the old blanket exemption for programmable parts). frequency_min / frequency_max
+//     are the v22 shard row fields (TDAS electrical.frequencyRange); no TAS record states one
+//     yet, so the tests add it.
 const sit3901 = osc({ mpn: 'SiT3901', manufacturer: 'SiTime', device_type: 'oscillator',
   technology: 'programmable', frequency: null, frequency_stability: 0.000049999999999999996,
   output_type: 'cmos', enable_function: '', caseCode: '1508, 4 pad', vsupply_min: 1.8,
-  vsupply_max: 2.25, rms_phase_jitter: 8e-10, temp_min_c: -40, temp_max_c: 85 })
-assert.deepEqual(await pool(sit3901), ['programmable'])
+  vsupply_max: 2.25, rms_phase_jitter: 8e-10, temp_min_c: -40, temp_max_c: 85,
+  frequency_min: null, frequency_max: null })
+ranked = 0
+await assert.rejects(runCrossRef({ family: 'timing', original: sit3901, manufacturers: ['X'], engine: timingEngine }),
+  { message: 'SiT3901 has no frequency value in the catalogue — cannot cross-reference without the primary value.' })
+assert.equal(ranked, 0)
+// A range alone is not enough: both ends are needed.
+await assert.rejects(runCrossRef({ family: 'timing', original: { ...sit3901, frequency_min: 1e6 },
+  manufacturers: ['X'], engine: timingEngine }), /has no frequency value/)
+
+// An engine that records EVERY browse, so the second (blank) pool is visible.
+let queries = []
+const blankRows = [
+  { ...sit3901, mpn: 'BLANK-1-220', manufacturer: 'X', frequency_min: 1e6, frequency_max: 220e6 },
+  { ...sit3901, mpn: 'ORDERED-12', manufacturer: 'X', frequency: 12e6, frequency_min: 1e6, frequency_max: 220e6 },
+]
+let rankedPool = null
+const recEngine = {
+  async browse(family, q) { queries.push(q); return q.filters.frequency_min ? { total: blankRows.length, rows: blankRows } : { total: 1, rows: [{ ...msh, mpn: 'EXACT', manufacturer: 'X' }] } },
+  async crossReference(cat, orig, cands) { rankedPool = cands.map((c) => c.mpn); return { candidates: [] } },
+}
+// The range-only original: one pool, programmable only, the candidate's range must cover
+// 1-26 MHz (widened by the 1e-9 representation epsilon), and no frequency filter.
+const sitRange = { ...sit3901, frequency_min: 1e6, frequency_max: 26e6 }
+queries = []
+const rr = await runCrossRef({ family: 'timing', original: sitRange, manufacturers: ['X'], engine: recEngine })
+assert.equal(queries.length, 1)
+assert.deepEqual(queries[0].filters.technology, ['programmable'])
+assert.equal(queries[0].filters.frequency, undefined)
+assert.ok(queries[0].filters.frequency_min.max >= 1e6 && queries[0].filters.frequency_min.max < 1e6 * (1 + 1e-8))
+assert.ok(queries[0].filters.frequency_max.min <= 26e6 && queries[0].filters.frequency_max.min > 26e6 * (1 - 1e-8))
+assert.equal(rr.origSpec.frequency_range_min, 1e6)
+assert.equal(rr.origSpec.frequency_range_max, 26e6)
+// Its range is its datum: the original is verified on it, not marked missing a frequency.
+assert.deepEqual(rr.missing, [])
+// A programmable original ordered at 10 MHz: the exact-frequency pool AND a second pool of
+// programmable blanks whose range holds 10 MHz; the ordered part from the second pool is
+// dropped (the ranker rejects any stated frequency but 10 MHz), the blank is ranked.
+const sitAt10 = { ...sitRange, frequency: 10e6 }
+queries = []
+await runCrossRef({ family: 'timing', original: sitAt10, manufacturers: ['X'], engine: recEngine })
+assert.equal(queries.length, 2)
+assert.ok(queries[0].filters.frequency.min <= 10e6 && queries[0].filters.frequency.max >= 10e6)
+assert.equal(queries[0].filters.frequency_min, undefined)
+assert.equal(queries[1].filters.frequency, undefined)
+assert.deepEqual(queries[1].filters.technology, ['programmable'])
+assert.ok(queries[1].filters.frequency_min.max >= 10e6 && queries[1].filters.frequency_max.min <= 10e6)
+assert.deepEqual(rankedPool, ['EXACT', 'BLANK-1-220'])
+// Fixed-frequency oscillators are untouched: one pool, no range filters, the crossings as before.
+for (const o of [msh, asdm1, atx]) {
+  queries = []
+  await runCrossRef({ family: 'timing', original: o, manufacturers: ['X'], engine: recEngine })
+  assert.equal(queries.length, 1, o.mpn)
+  assert.equal(queries[0].filters.frequency_min, undefined, o.mpn)
+  assert.equal(queries[0].filters.frequency_max, undefined, o.mpn)
+}
+// Same technology only: a programmable original's pool is programmable alone, and no other
+// technology's pool admits programmable (timing_technology_cross has no crossing for it).
+assert.deepEqual(timingTechnologiesAdmitted('programmable'), ['programmable'])
+for (const t of TIMING_TECHNOLOGIES) {
+  if (t !== 'programmable') assert.ok(!timingTechnologiesAdmitted(t).includes('programmable'), t)
+}
 
 console.log('crossref variants: all checks passed')

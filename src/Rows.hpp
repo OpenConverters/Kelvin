@@ -482,6 +482,13 @@ struct TimingRow : RowBase {
     // it brings with it, and the two are different quantities. It was not extracted, so a 15 pF
     // and a 22 pF resonator compared as equals (Qarlos r11/r13). NaN when unstated.
     double built_in_capacitance = kNaN();
+    // Hz — electrical.frequencyRange {minimum, maximum} (v22, TDAS ab9f3c4): the span a
+    // factory-programmable blank (SiT3901 1-26 MHz) or a DCXO can be configured to. Both ends
+    // or neither: NaN when the record states no range, or one whose minimum exceeds its
+    // maximum. The cross-reference reads it between two programmable parts
+    // (programmable_frequency_fit). No TAS record carried it when it was added.
+    double frequency_min = kNaN();
+    double frequency_max = kNaN();
     bool is_production = false;
 };
 
