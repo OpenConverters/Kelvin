@@ -414,6 +414,8 @@ void row_io(Ar& ar, ResistorRow& r) {
     ar.boolean(r.current_sense);         // v19
     ar.boolean(r.pulse_withstanding);    // v19
     ar.dbl(r.max_voltage);               // v21
+    ar.dbl(r.number_of_elements);        // v22 (RAS 3ba21f6)
+    ar.str(r.internal_connection);       // v22 (RAS 3ba21f6)
 }
 
 template <class Ar>

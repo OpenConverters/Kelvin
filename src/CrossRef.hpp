@@ -1442,18 +1442,119 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // caps the grade at major_review and sinks the candidate below any genuine
     // array-for-array match.
     bool resistor_class_conflict = false;
+    bool resistor_connection_unverified = false;
     if (cat == "resistor") {
+        // Network structure (owner 2026-11-13, AA2; RAS 3ba21f6 electrical.numberOfElements /
+        // elements[] / part.internalConnection). A STATED element count declares a network
+        // and wins over the count a "0402x4" case string names; a record stating both, and
+        // disagreeing, is a data defect: it is reported and its count is not chosen.
+        struct NetCount {
+            std::optional<double> n;  // the count, when the record settles one
+            std::string defect;       // non-empty: the record contradicts itself
+            bool stated = false;      // electrical.numberOfElements / elements[] on record
+        };
+        auto count_of = [](const json& p) {
+            NetCount c;
+            const auto stated = num(p, "number_of_elements");
+            const auto from_case = case_resistor_element_count(str(p, "case_code"));
+            c.stated = stated.has_value();
+            if (stated && from_case && *stated != static_cast<double>(*from_case)) {
+                char b[160];
+                std::snprintf(b, sizeof b, "states %g elements but its case '%s' names %d",
+                              *stated, str(p, "case_code").c_str(), *from_case);
+                c.defect = b;
+            } else if (stated) {
+                c.n = stated;
+            } else if (from_case) {
+                c.n = static_cast<double>(*from_case);
+            }
+            return c;
+        };
+        const NetCount oc = count_of(original), sc = count_of(cand);
         const std::string conflict = resistor_network_conflict(
-            declares_resistor_network(str(original, "family"), str(original, "mpn"),
-                                      str(original, "case_code")),
-            declares_resistor_network(str(cand, "family"), str(cand, "mpn"),
-                                      str(cand, "case_code")));
+            oc.stated || declares_resistor_network(str(original, "family"), str(original, "mpn"),
+                                                   str(original, "case_code")),
+            sc.stated || declares_resistor_network(str(cand, "family"), str(cand, "mpn"),
+                                                   str(cand, "case_code")));
         if (!conflict.empty()) {
             params.push_back({{"name", "configuration"}, {"verdict", FAIL}});
             demote();
             penalty += opt.gate_weight * kVerdictFailPenalty;
             notes.push_back(conflict);
             resistor_class_conflict = true;
+        } else {
+            // Both sides are networks (or neither declares one). Element count is an
+            // identity: different -> rejected; one side unknown -> UNVERIFIED with the
+            // network cap (major_review), as an array<->discrete swap is capped.
+            auto n_str = [](double v) {
+                char b[32];
+                std::snprintf(b, sizeof b, "%g", v);
+                return std::string(b);
+            };
+            auto count_unverified = [&](const std::string& note) {
+                params.push_back({{"name", "number_of_elements"}, {"verdict", UNVERIFIED}});
+                notes.push_back(note);
+                demote();
+                penalty += opt.gate_weight * kVerdictFailPenalty;
+                missing_required_data = true;
+            };
+            if (!oc.defect.empty() || !sc.defect.empty()) {
+                std::string note = "data defect: ";
+                if (!oc.defect.empty()) note += "the original's record " + oc.defect;
+                if (!oc.defect.empty() && !sc.defect.empty()) note += "; ";
+                if (!sc.defect.empty()) note += "the substitute's record " + sc.defect;
+                count_unverified(note + " — the element count is not chosen between them; "
+                                        "confirm it on the datasheet");
+            } else if (oc.n && sc.n) {
+                if (*oc.n == *sc.n) {
+                    params.push_back({{"name", "number_of_elements"}, {"verdict", PASS}});
+                } else {
+                    params.push_back({{"name", "number_of_elements"}, {"verdict", FAIL}});
+                    notes.push_back("number of resistor elements differs: the original holds " +
+                                    n_str(*oc.n) + ", the substitute " + n_str(*sc.n) +
+                                    " — a different land pattern and circuit, not a substitute");
+                    return reject("a different number of resistor elements");
+                }
+            } else if (oc.n || sc.n) {
+                count_unverified(
+                    oc.n ? "the original's record states " + n_str(*oc.n) +
+                               " resistor elements and the substitute's states no count — "
+                               "confirm the substitute's element count and pinout from its "
+                               "datasheet"
+                         : "the substitute's record states " + n_str(*sc.n) +
+                               " resistor elements and the original's states no count — "
+                               "confirm the original's element count and pinout match");
+            }
+            // Internal connection: the MOSFET / diode internal_connection rule, field for
+            // field — both stated and different -> rejected; one-sided -> UNVERIFIED, capped
+            // below drop_in (minor_review); neither -> silent.
+            const std::string o = str(original, "internal_connection"),
+                              s = str(cand, "internal_connection");
+            if (!o.empty() && !s.empty()) {
+                if (o == s) {
+                    params.push_back({{"name", "internal_connection"}, {"verdict", PASS}});
+                } else {
+                    params.push_back({{"name", "internal_connection"}, {"verdict", FAIL}});
+                    notes.push_back("internal connection differs: the original is '" + o +
+                                    "', the substitute '" + s +
+                                    "' — a different network circuit and pinout, not a "
+                                    "substitute");
+                    return reject("a different resistor network internal connection");
+                }
+            } else if (!o.empty() || !s.empty()) {
+                params.push_back({{"name", "internal_connection"}, {"verdict", UNVERIFIED}});
+                notes.push_back(o.empty()
+                                    ? "the substitute's record states internal connection '" + s +
+                                          "' and the original's states none — confirm the "
+                                          "original's network circuit and pinout match"
+                                    : "the original's record states internal connection '" + o +
+                                          "' and the substitute's states none — confirm the "
+                                          "substitute's network circuit and pinout from its "
+                                          "datasheet");
+                demote();
+                penalty += opt.gate_weight * kVerdictWarnPenalty;
+                resistor_connection_unverified = true;
+            }
         }
     }
     // Anti-sulfuration is a CONSTRUCTION class, not a parameter. An ERJ-S and the
@@ -3564,6 +3665,54 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             topology_unverified = true;
         }
     }
+    // Diode count (owner 2026-11-13, AA1; SAS bcc7a93 electrical.numberOfElements /
+    // dies[]): how many diodes the package holds is an identity like the die configuration —
+    // an 8-line ESD array is not a 4-line one, whatever their per-line ratings. Graded only
+    // when at least one record STATES a count; a stated 'dual' without one is 2 and a stated
+    // 'single' is 1, because SAS defines them so (an absent configuration is not read as
+    // one). Same rule as above: both known and different -> rejected; one side known ->
+    // UNVERIFIED, capped as the die configuration is (no second penalty where that row, or
+    // the forward-current basis, already capped for the same silence).
+    if (cat == "diode" && (num(original, "number_of_elements") || num(cand, "number_of_elements"))) {
+        auto count_of = [](const json& p) -> std::optional<double> {
+            if (auto n = num(p, "number_of_elements")) return n;
+            const std::string dc = str(p, "die_configuration");
+            if (dc == "dual") return 2.0;
+            if (dc == "single") return 1.0;
+            return std::nullopt;
+        };
+        const auto o = count_of(original), s = count_of(cand);
+        auto n_str = [](double v) {
+            char b[32];
+            std::snprintf(b, sizeof b, "%g", v);
+            return std::string(b);
+        };
+        if (o && s) {
+            if (*o == *s) {
+                params.push_back({{"name", "number_of_elements"}, {"verdict", PASS}});
+            } else {
+                params.push_back({{"name", "number_of_elements"}, {"verdict", FAIL}});
+                notes.push_back("number of diodes differs: the original holds " + n_str(*o) +
+                                ", the substitute " + n_str(*s) +
+                                " — a different package and pinout, not a substitute");
+                return reject("a different number of diodes in the package");
+            }
+        } else {
+            params.push_back({{"name", "number_of_elements"}, {"verdict", UNVERIFIED}});
+            notes.push_back(o ? "the original's record states " + n_str(*o) +
+                                    " diodes in the package and the substitute's states no "
+                                    "count — confirm the substitute's diode count and pinout "
+                                    "from its datasheet"
+                              : "the substitute's record states " + n_str(*s) +
+                                    " diodes in the package and the original's states no "
+                                    "count — confirm the original's diode count and pinout match");
+            if (!current_basis_blind && !topology_unverified) {
+                demote();
+                penalty += opt.gate_weight * kVerdictWarnPenalty;
+            }
+            topology_unverified = true;
+        }
+    }
 
     // ── temperature grade tie-break when the original states none ───────────
     if (cat == "capacitor" && !num(original, "temp_max_C")) {
@@ -3665,54 +3814,6 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             // original. Capped like an unverified footprint (minor_review).
             params.push_back({{"name", "mounting"}, {"verdict", UNVERIFIED}});
             mount_unverified = true;
-    // Diode count (owner 2026-11-13, AA1; SAS bcc7a93 electrical.numberOfElements /
-    // dies[]): how many diodes the package holds is an identity like the die configuration —
-    // an 8-line ESD array is not a 4-line one, whatever their per-line ratings. Graded only
-    // when at least one record STATES a count; a stated 'dual' without one is 2 and a stated
-    // 'single' is 1, because SAS defines them so (an absent configuration is not read as
-    // one). Same rule as above: both known and different -> rejected; one side known ->
-    // UNVERIFIED, capped as the die configuration is (no second penalty where that row, or
-    // the forward-current basis, already capped for the same silence).
-    if (cat == "diode" && (num(original, "number_of_elements") || num(cand, "number_of_elements"))) {
-        auto count_of = [](const json& p) -> std::optional<double> {
-            if (auto n = num(p, "number_of_elements")) return n;
-            const std::string dc = str(p, "die_configuration");
-            if (dc == "dual") return 2.0;
-            if (dc == "single") return 1.0;
-            return std::nullopt;
-        };
-        const auto o = count_of(original), s = count_of(cand);
-        auto n_str = [](double v) {
-            char b[32];
-            std::snprintf(b, sizeof b, "%g", v);
-            return std::string(b);
-        };
-        if (o && s) {
-            if (*o == *s) {
-                params.push_back({{"name", "number_of_elements"}, {"verdict", PASS}});
-            } else {
-                params.push_back({{"name", "number_of_elements"}, {"verdict", FAIL}});
-                notes.push_back("number of diodes differs: the original holds " + n_str(*o) +
-                                ", the substitute " + n_str(*s) +
-                                " — a different package and pinout, not a substitute");
-                return reject("a different number of diodes in the package");
-            }
-        } else {
-            params.push_back({{"name", "number_of_elements"}, {"verdict", UNVERIFIED}});
-            notes.push_back(o ? "the original's record states " + n_str(*o) +
-                                    " diodes in the package and the substitute's states no "
-                                    "count — confirm the substitute's diode count and pinout "
-                                    "from its datasheet"
-                              : "the substitute's record states " + n_str(*s) +
-                                    " diodes in the package and the original's states no "
-                                    "count — confirm the original's diode count and pinout match");
-            if (!current_basis_blind && !topology_unverified) {
-                demote();
-                penalty += opt.gate_weight * kVerdictWarnPenalty;
-            }
-            topology_unverified = true;
-        }
-    }
             // A gap toward the several-gaps cap only when the original states the board
             // mount (owner 2026-11-13, W1).
             if (!o_cls.empty()) connector_identity_gaps.push_back("board mount");
@@ -5288,6 +5389,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                     ripple_basis_unverified || ripple_temp_basis_unverified ||
                                     lead_form_unverified ||
                                     qualification_unverified || topology_unverified ||
+                                    resistor_connection_unverified ||
                                     mount_unverified || timebase_pin_unverified ||
                                     timebase_prog_order;
     out["grade"] = grade_for(status, tier, any_warn, any_fail, primary_unverified,

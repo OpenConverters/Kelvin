@@ -1071,7 +1071,29 @@ std::optional<ResistorRow> extract_resistor(const json& env) {
     const json* di = obj_get(*mi, "datasheetInfo");
     if (!di) return std::nullopt;
     const json* elec = obj_get(*di, "electrical");
-    if (!elec) return std::nullopt;
+    // A network whose elements are described one by one carries `elements` (RAS 3ba21f6: one
+    // electrical block per element) INSTEAD of a package-level block. Read as extract_diode
+    // reads dies (owner 2026-11-13, AA2): when every element states the SAME electrical block
+    // (and the same thermal block, if any) its values are the part's, per element; elements
+    // that differ (a divider, a terminator) give the network no single resistance and the
+    // record is left unread rather than given one element's value.
+    std::optional<double> element_count;
+    if (!elec) {
+        const json* els = obj_get(*di, "elements");
+        if (!els || !els->is_array() || els->size() < 2) return std::nullopt;
+        const json& first = (*els)[0];
+        const json* e0 = obj_get(first, "electrical");
+        if (!e0) return std::nullopt;
+        const json* t0 = obj_get(first, "thermal");
+        for (const auto& el : *els) {
+            const json* e = obj_get(el, "electrical");
+            const json* t = obj_get(el, "thermal");
+            if (!e || *e != *e0) return std::nullopt;
+            if ((t == nullptr) != (t0 == nullptr) || (t && *t != *t0)) return std::nullopt;
+        }
+        elec = e0;
+        element_count = static_cast<double>(els->size());
+    }
     const json empty = json::object();
     const json* part = obj_get(*di, "part");
     if (!part) part = &empty;
@@ -1171,6 +1193,13 @@ std::optional<ResistorRow> extract_resistor(const json& env) {
     r.pulse_withstanding = fn.pulse_withstanding;
     // v21: the maximum continuous working voltage, as stated. Absent / non-positive stays NaN.
     if (auto v = get_num(*elec, "maxVoltage"); pos(v)) r.max_voltage = *v;
+    // v22: the network structure the record states. Only an integer >= 2 is a count (RAS
+    // minimum); anything else is unreadable and stays NaN, never rounded into one.
+    if (auto n = get_num(*elec, "numberOfElements"); n && *n >= 2 && *n == std::floor(*n))
+        r.number_of_elements = *n;
+    else if (element_count)
+        r.number_of_elements = *element_count;
+    r.internal_connection = get_str(*part, "internalConnection").value_or("");
     return r;
 }
 

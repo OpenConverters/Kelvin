@@ -383,6 +383,15 @@ struct ResistorRow : RowBase {
     // chips with no voltage verdict at all (Qarlos r10 seed 23612437; r8 seed 22565147: a
     // 500 V CMF60). v21.
     double max_voltage = kNaN();
+    // v22 (RAS 3ba21f6 / 66a3d72): the network structure the record states. Absent = "" /
+    // NaN, never inferred from the MPN, the family string or the case.
+    //   number_of_elements: electrical.numberOfElements (a network of identical elements;
+    //     the electrical block is then per element), else the length of
+    //     datasheetInfo.elements[] (a network read from its elements, see extract_resistor).
+    //   internal_connection: part.internalConnection — isolated / bussed / centerCommon /
+    //     diagonalCommon, verbatim.
+    double number_of_elements = kNaN();
+    std::string internal_connection;
 };
 
 struct IgbtRow : RowBase {
