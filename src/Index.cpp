@@ -453,6 +453,8 @@ void row_io(Ar& ar, MagneticRow& r) {
     ar.dblvec(r.sat_table_current);       // v20
     ar.dblvec(r.sat_table_percent_drop);  // v20
     ar.dblvec(r.sat_table_temperature);   // v20
+    ar.dbl(r.inductance_tol_minus_pct);    // v22
+    ar.dbl(r.inductance_tol_plus_pct);     // v22
     ar.boolean(r.is_production);
 }
 

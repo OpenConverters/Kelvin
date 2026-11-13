@@ -219,6 +219,8 @@ inline const FieldTable<MagneticRow>& fields<MagneticRow>() {
          {"dcr", &MagneticRow::dcr},
          {"srf", &MagneticRow::srf},
          {"turns_ratio", &MagneticRow::turns_ratio},
+         {"inductance_tol_minus_pct", &MagneticRow::inductance_tol_minus_pct},
+         {"inductance_tol_plus_pct", &MagneticRow::inductance_tol_plus_pct},
          {"impedance_100mhz", &MagneticRow::impedance_100mhz},
          {"impedance_peak", &MagneticRow::impedance_peak},
          {"impedance_peak_freq", &MagneticRow::impedance_peak_freq},

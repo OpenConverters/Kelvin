@@ -409,6 +409,13 @@ struct MagneticRow : RowBase {
     double dcr = kNaN();                  // Ω  — dcResistance (worst-case / maximum), else dcResistances[0]
     double srf = kNaN();                  // Hz — selfResonantFrequency
     double turns_ratio = kNaN();          // —  electrical[0].turnsRatios[0] (transformers): primary:secondary
+    // v22: the inductance tolerance band the record STATES, as percent below / above the nominal:
+    // electrical[0].inductance.minimum and .maximum (both required, resolved with the PEAS
+    // resolver at MINIMUM / MAXIMUM) against the resolved nominal. NaN when the record states no
+    // two-sided band. The cross-reference narrows the inductance PASS window to it (owner
+    // 2026-11-13, R1).
+    double inductance_tol_minus_pct = kNaN();
+    double inductance_tol_plus_pct = kNaN();
     // Winding structure: bit n set when some electrical[] wiring configuration has n windings besides
     // the primary (a single-winding inductor/chip bead sets bit 0; a transformer or coupled inductor sets
     // bit turnsRatios.size()). 0 means no configuration states its structure (e.g. a transformer entry

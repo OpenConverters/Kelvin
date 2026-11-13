@@ -971,7 +971,27 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // The original's tolerance bounds the pass window where the tolerance IS the
     // value's guarantee (resistors): a 0.25 % part cannot have a 0.93 % shift
     // called a drop-in on the strength of a catalogue-wide +/-1 % band.
-    auto pv = score_primary_value(cat, o_val, s_val, has_pv, o_tol);
+    // Magnetics (owner 2026-11-13, R1): the original's STATED inductance band — the record's
+    // inductance minimum / maximum, as percent below / above the nominal, possibly asymmetric —
+    // bounds the PASS window the way a resistor's tolerance does. No band stated: the
+    // category's +/-15 % window stands.
+    const auto o_band_minus = num(original, "tolerance_minus_pct"),
+               o_band_plus = num(original, "tolerance_plus_pct");
+    const bool magnetic_band =
+        cat == "magnetic" && tolerance_band_stated(o_band_minus, o_band_plus);
+    auto pv = magnetic_band
+                  ? score_primary_value(cat, o_val, s_val, has_pv, o_band_minus, o_band_plus)
+                  : score_primary_value(cat, o_val, s_val, has_pv, o_tol);
+    // An inductance outside the original's stated band (but inside the accept window) is a
+    // different value: WARN (score_range already said so), ranked after every in-band and
+    // exact-value candidate — the resistor near-value sort tier ("value_differs"). Grade and
+    // direction are left to the WARN itself, as for an off-nominal zener.
+    bool inductance_off_band = false;
+    if (magnetic_band && has_pv && pv.verdict != FAIL && o_val && s_val && *o_val > 0 &&
+        *s_val > 0 && outside_band(*s_val / *o_val, *o_band_minus, *o_band_plus)) {
+        inductance_off_band = true;
+        pv.verdict = WARN;
+    }
     // Resistors: a different NOMINAL resistance is a different part, whatever the
     // tolerance bands say. The ±5 % pool window keeps near values on offer as
     // alternatives, but every one is a WARN on value, capped at major_review, never
@@ -1026,6 +1046,20 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                     note += " — not a drop-in anywhere the value sets a ratio or a reference";
                 }
                 notes.push_back(note);
+            }
+            if (inductance_off_band) {
+                const double m = *o_band_minus, pl = *o_band_plus;
+                const std::string band =
+                    std::fabs(m - pl) < 0.005 ? "+/-" + plain_pct(m)
+                                              : "+" + plain_pct(pl) + " / -" + plain_pct(m);
+                char buf[160];
+                std::snprintf(buf, sizeof buf, "inductance %.4g H against the original's %.4g H",
+                              *s_val, *o_val);
+                notes.push_back(std::string(buf) + " (" +
+                                signed_pct((*s_val / *o_val - 1.0) * 100.0) +
+                                "): outside the original's stated " + band +
+                                " tolerance — a different inductance value, ranked after the "
+                                "in-tolerance candidates; check the circuit tolerates it");
             }
             if (value_differs)
                 notes.push_back("nominal resistance differs: " + ohms(*o_val) + " -> " +
@@ -4570,6 +4604,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // A zener off the original's nominal (see zener_off_nominal): the same sort tier, and
     // nothing else — grade and direction unchanged (owner 2026-11-13).
     if (zener_off_nominal) out["value_differs"] = true;
+    // An inductance outside the original's stated tolerance (see inductance_off_band): the
+    // same sort tier; grade and direction stay the WARN's (owner 2026-11-13, R1).
+    if (inductance_off_band) out["value_differs"] = true;
     return out;
 }
 

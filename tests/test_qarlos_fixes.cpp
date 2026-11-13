@@ -6695,3 +6695,65 @@ TEST_CASE("owner 2026-11-13 N2c: MOSFET die configuration is graded like the dio
         CHECK(verdict_of(c, "die_configuration") == "fail");
     }
 }
+
+// ── Owner decisions 2026-11-13 (c): R1 inductance tolerance ──
+// Every record below is the REAL TAS magnetics.ndjson line (data 3d2be2e, distributorsInfo
+// dropped). The spec block is the one web/src/crossref.js builds from the browse row: the v20
+// magnetic spec plus the v22 tolerance band.
+namespace {
+const char* kRecLQW15AN7N2G00B = R"KREC({"magnetic":{"manufacturerInfo":{"name":"Murata","reference":"LQW15AN7N2G00B","status":"production","family":"LQW15AN_00","datasheetUrl":"https://www.murata.com/en-us/products/productdetail?partno=LQW15AN7N2G00B","datasheetInfo":{"part":{"partNumber":"LQW15AN7N2G00B","description":"Wire Wound RF Inductor","shielded":false,"family":"LQW15AN_00","caseCode":"1005/0402"},"electrical":[{"subtype":"inductor","inductance":{"nominal":7.2e-09,"minimum":7.056e-09,"maximum":7.344e-09},"dcResistance":{"maximum":0.13},"ratedCurrents":[0.57],"selfResonantFrequency":6000000000.0}],"mechanical":{"length":{"nominal":0.001,"minimum":0.0009,"maximum":0.0011},"width":{"nominal":0.0006,"minimum":0.0005,"maximum":0.0007},"height":{"nominal":0.0005,"minimum":0.0004,"maximum":0.0006},"weight":{"nominal":8e-07}},"thermal":{"operatingTemperature":{"minimum":-55.0,"maximum":125.0}},"provenance":[{"source":"manufacturerParametric","sourceName":"Murata product detail page (rendered)","sourceUrl":"https://www.murata.com/en-us/products/productdetail?partno=LQW15AN7N2G00B","retrievedDate":"2026-11-13","fields":["part.partNumber","part.description","electrical.inductance","electrical.dcResistance","electrical.ratedCurrents","electrical.selfResonantFrequency","part.shielded","part.family","part.caseCode","mechanical","thermal.operatingTemperature","manufacturerInfo.status"],"verification":"valuesReadFromSource","verificationDate":"2026-11-13","verificationMethod":"Rendered (browser) productdetail page for this exact part number read; every value is the one the page prints for the part; the page lists the part's packaging code in its packaging table."}]}}}})KREC";
+const char* kRecMHQ1005P6N2 = R"KREC({"magnetic":{"manufacturerInfo":{"name":"TDK","reference":"MHQ1005P6N2BT000","status":"production","family":"MHQ-P","datasheetUrl":"https://www.tdk.com/en/search/compass/part_no/MHQ1005P6N2BT000","datasheetInfo":{"part":{"description":"MHQ-P MHQ1005P6N2BT000 6.2nH","caseCode":"0402","windingStyle":"multilayer"},"electrical":[{"subtype":"inductor","inductance":{"nominal":6.2e-09},"dcResistance":{"maximum":0.13,"nominal":0.08947},"selfResonantFrequency":5858000000.0,"ratedCurrents":[0.7]}],"mechanical":{"length":{"nominal":0.001},"width":{"nominal":0.0005},"height":{"nominal":0.0005},"weight":{"nominal":1e-06}},"thermal":{"operatingTemperature":{"minimum":-55.0,"maximum":125.0}},"provenance":[{"source":"manufacturerDatabase","sourceName":"TDK product database","retrievedDate":"2026-07-31"},{"source":"manufacturerDatabase","sourceName":"TDK Meister database","retrievedDate":"2026-09-24","verification":"valuesReadFromSource","verificationDate":"2026-09-24","fields":["part.windingStyle"],"verificationMethod":"TDK Meister classifies this part's product class as multilayer construction."},{"source":"manufacturerDatabase","sourceName":"TDK product center (part search listing)","sourceUrl":"https://product.tdk.com/en/search/inductor/inductor/smd/info?part_no=MHQ1005P6N2BT000","retrievedDate":"2026-10-17","fields":["electrical.inductance","electrical.dcResistance","electrical.ratedCurrents","thermal.operatingTemperature","mechanical.length","mechanical.width"],"verification":"valuesReadFromSource","verificationDate":"2026-10-17"}]}}}})KREC";
+const char* kRecLQW15AN7N1G80D = R"KREC({"magnetic":{"manufacturerInfo":{"name":"Murata","reference":"LQW15AN7N1G80D","status":"production","datasheetUrl":"https://search.murata.co.jp/Ceramy/image/img/P02/JELF243A-0100.pdf","datasheetInfo":{"part":{"caseCode":"0402 (1005 Metric)","shielded":true},"electrical":[{"subtype":"inductor","inductance":{"nominal":7.1e-09,"minimum":6.958e-09,"maximum":7.242e-09},"dcResistance":{"maximum":0.069},"ratedCurrents":[1.42]}],"mechanical":{"mounting":"smt","length":{"nominal":0.001},"width":{"nominal":0.0006}},"thermal":{"operatingTemperature":{"minimum":-55.0,"maximum":125.0}},"provenance":[{"source":"manufacturerParametric","sourceName":"Murata SimSurfing","sourceUrl":"https://search.murata.co.jp/Ceramy/image/img/P02/JELF243A-0100.pdf","retrievedDate":"2026-06-20"},{"source":"manufacturerParametric","sourceName":"Murata parametric search","retrievedDate":"2026-07-21","fields":["mechanical.length","mechanical.width"]},{"source":"manufacturerParametric","sourceName":"Murata product catalogue (PIM API, values also printed on the productdetail page)","sourceUrl":"https://www.murata.com/en-us/products/productdetail?partno=LQW15AN7N1G80D","retrievedDate":"2026-10-17","fields":["mechanical.length","thermal.operatingTemperature","electrical.inductance","electrical.dcResistance","electrical.ratedCurrents","part.partNumber","mechanical.width"],"verification":"valuesReadFromSource","verificationDate":"2026-10-17"},{"source":"manufacturerParametric","sourceName":"Murata productdetail page","sourceUrl":"https://www.murata.com/en-us/products/productdetail?partno=LQW15AN7N1G80D","retrievedDate":"2026-11-13","fields":["electrical.0.inductance.maximum","electrical.0.inductance.minimum"],"verification":"valuesReadFromSource","verificationDate":"2026-11-13","verificationMethod":"Product page prints Inductance 7.1nH ±2%; minimum and maximum set from that nominal and tolerance; stored values used a different tolerance than the one printed"}]}},"distributorsInfo":[{"name":"Digi-Key","reference":"490-7671-2-ND","link":"https://www.digikey.com/en/products/detail/murata-electronics/LQW15AN7N1G80D/4292384","cost":{"value":0.0,"currency":"USD"},"quantity":20000,"updatedAt":"2026-04-12"}]}})KREC";
+json mag_spec_r(const kelvin::MagneticRow& r) {
+    json s = mag_spec_xref(r);
+    json row;
+    kelvin::browse::extra_row_json(r, row);
+    auto raw = [](double v) { return std::isnan(v) ? json(nullptr) : json(v); };
+    s["tolerance_minus_pct"] = raw(r.inductance_tol_minus_pct);
+    s["tolerance_plus_pct"] = raw(r.inductance_tol_plus_pct);
+    return s;
+}
+kelvin::MagneticRow real_row(const char* text) {
+    auto r = kelvin::extract_magnetic(real_mag(text));
+    REQUIRE(r.has_value());
+    return *r;
+}
+}  // namespace
+
+// R1: LQW15AN7N2G00B states 7.2 nH with minimum 7.056 / maximum 7.344 nH (+/-2 %). The 6.2 nH
+// MHQ1005P6N2BT000 (-13.9 %) sat inside the flat +/-15 % window and PASSED on value. It now
+// WARNs with a note and ranks after the in-band LQW15AN7N1G80D (7.1 nH, -1.4 %), which stays
+// PASS. An original that states no band keeps the +/-15 % window.
+TEST_CASE("owner 2026-11-13 R1: an inductance outside the original's stated tolerance warns "
+          "and ranks after the in-band candidates",
+          "[qarlos][views][crossref][magnetic][tolerance]") {
+    const auto lqw = real_row(kRecLQW15AN7N2G00B);
+    const auto mhq = real_row(kRecMHQ1005P6N2);
+    const auto lqw71 = real_row(kRecLQW15AN7N1G80D);
+    CHECK(lqw.inductance_tol_minus_pct == Approx(2.0));
+    CHECK(lqw.inductance_tol_plus_pct == Approx(2.0));
+    CHECK(std::isnan(mhq.inductance_tol_minus_pct));  // nominal only: no band on record
+    CHECK(std::isnan(mhq.inductance_tol_plus_pct));
+
+    auto r = kelvin::crossref::cross_reference(
+        "magnetic", mag_spec_r(lqw), json::array({mag_spec_r(mhq), mag_spec_r(lqw71)}));
+    const json* m = cand_by_mpn(r, "MHQ1005P6N2BT000");
+    const json* in = cand_by_mpn(r, "LQW15AN7N1G80D");
+    REQUIRE(m);
+    REQUIRE(in);
+    CHECK(verdict_of(*m, "value") == "warn");
+    CHECK(m->value("value_differs", false));
+    CHECK(has_note(*m, "outside the original's stated +/-2 % tolerance"));
+    CHECK(verdict_of(*in, "value") == "pass");
+    CHECK_FALSE(in->value("value_differs", false));
+    REQUIRE(r["candidates"].size() == 2);
+    CHECK(r["candidates"][0].value("mpn", "") == "LQW15AN7N1G80D");
+
+    // No band stated on the original: the +/-15 % window stands (7.1 vs 6.2 nH = +14.5 %).
+    auto r2 = kelvin::crossref::cross_reference("magnetic", mag_spec_r(mhq),
+                                                json::array({mag_spec_r(lqw71)}));
+    const json* c2 = cand_by_mpn(r2, "LQW15AN7N1G80D");
+    REQUIRE(c2);
+    CHECK(verdict_of(*c2, "value") == "pass");
+    CHECK_FALSE(c2->value("value_differs", false));
+}
