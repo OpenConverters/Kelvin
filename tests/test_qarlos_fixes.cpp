@@ -33,6 +33,11 @@ bool has_note(const json& c, const std::string& needle) {
         if (n.get<std::string>().find(needle) != std::string::npos) return true;
     return false;
 }
+// Y2 (owner 2026-11-13): the note of the cap a primary rating missing on the ORIGINAL only
+// puts on every candidate ("the original's record states no <axis>; the substitute's does ...
+// capped below drop_in"). Its cap is the only one these notes name.
+const char* kY2CapNote = "; the substitute's does, but nothing holds it to the original's "
+                         "requirement there — capped below drop_in";
 }  // namespace
 
 // ABT #2045: a nominal-only (or minimum-only) gate threshold is not a maximum.
@@ -5146,7 +5151,15 @@ TEST_CASE("footprint stated by neither record: UNVERIFIED and penalised, not cap
     CHECK(c["footprint"] == "unknown");
     CHECK(verdict_of(c, "footprint") == "unverified");
     CHECK(c["penalty"].get<double>() >= kelvin::crossref::kUnknownDimPenalty - 1e-9);
-    CHECK(c["grade"] == "drop_in");
+    // owner 2026-11-13 (Y2): the original states no saturation current, so every candidate is
+    // capped at minor_review by that rule. The cap comes from it and from nothing else: its note
+    // is the only note naming a cap, and no footprint note is emitted (neither record states a
+    // land or a package, so the footprint gap stays uncapped as before).
+    CHECK(c["grade"] == "minor_review");
+    CHECK(has_note(c, std::string("the original's record states no saturation current") +
+                          kY2CapNote));
+    CHECK(count_notes(c, "capped") == 1);
+    CHECK(count_notes(c, "footprint") == 0);
 }
 
 // Boundary: ONE record states the land or the package, so the gap is one-sided and keeps its
@@ -5162,7 +5175,15 @@ TEST_CASE("footprint stated by one record only keeps its cap",
     CHECK(c["footprint"] == "unknown");
     CHECK(verdict_of(c, "footprint") == "unverified");
     // Owner decision 2026-11-13 (N1b): the original states no land, so no candidate is capped.
-    CHECK(c["grade"] == "drop_in");
+    // owner 2026-11-13 (Y2): the original states no saturation current, so the candidate is
+    // capped at minor_review by that rule — not by its footprint: the Y2 note is the only note
+    // naming a cap, and the footprint note is the uncapped N1b one ("footprint fit is
+    // UNVERIFIED, confirm the pads"), which names no cap.
+    CHECK(c["grade"] == "minor_review");
+    CHECK(has_note(c, std::string("the original's record states no saturation current") +
+                          kY2CapNote));
+    CHECK(count_notes(c, "capped") == 1);
+    CHECK(has_note(c, "the original's record states no land dimensions"));
     // The pair above with a package stated on the original only (the field set here, not
     // taken from the record): one-sided again, capped.
     json oc = o;
@@ -6984,7 +7005,15 @@ TEST_CASE("dec 1113b N1b: no footprint cap for any candidate when the original s
         "magnetic", json::parse(kBWLS0006040426NJ00), json::array({bare}))["candidates"][0];
     INFO("dimensionless twin " << b["grade"]);
     CHECK(xfl["grade"] == b["grade"]);
-    CHECK(xfl["grade"] != "minor_review");
+    // owner 2026-11-13 (Y2): the original states neither a saturation nor a rated current, so
+    // every candidate is capped at minor_review by that rule. The footprint adds no cap of its
+    // own: the twin without dimensions grades the same (above), and the Y2 note is the only
+    // note naming a cap.
+    CHECK(xfl["grade"] == "minor_review");
+    CHECK(has_note(xfl, std::string("the original's record states no saturation current, "
+                                    "rated current") + kY2CapNote));
+    CHECK(count_notes(xfl, "capped") == 1);
+    CHECK(count_notes(b, "capped") == 1);
     // Every candidate still pays the unknown-footprint penalty.
     CHECK(xfl.value("penalty", 0.0) >= kelvin::crossref::kUnknownDimPenalty);
     CHECK(srn.value("penalty", 0.0) >= kelvin::crossref::kUnknownDimPenalty);
