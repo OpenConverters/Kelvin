@@ -151,6 +151,27 @@ inline void narrow_to_tolerance(PrimaryValueSpec& spec, std::optional<double> to
     spec.tight_hi = std::min(spec.tight_hi, 1.0 + f);
 }
 
+// A two-sided band the record STATES as bounds (magnetics: inductance minimum / maximum),
+// percent below / above the nominal — possibly asymmetric. Same rule as narrow_to_tolerance:
+// it only ever narrows. A band with a negative side, or with no width at all, is not a band.
+inline bool tolerance_band_stated(std::optional<double> minus_pct, std::optional<double> plus_pct) {
+    return minus_pct && plus_pct && *minus_pct >= 0 && *minus_pct < 100 && *plus_pct >= 0 &&
+           (*minus_pct > 0 || *plus_pct > 0);
+}
+// Whether `ratio` (substitute / original) lies outside a stated band, with score_range's
+// edge slack: a part exactly on 7.056 / 7.2 nH (= -2 %) is inside a +/-2 % band.
+inline bool outside_band(double ratio, double minus_pct, double plus_pct) {
+    const double x = std::log(ratio);
+    return x < std::log(1.0 - minus_pct / 100.0) - kEdgeEps ||
+           x > std::log(1.0 + plus_pct / 100.0) + kEdgeEps;
+}
+inline void narrow_to_band(PrimaryValueSpec& spec, std::optional<double> minus_pct,
+                           std::optional<double> plus_pct) {
+    if (!spec.tolerance_bounds_pass || !tolerance_band_stated(minus_pct, plus_pct)) return;
+    spec.tight_lo = std::max(spec.tight_lo, 1.0 - *minus_pct / 100.0);
+    spec.tight_hi = std::min(spec.tight_hi, 1.0 + *plus_pct / 100.0);
+}
+
 // Returns the spec + true, or {} + false when the category has no primary-value
 // gate (mosfet/diode/connector/analog/timeBase match on other axes).
 inline bool primary_value_spec(const std::string& category, PrimaryValueSpec& out) {
@@ -170,7 +191,11 @@ inline bool primary_value_spec(const std::string& category, PrimaryValueSpec& ou
     if (category == "magnetic") {
         // +/-15% tight: inductor tolerance is typically +/-20%, so a 3% shift
         // is well inside the band the board was designed around.
-        out = {Mode::Range, 0.85, 1.15, 0.80, 1.25, 0.9, 0.8};
+        // Tolerance-bounded (owner 2026-11-13, R1): when the original STATES its
+        // inductance band (minimum / maximum), PASS only inside it — a 7.2 nH +/-2 %
+        // RF part guarantees +/-2 %, and a 6.2 nH part is not that value. Outside the
+        // band but inside the accept window is a WARN. No stated band: +/-15 % stands.
+        out = {Mode::Range, 0.85, 1.15, 0.80, 1.25, 0.9, 0.8, true};
         return true;
     }
     if (category == "varistor") {
@@ -198,12 +223,18 @@ inline bool primary_value_spec(const std::string& category, PrimaryValueSpec& ou
 // (nothing is assumed about a part that states no tolerance).
 inline ScoreResult score_primary_value(
     const std::string& category, std::optional<double> original, std::optional<double> substitute,
-    bool& has_spec, std::optional<double> original_tolerance_pct = std::nullopt) {
+    bool& has_spec, std::optional<double> original_tolerance_pct = std::nullopt,
+    std::optional<double> original_tolerance_plus_pct = std::nullopt) {
     PrimaryValueSpec spec{};
     has_spec = primary_value_spec(category, spec);
     if (!has_spec) return {0.0, UNVERIFIED, std::nullopt};
     if (spec.mode == Mode::Range) {
-        narrow_to_tolerance(spec, original_tolerance_pct);
+        // A plus side given: original_tolerance_pct is the MINUS side of a stated
+        // (possibly asymmetric) band. Otherwise it is the symmetric +/- tolerance.
+        if (original_tolerance_plus_pct)
+            narrow_to_band(spec, original_tolerance_pct, original_tolerance_plus_pct);
+        else
+            narrow_to_tolerance(spec, original_tolerance_pct);
         return score_range(original, substitute, spec.tight_lo, spec.tight_hi, spec.accept_lo,
                            spec.accept_hi);
     }

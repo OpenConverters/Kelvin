@@ -48,9 +48,19 @@ export const XREF = [
       // v20 (Qarlos 2026-11-09): the operating range, which the substitute must cover at both
       // ends. Raw, NOT through nz(): a cold limit is negative and 0 degC is a real rating.
       // Absent -> null -> UNVERIFIED in the ranker.
-      temp_min_C: r.temp_min_c ?? null, temp_max_C: r.temp_max_c ?? null }),
+      temp_min_C: r.temp_min_c ?? null, temp_max_C: r.temp_max_c ?? null,
+      // v22 (owner 2026-11-13, R1): the inductance tolerance band the record states
+      // (inductance minimum / maximum against the nominal), percent below / above. It narrows
+      // the value PASS window; null = no band stated -> the +/-15 % window stands. Raw: a
+      // 0 % side is a stated value, not absence.
+      tolerance_minus_pct: r.inductance_tol_minus_pct ?? null,
+      tolerance_plus_pct: r.inductance_tol_plus_pct ?? null,
+      // v22 (R2): the whole turnsRatios array (primary:secondary per secondary winding),
+      // compared element-wise. null = not stated.
+      turns_ratios: Array.isArray(r.turns_ratios) && r.turns_ratios.length ? r.turns_ratios : null }),
     params: [
       { key: 'value', label: 'L', row: 'inductance', unit: 'H' },
+      { key: 'turns_ratio', label: 'N', row: 'turns_ratio', unit: '' },
       { key: 'saturation_current', label: 'Isat', row: 'saturation_current', unit: 'A' },
       { key: 'rated_current', label: 'I rated', row: 'rated_current', unit: 'A' },
       { key: 'dcr', label: 'DCR', row: 'dcr', unit: 'Ω' },

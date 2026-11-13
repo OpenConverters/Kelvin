@@ -219,6 +219,8 @@ inline const FieldTable<MagneticRow>& fields<MagneticRow>() {
          {"dcr", &MagneticRow::dcr},
          {"srf", &MagneticRow::srf},
          {"turns_ratio", &MagneticRow::turns_ratio},
+         {"inductance_tol_minus_pct", &MagneticRow::inductance_tol_minus_pct},
+         {"inductance_tol_plus_pct", &MagneticRow::inductance_tol_plus_pct},
          {"impedance_100mhz", &MagneticRow::impedance_100mhz},
          {"impedance_peak", &MagneticRow::impedance_peak},
          {"impedance_peak_freq", &MagneticRow::impedance_peak_freq},
@@ -346,6 +348,8 @@ inline void extra_row_json(const ResistorRow& r, json& o) {
 // [{current, percent_drop, temperature}], a criterion or temperature the record does not state
 // is null. null when the record states no Isat at all — never an empty table.
 inline void extra_row_json(const MagneticRow& r, json& o) {
+    // The whole turns-ratio array (v22), null when the record states none.
+    o["turns_ratios"] = r.turns_ratios.empty() ? json(nullptr) : json(r.turns_ratios);
     if (r.sat_table_current.empty()) {
         o["saturation_points"] = nullptr;
         return;

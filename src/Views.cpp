@@ -1334,6 +1334,28 @@ std::optional<MagneticRow> extract_magnetic(const json& env) {
         const json& elec = elec_arr->front();
         auto L = resolve_field(elec, "inductance");
         if (L && *L > 0) r.inductance = *L;
+        // The stated inductance tolerance (R1, owner 2026-11-13): MAS carries it as the
+        // inductance's minimum and maximum, not as a percentage (survey of magnetics.ndjson
+        // 3d2be2e: 62,302 records state nominal+minimum+maximum, no record a tolerance key).
+        // A band is two-sided: both bounds must be stated — the resolver falls back to the
+        // nominal for a missing end, which would read as a 0 % side. A band that does not
+        // bracket the nominal is not a tolerance and is not carried.
+        if (present(r.inductance))
+            if (const json* lj = obj_get(elec, "inductance");
+                lj && lj->is_object() && lj->contains("minimum") && lj->contains("maximum")) {
+                try {
+                    const double lo = PEAS::resolve_dimensional_values(
+                                     *lj, PEAS::DimensionalValues::MINIMUM),
+                                 hi = PEAS::resolve_dimensional_values(
+                                     *lj, PEAS::DimensionalValues::MAXIMUM);
+                    if (lo > 0 && lo <= r.inductance && hi >= r.inductance && hi > lo) {
+                        r.inductance_tol_minus_pct = (1.0 - lo / r.inductance) * 100.0;
+                        r.inductance_tol_plus_pct = (hi / r.inductance - 1.0) * 100.0;
+                    }
+                } catch (const std::exception&) {
+                    // a non-numeric bound: no band on record (unreadable, never guessed)
+                }
+            }
         r.saturation_current = magnetic_saturation_current(elec, r.saturation_percent_drop);
         magnetic_saturation_table(elec, r);
         magnetic_saturation_from_bias_curve(elec, r);
@@ -1447,6 +1469,21 @@ std::optional<MagneticRow> extract_magnetic(const json& env) {
                 if (tr > 0) r.turns_ratio = tr;
             } catch (const std::exception&) {
             }
+            // The whole array (v22), all-or-nothing: one unreadable or non-positive entry
+            // leaves the structure unknown rather than a shorter, wrong one.
+            std::vector<double> all;
+            bool ok = true;
+            for (const auto& t : *trs) {
+                try {
+                    const double v = PEAS::resolve_dimensional_values(t);
+                    if (!(v > 0)) { ok = false; break; }
+                    all.push_back(v);
+                } catch (const std::exception&) {
+                    ok = false;
+                    break;
+                }
+            }
+            if (ok) r.turns_ratios = std::move(all);
         }
         r.device_type = get_str(elec, "subtype").value_or("");
 

@@ -82,6 +82,11 @@ inline std::string plain_pct(double v) {
 // The same, sign always shown — a shift has a direction and it matters.
 inline std::string signed_pct(double v) { return (v >= 0 ? "+" : "") + plain_pct(v); }
 
+//: Transformer turns ratio (owner 2026-11-13, R2): equal within print rounding passes, up to
+//: 15 % off warns ("turns ratio can be +-15%, but with care"), beyond that fails.
+inline constexpr double kTurnsRatioPassRel = 0.01;
+inline constexpr double kTurnsRatioWarnRel = 0.15;
+
 // A resistance as an engineer writes it: SI prefix, up to six significant digits,
 // no trailing zeros ("14.7 kΩ", "15 kΩ", "0.5 Ω").
 inline std::string ohms(double v) {
@@ -991,7 +996,27 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // The original's tolerance bounds the pass window where the tolerance IS the
     // value's guarantee (resistors): a 0.25 % part cannot have a 0.93 % shift
     // called a drop-in on the strength of a catalogue-wide +/-1 % band.
-    auto pv = score_primary_value(cat, o_val, s_val, has_pv, o_tol);
+    // Magnetics (owner 2026-11-13, R1): the original's STATED inductance band — the record's
+    // inductance minimum / maximum, as percent below / above the nominal, possibly asymmetric —
+    // bounds the PASS window the way a resistor's tolerance does. No band stated: the
+    // category's +/-15 % window stands.
+    const auto o_band_minus = num(original, "tolerance_minus_pct"),
+               o_band_plus = num(original, "tolerance_plus_pct");
+    const bool magnetic_band =
+        cat == "magnetic" && tolerance_band_stated(o_band_minus, o_band_plus);
+    auto pv = magnetic_band
+                  ? score_primary_value(cat, o_val, s_val, has_pv, o_band_minus, o_band_plus)
+                  : score_primary_value(cat, o_val, s_val, has_pv, o_tol);
+    // An inductance outside the original's stated band (but inside the accept window) is a
+    // different value: WARN (score_range already said so), ranked after every in-band and
+    // exact-value candidate — the resistor near-value sort tier ("value_differs"). Grade and
+    // direction are left to the WARN itself, as for an off-nominal zener.
+    bool inductance_off_band = false;
+    if (magnetic_band && has_pv && pv.verdict != FAIL && o_val && s_val && *o_val > 0 &&
+        *s_val > 0 && outside_band(*s_val / *o_val, *o_band_minus, *o_band_plus)) {
+        inductance_off_band = true;
+        pv.verdict = WARN;
+    }
     // Resistors: a different NOMINAL resistance is a different part, whatever the
     // tolerance bands say. The ±5 % pool window keeps near values on offer as
     // alternatives, but every one is a WARN on value, capped at major_review, never
@@ -1046,6 +1071,20 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                     note += " — not a drop-in anywhere the value sets a ratio or a reference";
                 }
                 notes.push_back(note);
+            }
+            if (inductance_off_band) {
+                const double m = *o_band_minus, pl = *o_band_plus;
+                const std::string band =
+                    std::fabs(m - pl) < 0.005 ? "+/-" + plain_pct(m)
+                                              : "+" + plain_pct(pl) + " / -" + plain_pct(m);
+                char buf[160];
+                std::snprintf(buf, sizeof buf, "inductance %.4g H against the original's %.4g H",
+                              *s_val, *o_val);
+                notes.push_back(std::string(buf) + " (" +
+                                signed_pct((*s_val / *o_val - 1.0) * 100.0) +
+                                "): outside the original's stated " + band +
+                                " tolerance — a different inductance value, ranked after the "
+                                "in-tolerance candidates; check the circuit tolerates it");
             }
             if (value_differs)
                 notes.push_back("nominal resistance differs: " + ohms(*o_val) + " -> " +
@@ -1991,6 +2030,91 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         if (numeric && is_hard_param(cat, spec.key) && !o && s && !isat_vs_rating) {
             direction_blind = true;
             blind_axes.push_back(param_label(spec.key));
+        }
+    }
+
+    // ── transformer turns ratio (owner 2026-11-13, R2) ───────────────────────
+    // MagneticRow carried the ratio but the ranker never compared it, so a 1:1.2 part and a
+    // 1:2 part were the same candidate. Owner: "turns ratio can be +-15%, but with care".
+    //   both stated, every ratio within 1 % (print rounding)      -> PASS
+    //   worst ratio off by more than 1 %, up to 15 %              -> WARN + note
+    //   worst ratio off by more than 15 %                         -> FAIL (+ note)
+    //   different number of ratios (a different winding structure) -> FAIL + note
+    //   stated on one side only                                   -> UNVERIFIED + note, no cap
+    // The arrays are electrical[0].turnsRatios in record order (primary:secondary for each
+    // secondary), compared element-wise. The deviation is |sub/orig - 1| per element.
+    if (cat == "magnetic") {
+        auto ratios = [](const json& p) {
+            std::vector<double> v;
+            const json* a = (p.is_object() && p.contains("turns_ratios")) ? &p.at("turns_ratios")
+                                                                           : nullptr;
+            if (a && a->is_array())
+                for (const auto& x : *a)
+                    if (x.is_number() && x.get<double>() > 0) v.push_back(x.get<double>());
+            return v;
+        };
+        const std::vector<double> o_tr = ratios(original), s_tr = ratios(cand);
+        auto list = [](const std::vector<double>& v) {
+            std::string out;
+            char buf[32];
+            for (size_t i = 0; i < v.size(); ++i) {
+                std::snprintf(buf, sizeof buf, "%.4g", v[i]);
+                out += (i ? ", " : "") + std::string(buf);
+            }
+            return v.size() > 1 ? "[" + out + "]" : out;
+        };
+        if (!o_tr.empty() && !s_tr.empty()) {
+            const char* v = PASS;
+            if (o_tr.size() != s_tr.size()) {
+                v = FAIL;
+                notes.push_back("winding structure differs: the original states " +
+                                std::to_string(o_tr.size()) + " turns ratio(s) " + list(o_tr) +
+                                ", the substitute " + std::to_string(s_tr.size()) + " " +
+                                list(s_tr) +
+                                " — a different number of secondaries, not a drop-in");
+            } else {
+                double worst = 0.0;
+                size_t wi = 0;
+                for (size_t i = 0; i < o_tr.size(); ++i) {
+                    const double d = std::fabs(s_tr[i] / o_tr[i] - 1.0);
+                    if (d > worst) { worst = d; wi = i; }
+                }
+                if (worst > kTurnsRatioPassRel + kEdgeEps) {
+                    v = worst > kTurnsRatioWarnRel + kEdgeEps ? FAIL : WARN;
+                    char buf[200];
+                    std::snprintf(buf, sizeof buf, "turns ratio %.4g vs the original's %.4g",
+                                  s_tr[wi], o_tr[wi]);
+                    std::string note = std::string(buf);
+                    if (o_tr.size() > 1)
+                        note += " (secondary " + std::to_string(wi + 1) + " of " +
+                                std::to_string(o_tr.size()) + ")";
+                    note += " (" + signed_pct((s_tr[wi] / o_tr[wi] - 1.0) * 100.0) + ")";
+                    note += v == WARN ? " — check the circuit tolerates it"
+                                      : " — beyond the 15 % a transformer swap can absorb; a "
+                                        "different ratio, not a substitute without a redesign";
+                    notes.push_back(note);
+                }
+            }
+            params.push_back({{"name", "turns_ratio"}, {"verdict", v}});
+            if (v == FAIL) {
+                demote();
+                penalty += opt.gate_weight * kVerdictFailPenalty;
+                ++worse;
+            } else if (v == WARN) {
+                demote();
+                penalty += opt.gate_weight * kVerdictWarnPenalty;
+                ++worse;
+            }
+        } else if (!o_tr.empty() || !s_tr.empty()) {
+            // Secondary-axis missing data: note only, no cap, no penalty (owner policy).
+            params.push_back({{"name", "turns_ratio"}, {"verdict", UNVERIFIED}});
+            notes.push_back(!o_tr.empty()
+                                ? "the original's turns ratio is " + list(o_tr) +
+                                      "; the substitute's record states none — confirm it "
+                                      "from the datasheet"
+                                : "the substitute's turns ratio is " + list(s_tr) +
+                                      "; the original's record states none — confirm both "
+                                      "ratios match from the datasheets");
         }
     }
 
@@ -4628,6 +4752,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // A zener off the original's nominal (see zener_off_nominal): the same sort tier, and
     // nothing else — grade and direction unchanged (owner 2026-11-13).
     if (zener_off_nominal) out["value_differs"] = true;
+    // An inductance outside the original's stated tolerance (see inductance_off_band): the
+    // same sort tier; grade and direction stay the WARN's (owner 2026-11-13, R1).
+    if (inductance_off_band) out["value_differs"] = true;
     return out;
 }
 
