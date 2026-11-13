@@ -5440,3 +5440,223 @@ TEST_CASE("qarlos r14-r16 H3: connector positions stated by the substitute only 
     o5["positions"] = 5.0;
     CHECK(conn_one(o5, cand)["status"] == "no_substitute");
 }
+
+
+// ── Owner decisions 2026-11-13, agent I (magnetic + connector) ───────────────
+// Records are the REAL lines of tools/qarlos/bench/data-9cb6cf8 (TAS 9cb6cf8), distributorsInfo
+// dropped, run through the real extractor and the spec block web/src/crossref.js builds.
+namespace dec1113_i {
+// magnetics.ndjson line 2174: 744766115
+const char* k744766115 = R"KREC({"magnetic":{"manufacturerInfo":{"name":"Würth Elektronik","reference":"744766115","status":"production","family":"WE-GF","datasheetUrl":"https://www.we-online.com/components/products/datasheet/744766115.pdf","datasheetInfo":{"part":{"caseCode":"4532"},"electrical":[{"subtype":"inductor","inductance":{"nominal":1.4999999999999999e-05,"minimum":1.2e-05,"maximum":1.8e-05},"dcResistance":{"maximum":2.5,"nominal":1.28},"ratedCurrents":[0.6]}],"provenance":[{"source":"manufacturerDatabase","sourceName":"Würth Elektronik database","sourceUrl":"https://www.we-online.com/components/products/datasheet/744766115.pdf","retrievedDate":"2026-06-24","verification":"partNamed","verificationDate":"2026-10-09"},{"source":"manufacturerDatabase","sourceName":"Würth Elektronik database","retrievedDate":"2026-07-21","fields":["mechanical.length","mechanical.width","mechanical.height"]}],"mechanical":{"length":{"nominal":0.0045},"width":{"nominal":0.0032},"height":{"nominal":0.0032}}}}}})KREC";
+// magnetics.ndjson line 2844: 744071220
+const char* k744071220 = R"KREC({"magnetic":{"manufacturerInfo":{"name":"Würth Elektronik","reference":"744071220","status":"production","family":"WE-TPC","datasheetUrl":"https://www.we-online.com/components/products/datasheet/744071220.pdf","datasheetInfo":{"part":{"caseCode":"8043"},"electrical":[{"subtype":"inductor","inductance":{"nominal":2.2e-05,"minimum":1.76e-05,"maximum":2.64e-05},"dcResistance":{"maximum":0.08,"nominal":0.065},"saturationCurrentPeak":1.9,"ratedCurrents":[2.3]}],"provenance":[{"source":"manufacturerDatabase","sourceName":"Würth Elektronik database","sourceUrl":"https://www.we-online.com/components/products/datasheet/744071220.pdf","retrievedDate":"2026-06-24","verification":"partNamed","verificationDate":"2026-10-09"},{"source":"manufacturerDatabase","sourceName":"Würth Elektronik database","retrievedDate":"2026-07-21","fields":["mechanical.length","mechanical.width","mechanical.height"]}],"mechanical":{"length":{"nominal":0.008},"width":{"nominal":0.008},"height":{"nominal":0.0043}}}}}})KREC";
+// magnetics.ndjson line 5812: AGP4233-223ME
+const char* kAGP4233223ME = R"KREC({"magnetic":{"manufacturerInfo":{"name":"Coilcraft","reference":"AGP4233-223ME","status":"production","datasheetUrl":"https://www.mouser.com/datasheet/3/995/1/agp4233.pdf","datasheetInfo":{"part":{"description":"Power Inductors - Leaded 22uH Shld 20% 24A 2.95mOhms"},"electrical":[{"subtype":"inductor","inductance":{"nominal":2.2e-05},"dcResistance":{"nominal":0.00295},"saturationCurrents":[{"percentInductanceDrop":10.0,"current":32.8},{"percentInductanceDrop":20.0,"current":35.4},{"percentInductanceDrop":30.0,"current":36.6}],"inductancePoints":[{"current":0.0,"inductance":2.2e-05,"temperature":25.0},{"current":0.8,"inductance":2.2013719677524315e-05,"temperature":25.0},{"current":1.6,"inductance":2.2024456816456385e-05,"temperature":25.0},{"current":2.4,"inductance":2.2031018401359317e-05,"temperature":25.0},{"current":3.1,"inductance":2.2034199775857708e-05,"temperature":25.0},{"current":3.9,"inductance":2.2034597447670004e-05,"temperature":25.0},{"current":4.7,"inductance":2.2034995119482306e-05,"temperature":25.0},{"current":5.5,"inductance":2.2034199775857708e-05,"temperature":25.0},{"current":6.3,"inductance":2.203280792451466e-05,"temperature":25.0},{"current":7.1,"inductance":2.203161490907776e-05,"temperature":25.0},{"current":7.9,"inductance":2.2028234698673222e-05,"temperature":25.0},{"current":8.6,"inductance":2.202664401142403e-05,"temperature":25.0},{"current":9.4,"inductance":2.2023064965113342e-05,"temperature":25.0},{"current":10.2,"inductance":2.2019485918802646e-05,"temperature":25.0},{"current":11.0,"inductance":2.2015310364773512e-05,"temperature":25.0},{"current":11.8,"inductance":2.201053830302592e-05,"temperature":25.0},{"current":12.6,"inductance":2.2005965077184485e-05,"temperature":25.0},{"current":13.4,"inductance":2.2000795343624598e-05,"temperature":25.0},{"current":14.2,"inductance":2.1993836086909366e-05,"temperature":25.0},{"current":14.9,"inductance":2.198806984563104e-05,"temperature":25.0},{"current":15.7,"inductance":2.197951990166661e-05,"temperature":25.0},{"current":16.5,"inductance":2.1970771121796033e-05,"temperature":25.0},{"current":17.3,"inductance":2.1960630490582414e-05,"temperature":25.0},{"current":18.1,"inductance":2.1948501500307296e-05,"temperature":25.0},{"current":18.9,"inductance":2.1935974838219878e-05,"temperature":25.0},{"current":19.7,"inductance":2.191947145800947e-05,"temperature":25.0},{"current":22.0,"inductance":2.186379740428763e-05,"temperature":25.0},{"current":26.0,"inductance":2.168484508875312e-05,"temperature":25.0},{"current":30.0,"inductance":2.128995697914031e-05,"temperature":25.0},{"current":38.0,"inductance":1.4802935541014425e-05,"temperature":25.0}]}],"provenance":[{"source":"distributor","sourceName":"datasheet via Mouser listing","sourceUrl":"https://www.mouser.com/datasheet/3/995/1/agp4233.pdf","verification":"partNamed","verificationDate":"2026-10-10"},{"source":"manufacturerParametric","sourceName":"Coilcraft parametric search","retrievedDate":"2026-07-21","fields":["mechanical.height","mechanical.length","mechanical.width"]},{"source":"manufacturerParametric","sourceName":"Coilcraft product page (series parts table)","sourceUrl":"https://www.coilcraft.com/en-us/products/power/shielded-inductors/high-current-flat-wire/agp-ver/agp4233/","retrievedDate":"2026-10-10","fields":["electrical.saturationCurrents"],"verification":"valuesReadFromSource","verificationDate":"2026-10-18"},{"source":"manufacturerParametric","sourceName":"Coilcraft product page (series parts table)","sourceUrl":"https://www.coilcraft.com/en-us/products/power/shielded-inductors/high-current-flat-wire/agp-ver/agp4233/","retrievedDate":"2026-10-18","fields":["electrical.inductance","electrical.dcResistance"],"verification":"partNamed","verificationDate":"2026-10-31"},{"source":"manufacturerParametric","sourceName":"Coilcraft Power Inductor Finder (L vs DC bias)","sourceUrl":"https://www.coilcraft.com/en-us/tools/power-inductor-finder/","retrievedDate":"2026-11-03","fields":["electrical.inductancePoints"],"verification":"valuesReadFromSource","verificationDate":"2026-11-03","verificationMethod":"Typical inductance normalised to nominal vs DC bias current, 25 degC ambient; series data for the tool part AGP4233-223"}],"mechanical":{"length":{"nominal":0.0403},"width":{"nominal":0.0368},"height":{"nominal":0.028}}}}}})KREC";
+// magnetics.ndjson line 10096: LQH88PN220M38L
+const char* kLQH88PN220M38L = R"KREC({"magnetic":{"manufacturerInfo":{"name":"Murata","reference":"LQH88PN220M38L","status":"production","datasheetUrl":"https://mm.digikey.com/Volume0/opasdata/d220001/medias/docus/4313/LQH88P.pdf","datasheetInfo":{"part":{"caseCode":"3131 (8080 Metric)","shielded":true},"electrical":[{"subtype":"inductor","inductance":{"nominal":2.2e-05,"minimum":1.76e-05,"maximum":2.6399999999999998e-05},"dcResistance":{"maximum":0.006},"ratedCurrents":[2.25]}],"mechanical":{"mounting":"smt"},"thermal":{"operatingTemperature":{"minimum":-40.0,"maximum":85.0}},"provenance":[{"source":"distributor","sourceName":"datasheet via Digi-Key listing","sourceUrl":"https://mm.digikey.com/Volume0/opasdata/d220001/medias/docus/4313/LQH88P.pdf","verification":"seriesConfirmed","verificationDate":"2026-10-09"}]}}}})KREC";
+// magnetics.ndjson line 11009: LQP02HV18NJ02L
+const char* kLQP02HV18NJ02L = R"KREC({"magnetic":{"manufacturerInfo":{"name":"Murata","reference":"LQP02HV18NJ02L","status":"production","datasheetUrl":"https://search.murata.co.jp/Ceramy/image/img/P02/JELF243C-0034.pdf","datasheetInfo":{"part":{"caseCode":"01005 (0402 Metric)","shielded":true},"electrical":[{"subtype":"inductor","inductance":{"nominal":1.8000000000000002e-08,"minimum":1.4400000000000003e-08,"maximum":2.16e-08},"dcResistance":{"maximum":1.08},"ratedCurrents":[0.17]}],"mechanical":{"mounting":"smt"},"thermal":{"operatingTemperature":{"minimum":-55.0,"maximum":125.0}},"provenance":[{"source":"manufacturerParametric","sourceName":"Murata SimSurfing","sourceUrl":"https://search.murata.co.jp/Ceramy/image/img/P02/JELF243C-0034.pdf","retrievedDate":"2026-08-01"},{"source":"manufacturerParametric","sourceName":"Murata product catalogue (PIM API, values also printed on the productdetail page)","sourceUrl":"https://www.murata.com/en-us/products/productdetail?partno=LQP02HV18NJ02L","retrievedDate":"2026-10-17","fields":["thermal.operatingTemperature","electrical.inductance","electrical.dcResistance","electrical.ratedCurrents","part.partNumber"],"verification":"valuesReadFromSource","verificationDate":"2026-10-17"}]}}}})KREC";
+// magnetics.ndjson line 16563: MHQ1005P18NGT000
+const char* kMHQ1005P18NGT000 = R"KREC({"magnetic":{"manufacturerInfo":{"name":"TDK","reference":"MHQ1005P18NGT000","status":"production","family":"MHQ-P","datasheetUrl":"https://www.tdk.com/en/search/compass/part_no/MHQ1005P18NGT000","datasheetInfo":{"part":{"description":"MHQ-P MHQ1005P18NGT000 18.0nH","caseCode":"0402","windingStyle":"multilayer"},"electrical":[{"subtype":"inductor","inductance":{"nominal":1.8e-08,"minimum":1.7639999999999998e-08,"maximum":1.836e-08},"dcResistance":{"maximum":0.8,"nominal":0.48},"selfResonantFrequency":3400000000.0,"ratedCurrents":[0.26]}],"mechanical":{"length":{"nominal":0.001},"width":{"nominal":0.0005},"height":{"nominal":0.0005},"weight":{"nominal":1e-06}},"thermal":{"operatingTemperature":{"minimum":-55.0,"maximum":125.0}},"provenance":[{"source":"manufacturerDatabase","sourceName":"TDK product database","retrievedDate":"2026-07-31"},{"source":"manufacturerDatabase","sourceName":"TDK Meister database","retrievedDate":"2026-09-24","verification":"valuesReadFromSource","verificationDate":"2026-09-24","fields":["part.windingStyle"],"verificationMethod":"TDK Meister classifies this part's product class as multilayer construction."},{"source":"manufacturerDatabase","sourceName":"TDK product center (part search listing)","sourceUrl":"https://product.tdk.com/en/search/inductor/inductor/smd/info?part_no=MHQ1005P18NGT000","retrievedDate":"2026-10-17","fields":["electrical.inductance","electrical.dcResistance","electrical.ratedCurrents","thermal.operatingTemperature","mechanical.length","mechanical.width"],"verification":"valuesReadFromSource","verificationDate":"2026-10-17"}]}}}})KREC";
+// magnetics.ndjson line 21407: B82432T1153K000
+const char* kB82432T1153K000 = R"KREC({"magnetic":{"manufacturerInfo":{"name":"TDK","reference":"B82432T1153K000","status":"production","family":"SIMID","datasheetUrl":"https://www.tdk.com/en/search/compass/part_no/B82432T1153K000","datasheetInfo":{"part":{"description":"SIMID B82432T1153K000 15.0μH","caseCode":"1812","windingStyle":"wireWound"},"electrical":[{"subtype":"inductor","inductance":{"nominal":1.5e-05,"minimum":1.3500000000000001e-05,"maximum":1.65e-05},"dcResistance":{"maximum":0.5},"saturationCurrentPeak":0.9,"selfResonantFrequency":20000000.0,"ratedCurrents":[0.902],"inductancePoints":[{"inductance":1.462e-05,"current":0,"temperature":-55},{"inductance":1.481e-05,"current":0.07328,"temperature":-55},{"inductance":1.488e-05,"current":0.1479,"temperature":-55},{"inductance":1.49e-05,"current":0.2227,"temperature":-55},{"inductance":1.485e-05,"current":0.2975,"temperature":-55},{"inductance":1.482e-05,"current":0.3724,"temperature":-55},{"inductance":1.479e-05,"current":0.4472,"temperature":-55},{"inductance":1.472e-05,"current":0.5218,"temperature":-55},{"inductance":1.465e-05,"current":0.5964,"temperature":-55},{"inductance":1.457e-05,"current":0.6709,"temperature":-55},{"inductance":1.443e-05,"current":0.7448,"temperature":-55},{"inductance":1.426e-05,"current":0.8183,"temperature":-55},{"inductance":1.411e-05,"current":0.8919,"temperature":-55},{"inductance":1.385e-05,"current":0.9617,"temperature":-55},{"inductance":1.341e-05,"current":1.027,"temperature":-55},{"inductance":1.288e-05,"current":1.087,"temperature":-55},{"inductance":1.247e-05,"current":1.151,"temperature":-55},{"inductance":1.172e-05,"current":1.191,"temperature":-55},{"inductance":1.098e-05,"current":1.23,"temperature":-55},{"inductance":1.024e-05,"current":1.268,"temperature":-55},{"inductance":1.469e-05,"current":0,"temperature":-40},{"inductance":1.485e-05,"current":0.07154,"temperature":-40},{"inductance":1.491e-05,"current":0.1441,"temperature":-40},{"inductance":1.493e-05,"current":0.2169,"temperature":-40},{"inductance":1.488e-05,"current":0.2897,"temperature":-40},{"inductance":1.485e-05,"current":0.3624,"temperature":-40},{"inductance":1.482e-05,"current":0.4352,"temperature":-40},{"inductance":1.475e-05,"current":0.5078,"temperature":-40},{"inductance":1.468e-05,"current":0.5804,"temperature":-40},{"inductance":1.461e-05,"current":0.6528,"temperature":-40},{"inductance":1.447e-05,"current":0.7247,"temperature":-40},{"inductance":1.431e-05,"current":0.7963,"temperature":-40},{"inductance":1.417e-05,"current":0.8679,"temperature":-40},{"inductance":1.389e-05,"current":0.9356,"temperature":-40},{"inductance":1.345e-05,"current":0.9989,"temperature":-40},{"inductance":1.294e-05,"current":1.058,"temperature":-40},{"inductance":1.251e-05,"current":1.121,"temperature":-40},{"inductance":1.177e-05,"current":1.159,"temperature":-40},{"inductance":1.103e-05,"current":1.197,"temperature":-40},{"inductance":1.029e-05,"current":1.234,"temperature":-40},{"inductance":1.479e-05,"current":0,"temperature":-20},{"inductance":1.489e-05,"current":0.06921,"temperature":-20},{"inductance":1.494e-05,"current":0.1391,"temperature":-20},{"inductance":1.495e-05,"current":0.2092,"temperature":-20},{"inductance":1.492e-05,"current":0.2792,"temperature":-20},{"inductance":1.489e-05,"current":0.3492,"temperature":-20},{"inductance":1.486e-05,"current":0.4192,"temperature":-20},{"inductance":1.48e-05,"current":0.4891,"temperature":-20},{"inductance":1.473e-05,"current":0.559,"temperature":-20},{"inductance":1.466e-05,"current":0.6287,"temperature":-20},{"inductance":1.453e-05,"current":0.698,"temperature":-20},{"inductance":1.438e-05,"current":0.7669,"temperature":-20},{"inductance":1.423e-05,"current":0.836,"temperature":-20},{"inductance":1.395e-05,"current":0.9008,"temperature":-20},{"inductance":1.35e-05,"current":0.9615,"temperature":-20},{"inductance":1.301e-05,"current":1.02,"temperature":-20},{"inductance":1.258e-05,"current":1.08,"temperature":-20},{"inductance":1.184e-05,"current":1.117,"temperature":-20},{"inductance":1.11e-05,"current":1.154,"temperature":-20},{"inductance":1.035e-05,"current":1.19,"temperature":-20},{"inductance":1.488e-05,"current":0,"temperature":0},{"inductance":1.494e-05,"current":0.06689,"temperature":0},{"inductance":1.497e-05,"current":0.1341,"temperature":0},{"inductance":1.498e-05,"current":0.2014,"temperature":0},{"inductance":1.495e-05,"current":0.2687,"temperature":0},{"inductance":1.492e-05,"current":0.336,"temperature":0},{"inductance":1.49e-05,"current":0.4033,"temperature":0},{"inductance":1.484e-05,"current":0.4704,"temperature":0},{"inductance":1.478e-05,"current":0.5376,"temperature":0},{"inductance":1.471e-05,"current":0.6047,"temperature":0},{"inductance":1.459e-05,"current":0.6713,"temperature":0},{"inductance":1.444e-05,"current":0.7376,"temperature":0},{"inductance":1.43e-05,"current":0.804,"temperature":0},{"inductance":1.4e-05,"current":0.866,"temperature":0},{"inductance":1.356e-05,"current":0.9241,"temperature":0},{"inductance":1.309e-05,"current":0.9808,"temperature":0},{"inductance":1.265e-05,"current":1.039,"temperature":0},{"inductance":1.191e-05,"current":1.075,"temperature":0},{"inductance":1.116e-05,"current":1.11,"temperature":0},{"inductance":1.042e-05,"current":1.145,"temperature":0},{"inductance":1.498e-05,"current":0,"temperature":20},{"inductance":1.499e-05,"current":0.06456,"temperature":20},{"inductance":1.5e-05,"current":0.1291,"temperature":20},{"inductance":1.501e-05,"current":0.1937,"temperature":20},{"inductance":1.499e-05,"current":0.2582,"temperature":20},{"inductance":1.496e-05,"current":0.3228,"temperature":20},{"inductance":1.494e-05,"current":0.3873,"temperature":20},{"inductance":1.488e-05,"current":0.4517,"temperature":20},{"inductance":1.482e-05,"current":0.5161,"temperature":20},{"inductance":1.476e-05,"current":0.5806,"temperature":20},{"inductance":1.465e-05,"current":0.6445,"temperature":20},{"inductance":1.451e-05,"current":0.7083,"temperature":20},{"inductance":1.437e-05,"current":0.7721,"temperature":20},{"inductance":1.406e-05,"current":0.8312,"temperature":20},{"inductance":1.361e-05,"current":0.8867,"temperature":20},{"inductance":1.316e-05,"current":0.9421,"temperature":20},{"inductance":1.271e-05,"current":0.9976,"temperature":20},{"inductance":1.198e-05,"current":1.033,"temperature":20},{"inductance":1.123e-05,"current":1.067,"temperature":20},{"inductance":1.049e-05,"current":1.101,"temperature":20},{"inductance":1.537e-05,"current":0,"temperature":45},{"inductance":1.538e-05,"current":0.06237,"temperature":45},{"inductance":1.54e-05,"current":0.1248,"temperature":45},{"inductance":1.542e-05,"current":0.1871,"temperature":45},{"inductance":1.539e-05,"current":0.2495,"temperature":45},{"inductance":1.536e-05,"current":0.3118,"temperature":45},{"inductance":1.534e-05,"current":0.3742,"temperature":45},{"inductance":1.529e-05,"current":0.4365,"temperature":45},{"inductance":1.524e-05,"current":0.4987,"temperature":45},{"inductance":1.519e-05,"current":0.561,"temperature":45},{"inductance":1.507e-05,"current":0.6229,"temperature":45},{"inductance":1.494e-05,"current":0.6846,"temperature":45},{"inductance":1.482e-05,"current":0.7464,"temperature":45},{"inductance":1.451e-05,"current":0.8036,"temperature":45},{"inductance":1.403e-05,"current":0.8562,"temperature":45},{"inductance":1.352e-05,"current":0.9081,"temperature":45},{"inductance":1.305e-05,"current":0.962,"temperature":45},{"inductance":1.229e-05,"current":0.9951,"temperature":45},{"inductance":1.153e-05,"current":1.029,"temperature":45},{"inductance":1.076e-05,"current":1.061,"temperature":45},{"inductance":1.568e-05,"current":0,"temperature":65},{"inductance":1.57e-05,"current":0.06062,"temperature":65},{"inductance":1.573e-05,"current":0.1213,"temperature":65},{"inductance":1.575e-05,"current":0.1819,"temperature":65},{"inductance":1.571e-05,"current":0.2425,"temperature":65},{"inductance":1.568e-05,"current":0.3031,"temperature":65},{"inductance":1.567e-05,"current":0.3637,"temperature":65},{"inductance":1.562e-05,"current":0.4243,"temperature":65},{"inductance":1.557e-05,"current":0.4848,"temperature":65},{"inductance":1.553e-05,"current":0.5454,"temperature":65},{"inductance":1.542e-05,"current":0.6055,"temperature":65},{"inductance":1.529e-05,"current":0.6656,"temperature":65},{"inductance":1.517e-05,"current":0.7258,"temperature":65},{"inductance":1.486e-05,"current":0.7816,"temperature":65},{"inductance":1.436e-05,"current":0.8318,"temperature":65},{"inductance":1.381e-05,"current":0.8808,"temperature":65},{"inductance":1.332e-05,"current":0.9336,"temperature":65},{"inductance":1.254e-05,"current":0.9651,"temperature":65},{"inductance":1.178e-05,"current":0.9984,"temperature":65},{"inductance":1.098e-05,"current":1.029,"temperature":65},{"inductance":1.6e-05,"current":0,"temperature":85},{"inductance":1.602e-05,"current":0.05888,"temperature":85},{"inductance":1.605e-05,"current":0.1178,"temperature":85},{"inductance":1.607e-05,"current":0.1766,"temperature":85},{"inductance":1.603e-05,"current":0.2355,"temperature":85},{"inductance":1.6e-05,"current":0.2944,"temperature":85},{"inductance":1.599e-05,"current":0.3533,"temperature":85},{"inductance":1.595e-05,"current":0.4121,"temperature":85},{"inductance":1.59e-05,"current":0.4709,"temperature":85},{"inductance":1.587e-05,"current":0.5298,"temperature":85},{"inductance":1.576e-05,"current":0.5882,"temperature":85},{"inductance":1.563e-05,"current":0.6466,"temperature":85},{"inductance":1.553e-05,"current":0.7052,"temperature":85},{"inductance":1.522e-05,"current":0.7595,"temperature":85},{"inductance":1.469e-05,"current":0.8074,"temperature":85},{"inductance":1.41e-05,"current":0.8536,"temperature":85},{"inductance":1.36e-05,"current":0.9051,"temperature":85},{"inductance":1.279e-05,"current":0.9351,"temperature":85},{"inductance":1.202e-05,"current":0.9681,"temperature":85},{"inductance":1.12e-05,"current":0.9974,"temperature":85},{"inductance":1.626e-05,"current":0,"temperature":105},{"inductance":1.628e-05,"current":0.05634,"temperature":105},{"inductance":1.63e-05,"current":0.1127,"temperature":105},{"inductance":1.632e-05,"current":0.1691,"temperature":105},{"inductance":1.628e-05,"current":0.2254,"temperature":105},{"inductance":1.625e-05,"current":0.2817,"temperature":105},{"inductance":1.624e-05,"current":0.3381,"temperature":105},{"inductance":1.62e-05,"current":0.3943,"temperature":105},{"inductance":1.615e-05,"current":0.4506,"temperature":105},{"inductance":1.612e-05,"current":0.507,"temperature":105},{"inductance":1.601e-05,"current":0.563,"temperature":105},{"inductance":1.589e-05,"current":0.6188,"temperature":105},{"inductance":1.578e-05,"current":0.675,"temperature":105},{"inductance":1.546e-05,"current":0.7267,"temperature":105},{"inductance":1.495e-05,"current":0.7733,"temperature":105},{"inductance":1.434e-05,"current":0.8169,"temperature":105},{"inductance":1.384e-05,"current":0.8672,"temperature":105},{"inductance":1.302e-05,"current":0.8955,"temperature":105},{"inductance":1.222e-05,"current":0.9256,"temperature":105},{"inductance":1.138e-05,"current":0.9538,"temperature":105},{"inductance":1.652e-05,"current":0,"temperature":125},{"inductance":1.653e-05,"current":0.05381,"temperature":125},{"inductance":1.656e-05,"current":0.1076,"temperature":125},{"inductance":1.658e-05,"current":0.1615,"temperature":125},{"inductance":1.653e-05,"current":0.2153,"temperature":125},{"inductance":1.65e-05,"current":0.269,"temperature":125},{"inductance":1.649e-05,"current":0.3229,"temperature":125},{"inductance":1.645e-05,"current":0.3766,"temperature":125},{"inductance":1.64e-05,"current":0.4304,"temperature":125},{"inductance":1.637e-05,"current":0.4842,"temperature":125},{"inductance":1.627e-05,"current":0.5377,"temperature":125},{"inductance":1.614e-05,"current":0.591,"temperature":125},{"inductance":1.603e-05,"current":0.6447,"temperature":125},{"inductance":1.57e-05,"current":0.6939,"temperature":125},{"inductance":1.522e-05,"current":0.7392,"temperature":125},{"inductance":1.458e-05,"current":0.7802,"temperature":125},{"inductance":1.408e-05,"current":0.8293,"temperature":125},{"inductance":1.325e-05,"current":0.8559,"temperature":125},{"inductance":1.241e-05,"current":0.8832,"temperature":125},{"inductance":1.156e-05,"current":0.9101,"temperature":125},{"inductance":1.685e-05,"current":0,"temperature":150},{"inductance":1.686e-05,"current":0.05065,"temperature":150},{"inductance":1.688e-05,"current":0.1013,"temperature":150},{"inductance":1.689e-05,"current":0.152,"temperature":150},{"inductance":1.684e-05,"current":0.2026,"temperature":150},{"inductance":1.681e-05,"current":0.2532,"temperature":150},{"inductance":1.679e-05,"current":0.3039,"temperature":150},{"inductance":1.676e-05,"current":0.3545,"temperature":150},{"inductance":1.672e-05,"current":0.4051,"temperature":150},{"inductance":1.668e-05,"current":0.4558,"temperature":150},{"inductance":1.658e-05,"current":0.5061,"temperature":150},{"inductance":1.646e-05,"current":0.5563,"temperature":150},{"inductance":1.634e-05,"current":0.6069,"temperature":150},{"inductance":1.6e-05,"current":0.6529,"temperature":150},{"inductance":1.555e-05,"current":0.6966,"temperature":150},{"inductance":1.488e-05,"current":0.7343,"temperature":150},{"inductance":1.438e-05,"current":0.782,"temperature":150},{"inductance":1.354e-05,"current":0.8064,"temperature":150},{"inductance":1.266e-05,"current":0.8301,"temperature":150},{"inductance":1.179e-05,"current":0.8555,"temperature":150}]}],"mechanical":{"length":{"nominal":0.0045},"width":{"nominal":0.0032},"height":{"nominal":0.0032},"weight":{"nominal":0.00013000000000000002}},"thermal":{"operatingTemperature":{"minimum":-55.0,"maximum":150.0}},"provenance":[{"source":"manufacturerDatabase","sourceName":"TDK product database","retrievedDate":"2026-07-31"},{"source":"manufacturerDatabase","sourceName":"TDK Meister database","retrievedDate":"2026-09-24","verification":"valuesReadFromSource","verificationDate":"2026-09-24","fields":["part.windingStyle"],"verificationMethod":"TDK Meister classifies this part's product class as wire-wound construction."},{"source":"manufacturerDatabase","sourceName":"TDK product center (part search listing)","sourceUrl":"https://product.tdk.com/en/search/inductor/inductor/smd/info?part_no=B82432T1153K000","retrievedDate":"2026-10-17","fields":["electrical.inductance","electrical.dcResistance","electrical.ratedCurrents","electrical.selfResonantFrequency","thermal.operatingTemperature","mechanical.length","mechanical.width"],"verification":"valuesReadFromSource","verificationDate":"2026-10-17"},{"source":"manufacturerParametric","sourceName":"TDK Product Center","sourceUrl":"https://product.tdk.com/en/search/inductor/inductor/smd/info?part_no=B82432T1153K000","retrievedDate":"2026-11-03","fields":["electrical.inductancePoints"],"verification":"valuesReadFromSource","verificationDate":"2026-11-03","verificationMethod":"Inductance vs DC bias current at the stated temperatures; AC drive level not published."}]}}}})KREC";
+// magnetics.ndjson line 22345: AMT45S-150-2P-TL000
+const char* kAMT45S1502P = R"KREC({"magnetic":{"manufacturerInfo":{"name":"TDK","reference":"AMT45S-150-2P-TL000","status":"production","family":"AMT","datasheetUrl":"https://www.tdk.com/en/search/compass/part_no/AMT45S-150-2P-TL000","datasheetInfo":{"part":{"description":"AMT AMT45S-150-2P-TL000 15.0μH","caseCode":"1812"},"electrical":[{"subtype":"inductor","inductance":{"nominal":1.5e-05}}],"mechanical":{"length":{"nominal":0.0045},"width":{"nominal":0.0032},"height":{"nominal":0.0028},"weight":{"nominal":0.00014000000000000001}},"thermal":{"operatingTemperature":{"minimum":-40.0,"maximum":125.0}},"provenance":[{"source":"manufacturerDatabase","sourceName":"TDK product database","retrievedDate":"2026-07-31"}]}}}})KREC";
+json spec(const char* line) {
+    auto r = kelvin::extract_magnetic(real_mag(line));
+    REQUIRE(r.has_value());
+    return mag_spec_xref(*r);
+}
+json rank(const json& orig, const json& cands) {
+    kelvin::crossref::Options opt;
+    opt.max_results = 50;
+    return kelvin::crossref::cross_reference("magnetic", orig, cands, opt);
+}
+json one(const json& orig, const json& cand) {
+    const json r = rank(orig, json::array({cand}));
+    REQUIRE(r["candidates"].size() == 1);
+    return r["candidates"][0];
+}
+int position_of(const json& r, const std::string& mpn) {
+    int i = 0;
+    for (const auto& c : r["candidates"]) {
+        if (c.value("mpn", "") == mpn) return i;
+        ++i;
+    }
+    return -1;
+}
+}  // namespace dec1113_i
+
+// I1 (owner 2026-11-13): a magnetic whose record states no rated current, against an original
+// that states one, takes the FAIL-sized penalty and a note, and NO cap (the capacitor
+// ESR-absent precedent). Qarlos r14 25916475: 744766115 (0.6 A) ranked AMT45S-150-2P-TL000
+// (no rated current on record) ahead of B82432T1153K000 (0.902 A stated).
+TEST_CASE("dec 2026-11-13 I1: magnetic rated current absent from the substitute is penalised, "
+          "noted, uncapped",
+          "[qarlos][crossref][magnetic][rated-current-absent]") {
+    using namespace dec1113_i;
+    const json o = spec(k744766115), amt = spec(kAMT45S1502P), b82 = spec(kB82432T1153K000);
+    // The premise: the original states its rating, AMT45S does not, B82432T does.
+    REQUIRE(o["rated_current"] == 0.6);
+    REQUIRE(amt["rated_current"].is_null());
+    REQUIRE(b82["rated_current"].get<double>() == Approx(0.902));
+    const json r = rank(o, json::array({amt, b82}));
+    const int p_amt = position_of(r, "AMT45S-150-2P-TL000"), p_b82 = position_of(r, "B82432T1153K000");
+    REQUIRE(p_amt >= 0);
+    REQUIRE(p_b82 >= 0);
+    CHECK(p_b82 < p_amt);
+    const json& c = r["candidates"][p_amt];
+    CHECK(verdict_of(c, "rated_current") == "unverified");
+    CHECK(has_note(c, "substitute's record carries no rated current — the original states one "
+                      "(0.6 A)"));
+    CHECK(c["direction"] == "unknown");
+
+    // Boundary: the same substitute stating the original's rating carries no such note, costs
+    // exactly the FAIL penalty less, and grades the same — the absence is not capped.
+    json amt_rated = amt;
+    amt_rated["rated_current"] = 0.6;
+    const json absent = one(o, amt), stated = one(o, amt_rated);
+    CHECK(verdict_of(stated, "rated_current") == "pass");
+    CHECK_FALSE(has_note(stated, "carries no rated current"));
+    CHECK(absent["penalty"].get<double>() - stated["penalty"].get<double>() ==
+          Approx(kelvin::crossref::Options{}.gate_weight * kelvin::crossref::kVerdictFailPenalty));
+    CHECK(absent["grade"] == stated["grade"]);
+
+    // Chip beads share the axis in the code but are not in the owner's decision: a bead's
+    // missing rating keeps the unweighed treatment (no penalty, no such note).
+    json bo = {{"mpn", "BEAD_O"}, {"impedance_100mhz", 600.0}, {"impedance_peak", 600.0},
+               {"impedance_peak_freq", 1e8}, {"dcr", 0.3}, {"rated_current", 0.5}};
+    json bs = bo;
+    bs["mpn"] = "BEAD_S";
+    bs.erase("rated_current");
+    kelvin::crossref::Options opt;
+    const json bead = kelvin::crossref::cross_reference("chipBead", bo, json::array({bs}),
+                                                        opt)["candidates"][0];
+    CHECK(verdict_of(bead, "rated_current") == "unverified");
+    CHECK_FALSE(has_note(bead, "carries no rated current"));
+    CHECK(has_note(bead, "the original states its rated current; the substitute's record does not"));
+}
+
+// I2 (owner 2026-11-13): a magnetic dual chip code "IIII (MMMM Metric)" is decoded from its
+// metric half and set against the other side's drawn body. More than 1.5x apart on either
+// sorted axis is an established size difference; inside the band the fit is UNVERIFIED.
+TEST_CASE("dec 2026-11-13 I2: a magnetic dual chip code against a drawn body", 
+          "[qarlos][crossref][magnetic][dual-code]") {
+    using namespace dec1113_i;
+    using kelvin::crossref::magnetic_dual_code_body;
+    // Decoding: only the dual form, from its metric half, axes sorted.
+    const auto d8080 = magnetic_dual_code_body("3131 (8080 Metric)");
+    REQUIRE(d8080.has_value());
+    CHECK(*d8080->length == Approx(8.0e-3));
+    CHECK(*d8080->width == Approx(8.0e-3));
+    CHECK_FALSE(d8080->height.has_value());
+    const auto d0402 = magnetic_dual_code_body("01005 (0402 Metric)");
+    REQUIRE(d0402.has_value());
+    CHECK(*d0402->length == Approx(0.4e-3));
+    CHECK(*d0402->width == Approx(0.2e-3));
+    const auto d0510 = magnetic_dual_code_body("0204 (0510 Metric)");
+    REQUIRE(d0510.has_value());
+    CHECK(*d0510->length == Approx(1.0e-3));  // sorted: 0.5 x 1.0 -> 1.0 x 0.5
+    CHECK(*d0510->width == Approx(0.5e-3));
+    CHECK_FALSE(magnetic_dual_code_body("0402").has_value());   // bare code: never
+    CHECK_FALSE(magnetic_dual_code_body("8080").has_value());
+    CHECK_FALSE(magnetic_dual_code_body("0805 (1608 Metric)").has_value());  // contradicts itself
+    CHECK_FALSE(magnetic_dual_code_body("No Tabs").has_value());
+
+    // Qarlos bench 20276947: LQH88PN220M38L (8.0 x 8.0 mm by its code) -> AGP4233-223ME, drawn
+    // 40.3 x 36.8 mm. Overflow, not an unverified footprint.
+    {
+        const json o = spec(kLQH88PN220M38L), s = spec(kAGP4233223ME);
+        REQUIRE(o["length_m"].is_null());
+        REQUIRE(o["case_code"] == "3131 (8080 Metric)");
+        const json c = one(o, s);
+        CHECK(c["footprint"] == "overflows");
+        CHECK(verdict_of(c, "footprint") == "fail");
+        CHECK(c["grade"] == "redesign");
+        CHECK(has_note(c, "its chip code '3131 (8080 Metric)' decodes (metric half) to 8 x 8 mm"));
+    }
+    // Qarlos bench 20784754: LQP02HV18NJ02L (0.4 x 0.2 mm) -> MHQ1005P18NGT000, drawn 1.0 x 0.5.
+    {
+        const json o = spec(kLQP02HV18NJ02L), s = spec(kMHQ1005P18NGT000);
+        REQUIRE(o["length_m"].is_null());
+        const json c = one(o, s);
+        CHECK(c["footprint"] == "overflows");
+        CHECK(c["grade"] == "redesign");
+        CHECK(has_note(c, "decodes (metric half) to 0.4 x 0.2 mm"));
+    }
+    // Inside the band: LQH88PN220M38L -> 744071220, drawn 8.0 x 8.0 mm. The code does not
+    // prove the land: UNVERIFIED, never 'fits', capped like any one-sided unknown footprint.
+    const json o = spec(kLQH88PN220M38L), we = spec(k744071220);
+    {
+        const json c = one(o, we);
+        CHECK(c["footprint"] == "unknown");
+        CHECK(verdict_of(c, "footprint") == "unverified");
+        CHECK(c["grade"] != "drop_in");
+        CHECK(has_note(c, "within 1.5x on both axes, but a decoded code is not a drawn land"));
+    }
+    // Boundaries at 1.5x either way (8.0 mm decoded).
+    auto sized = [&](double l_mm, double w_mm) {
+        json s = we;
+        s["length_m"] = l_mm * 1e-3;
+        s["width_m"] = w_mm * 1e-3;
+        return one(o, s);
+    };
+    CHECK(sized(11.9, 8.0)["footprint"] == "unknown");          // 1.4875x: inside
+    CHECK(sized(12.1, 8.0)["footprint"] == "one_size_larger");  // 1.5125x: established
+    CHECK(sized(8.0, 5.4)["footprint"] == "unknown");           // 0.675x: inside
+    CHECK(sized(8.0, 5.3)["footprint"] == "smaller");           // 0.6625x: established
+    // A bare code on the original is never decoded: the original-states-no-land branch.
+    json bare = spec(kLQP02HV18NJ02L);
+    bare["case_code"] = "0402";
+    const json cb = one(bare, spec(kMHQ1005P18NGT000));
+    CHECK(cb["footprint"] == "unknown");
+    CHECK_FALSE(has_note(cb, "decodes (metric half)"));
+}
+
+// I3 (owner 2026-11-13): Isat stated by neither record keeps its UNVERIFIED row and now
+// carries a note.
+TEST_CASE("dec 2026-11-13 I3: Isat stated by neither record carries a note",
+          "[qarlos][crossref][isat][isat-both-unstated]") {
+    using namespace isat_both_unstated;
+    const json c = one(spec(kLSQCA201616T680M), spec(kLQH2MCN680K02));
+    CHECK(verdict_of(c, "saturation_current") == "unverified");
+    CHECK(has_note(c, "saturation current stated by neither record"));
+    // Boundary: Isat stated on either side -> no such note.
+    json o = spec(kLSQCA201616T680M);
+    o["saturation_current"] = 0.2;
+    json s = spec(kLQH2MCN680K02);
+    s["saturation_current"] = 0.25;
+    CHECK_FALSE(has_note(one(o, s), "saturation current stated by neither record"));
+}
+
+// I4 (owner 2026-11-13): a position count stated by one record only counts toward the 3+
+// one-sided identity cap. 05FHJ-SM1-TB (JST FHJ, no positions, gender or rows on record)
+// against TE 1-1734242-0 (10 positions, female, 1 row): three gaps -> major_review. Spec blocks
+// exactly as web/src/crossref.js builds them from the shard rows.
+TEST_CASE("dec 2026-11-13 I4: a one-sided positions gap counts toward the identity-gap cap",
+          "[qarlos][crossref][connector][positions-one-sided]") {
+    const json orig = conn_spec("05FHJ-SM1-TB",
+                                {{"family", "fpcFfc"}, {"pitch_mm", 0.5}, {"rated_current_A", 0.5},
+                                 {"rated_voltage_V", 50.0}, {"temp_min_C", -25.0},
+                                 {"temp_max_C", 85.0}, {"mounting", "smt"},
+                                 {"orientation", "rightAngle"}});
+    const json cand = conn_spec("1-1734242-0",
+                                {{"family", "fpcFfc"}, {"positions", 10.0}, {"polarity", "female"},
+                                 {"rows", 1.0}, {"pitch_mm", 0.5}, {"rated_current_A", 0.5},
+                                 {"rated_voltage_V", 50.0}, {"mounting", "smt"},
+                                 {"orientation", "rightAngle"}});
+    REQUIRE(orig["positions"].is_null());
+    REQUIRE(orig["polarity"].is_null());
+    REQUIRE(orig["rows"].is_null());
+    const json c = conn_one(orig, cand);
+    CHECK(c["grade"] == "major_review");
+    CHECK(has_note(c, "3 connector identity axes are unverified (stated on one side only: "));
+    CHECK(has_note(c, "contact positions"));
+    // Boundary: with the gender stated alike on both sides only two gaps remain (positions,
+    // rows) — the one-sided cap below drop_in, not major_review.
+    json o2 = orig;
+    o2["polarity"] = "female";
+    const json c2 = conn_one(o2, cand);
+    CHECK(c2["grade"] == "minor_review");
+    CHECK_FALSE(has_note(c2, "connector identity axes are unverified"));
+}

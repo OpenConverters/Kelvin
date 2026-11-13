@@ -502,7 +502,12 @@ TEST_CASE("golden: an original with no land pattern still reports the package ax
     CHECK(notes_of(by_mpn("LQG15HS33NH02D")).find("1 x 0.5 mm") != std::string::npos);
     // Where NEITHER record states a package there is nothing to name: the UNVERIFIED
     // verdict is the whole story and a sentence blaming the candidate would be wrong.
-    CHECK_FALSE(by_mpn("NO_PACKAGE").contains("notes"));
+    // Narrowed to "no footprint/package note" with the owner's approval (2026-11-13): the
+    // candidate now carries the note that NEITHER record states a saturation current
+    // (Qarlos r14-r16 group H, owner decision I3), which is not about the package.
+    CHECK(notes_of(by_mpn("NO_PACKAGE")).find("land") == std::string::npos);
+    CHECK(notes_of(by_mpn("NO_PACKAGE")).find("package") == std::string::npos);
+    CHECK(notes_of(by_mpn("NO_PACKAGE")).find("footprint") == std::string::npos);
 
     // The axis is reported, not scored: with no original to compare against, the
     // footprint term is the same for every candidate and must not reorder them.

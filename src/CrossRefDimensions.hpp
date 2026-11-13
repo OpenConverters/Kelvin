@@ -935,6 +935,36 @@ inline std::set<std::string> magnetic_chip_case_readings(const std::string& s) {
     return out;
 }
 
+// The body a MAGNETIC case code spells, decoded ONLY from the dual form
+// "IIII (MMMM Metric)" and only from its metric half, read LL WW in units of 0.1 mm
+// ("3131 (8080 Metric)" -> 8.0 x 8.0 mm, "01005 (0402 Metric)" -> 0.4 x 0.2 mm). Owner
+// decision 2026-11-13: a bare four-digit code is never decoded (it may be either system, or
+// a power-inductor LLHH code), and neither is a dual form whose metric half the IEC table
+// maps to a DIFFERENT imperial code (the record contradicts itself). Axes are sorted:
+// length is the longer one. Height is never decoded. The result is a code's nominal body,
+// not a drawing: CrossRef.hpp only ever uses it to establish a size DIFFERENCE beyond
+// kMagneticCodeBodyBand, never a fit.
+inline std::optional<Dims> magnetic_dual_code_body(const std::string& s) {
+    static const std::regex pair_metric(R"(^\s*(\d{4,5})\s*\(\s*(\d{4})\s*metric\s*\)\s*$)",
+                                        std::regex::icase);
+    std::smatch m;
+    if (!std::regex_match(s, m, pair_metric)) return std::nullopt;
+    const std::string metric = m[2].str();
+    const auto it = chip_metric_to_imperial().find(metric);
+    if (it != chip_metric_to_imperial().end() && it->second != m[1].str()) return std::nullopt;
+    const double a = std::stoi(metric.substr(0, 2)) * 0.1e-3;
+    const double b = std::stoi(metric.substr(2, 2)) * 0.1e-3;
+    if (!(a > 0) || !(b > 0)) return std::nullopt;
+    Dims d;
+    d.length = std::max(a, b);
+    d.width = std::min(a, b);
+    return d;
+}
+// A drawn body more than this factor larger, or smaller, than a decoded dual code's body on
+// either (sorted) axis is an ESTABLISHED size difference (owner, 2026-11-13). Inside the band
+// the code establishes nothing either way: UNVERIFIED, never 'fits'.
+inline constexpr double kMagneticCodeBodyBand = 1.5;
+
 // True only when both magnetic case codes decode (above) and NO reading of one is a reading
 // of the other: the two parts are then different chip sizes however their codes are read, so
 // a different land pattern. Undecodable or overlapping readings establish nothing.

@@ -773,6 +773,15 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // rule. Rule: any such axis turns 'upgrade' / 'equivalent' into
     // 'unknown', exactly as direction_blind does; a measured regression still stands.
     std::vector<std::string> magnetic_unweighed;
+    // A magnetic's rated current stated by the original and absent from the substitute's
+    // record (owner, 2026-11-13; precedent: capacitor ESR absent): the FAIL-sized penalty so
+    // a part that states its rating ranks first, a note, the direction 'unknown' (as for the
+    // other unweighed axes above), and NO demotion and NO cap. 744766115 (0.6 A) took
+    // AMT45S-150-2P-TL000, whose record states no rated current, ahead of B82432T1153K000
+    // (0.902 A stated; Qarlos r14 25916475). Magnetics only: chip beads share the axis in the
+    // code (same PARAM_SPECS row and hard-param set) but the owner's decision names
+    // magnetics, so a bead keeps the unweighed treatment.
+    bool magnetic_rated_absent = false;
     auto note_direction = [&](Dir dir, std::optional<double> o, std::optional<double> s) {
         if (!o || !s || *o <= 0 || *s <= 0) return;
         const double ratio = *s / *o;
@@ -1399,12 +1408,20 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // the axis was skipped without a row, so a part came back drop_in / 'upgrade' with
         // nothing saying Isat was never compared. Missing on both sides is not capped and not
         // penalised (owner 2026-11-12: identical for every candidate, it cannot skew one against
-        // another), but the gap is shown as an UNVERIFIED row — the treatment a footprint
-        // stated by neither record gets (row, no note: test_crossref_ranking_golden ABT #545
-        // asserts such a candidate carries no notes; whether a note may be added is a question
-        // for the owner, Qarlos r14-r16 group H).
+        // another), but the gap is shown as an UNVERIFIED row with a note (owner, 2026-11-13;
+        // test_crossref_ranking_golden ABT #545 was narrowed to "no footprint/package note"
+        // with the owner's approval). The owner also decided the direction becomes 'unknown'
+        // here; that is NOT applied yet, because three existing assertions pin the old
+        // reading ('upgrade' / 'equivalent' with Isat stated by neither record):
+        // test_crossref_classes "direction is not a verdict when the deciding axis was never
+        // compared", the magnetic self-copy invariant of test_crossref_fuzz, and
+        // test_qarlos_fixes "the real LQW04 / CWW0402 pair ..." (r3). Changing them needs the
+        // owner's yes.
         if (!has_data && cat == "magnetic" && spec.key == "saturation_current") {
             params.push_back({{"name", spec.key}, {"verdict", UNVERIFIED}});
+            notes.push_back("saturation current stated by neither record — Isat was not "
+                            "compared, so whether the substitute saturates before the original "
+                            "is unknown; confirm both from the datasheets");
             continue;
         }
         if (!has_data) continue;
@@ -1597,8 +1614,24 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         const bool numeric = (spec.dir == Dir::Lower || spec.dir == Dir::Higher);
         if ((cat == "magnetic" || cat == "chipBead") && numeric && verdict == UNVERIFIED &&
             (spec.key == "rated_current" || spec.key == "dcr" || spec.key == "srf") &&
-            detail::present(original, spec.key) && !detail::present(cand, spec.key))
-            magnetic_unweighed.push_back(param_label(spec.key));
+            detail::present(original, spec.key) && !detail::present(cand, spec.key)) {
+            if (cat == "magnetic" && spec.key == "rated_current") {
+                // See magnetic_rated_absent: penalty + note, no demotion, no cap.
+                magnetic_rated_absent = true;
+                penalty += opt.gate_weight * kVerdictFailPenalty;
+                const auto o_ir = detail::jnum(original, spec.key);
+                char buf[96] = "";
+                if (o_ir) std::snprintf(buf, sizeof buf, " (%g A)", *o_ir);
+                notes.push_back("substitute's record carries no rated current — the original "
+                                "states one" + std::string(buf) +
+                                ", so this comparison could not be made and whether the "
+                                "substitute is ahead or behind is unknown; ranked below "
+                                "candidates that state it — confirm it from the datasheet "
+                                "before this swap");
+            } else {
+                magnetic_unweighed.push_back(param_label(spec.key));
+            }
+        }
         // Two ratings on different bases have no direction between them (ripple basis above).
         auto o = numeric && !ripple_blind && !coss_blind ? detail::jnum(original, spec.key)
                                                          : std::nullopt;
@@ -1805,11 +1838,11 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // states it is rejected in the PARAM_SPECS loop (missing required data on a hard
         // axis), so only this direction reaches here. It takes the one-sided identity
         // treatment of gender / termination / pitch / rows: the UNVERIFIED verdict the loop
-        // pushed, a note naming both sides, and the cap below drop_in. It is NOT counted toward
-        // the several-gaps major_review cap below: that list is the owner's, and positions is
-        // not on it (question recorded for the owner, Qarlos r14-r16 group H).
+        // pushed, a note naming both sides, and the cap below drop_in. It also counts toward
+        // the several-gaps major_review cap below (owner, 2026-11-13).
         if (!stated(original, "positions") && stated(cand, "positions")) {
             connector_identity_unverified = true;
+            connector_identity_gaps.push_back("contact positions");
             notes.push_back("contact positions not established (original: " +
                             said(original, "positions") + ", substitute: " +
                             said(cand, "positions") +
@@ -3136,6 +3169,52 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 params.push_back({{"name", "footprint"}, {"verdict", PASS}});
             }
         }
+        // ── magnetic dual chip code against the substitute's drawn body (owner, 2026-11-13) ──
+        // An original whose record draws no land but states a dual chip code ("3131 (8080
+        // Metric)") had its size thrown away: LQH88PN220M38L (8.0 x 8.0 mm) ranked the 42 x
+        // 33 mm AGP4233-223ME first as an unverified footprint (Qarlos bench 20276947), and
+        // LQP02HV18NJ02L (0.4 x 0.2 mm) took 1.0 x 0.5 mm MHQ1005P18NGT000 the same way (bench
+        // 20784754). The code's metric half is decoded (magnetic_dual_code_body) and set
+        // against the substitute's drawn body, sorted axes:
+        //   more than kMagneticCodeBodyBand larger or smaller on either axis -> an ESTABLISHED
+        //     size difference: the decoded body stands in for the original's land and the
+        //     ordinary size compare below grades it (one size larger / smaller / crossed land
+        //     / overflow — the treatment of every other family's established mismatch);
+        //   inside the band -> UNVERIFIED with a note: a decoded code is not a drawn land, so
+        //     it never reads as 'fits' (capped like any one-sided unknown footprint).
+        // Only the original's code is decoded: a magnetic substitute with no complete drawing
+        // against an original that has one was already rejected above (missing_dimensions).
+        if (cat == "magnetic" && !out.contains("footprint") &&
+            (!o_dims || !has_any_land(*o_dims)) && s_dims && has_land(*s_dims)) {
+            const std::string oc = str(original, "case_code");
+            if (const auto coded = magnetic_dual_code_body(oc)) {
+                const double s_long = std::max(*s_dims->length, *s_dims->width);
+                const double s_short = std::min(*s_dims->length, *s_dims->width);
+                const double r_long = s_long / *coded->length, r_short = s_short / *coded->width;
+                const bool outside = r_long > kMagneticCodeBodyBand ||
+                                     r_short > kMagneticCodeBodyBand ||
+                                     r_long < 1.0 / kMagneticCodeBodyBand ||
+                                     r_short < 1.0 / kMagneticCodeBodyBand;
+                const std::string what = "the original's record draws no body; its chip code '" +
+                                         oc + "' decodes (metric half) to " + land_mm(*coded) +
+                                         " and the substitute's drawn body is " + land_mm(*s_dims);
+                if (outside) {
+                    Dims od = *coded;
+                    if (o_dims) od.height = o_dims->height;
+                    o_dims = od;
+                    notes.push_back(what + " — more than 1.5x apart on at least one axis, an "
+                                           "established size difference");
+                } else {
+                    out["footprint"] = "unknown";
+                    params.push_back({{"name", "footprint"}, {"verdict", UNVERIFIED}});
+                    demote();
+                    penalty += opt.footprint_weight * kUnknownDimPenalty;
+                    notes.push_back(what + " — within 1.5x on both axes, but a decoded code is "
+                                           "not a drawn land; footprint fit is UNVERIFIED, "
+                                           "confirm the pads before substituting");
+                }
+            }
+        }
         FootprintTier tier = footprint_tier(o_dims, s_dims, strict_case);
         // Same standard chip code on both records: a drawing a few percent off the original's
         // is the same land, not a larger case (see kSameChipCodeBodySpread).
@@ -3972,8 +4051,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // D38999/20MG11BN (female, panel-mount, shell 21, coding N, threaded) took
     // YDIV46E21-11PNC009, whose record states none of the five, as minor_review (Qarlos bench
     // 20365838; it is a wire-to-wire plug). Counted: axes exactly one record states — gender,
-    // wire termination, contact pitch, contact rows, board mount, and the family-variant
-    // identities. DECISION for the owner: the variant identities (actuator type, shell size,
+    // wire termination, contact pitch, contact rows, contact positions (owner, 2026-11-13),
+    // board mount, and the family-variant identities. DECISION for the owner: the variant identities (actuator type, shell size,
     // coding, coupling type) count although a single one is uncapped (interface_standard's
     // treatment, which is NOT counted); orientation and pluggable are capped one-sided
     // connector axes but not identities in the owner's list, and are not counted either.
@@ -4054,8 +4133,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //   connector variant identity (actuator type, shell
     //     size, coding, coupling type), one alone             primary    note only, no cap
     //   connector identities one-sided, 3 or more of gender,
-    //     termination, pitch, rows, board mount and the
-    //     variant identities (connector_identity_gaps)        primary    cap major_review
+    //     termination, pitch, rows, positions, board mount
+    //     and the variant identities (connector_identity_gaps) primary   cap major_review
     //   connector orientation (connector_orientation_unv.)    primary    cap minor_review
     //   connector pluggable vs fixed (pluggable_unverified)   primary    cap minor_review
     //   diode die configuration / internal connection         primary    cap minor_review
@@ -4069,7 +4148,14 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //     varistor Vclamp/Isurge, TVS Ppk/Ipp, diode If basis,
     //     zener Vz (missing_required_data)                    primary    cap major_review
     //   AEC-Q grade (automotive_grade)                        primary    demoted, no cap*
-    //   Id / If(AV) / Ic, magnetic & bead rated current,
+    //   magnetic rated current absent from the substitute
+    //     (owner 2026-11-13; magnetic_rated_absent)           primary    note + FAIL penalty,
+    //                                                                    direction 'unknown',
+    //                                                                    no cap
+    //   magnetic Isat stated by NEITHER record (owner
+    //     2026-11-13)                                         both-unst. UNVERIFIED row + note,
+    //                                                                    no cap, no penalty
+    //   Id / If(AV) / Ic, chip-bead rated current,
     //     connector rated voltage, diode power dissipation    primary    no cap*
     //   height-only clearance (height_fit unknown)            secondary  note only
     //   operating-temperature range (resistor, magnetic)      secondary  note only
@@ -4123,7 +4209,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // stands — blindness elsewhere cannot make a regression we did see disappear — and so does
     // "mixed", which already carries one.
     out["direction"] = (cand_retracted || ((direction_blind || isat_basis_blind || surge_blind ||
-                                            current_basis_blind || !magnetic_unweighed.empty()) &&
+                                            current_basis_blind || !magnetic_unweighed.empty() ||
+                                            magnetic_rated_absent) &&
                                            (dir == "upgrade" || dir == "equivalent")))
                            ? "unknown"
                            : dir;
