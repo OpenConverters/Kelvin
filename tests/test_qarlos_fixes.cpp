@@ -5649,7 +5649,11 @@ TEST_CASE("qarlos r14-r16 J4: a tantalum case letter is sized by its series, nev
     CHECK(*e_cwr->width == Approx(2.54e-3));
     CHECK_FALSE(resolve_tantalum_letter("A", "T95").has_value());  // its own A: 3.7 x 1.8
     CHECK_FALSE(resolve_tantalum_letter("A", "").has_value());     // no series named
-    CHECK_FALSE(resolve_tantalum_letter("E", "293D").has_value()); // not in the A-D table
+    // Owner 2026-11-13: E (7343-43) shares D's 7343 land; the height is compared separately.
+    auto e_293d = resolve_tantalum_letter("E", "293D");
+    REQUIRE(e_293d);
+    CHECK(*e_293d->length == Approx(7.3e-3));
+    CHECK(*e_293d->width == Approx(4.3e-3));
 
     // The real pair: still different_case, now for the bodies.
     const json cwr = sp(kCWR06DC155JCA);
@@ -6116,16 +6120,21 @@ TEST_CASE("dec-1113 K1: an EIA-series tantalum letter and its EIA size code are 
     CHECK_FALSE(same("A", "293D", "1210", ""));
     CHECK_FALSE(same("A", "293D", "3528-21", ""));
     CHECK_FALSE(same("D", "293D", "1206 (7343 Metric)", ""));
-    CHECK_FALSE(same("B", "293D", "1411", ""));  // bare 1411 is not in the owner's list
+    // A bare 1411 of no stated technology is not read (L1 maps KEMET's 1411 / 2817 on a
+    // TANTALUM record only: see the r17-L1 tantalum test).
+    CHECK_FALSE(same("B", "293D", "1411", ""));
     // Only EIA-letter series: CWR06's "A" (2.54 x 1.27 mm) is not 1206, nor is a letter with no
     // series, nor an EIA-series letter on a leaded body.
     CHECK_FALSE(same("A", "CWR06", "1206", ""));
     CHECK_FALSE(same("A", "194D", "3216", ""));
     CHECK_FALSE(same("A", "", "1206", ""));
     CHECK_FALSE(same("A", "293D", "1206", "", /*o_ok=*/false));
-    // Letters outside A-D are not mapped (E = 7343-43 shares D's land at another height: the
-    // owner's call, not made here).
-    CHECK_FALSE(same("E", "293D", "7343-43", ""));
+    // E = 7343-43 shares D's land at another height. Agent K left it unmapped as the owner's
+    // call; the owner decided it on 2026-11-13 (L2: land = case, height compared separately),
+    // so this assertion was reversed with that decision.
+    CHECK(same("E", "293D", "7343-43", ""));
+    CHECK(same("V", "293D", "7343-20", ""));
+    CHECK(same("E", "293D", "D", "T83"));
     // Unchanged where no EIA-series letter is involved: an unmarked metric "3216" against
     // "1206" is not guessed, and letter against letter compares as before.
     CHECK_FALSE(same("3216", "", "1206", ""));
@@ -6250,4 +6259,298 @@ TEST_CASE("r17 M8: a candidate rejected for missing data reads direction 'unknow
     CHECK(m["status"] == "no_substitute");
     CHECK(m["reason"] == "breakdown minimum at or below the original's working voltage");
     CHECK(m["direction"] == "downgrade");
+}
+
+// ── Qarlos r17-r19, group L (2026-11-13) ─────────────────────────────────────
+// L-1: TE 3-641148-5 (6 positions, 3.96 mm pitch, no row count) against Amphenol
+// 10167520-121253CLF (6 positions, 6 rows, 3.0 mm), connectors.ndjson records of data-3d2be2e.
+// The candidate's 6/6 gave a per-row count of 1, an end-pin offset of 0 and pitch 'pass'.
+TEST_CASE("r17-L1: a pitch difference over 0.1 mm fails even when a record reads one contact per row",
+          "[qarlos][crossref][connector][r17-l]") {
+    const json orig = conn_spec("3-641148-5", {{"family", "wireToBoard"}, {"positions", 6.0},
+                                               {"pitch_mm", 3.96}, {"rated_current_A", 7.0},
+                                               {"rated_voltage_V", 600.0}});
+    const json cand = conn_spec("10167520-121253CLF",
+                                {{"family", "wireToBoard"}, {"positions", 6.0}, {"rows", 6.0},
+                                 {"pitch_mm", 3.0}, {"polarity", "male"},
+                                 {"orientation", "vertical"}, {"rated_current_A", 12.0}});
+    const json c = conn_one(orig, cand);
+    CHECK(verdict_of(c, "pitch_mm") == "fail");
+    CHECK(c["footprint"] == "different_land_pattern");
+    CHECK(has_note(c, "pitch differs: 3.96 -> 3 mm"));
+    CHECK(c["grade"] != "drop_in");
+    CHECK(c["grade"] != "minor_review");
+    // Inside 0.1 mm the one-contact row still reads as two contacts: 1 x 0.05 mm, a pass.
+    json near = cand;
+    near["pitch_mm"] = 3.91;
+    CHECK(verdict_of(conn_one(orig, near), "pitch_mm") == "pass");
+}
+
+// L-8: Stackpole RAVF104DGT39R0 (case "0402x4", family "RAVF") against YAGEO RC0402FR-0739RL
+// (discrete 0402), resistors.ndjson of data-3d2be2e; graded minor_review / upgrade (r19 seed
+// 28429971). The case string declares four 0402 elements: a device-class conflict.
+TEST_CASE("r17-L8: a resistor whose case names an element count is an array",
+          "[qarlos][crossref][resistor][r17-l]") {
+    using kelvin::crossref::case_declares_resistor_network;
+    CHECK(case_declares_resistor_network("0402x4"));
+    CHECK(case_declares_resistor_network("0603x8"));
+    CHECK(case_declares_resistor_network("1206 X 4"));
+    CHECK_FALSE(case_declares_resistor_network("0402"));
+    CHECK_FALSE(case_declares_resistor_network("0402x1"));
+    CHECK_FALSE(case_declares_resistor_network("6.3x8"));
+    CHECK_FALSE(case_declares_resistor_network("3216-18"));
+    json ravf = res_spec("RAVF104DGT39R0", 39.0, 0.063, 2.0,
+                         {{"case_code", "0402x4"}, {"family", "RAVF"}, {"mount", "smt"},
+                          {"technology", "thickFilm"}, {"tcr", 200.0}, {"temp_min_C", -55.0},
+                          {"temp_max_C", 155.0}, {"max_voltage_V", 25.0}});
+    json rc = res_spec("RC0402FR-0739RL", 39.0, 0.063, 1.0,
+                       {{"case_code", "0402"}, {"family", "RC"}, {"technology", "thickFilm"},
+                        {"length_m", 1.0e-3}, {"width_m", 0.5e-3}, {"height_m", 0.35e-3},
+                        {"temp_min_C", -55.0}, {"temp_max_C", 155.0}});
+    kelvin::crossref::Options opt;
+    opt.max_results = 10;
+    const json c = kelvin::crossref::cross_reference("resistor", ravf, json::array({rc}), opt)
+                       ["candidates"][0];
+    CHECK(verdict_of(c, "configuration") == "fail");
+    CHECK(has_note(c, "multi-element chip resistor array/network"));
+    CHECK(c["footprint"] == "different_land_pattern");
+    CHECK(c["grade"] != "drop_in");
+    CHECK(c["grade"] != "minor_review");
+}
+
+// L-9: Stackpole RNF12DTE249R / RNMF14DTC680R (assemblyType tht, no case) against YAGEO
+// AC1225FK-07249RL / AC0612FR-07680RL (case "1225" / "0612", no assembly type), bench seed
+// 20575296: the SMD chips ranked first with mount 'not stated'. A wide-terminal chip code is
+// an SMD outline, so the swap is a different board process and is rejected.
+TEST_CASE("r17-L9: a wide-terminal chip code classifies as SMD for the mount gate",
+          "[qarlos][crossref][resistor][r17-l]") {
+    using kelvin::crossref::mount_class;
+    CHECK(mount_class("", "1225") == "smd");
+    CHECK(mount_class("", "0612") == "smd");
+    CHECK(mount_class("", "1218") == "smd");
+    CHECK(mount_class("", "AC1225-ish").empty());  // whole-string match only
+    json rnf = res_spec("RNF12DTE249R", 249.0, 0.5, 0.5,
+                        {{"mount", "tht"}, {"family", "RNF"}, {"technology", "metalFilm"},
+                         {"tcr", 25.0}, {"max_voltage_V", 350.0}});
+    json ac = res_spec("AC1225FK-07249RL", 249.0, 2.0, 1.0,
+                       {{"case_code", "1225"}, {"family", "AC Wide Terminal"},
+                        {"technology", "thickFilm"}, {"length_m", 3.2e-3}, {"width_m", 6.4e-3},
+                        {"height_m", 0.55e-3}, {"temp_min_C", -55.0}, {"temp_max_C", 155.0}});
+    kelvin::crossref::Options opt;
+    opt.max_results = 10;
+    const json r = kelvin::crossref::cross_reference("resistor", rnf, json::array({ac}), opt);
+    bool rejected = r["candidates"].empty();
+    if (!rejected) rejected = r["candidates"][0]["status"] == "no_substitute";
+    CHECK(rejected);
+    json rnmf = res_spec("RNMF14DTC680R", 680.0, 0.25, 0.5,
+                         {{"mount", "tht"}, {"family", "RNMF"}, {"technology", "metalFilm"}});
+    json ac06 = res_spec("AC0612FR-07680RL", 680.0, 1.0, 1.0,
+                         {{"case_code", "0612"}, {"family", "AC Wide Terminal"},
+                          {"technology", "thickFilm"}, {"length_m", 1.6e-3},
+                          {"width_m", 3.2e-3}, {"height_m", 0.55e-3}});
+    const json r2 = kelvin::crossref::cross_reference("resistor", rnmf, json::array({ac06}), opt);
+    bool rejected2 = r2["candidates"].empty();
+    if (!rejected2) rejected2 = r2["candidates"][0]["status"] == "no_substitute";
+    CHECK(rejected2);
+}
+
+// ── L1 / L2: tantalum case identity (owner decisions 2026-11-13) ─────────────
+// Specs as web/src/crossref.js builds them from the v22 shard rows of these capacitors.ndjson
+// records of data-3d2be2e (every unstated optional null).
+namespace r17_l_tant {
+json tant(const char* mpn, const char* code, const char* series, double c, double v, json l,
+          json w, json h, double esr) {
+    return json{{"mpn", mpn}, {"length_m", l}, {"width_m", w}, {"height_m", h},
+                {"case_code", code}, {"mount", "SMT"}, {"lead_pitch_m", nullptr},
+                {"is_production", true}, {"provenance_retracted", false},
+                {"box_axes_ambiguous", false}, {"value_si", c}, {"voltage", v}, {"esr", esr},
+                {"ripple_current", nullptr}, {"technology", "tantalum-mno2"},
+                {"dielectric_code", ""}, {"family", series}, {"voltage_ac", nullptr},
+                {"esr_frequency", 100000}, {"temp_min_C", -55}, {"temp_max_C", 125},
+                {"ripple_current_frequency", nullptr}, {"safety_class", nullptr},
+                {"capacitance_min", nullptr}, {"capacitance_max", nullptr},
+                {"lead_form", nullptr}, {"qualified_spec", nullptr},
+                {"qualified_grade", nullptr}, {"qualified_failure_rate", nullptr}};
+}
+json one(const json& orig, const json& cand) {
+    kelvin::crossref::Options opt;
+    opt.max_results = 10;
+    const json r = kelvin::crossref::cross_reference("capacitor", orig, json::array({cand}), opt);
+    REQUIRE(r["candidates"].size() == 1);
+    return r["candidates"][0];
+}
+}  // namespace r17_l_tant
+
+TEST_CASE("r17-L1: KEMET 1411 / 2817 on a tantalum record are the B / D cases; a drawn body maps too",
+          "[qarlos][crossref][tantalum][r17-l]") {
+    using kelvin::crossref::capacitor_case_identities;
+    using kelvin::crossref::CapacitorCaseSide;
+    using kelvin::crossref::Dims;
+    auto drawn = [](double l_mm, double w_mm) {
+        Dims d;
+        d.length = l_mm * 1e-3;
+        d.width = w_mm * 1e-3;
+        return std::optional<Dims>(d);
+    };
+    auto same = [](const CapacitorCaseSide& o, const CapacitorCaseSide& s) {
+        const auto ids = capacitor_case_identities(o, s);
+        return ids.first == ids.second;
+    };
+    const CapacitorCaseSide b293{"B", "293D", "tantalum-mno2", true, std::nullopt};
+    const CapacitorCaseSide d293{"D", "293D", "tantalum-mno2", true, std::nullopt};
+    const CapacitorCaseSide k1411{"1411", "T492 CWR11", "tantalum-mno2", true, drawn(3.5, 2.8)};
+    const CapacitorCaseSide k2817{"2817", "T491", "tantalum-polymer", true, drawn(7.3, 4.3)};
+    CHECK(same(b293, k1411));
+    CHECK(same(k1411, b293));
+    CHECK(same(d293, k2817));
+    CHECK_FALSE(same(d293, k1411));
+    // KEMET's code against the other EIA spellings of the size.
+    CHECK(same(k1411, {"3528-21", "", "tantalum-mno2", true, std::nullopt}));
+    CHECK(same(k1411, {"1210", "", "", true, std::nullopt}));
+    CHECK(same(k2817, {"7343-43", "", "tantalum-mno2", true, std::nullopt}));
+    // The string alone, no drawing: still the B case on a tantalum record...
+    CHECK(same(b293, {"1411", "T491", "tantalum-mno2", true, std::nullopt}));
+    // ...and not on a record of another technology (KEMET A700 aluminium polymer "2817").
+    CHECK_FALSE(same(d293, {"2817", "A700", "aluminum-electrolytic-polymer", true, std::nullopt}));
+    // A KEMET code against a non-EIA-series letter stays the plain compare (J4).
+    CHECK_FALSE(same(k1411, {"B", "CWR06", "tantalum-mno2", true, std::nullopt}));
+    // Map by dimensions: a tantalum record whose string names no EIA size, drawing the 3528 body.
+    const CapacitorCaseSide odd_b{"Case B (low ESR)", "", "tantalum-polymer", true, drawn(3.5, 2.8)};
+    CHECK(same(b293, odd_b));
+    CHECK(same({"3528-21", "", "", true, std::nullopt}, odd_b));  // against an EIA size code
+    CHECK_FALSE(same(d293, odd_b));                               // the body is not D's
+    // No drawing: nothing to map, the strings decide (unverified elsewhere, never guessed).
+    CHECK_FALSE(same(b293, {"Case B (low ESR)", "", "tantalum-polymer", true, std::nullopt}));
+    // A 1210 MLCC outline (3.2 x 2.5 mm) is not the 3528 body, and a non-tantalum drawing is not read.
+    CHECK_FALSE(same(b293, {"odd", "", "tantalum-mno2", true, drawn(3.2, 2.5)}));
+    CHECK_FALSE(same(b293, {"odd", "", "ceramic-class-2", true, drawn(3.5, 2.8)}));
+    // A table outline is not a drawing.
+    {
+        auto t = drawn(3.5, 2.8);
+        t->land_from_table = true;
+        CHECK_FALSE(same(b293, {"odd", "", "tantalum-mno2", true, t}));
+    }
+
+    // The real pair: Vishay 293D105X9035B2TE3 ("B", 1 uF / 35 V, no drawing) against KEMET
+    // CWR11MH105KB ("1411", 3.5 x 2.8 x 1.9 mm, 1 uF / 35 V). Was different_case "B -> 1411".
+    using namespace r17_l_tant;
+    const json v = tant("293D105X9035B2TE3", "B", "293D", 1e-6, 35.0, nullptr, nullptr, nullptr, 5.0);
+    const json k = tant("CWR11MH105KB", "1411", "T492 CWR11", 1e-6, 35.0, 3.5e-3, 2.8e-3, 1.9e-3, 6.5);
+    const json c = one(v, k);
+    CHECK(c["footprint"] != "different_case");
+    CHECK_FALSE(has_note(c, "different package/case"));
+    CHECK(c["footprint"] == "fits");
+    const json back = one(k, v);
+    CHECK(back["footprint"] != "different_case");
+    CHECK_FALSE(has_note(back, "different package/case"));
+}
+
+TEST_CASE("r17-L2: tantalum E / V share D's 7343 land; the height is compared on its own axis",
+          "[qarlos][crossref][tantalum][r17-l]") {
+    using namespace r17_l_tant;
+    // Vishay T83E686M020ESSS ("E", 68 uF / 20 V, no drawing) and KEMET T491D686K020AG ("2817",
+    // 7.3 x 4.3 x 2.8 mm, 68 uF / 20 V), capacitors.ndjson of data-3d2be2e.
+    const json e = tant("T83E686M020ESSS", "E", "T83", 68e-6, 20.0, nullptr, nullptr, nullptr, 0.6);
+    const json k = tant("T491D686K020AG", "2817", "T491", 68e-6, 20.0, 7.3e-3, 4.3e-3, 2.8e-3, 0.7);
+    // E original (7343-43, 4.3 mm) -> the 2.8 mm KEMET D body: same land, shorter, height pass.
+    const json c = one(e, k);
+    CHECK(c["footprint"] != "different_case");
+    CHECK_FALSE(has_note(c, "different package/case"));
+    CHECK(c["footprint"] == "fits");
+    CHECK(c["height_fit"] == "fits");
+    CHECK(has_note(c, "the original's 7343-43 (4.3 mm)"));
+    // The other way: the 2.8 mm original against the E case's 4.3 mm -> taller, a height WARN,
+    // never a case mismatch.
+    const json back = one(k, e);
+    CHECK(back["footprint"] != "different_case");
+    CHECK_FALSE(has_note(back, "different package/case"));
+    CHECK(back["height_fit"] != "fits");
+    CHECK(verdict_of(back, "height") != "pass");
+    CHECK(has_note(back, "taller than the original"));
+    // Letter against letter: 293D D (7343-31) against T83 E (7343-43).
+    const json d = tant("293D686X0020D2TE3", "D", "293D", 68e-6, 20.0, nullptr, nullptr, nullptr, 0.6);
+    const json de = one(d, e);
+    CHECK(de["footprint"] != "different_case");
+    CHECK(verdict_of(de, "height") == "warn");
+    CHECK(has_note(de, "7343-31 (3.1 mm)"));
+    CHECK(has_note(de, "7343-43 (4.3 mm)"));
+    // A metric-height string is read by land, its height separately: "7343-20" for a V.
+    const json v = tant("T55V686M020C0100", "V", "T55", 68e-6, 20.0, nullptr, nullptr, nullptr, 0.1);
+    const json m = tant("METRIC_7343_20", "7343-20", "", 68e-6, 20.0, nullptr, nullptr, nullptr, 0.1);
+    const json vm = one(v, m);
+    CHECK(vm["footprint"] != "different_case");
+    // Same designation height (2.0 mm both): no height difference to report.
+    CHECK(vm["height_fit"] == "fits");
+    // A non-EIA-series letter E (CWR06 / 194D: 5.08 x 2.54 mm) is not D's land.
+    const json cwr = tant("CWR06NH105MSC", "E", "CWR06", 68e-6, 20.0, nullptr, nullptr, nullptr, 0.6);
+    CHECK(one(cwr, d)["footprint"] == "different_case");
+}
+
+namespace r17_l_cap {
+// A leaded capacitor spec as web/src/crossref.js builds it (unstated optionals null).
+json cap(const char* mpn, const char* code, const char* tech, const char* series, double c,
+         double v, json l, json w, json h, json lead_pitch, json lead_form) {
+    return json{{"mpn", mpn}, {"length_m", l}, {"width_m", w}, {"height_m", h},
+                {"case_code", code}, {"mount", "THT"}, {"lead_pitch_m", lead_pitch},
+                {"is_production", true}, {"provenance_retracted", false},
+                {"box_axes_ambiguous", false}, {"value_si", c}, {"voltage", v}, {"esr", nullptr},
+                {"ripple_current", nullptr}, {"technology", tech}, {"dielectric_code", ""},
+                {"family", series}, {"voltage_ac", nullptr}, {"esr_frequency", nullptr},
+                {"temp_min_C", -55}, {"temp_max_C", 105}, {"ripple_current_frequency", nullptr},
+                {"safety_class", nullptr}, {"capacitance_min", nullptr},
+                {"capacitance_max", nullptr}, {"lead_form", lead_form},
+                {"qualified_spec", nullptr}, {"qualified_grade", nullptr},
+                {"qualified_failure_rate", nullptr}};
+}
+json one(const json& orig, const json& cand) {
+    kelvin::crossref::Options opt;
+    opt.max_results = 10;
+    const json r = kelvin::crossref::cross_reference("capacitor", orig, json::array({cand}), opt);
+    REQUIRE(r["candidates"].size() == 1);
+    return r["candidates"][0];
+}
+}  // namespace r17_l_cap
+
+// L-6: Nichicon RS80E471MCNASQ ("6.3x8", 6.3 mm can, 8 mm long) against KEMET
+// A758EK477M0ECAE018 ("6.3x8mm", the same can, 2.5 mm pitch), r19 seed 28325242.
+TEST_CASE("r17-L6: a can size written with its 'mm' unit is the same case",
+          "[qarlos][crossref][capacitor][r17-l]") {
+    using kelvin::crossref::case_identity;
+    CHECK(case_identity("capacitor", "6.3x8mm") == case_identity("capacitor", "6.3x8"));
+    CHECK(case_identity("capacitor", "7.2x6x4.5 MM") == case_identity("capacitor", "7.2x6x4.5"));
+    CHECK(case_identity("capacitor", "6.3x8mm") != case_identity("capacitor", "6.3x11"));
+    CHECK(case_identity("capacitor", "PCM 5mm") == "PCM5MM");  // not a size string: untouched
+    using namespace r17_l_cap;
+    const json rs = cap("RS80E471MCNASQ", "6.3x8", "aluminum-electrolytic-polymer", "RS8", 470e-6,
+                        2.5, 6.3e-3, 6.3e-3, 8e-3, nullptr, "radial");
+    const json a7 = cap("A758EK477M0ECAE018", "6.3x8mm", "aluminum-electrolytic-polymer", "A758",
+                        470e-6, 2.5, 6.3e-3, 6.3e-3, 8e-3, 2.5e-3, "radial");
+    const json c = one(rs, a7);
+    CHECK(c["footprint"] != "different_case");
+    CHECK_FALSE(has_note(c, "different package/case"));
+}
+
+// L-7: WIMA FKP2C016801D00HO00 ("PCM 5", 7.2 x 4.5 x 6 mm, 5 mm pitch, no lead form) against
+// KEMET PFR5682G63J11L4Bulk ("7.2x6x4.5mm", the same box, 5 mm pitch, radial), bench seed
+// 20575296: graded "different package/case — different land pattern".
+TEST_CASE("r17-L7: two leaded parts stating the same lead pitch are not a case mismatch on their strings",
+          "[qarlos][crossref][capacitor][r17-l]") {
+    using namespace r17_l_cap;
+    const json fkp = cap("FKP2C016801D00HO00", "PCM 5", "film-polypropylene", "FKP 2", 6.8e-9, 63.0,
+                         7.2e-3, 4.5e-3, 6e-3, 5e-3, nullptr);
+    const json pfr = cap("PFR5682G63J11L4Bulk", "7.2x6x4.5mm", "film-polypropylene", "PFR/F411",
+                         6.8e-9, 63.0, 7.2e-3, 4.5e-3, 6e-3, 5e-3, "radial");
+    const json c = one(fkp, pfr);
+    CHECK(c["footprint"] != "different_case");
+    CHECK_FALSE(has_note(c, "different package/case"));
+    CHECK(c["footprint"] == "fits");
+    // The radial form is stated on one side only: still unverified and capped (unchanged).
+    CHECK(verdict_of(c, "lead_form") == "unverified");
+    CHECK(c["grade"] != "drop_in");
+    // A different lead pitch is still a different land.
+    json pfr10 = pfr;
+    pfr10["lead_pitch_m"] = 7.5e-3;
+    const json c10 = one(fkp, pfr10);
+    CHECK(c10["footprint"] == "different_land_pattern");
+    CHECK(has_note(c10, "lead pitch differs"));
 }

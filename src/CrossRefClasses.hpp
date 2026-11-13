@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstdio>
 #include <optional>
+#include <regex>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -555,7 +556,24 @@ inline std::string safety_class_unverified(char axis, int orig_rank,
 // declaration, and the gate below only fires when exactly one side declares a
 // network. An undeclared array offered against a discrete original therefore
 // still slips through — that is a catalogue data gap, not something to guess at.
-inline bool declares_resistor_network(const std::string& family, const std::string& mpn) {
+//
+// A third declaration is the record's CASE string when it names an element count beside a
+// chip code: "0402x4" (four 0402 elements in one body), "0603x8", "1206x4". 700 resistor
+// records state their case this way (data-3d2be2e: 0603x4 267, 0402x4 249, 1206x4 121, 0402x2
+// 30, 0603x8 18, 0603x2 15), every one a Stackpole RAVF array whose family string ("RAVF")
+// does not say so; RAVF104DGT39R0 ("0402x4") took the discrete RC0402FR-0739RL as
+// minor_review (Qarlos r19 seed 28429971). This reads the structured case field, exactly as a
+// metric-height "3528-21" is read; it is not a description or an MPN parse. The count must
+// be 2 or more and the chip half a 4-digit code: anything else declares nothing.
+inline bool case_declares_resistor_network(const std::string& case_code) {
+    static const std::regex chip_times_n(R"(^\s*\d{4}\s*[xX]\s*(\d{1,2})\s*$)");
+    std::smatch m;
+    if (!std::regex_match(case_code, m, chip_times_n)) return false;
+    return std::stoi(m[1].str()) >= 2;
+}
+inline bool declares_resistor_network(const std::string& family, const std::string& mpn,
+                                      const std::string& case_code = std::string()) {
+    if (case_declares_resistor_network(case_code)) return true;
     const std::string f = lower_copy(family);
     if (contains(f, "array") || contains(f, "network")) return true;
     const std::string m = lower_copy(mpn);
