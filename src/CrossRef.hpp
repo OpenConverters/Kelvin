@@ -493,6 +493,16 @@ inline constexpr double kUnknownTempGradePenaltyPerC = 0.002;
 // numeric terms so no single categorical miss can outweigh the primary value.
 inline constexpr double kVerdictWarnPenalty = 0.5;
 inline constexpr double kVerdictFailPenalty = 3.0;
+// Gross over-rating (owner 2026-11-13, Y4): a substitute whose primary voltage or current
+// rating is more than kGrossOverRatingFactor times the original's costs
+// kGrossOverRatingPenalty per such axis, plus a note naming it — a 200 V / 3 A rectifier for
+// a 70 V / 70 mA signal Schottky is "better" on paper and very likely a bigger body, more
+// cost and more capacitance. A fixed step, well below a WARN (0.5), so it only orders among
+// otherwise-equal candidates; grade and direction are unchanged.
+inline constexpr double kGrossOverRatingFactor = 3.0;
+inline constexpr double kGrossOverRatingPenalty = 0.15;
+static_assert(kGrossOverRatingPenalty < kVerdictWarnPenalty / 2,
+              "Y4: the over-rating step must stay well below a WARN");
 // A NUMERIC WARN's penalty scales with its deviation (owner, 2026-11-13). Every WARN used to
 // cost a flat kVerdictWarnPenalty, so a Qg 3 % over the original's and one 93 % over it (both
 // inside the 2x WARN band; STL13NM60N -> SiHH11N60EF / SiHF12N60E) cost the same, and so did
@@ -1140,6 +1150,34 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         if (std::find(orig_unstated_primary.begin(), orig_unstated_primary.end(), l) ==
             orig_unstated_primary.end())
             orig_unstated_primary.push_back(l);
+    };
+    // Y4: one note and one small penalty per grossly over-rated primary V / A rating.
+    auto gross_over_rating = [&](const std::string& key, std::optional<double> o,
+                                 std::optional<double> s) {
+        if (!o || !s || !(*o > 0) || !(*s > kGrossOverRatingFactor * *o)) return;
+        static const std::map<std::string, std::pair<const char*, const char*>> kWhat = {
+            {"vds", {"drain-source voltage rating", "V"}},
+            {"id", {"continuous drain current rating", "A"}},
+            {"vrrm", {"reverse voltage rating", "V"}},
+            {"if_avg", {"average forward current rating", "A"}},
+            {"voltage", {"rated voltage", "V"}},
+            {"vces", {"collector-emitter voltage rating", "V"}},
+            {"ic", {"continuous collector current rating", "A"}},
+            {"saturation_current", {"saturation current", "A"}},
+            {"rated_current", {"rated current", "A"}},
+            {"rated_current_A", {"rated current", "A"}},
+            {"rated_voltage_V", {"rated voltage", "V"}}};
+        const auto it = kWhat.find(key);
+        if (it == kWhat.end()) return;
+        penalty += opt.gate_weight * kGrossOverRatingPenalty;
+        char b[320];
+        std::snprintf(b, sizeof b,
+                      "%s %g %s is %.3gx the original's %g %s — far above what the original is "
+                      "rated for (more than %gx): a bigger body, higher cost and more "
+                      "capacitance are likely; ranked after closer-rated parts",
+                      it->second.first, *s, it->second.second, *s / *o, *o, it->second.second,
+                      kGrossOverRatingFactor);
+        notes.push_back(b);
     };
     // Direction bookkeeping: on each directional parameter we could compare,
     // did the substitute come out strictly ahead of the original, or behind?
@@ -2280,6 +2318,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             penalty += opt.overdim_weight * (spec.dir == Dir::Higher
                                                  ? over_dimensioning_penalty(o, s, 1.0)
                                                  : over_dimensioning_penalty(s, o, 1.0));
+            if (spec.dir == Dir::Higher &&
+                (spec.key == "saturation_current" || spec.key == "rated_current" ||
+                 spec.key == "rated_current_A" || spec.key == "rated_voltage_V"))
+                gross_over_rating(spec.key, o, s);
         }
         if (numeric) {
             // Isat is compared at a common inductance-drop criterion, so its direction is too:
@@ -3499,6 +3541,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             penalty += opt.gate_weight * v.penalty;
         } else {
             penalty += opt.overdim_weight * over_dimensioning_penalty(o, s, 1.0);
+            // A protection diode's standoff has its own above-band rule (standoff_band).
+            if (v.verdict == PASS && r.mode == Mode::HigherBetter &&
+                !(protection && std::string(r.key) == "vrrm"))
+                gross_over_rating(r.key, o, s);
         }
         if (v.verdict == WARN || v.verdict == FAIL)
             ++worse;  // a shortfall verdict is a regression, inside the neutral band or not

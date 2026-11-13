@@ -7840,3 +7840,26 @@ TEST_CASE("owner 2026-11-13 Y3: an unknown footprint never outranks a known diff
     CHECK(find_mpn(r, "BAS70LT1G")["footprint"] == "different_case");
     CHECK(order.back() == "MBRS3200T3G");
 }
+
+// Y4: gross over-rating (> 3x the original's primary V / A rating) costs a small penalty and a
+// note; grade and direction unchanged. Real pair: BAS70L (70 V / 0.07 A) -> MBRS3200T3G
+// (200 V = 2.86x, below the factor; 3 A = 43x, above it).
+TEST_CASE("owner 2026-11-13 Y4: a grossly over-rated substitute pays a small penalty and a note",
+          "[qarlos][crossref][diode][dec-1113y]") {
+    using namespace dec1113y;
+    const json o = json::parse(kBAS70L);
+    json near = json::parse(kMBRS3200T3G);
+    near["mpn"] = "MBRS3200T3G (0.2 A)";
+    near["if_avg"] = 0.2;  // 2.86x: inside the factor
+    const json r = kelvin::crossref::cross_reference(
+        "diode", o, json::array({json::parse(kMBRS3200T3G), near}));
+    const json big = find_mpn(r, "MBRS3200T3G"), ref = find_mpn(r, "MBRS3200T3G (0.2 A)");
+    CHECK(has_note(big, "average forward current rating 3 A is 42.9x the original's 0.07 A"));
+    CHECK_FALSE(has_note(big, "reverse voltage rating 200 V is"));  // 2.86x is not gross
+    CHECK_FALSE(has_note(ref, "far above what the original is rated for"));
+    CHECK(big["grade"] == ref["grade"]);
+    CHECK(big["direction"] == ref["direction"]);
+    const double d = big["penalty"].get<double>() - ref["penalty"].get<double>();
+    CHECK(d >= kelvin::crossref::kGrossOverRatingPenalty - 1e-9);
+    CHECK(d < kelvin::crossref::kVerdictWarnPenalty);
+}
