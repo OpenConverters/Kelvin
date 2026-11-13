@@ -2331,7 +2331,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             if (std::string(a.key) == "rows")
                 params.push_back({{"name", "rows"}, {"verdict", UNVERIFIED}});
             connector_identity_unverified = true;
-            connector_identity_gaps.push_back(a.what);
+            // Only an axis the ORIGINAL states and the substitute does not is a gap toward the
+            // several-gaps cap (owner 2026-11-13, W1): stating extra data never hurts a candidate.
+            if (os) connector_identity_gaps.push_back(a.what);
             notes.push_back(std::string(a.what) + " not established (original: " +
                             said(original, a.key) + ", substitute: " + said(cand, a.key) +
                             ") — " + a.confirm + " from the datasheets");
@@ -2343,11 +2345,11 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // states it is rejected in the PARAM_SPECS loop (missing required data on a hard
         // axis), so only this direction reaches here. It takes the one-sided identity
         // treatment of gender / termination / pitch / rows: the UNVERIFIED verdict the loop
-        // pushed, a note naming both sides, and the cap below drop_in. It also counts toward
-        // the several-gaps major_review cap below (owner, 2026-11-13).
+        // pushed, a note naming both sides, and the cap below drop_in. It does NOT count toward
+        // the several-gaps major_review cap below: only axes the original states count (owner
+        // 2026-11-13 W1, reversing the earlier I4 choice that counted it).
         if (!stated(original, "positions") && stated(cand, "positions")) {
             connector_identity_unverified = true;
-            connector_identity_gaps.push_back("contact positions");
             notes.push_back("contact positions not established (original: " +
                             said(original, "positions") + ", substitute: " +
                             said(cand, "positions") +
@@ -2364,7 +2366,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             // Counted toward the several-gaps cap (grade site) although a single one
             // stays uncapped: these are identities when stated (owner, 2026-11-12), and
             // DECISION for the owner: whether they should count is recorded at the cap.
-            connector_identity_gaps.push_back(connector_variant_axis_label(k));
+            // Only when the original states it (owner 2026-11-13, W1).
+            if (os) connector_identity_gaps.push_back(connector_variant_axis_label(k));
             notes.push_back(std::string(connector_variant_axis_label(k)) +
                             " not established (original: " + said(original, k) +
                             ", substitute: " + said(cand, k) +
@@ -2415,8 +2418,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 else {
                     // One-sided orientation is one of the identity gaps counted towards the
                     // 3+ cap (owner decision 2026-11-13); the horizontal/rightAngle pair is
-                    // stated on both sides and is not a gap.
-                    connector_identity_gaps.push_back("orientation");
+                    // stated on both sides and is not a gap. Only the original's stated
+                    // orientation is a gap (owner 2026-11-13, W1).
+                    if (!oo.empty()) connector_identity_gaps.push_back("orientation");
                     notes.push_back("orientation not established (original: " + said(oo) +
                                     ", substitute: " + said(so) +
                                     ") — confirm vertical / right-angle from the datasheets");
@@ -3426,7 +3430,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             // original. Capped like an unverified footprint (minor_review).
             params.push_back({{"name", "mounting"}, {"verdict", UNVERIFIED}});
             mount_unverified = true;
-            connector_identity_gaps.push_back("board mount");
+            // A gap toward the several-gaps cap only when the original states the board
+            // mount (owner 2026-11-13, W1).
+            if (!o_cls.empty()) connector_identity_gaps.push_back("board mount");
             notes.push_back(!o_cls.empty()
                                 ? "the original is " + mount_src(o_mt, o_pkg) +
                                       "-mounted; the substitute's record states no board mount — "
@@ -4792,10 +4798,13 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // the substitute's record establishes almost nothing of what makes it THIS connector:
     // D38999/20MG11BN (female, panel-mount, shell 21, coding N, threaded) took
     // YDIV46E21-11PNC009, whose record states none of the five, as minor_review (Qarlos bench
-    // 20365838; it is a wire-to-wire plug). Counted: axes exactly one record states — gender,
-    // wire termination, contact pitch, contact rows, contact positions (owner, 2026-11-13),
-    // board mount, orientation stated on one side only (owner, 2026-11-13; TW-03-05-F-Q-365-090
-    // -> WT12PD9), and the family-variant identities. DECISION for the owner: the variant
+    // 20365838; it is a wire-to-wire plug). Counted: axes the ORIGINAL states and the
+    // substitute's record does not (owner 2026-11-13, W1: an axis stated only by the
+    // substitute is not a gap; stating extra data never hurts a candidate) — gender,
+    // wire termination, contact pitch, contact rows, board mount, orientation (owner,
+    // 2026-11-13; TW-03-05-F-Q-365-090 -> WT12PD9), and the family-variant identities. Contact
+    // positions never counts: an original that states them against a silent substitute is
+    // rejected (hard identity), so only the substitute-only direction reaches here. DECISION for the owner: the variant
     // identities (actuator type, shell size, coding, coupling type) count although a single one
     // is uncapped (interface_standard's treatment, which is NOT counted); pluggable is a capped
     // one-sided connector axis but not an identity in the owner's list, and is not counted.
@@ -4877,9 +4886,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //   connector gender/termination/pitch/rows (identity)    primary    cap minor_review
     //   connector variant identity (actuator type, shell
     //     size, coding, coupling type), one alone             primary    note only, no cap
-    //   connector identities one-sided, 3 or more of gender,
-    //     termination, pitch, rows, positions, board mount,
-    //     orientation and the variant identities (connector_identity_gaps) primary   cap major_review
+    //   connector identities stated by the ORIGINAL only, 3
+    //     or more of gender, termination, pitch, rows, board
+    //     mount, orientation and the variant identities
+    //     (connector_identity_gaps; owner 2026-11-13 W1)    primary    cap major_review
     //   connector orientation (connector_orientation_unv.)    primary    cap minor_review
     //   connector pluggable vs fixed (pluggable_unverified)   primary    cap minor_review
     //   diode / MOSFET die configuration, internal connection primary  cap minor_review

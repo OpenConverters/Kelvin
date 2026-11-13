@@ -7323,3 +7323,53 @@ TEST_CASE("owner 2026-11-13 S1: a comparison drawn from a retracted-only field i
     CHECK(verdict_of(r3["candidates"][0], "vrrm") == "pass");
     CHECK_FALSE(has_note(r3["candidates"][0], "retracted"));
 }
+
+// ── Owner 2026-11-13 W1: only axes the ORIGINAL states count toward the 3+ identity-gap cap ──
+// Stating extra data must never hurt a candidate. Molex 397360004 (Eurostyle plug, male,
+// 4 positions, no pitch / rows on record) took TE 1546931-4 (4 positions, 5 mm pitch, 1 row,
+// no gender on record) at major_review: gender (original only) + pitch and rows (substitute
+// only) made three gaps. Now only the gender counts. Verbatim lines of
+// tools/qarlos/bench/data-6bd04c7/connectors.ndjson (TAS 6bd04c7).
+namespace dec_1113_w1 {
+// connectors.ndjson line 67161: 397360004
+const char* k397360004 = R"KREC({"connector": {"manufacturerInfo": {"name": "Molex", "reference": "397360004", "status": "production", "datasheetInfo": {"part": {"partNumber": "397360004", "matingPolarity": "male", "description": "5.08mm Pitch Eurostyle Horizontal PC Board Plug, with Retention Ends, 4 Circuits", "series": "Eurostyle Pluggable"}, "electrical": {"ratedCurrentPerContact": 12.0, "ratedVoltage": 300.0}, "mechanical": {"positions": 4}, "familyDetails": {"family": "terminalBlock", "pluggable": true}, "environmental": {"operatingTemperature": {"minimum": -40.0, "maximum": 105.0}}, "provenance": [{"source": "manufacturerParametric", "sourceName": "Molex product catalogue", "verification": "valuesReadFromSource", "verificationDate": "2026-09-07", "retrievedDate": "2026-06-24"}, {"source": "manufacturerParametric", "sourceName": "Molex product catalogue (part detail)", "sourceUrl": "https://www.molex.com/en-us/products/part-detail/397360004", "retrievedDate": "2026-11-06", "fields": ["part.partNumber", "part.series", "mechanical.positions", "electrical.ratedCurrentPerContact", "electrical.ratedVoltage", "environmental.operatingTemperature", "familyDetails.family"], "verification": "valuesReadFromSource", "verificationMethod": "Compared the stored values with the values printed in Molex's own per-part product-detail record, which names this exact part number; only the listed fields agree.", "verificationDate": "2026-11-06"}]}, "family": "Eurostyle Pluggable", "description": "5.08mm Pitch Eurostyle Horizontal PC Board Plug, with Retention Ends, 4 Circuits", "datasheetUrl": "https://www.molex.com/content/dam/molex/molex-dot-com/products/automated/en-us/salesdrawingpdf/397/39736/397360004_sd.pdf"}}})KREC";
+// connectors.ndjson line 120517: 1546931-4
+const char* k1546931_4 = R"KREC({"connector":{"manufacturerInfo":{"name":"TE Connectivity","reference":"1546931-4","status":"production","datasheetInfo":{"part":{"partNumber":"1546931-4","description":"4 Position, Header, Wire-to-Board, 5 mm [.197 in] Centerline, 1 Row, 300 VAC, Printed Circuit Board, Vertical, Through Hole - Solder, Power & Signal","series":null},"electrical":{"ratedCurrentPerContact":12.0,"ratedVoltage":300.0},"mechanical":{"positions":4,"pitch":0.005,"rows":1},"familyDetails":{"family":"terminalBlock"},"environmental":{"operatingTemperature":{"minimum":-40.0,"maximum":105.0}},"provenance":[{"source":"manufacturerParametric","sourceName":"TE Connectivity product catalogue","verification":"valuesReadFromSource","verificationDate":"2026-09-07","retrievedDate":"2026-06-24"},{"source":"manufacturerParametric","sourceName":"TE Connectivity product page","sourceUrl":"https://www.te.com/en/product-1546931-4.html","retrievedDate":"2026-11-09","fields":["mechanical.rows"],"verification":"valuesReadFromSource","verificationDate":"2026-11-09","verificationMethod":"Compared the stored value of each listed field with the attribute list printed on the saved TE product page for this part number (page text names the part): \"Number of Rows : 1\". Unit conversion only: mm to m, um to m, V and A as printed."}]},"description":"4 Position, Header, Wire-to-Board, 5 mm [.197 in] Centerline, 1 Row, 300 VAC, Printed Circuit Board, Vertical, Through Hole - Solder, Power & Signal","datasheetUrl":"https://www.te.com/commerce/DocumentDelivery/DDEController?Action=srchrtrv&DocNm=108-20166&DocType=Specification%20Or%20Standard&DocLang=English&DocFormat=pdf&PartCntxt=1546931-4"}}})KREC";
+}  // namespace dec_1113_w1
+
+TEST_CASE("owner 2026-11-13 W1: axes stated only by the substitute are not identity gaps",
+          "[qarlos][crossref][connector-identity][dec-w1]") {
+    using namespace variant_ids;
+    using namespace dec_1113_w1;
+    const json orig = spec_of(k397360004), cand = spec_of(k1546931_4);
+    REQUIRE(orig["pitch_mm"].is_null());
+    REQUIRE(orig["rows"].is_null());
+    REQUIRE(cand["polarity"].is_null());
+    REQUIRE(cand["pitch_mm"].is_number());
+    REQUIRE(cand["rows"].is_number());
+    const json c = rank_one(k397360004, k1546931_4);
+    REQUIRE(c["status"] != "no_substitute");
+    CHECK(c["grade"] != "major_review");
+    CHECK(notes_with(c, "connector identity axes are unverified") == 0);
+    // The per-axis notes stay: each one-sided axis is still named.
+    CHECK(has_note(c, "mating gender not established (original: male, substitute: not stated)"));
+    // The same candidate with its pitch and rows left unstated must not rank above it.
+    json less = cand;
+    less["mpn"] = "1546931-4-less";
+    less["pitch_mm"] = nullptr;
+    less["rows"] = nullptr;
+    kelvin::crossref::Options opt;
+    opt.max_results = 10;
+    const json r = kelvin::crossref::cross_reference("connector", orig,
+                                                     json::array({less, cand}), opt);
+    REQUIRE(r["candidates"].size() == 2);
+    const json& stated = r["candidates"][0]["mpn"] == "1546931-4" ? r["candidates"][0]
+                                                                  : r["candidates"][1];
+    const json& silent = r["candidates"][0]["mpn"] == "1546931-4" ? r["candidates"][1]
+                                                                  : r["candidates"][0];
+    const auto grade_rank = [](const std::string& g) {
+        return g == "drop_in" ? 0 : g == "minor_review" ? 1 : g == "major_review" ? 2 : 3;
+    };
+    CHECK(grade_rank(stated["grade"]) <= grade_rank(silent["grade"]));
+    CHECK(stated["penalty"].get<double>() <= silent["penalty"].get<double>());
+}
