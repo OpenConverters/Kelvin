@@ -7348,3 +7348,52 @@ TEST_CASE("Qarlos r26 X1: a missing supply current is not reported as a missing 
     CHECK(has_note(c, "the original draws 16 mA from its supply; the substitute's record states "
                       "no supply current"));
 }
+
+// X2: the ripple rating's temperature basis. Real pair (Qarlos r26 32304944), frozen bench data
+// TAS 6bd04c7, distributorsInfo dropped: 1.67 A @ 120 Hz / 105 degC against 2.25 A @ 100 Hz /
+// 85 degC (100 and 120 Hz are one basis, so only the temperature differs).
+namespace r26_x {
+// capacitors.ndjson line 137427: 600MXH270MEFCSN35X50
+const char* k600MXH270MEFCSN35X50 = R"KREC({"capacitor":{"manufacturerInfo":{"name":"Rubycon","reference":"600MXH270MEFCSN35X50","datasheetInfo":{"part":{"partNumber":"600MXH270MEFCSN35X50","technology":"aluminum-electrolytic-wet","series":"MXH","case":"35x50"},"electrical":{"capacitance":{"nominal":0.00027,"minimum":0.00021600000000000002,"maximum":0.000324},"ratedVoltage":600.0,"voltageRatedDcMax":600.0,"polarized":true,"rippleCurrent":1.67,"rippleCurrentFrequency":120.0,"rippleCurrentTemperature":105.0},"mechanical":{"shape":{"assembly":"Snap-In","shapeType":"Radial Cylindrical","volume":{"nominal":4.810563750809372e-05},"footprint":{"nominal":0.0009621127501618743}},"dimensions":{"diameter":{"nominal":0.035},"length":{"nominal":0.05}}},"thermal":{"temperature":{"minimum":-25.0,"maximum":105.0}},"lifetime":{"lifetimeEndurance":3000.0},"modelParams":{"cs":0.00027},"provenance":[{"source":"manufacturerParametric","sourceName":"Rubycon product list","sourceUrl":"https://www.rubycon.co.jp/wp-content/uploads/catalog-aluminum/MXH.pdf","retrievedDate":"2026-08-01"},{"source":"manufacturerParametric","sourceName":"Rubycon Product Search CSV export","sourceUrl":"https://tools.rubycon.co.jp/product-search/?class=1","retrievedDate":"2026-10-10","fields":["electrical.capacitance","electrical.ratedVoltage","electrical.voltageRatedDcMax","thermal.temperature","mechanical.dimensions.diameter","mechanical.dimensions.length","part.case"],"verification":"valuesReadFromSource","verificationDate":"2026-10-18"}]},"datasheetUrl":"https://www.rubycon.co.jp/wp-content/uploads/catalog-aluminum/MXH.pdf"}}})KREC";
+// capacitors.ndjson line 632051: B43541A8277M060
+const char* kB43541A8277M060 = R"KREC({"capacitor":{"manufacturerInfo":{"name":"TDK","reference":"B43541A8277M060","status":"production","datasheetUrl":"https://product.tdk.com/en/search/capacitor/aluminum-electrolytic/snap_multi_large/info?part_no=B43541A8277M060","datasheetInfo":{"part":{"partNumber":"B43541A8277M060","technology":"aluminum-electrolytic-wet","series":"B43541"},"electrical":{"capacitance":{"nominal":0.00027,"minimum":0.000216,"maximum":0.000324},"ratedVoltage":600.0,"voltageRatedDcMax":600.0,"rippleCurrent":2.25,"rippleCurrentFrequency":100.0,"rippleCurrentTemperature":85.0},"mechanical":{"dimensions":{"diameter":{"nominal":0.035},"length":{"nominal":0.05}},"shape":{"assembly":"THT","shapeType":"Snap-in"}},"provenance":[{"source":"manufacturerParametric","sourceName":"TDK product center","sourceUrl":"https://product.tdk.com/en/search/capacitor/aluminum-electrolytic/snap_multi_large/info?part_no=B43541A8277M060","retrievedDate":"2026-11-07","fields":["part.partNumber","electrical.capacitance","part.technology","part.series","electrical.ratedVoltage","electrical.rippleCurrent","electrical.rippleCurrentFrequency","electrical.rippleCurrentTemperature","mechanical.dimensions","manufacturerInfo.status"],"verification":"partNamed","verificationDate":"2026-11-07","verificationMethod":"Part number, capacitance, tolerance, voltage ratings, dimensions and lifecycle status read from the TDK Product Center part listing row for this exact code"}]}}}})KREC";
+// cap_spec (web/src/crossref.js) plus the v22 ripple temperature, as crossref.js passes it.
+json cap_spec_t(const kelvin::CapacitorRow& r) {
+    json s = cap_spec(r);
+    s["ripple_current_temperature"] =
+        std::isnan(r.ripple_current_temperature) ? json(nullptr) : json(r.ripple_current_temperature);
+    return s;
+}
+}  // namespace r26_x
+
+TEST_CASE("Qarlos r26 X2: ripple ratings at different temperatures are not compared",
+          "[qarlos][crossref][capacitor][r26-x2]") {
+    using namespace r26_x;
+    const auto o = cap_row(json::parse(k600MXH270MEFCSN35X50));
+    const auto s = cap_row(json::parse(kB43541A8277M060));
+    CHECK(o.ripple_current_temperature == 105.0);
+    CHECK(s.ripple_current_temperature == 85.0);
+    const json orig = cap_spec_t(o);
+    const json cand = cap_spec_t(s);
+    auto r = kelvin::crossref::cross_reference("capacitor", orig, json::array({cand}));
+    REQUIRE(r["candidates"].size() == 1);
+    const json c = r["candidates"][0];
+    CHECK(verdict_of(c, "ripple_current") == "unverified");
+    CHECK(has_note(c, "ripple current quoted at different temperatures (original 1.67 A at +105 "
+                      "degC, substitute 2.25 A at +85 degC)"));
+    // The same pair with the substitute stated at the original's temperature: compared as
+    // stated (pass), and the grade is the same — the temperature basis is not capped.
+    json same = cand;
+    same["ripple_current_temperature"] = 105.0;
+    auto r2 = kelvin::crossref::cross_reference("capacitor", orig, json::array({same}));
+    const json c2 = r2["candidates"][0];
+    CHECK(verdict_of(c2, "ripple_current") == "pass");
+    CHECK_FALSE(has_note(c2, "different temperatures"));
+    CHECK(c["grade"] == c2["grade"]);
+    // Substitute states no temperature: UNVERIFIED with the one-sided note.
+    json none = cand;
+    none["ripple_current_temperature"] = nullptr;
+    auto r3 = kelvin::crossref::cross_reference("capacitor", orig, json::array({none}));
+    CHECK(verdict_of(r3["candidates"][0], "ripple_current") == "unverified");
+    CHECK(has_note(r3["candidates"][0], "states 2.25 A at no temperature"));
+}

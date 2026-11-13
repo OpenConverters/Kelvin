@@ -884,6 +884,11 @@ std::optional<CapacitorRow> extract_capacitor(const json& env) {
     if (present(r.ripple_current_rms))
         if (auto v = get_num(*elec, "rippleCurrentFrequency"); pos(v))
             r.ripple_current_frequency = *v;
+    // The temperature the scalar ripple rating is stated AT (v22), the same way: only
+    // alongside a ripple value, never inferred from the temperature range or the series.
+    if (present(r.ripple_current_rms))
+        if (auto v = get_num(*elec, "rippleCurrentTemperature"); v && std::isfinite(*v))
+            r.ripple_current_temperature = *v;
     // The IEC 60384-14 safety class the record states (v20), verbatim. Absent or null stays
     // "" (not stated); the explicit token "none" is a stated fact and is kept as such.
     if (const json* sc = obj_get(*part, "safetyClass"); sc && sc->is_object())

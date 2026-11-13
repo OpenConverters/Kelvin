@@ -294,6 +294,12 @@ struct CapacitorRow : RowBase {
     // 40 % or more, so the cross-reference compares the two ratings only on a common basis
     // (Qarlos 2026-11-09, seed 20365838).
     double ripple_current_frequency = kNaN();
+    // v22 (no bump; not yet deployed): the temperature ripple_current_rms is stated AT (CAS
+    // electrical.rippleCurrentTemperature, degC). NaN = not stated. An 85 degC and a 105 degC
+    // rating of the same can differ severalfold, so they are compared only on a common basis
+    // (Qarlos r26 32304944: 600MXH270MEFCSN35X50 1.67 A @ 105 degC passed against
+    // B43541A8277M060 2.25 A @ 85 degC).
+    double ripple_current_temperature = kNaN();
     // v20: the capacitance band the record GUARANTEES (CAS electrical.capacitance.minimum /
     // .maximum, farads), kept in farads exactly as stated. NaN (both) unless the record states
     // both ends and they bracket the nominal with a non-zero width. A small part's tolerance

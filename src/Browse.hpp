@@ -126,6 +126,7 @@ inline const FieldTable<CapacitorRow>& fields<CapacitorRow>() {
          {"rth", &CapacitorRow::rth},
          {"esr_frequency", &CapacitorRow::esr_frequency},
          {"ripple_current_frequency", &CapacitorRow::ripple_current_frequency},
+         {"ripple_current_temperature", &CapacitorRow::ripple_current_temperature},
          {"capacitance_min", &CapacitorRow::capacitance_min},
          {"capacitance_max", &CapacitorRow::capacitance_max},
          {"qualified_failure_rate", &CapacitorRow::qualified_failure_rate},
