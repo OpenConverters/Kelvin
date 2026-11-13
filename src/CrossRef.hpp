@@ -1672,9 +1672,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // (1.67 A @ 105 degC) passed against B43541A8277M060 (2.25 A @ 85 degC). The Cj / Coss
     // basis rule: both state a ripple value and the original states its temperature -> a
     // substitute at the same temperature is compared as stated; one at a different
-    // temperature or at none is UNVERIFIED, noted, counts in neither direction, and is NOT
-    // demoted or capped (the Cj / Coss basis treatment). The original stating no temperature
-    // -> compared as stated. No conversion between temperatures is attempted.
+    // temperature or at none is UNVERIFIED, noted and counts in neither direction. Owner
+    // 2026-11-13, Z3: it is also demoted and capped at minor_review, as the ripple FREQUENCY
+    // basis rule above is (it was note-only, the Cj / Coss treatment). The original stating no
+    // temperature -> compared as stated. No conversion between temperatures is attempted.
     const bool ripple_temp_basis_unverified = [&] {
         if (cat != "capacitor") return false;
         const auto o_v = num(original, "ripple_current"), s_v = num(cand, "ripple_current");
@@ -1698,6 +1699,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                           "datasheet",
                           *o_v, degc(*o_t).c_str(), *s_v);
         notes.push_back(buf);
+        demote();
         return true;
     }();
     const bool esr_basis_unverified =
@@ -5101,6 +5103,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //   oscillator control-pin function (timebase_pin_unv.)   primary    cap minor_review
     //   resistor power at rating temp (power_basis_unverif.)  primary    cap minor_review
     //   capacitor ripple-current basis (ripple_basis_unv.)    primary    cap minor_review
+    //   capacitor ripple TEMPERATURE basis differs / unstated
+    //     (ripple_temp_basis_unverified; owner 2026-11-13 Z3) primary    cap minor_review
     //   MIL qualified reliability (qualification_unverified)  primary    cap minor_review
     //   safety class / AC rating, Isat, ripple, bead |Z|,
     //     connector family/positions/rated current, analog
@@ -5126,8 +5130,6 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //   resistor maximum working voltage                      secondary  note only
     //   capacitor ESR absent (was missing_required)           secondary  note + FAIL penalty
     //   capacitor ESR basis (esr_basis_unverified)            secondary  note only
-    //   capacitor ripple TEMPERATURE basis differs / unstated
-    //     (ripple_temp_basis_unverified; Cj / Coss rule)      basis      note only
     //   capacitance tolerance band                            secondary  note only
     //   capacitor dielectric codes not comparable             secondary  note only
     //   timing frequency tolerance / stability unstated       secondary  note only,
@@ -5150,7 +5152,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     if (connector_pluggable_unverified) footprint_unverified = true;
     if (connector_identity_unverified) footprint_unverified = true;
     const bool primary_unverified = footprint_unverified || power_basis_unverified ||
-                                    ripple_basis_unverified || lead_form_unverified ||
+                                    ripple_basis_unverified || ripple_temp_basis_unverified ||
+                                    lead_form_unverified ||
                                     qualification_unverified || topology_unverified ||
                                     mount_unverified || timebase_pin_unverified ||
                                     timebase_prog_order;

@@ -7807,3 +7807,50 @@ TEST_CASE("owner 2026-11-13 Z1: MOSFET Vds and capacitor ratings on retracted so
     CHECK(std::isnan(t.vrrm_rated));
     CHECK(t.vz_min == 6);
 }
+
+// ── Owner 2026-11-13 Z3: a ripple TEMPERATURE basis mismatch demotes and caps minor_review ──
+// Consistent with the ripple FREQUENCY basis rule: UNVERIFIED, demoted (never 'recommended')
+// and the grade at most minor_review. The r26 X2 pair (600MXH270MEFCSN35X50 ->
+// B43541A8277M060) is already minor_review on its unknown footprint, so the cap is shown on a
+// real pair that is otherwise a drop-in: Nichicon GWC1E471MCO1GS (470 uF 25 V +/-20 %, 3.7 A at
+// 100 kHz / 135 degC) -> TDK B40910A5477M000 (same, 5.1 A at 100 kHz / 125 degC). Verbatim lines of
+// tools/qarlos/bench/data-6bd04c7/capacitors.ndjson, distributorsInfo dropped.
+namespace dec_1113_z3 {
+// capacitors.ndjson line 581139: GWC1E471MCO1GS
+const char* kGWC1E471MCO1GS = R"KREC({"capacitor":{"manufacturerInfo":{"name":"Nichicon","reference":"GWC1E471MCO1GS","datasheetUrl":"https://www.nichicon.co.jp/series_items/catalog_pdf/ja/pdf/xja042/gwc.pdf","status":"production","datasheetInfo":{"part":{"partNumber":"GWC1E471MCO1GS","series":"GWC","technology":"aluminum-hybrid-polymer","case":"10x12.5"},"electrical":{"capacitance":{"nominal":0.00047,"minimum":0.000376,"maximum":0.000564},"ratedVoltage":25.0,"voltageRatedDcMax":25.0,"polarized":true,"dissipationFactor":0.14,"dissipationFactorFrequency":120,"leakageCurrent":0.0001175,"esr":0.014,"esrFrequency":100000,"rippleCurrent":3.7,"rippleCurrentTemperature":135.0,"rippleCurrentFrequency":100000.0},"application":"AEC-Q200","thermal":{"temperature":{"minimum":-55.0,"maximum":135.0}},"mechanical":{"dimensions":{"diameter":{"nominal":0.01},"length":{"nominal":0.0125}},"shape":{"assembly":"SMT","shapeType":"SMD Chip"}},"lifetime":{"lifetimeEndurance":4000.0},"provenance":[{"source":"manufacturerParametric","sourceName":"Nichicon aluminum electrolytic capacitor product search","sourceUrl":"https://www.nichicon.co.jp/products/electronics/aec/","retrievedDate":"2026-11-08","fields":["part.partNumber","part.series","part.technology","part.case","electrical.capacitance","electrical.ratedVoltage","electrical.voltageRatedDcMax","electrical.polarized","electrical.dissipationFactor","electrical.leakageCurrent","electrical.esr","electrical.rippleCurrent","electrical.rippleCurrentTemperature","electrical.rippleCurrentFrequency","application","thermal.temperature","mechanical.dimensions.diameter","mechanical.dimensions.length","mechanical.shape","lifetime.lifetimeEndurance","manufacturerInfo.status","manufacturerInfo.datasheetUrl"],"verification":"valuesReadFromSource","verificationDate":"2026-11-08","verificationMethod":"Capacitance and tolerance, rated voltage, case diameter and height, category temperature range, endurance hours, tan delta, leakage current (the search table prints whole microamperes), rated ripple current with its stated temperature and frequency, ESR at 20 C and 100 kHz where printed, and lifecycle status read from this exact part number's row of the Nichicon aluminum electrolytic capacitor search table; capacitance and rated voltage compared with the codes in the part number"},{"source":"manufacturerDatasheet","sourceName":"Nichicon GWC series catalogue","sourceUrl":"https://www.nichicon.co.jp/series_items/catalog_pdf/ja/pdf/xja042/gwc.pdf","retrievedDate":"2026-11-08","fields":["electrical.dissipationFactorFrequency","electrical.leakageCurrent","electrical.esrFrequency"],"verification":"seriesConfirmed","verificationDate":"2026-11-08","verificationMethod":"Test conditions (tan delta at 120 Hz and 20 C, ESR specified at 20 C and 100 kHz) read from the series specification table; leakage current read from this part's row of the series ratings table, which prints it to a finer digit than the search table"}]}}}})KREC";
+// capacitors.ndjson line 625380: B40910A5477M000
+const char* kB40910A5477M000 = R"KREC({"capacitor":{"manufacturerInfo":{"name":"TDK","reference":"B40910A5477M000","status":"production","datasheetUrl":"https://product.tdk.com/en/search/capacitor/aluminum-electrolytic/hybrid-polymer/info?part_no=B40910A5477M000","datasheetInfo":{"part":{"partNumber":"B40910A5477M000","technology":"aluminum-hybrid-polymer","series":"B40910"},"electrical":{"capacitance":{"nominal":0.00047,"minimum":0.000376,"maximum":0.000564},"ratedVoltage":25.0,"voltageRatedDcMax":25.0,"rippleCurrent":5.1,"rippleCurrentFrequency":100000.0,"rippleCurrentTemperature":125.0},"mechanical":{"dimensions":{"diameter":{"nominal":0.01},"length":{"nominal":0.0125}},"shape":{"assembly":"SMT","shapeType":"SMD"}},"provenance":[{"source":"manufacturerParametric","sourceName":"TDK product center","sourceUrl":"https://product.tdk.com/en/search/capacitor/aluminum-electrolytic/hybrid-polymer/info?part_no=B40910A5477M000","retrievedDate":"2026-11-07","fields":["part.partNumber","electrical.capacitance","part.technology","part.series","electrical.ratedVoltage","electrical.rippleCurrent","electrical.rippleCurrentFrequency","electrical.rippleCurrentTemperature","mechanical.dimensions","manufacturerInfo.status"],"verification":"partNamed","verificationDate":"2026-11-07","verificationMethod":"Part number, capacitance, tolerance, voltage ratings, dimensions and lifecycle status read from the TDK Product Center part listing row for this exact code"}]}}}})KREC";
+}  // namespace dec_1113_z3
+
+TEST_CASE("owner 2026-11-13 Z3: ripple temperature basis mismatch demotes and caps",
+          "[qarlos][crossref][capacitor][dec-z3]") {
+    using namespace r26_x;
+    using namespace dec_1113_z3;
+    const json orig = cap_spec_t(cap_row(json::parse(kGWC1E471MCO1GS)));
+    const json cand = cap_spec_t(cap_row(json::parse(kB40910A5477M000)));
+    REQUIRE(orig["ripple_current_temperature"] == 135.0);
+    REQUIRE(cand["ripple_current_temperature"] == 125.0);
+    auto r = kelvin::crossref::cross_reference("capacitor", orig, json::array({cand}));
+    REQUIRE(r["candidates"].size() == 1);
+    const json c = r["candidates"][0];
+    INFO(c.dump());
+    CHECK(verdict_of(c, "ripple_current") == "unverified");
+    CHECK(has_note(c, "ripple current quoted at different temperatures"));
+    CHECK(c["status"] == "partial");
+    CHECK(c["grade"] == "minor_review");
+    // Premise: at a common temperature the same pair is a drop-in, so the cap above is the
+    // temperature basis's.
+    json same = cand;
+    same["ripple_current_temperature"] = 135.0;
+    const json c2 =
+        kelvin::crossref::cross_reference("capacitor", orig, json::array({same}))["candidates"][0];
+    INFO(c2.dump());
+    CHECK(c2["status"] == "recommended");
+    CHECK(c2["grade"] == "drop_in");
+    // The X2 pair still reads the basis as unverified, with its note.
+    const json x2 = kelvin::crossref::cross_reference(
+        "capacitor", cap_spec_t(cap_row(json::parse(k600MXH270MEFCSN35X50))),
+        json::array({cap_spec_t(cap_row(json::parse(kB43541A8277M060)))}))["candidates"][0];
+    CHECK(verdict_of(x2, "ripple_current") == "unverified");
+    CHECK(x2["status"] == "partial");
+}
