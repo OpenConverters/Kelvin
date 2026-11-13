@@ -7219,3 +7219,28 @@ TEST_CASE("qarlos r23r25 T1/T2: an imperial(metric) chip case pair is the imperi
         CHECK(verdict_of(c, "footprint") != "warn");
     }
 }
+
+// T4 (bench 20269028): RNMF14FTC12R4 states its series limiting voltage (200 V); YAGEO
+// MFR-25FBF52-12R4 states its rated continuous working voltage, min(sqrt(P x R), 250 V) =
+// 1.76 V at 12.4 ohm / 0.25 W (its provenance says so). Compared as stated, the 1.76 V was a
+// FAIL against the 200 V for two parts that carry the same voltage. Both are now compared as
+// min(maxVoltage, sqrt(P x R)) when both records state all three.
+TEST_CASE("qarlos r23r25 T4: a resistor's working voltage is compared like with like",
+          "[qarlos][crossref][r23r25]") {
+    const json o = r23r25_res("RNMF14FTC12R4"), s = r23r25_res("MFR-25FBF52-12R4");
+    REQUIRE(o["max_voltage_V"] == 200.0);
+    REQUIRE(s["max_voltage_V"].get<double>() == Catch::Approx(1.760682));
+    const auto r = kelvin::crossref::cross_reference("resistor", o, json::array({s}), res_opt());
+    const json c = res_find(r, "MFR-25FBF52-12R4");
+    REQUIRE(!c.is_null());
+    CHECK(verdict_of(c, "max_voltage_V") == "pass");
+    CHECK_FALSE(has_note(c, "lower maximum working voltage"));
+    CHECK(has_note(c, "maximum voltage stated as 1.761 V against the original's 200 V"));
+    CHECK(has_note(c, "the power rating, not the stated voltage, is the limit"));
+    // The other way round the limit is still the power rating on both sides: a pass, not a
+    // spurious "upgrade" from the 200 V figure.
+    const auto r2 = kelvin::crossref::cross_reference("resistor", s, json::array({o}), res_opt());
+    const json c2 = res_find(r2, "RNMF14FTC12R4");
+    REQUIRE(!c2.is_null());
+    CHECK(verdict_of(c2, "max_voltage_V") == "pass");
+}

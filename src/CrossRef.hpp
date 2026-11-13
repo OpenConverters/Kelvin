@@ -735,6 +735,37 @@ inline ProgrammableFrequencyFit programmable_frequency_fit(const json& original,
     return out;
 }
 
+// ── resistor working voltage: like with like ─────────────────────────────────
+// RAS electrical.maxVoltage is written two ways. Most records state the series LIMITING
+// element voltage (RNMF14FTC12R4: 200 V); others state the rated continuous working voltage,
+// which the datasheets define as sqrt(P x R) or that limit, whichever is less (YAGEO
+// MFR-25FBF52-12R4: 1.76 V = sqrt(0.25 W x 12.4 ohm), its provenance says so). Compared as
+// stated, the 1.76 V was FAILed against the 200 V, for two parts that carry the same voltage
+// (Qarlos bench 20269028). The voltage a resistor can take continuously IS
+// min(maxVoltage, sqrt(P x R)), and that reading is the same for both conventions — so when
+// BOTH records state the voltage, the power rating and the resistance, the two are compared
+// on it. Anything less stated on either side: compared exactly as stated, as before.
+struct WorkingVoltage {
+    bool applies = false;
+    double orig = 0.0, subst = 0.0;     // V, min(maxVoltage, sqrt(P x R)) of each record
+    bool orig_limited = false, subst_limited = false;  // sqrt(P x R) below the stated voltage
+};
+inline WorkingVoltage resistor_working_voltage(const json& original, const json& cand) {
+    WorkingVoltage w;
+    const auto ov = detail::jnum(original, "max_voltage_V"), sv = detail::jnum(cand, "max_voltage_V");
+    const auto op = detail::jnum(original, "power_rating"), sp = detail::jnum(cand, "power_rating");
+    const auto orr = detail::jnum(original, "value_si"), sr = detail::jnum(cand, "value_si");
+    if (!ov || !sv || !op || !sp || !orr || !sr) return w;
+    if (!(*ov > 0 && *sv > 0 && *op > 0 && *sp > 0 && *orr > 0 && *sr > 0)) return w;
+    const double o_pr = std::sqrt(*op * *orr), s_pr = std::sqrt(*sp * *sr);
+    w.applies = true;
+    w.orig = std::min(*ov, o_pr);
+    w.subst = std::min(*sv, s_pr);
+    w.orig_limited = o_pr < *ov;
+    w.subst_limited = s_pr < *sv;
+    return w;
+}
+
 // ── resistor power at the original's rating temperature ─────────────────────
 // A resistor's power rating is the power it carries up to a STATED ambient, and above that
 // ambient it derates along its curve. RN50C5000FR36 is 0.05 W at 125 degC (flat to 125,
@@ -1561,6 +1592,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // power_at_rating_temperature). Computed once, consumed by the power_rating spec below.
     const PowerAtTemperature power_t =
         cat == "resistor" ? power_at_rating_temperature(original, cand) : PowerAtTemperature{};
+    // A resistor's working voltage is compared as min(maxVoltage, sqrt(P x R)) on both sides
+    // when both records state all three (resistor_working_voltage).
+    const WorkingVoltage work_v =
+        cat == "resistor" ? resistor_working_voltage(original, cand) : WorkingVoltage{};
     // ── capacitor ripple-current basis ──────────────────────────────────────
     // A ripple rating is stated AT a frequency, and the same can is rated very differently at
     // 100 Hz and at 20 kHz: 380LX151M450K022 is 1.2 A at 120 Hz and 1.7 A at 20 kHz. Its
@@ -1813,6 +1848,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             cat == "capacitor" && ((spec.key == "ripple_current" && ripple_basis_unverified) ||
                                    (spec.key == "esr" && esr_basis_unverified));
         const bool coss_blind = cat == "mosfet" && spec.key == "coss" && coss_basis_unverified;
+        const bool work_v_basis = spec.key == "max_voltage_V" && work_v.applies;
         // A diode's breakdown grade is DERIVED, (Vz max - Vz min) / (Vz max + Vz min), from two
         // window figures the datasheet states to 0.1 V. Two 5 % TVS grades therefore come out
         // 4.99419 % (43 V class, 40.9-45.2 V) and 4.99469 % (47 V class, 44.7-49.4 V), and the
@@ -1830,6 +1866,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             : vz_grade_same       ? ParamOutcome(PASS)
             : ripple_blind        ? ParamOutcome(UNVERIFIED)
             : coss_blind          ? ParamOutcome(UNVERIFIED)
+            : work_v_basis        ? compare_numeric(spec, work_v.orig, work_v.subst)
             : !power_at_t         ? compare_param(spec, original, cand)
             : power_t.subst       ? compare_numeric(spec, power_t.orig, power_t.subst)
             : power_nominal_short ? ParamOutcome(FAIL)
@@ -2514,11 +2551,24 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         if (cat == "resistor") {
             const auto o_v = num(original, "max_voltage_V"), s_v = num(cand, "max_voltage_V");
             const std::string v = verdict_of("max_voltage_V");
+            // On the working-voltage basis (resistor_working_voltage) the note says so, with
+            // the voltages the verdict was taken on.
+            auto basis = [&] {
+                return "the working voltage, min(maximum voltage, sqrt(P x R)), is " +
+                       volts(work_v.subst) + " V against the original's " +
+                       volts(work_v.orig) + " V";
+            };
             if ((v == WARN || v == FAIL) && o_v && s_v) {
                 notes.push_back("lower maximum working voltage: the substitute is rated " +
                                 volts(*s_v) + " V against the original's " + volts(*o_v) +
-                                " V — check the voltage the resistor actually sees in the "
+                                " V" + (work_v.applies ? "; " + basis() : std::string()) +
+                                " — check the voltage the resistor actually sees in the "
                                 "design");
+            } else if (v == PASS && work_v.applies && o_v && s_v && *s_v < *o_v) {
+                notes.push_back("maximum voltage stated as " + volts(*s_v) +
+                                " V against the original's " + volts(*o_v) + " V, but at " +
+                                "these resistances and power ratings " + basis() +
+                                " — the power rating, not the stated voltage, is the limit");
             } else if (v == UNVERIFIED && o_v && !s_v) {
                 notes.push_back("the original's maximum working voltage is " + volts(*o_v) +
                                 " V; the substitute's record states none — confirm it from the "
