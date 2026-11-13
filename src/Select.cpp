@@ -247,6 +247,9 @@ json select_capacitor(const Shard<CapacitorRow>& shard, const CapacitorConstrain
         // wave it through, so it is refused under its own reason before the DC compare.
         if (!present(x.v_rated)) { rej["no_dc_rating"]++; continue; }
         if (x.v_rated < c.v_rated_min) { rej["v_rated_low"]++; continue; }
+        // A capacitance resting only on retracted sources is not stated (NaN, Views.hpp
+        // unstate_retracted_ratings): NaN would compare false and pass both bounds.
+        if (!present(x.capacitance)) { rej["no_capacitance"]++; continue; }
         if (x.capacitance < c.capacitance_min) { rej["capacitance_low"]++; continue; }
         if (x.capacitance > c.capacitance_max) { rej["capacitance_high"]++; continue; }
         if (c.ripple_current_min.has_value()) {
@@ -451,6 +454,8 @@ json select_resistor(const Shard<ResistorRow>& shard, const ResistorConstraints&
         // so it is rejected under its own reason, never passed as if it were tight.
         if (std::isnan(r.tolerance)) { rej["tolerance_unknown"]++; continue; }
         if (r.tolerance > c.max_tolerance) { rej["tolerance_loose"]++; continue; }
+        // Not stated (retracted-only, NaN): a NaN deviation would compare false and pass.
+        if (!present(r.resistance)) { rej["no_resistance"]++; continue; }
         double dev = std::fabs(r.resistance - c.target_ohms) / c.target_ohms;
         if (dev > c.max_value_deviation) { rej["value_far"]++; continue; }
         passing.push_back(&r);

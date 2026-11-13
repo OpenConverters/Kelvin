@@ -369,6 +369,45 @@ inline std::vector<Rating> critical_ratings(const std::string& cat) {
 // a severe shortfall on a magnetic's current rating, or a mismatch on an
 // IDENTITY parameter (a 6-position connector is not a 4-position one; a dual
 // op-amp is not a quad). Everything else demotes to 'partial'.
+// Primary RATINGS for the original-only rule (owner 2026-11-13, Y2): a rating the ORIGINAL's
+// record does not state while the substitute's does caps every such candidate at
+// minor_review, with a note — nothing holds the substitute to the original's requirement on
+// the axis the match turns on, so "drop_in" would be a claim about a comparison never made.
+// The axes are the primary ratings of the grade table in score_candidate; identities (connector
+// gender / positions, analog channels, timing frequency, ...) are not ratings and keep their
+// own rules, as do the current ratings (Id / If(AV) / Ic) that Y1 already caps from either side.
+inline bool is_primary_rating(const std::string& cat, const std::string& key) {
+    static const std::map<std::string, std::set<std::string>> k = {
+        {"mosfet", {"vds", "rds_on"}},
+        {"diode", {"vrrm", "power_dissipation", "peak_pulse_power", "peak_pulse_current"}},
+        {"igbt", {"vces"}},
+        {"capacitor", {"voltage", "ripple_current"}},
+        {"magnetic", {"saturation_current", "rated_current"}},
+        {"chipBead", {"impedance_100mhz", "impedance_peak", "rated_current"}},
+        {"connector", {"rated_current_A", "rated_voltage_V"}},
+        {"varistor", {"clamping_voltage", "peak_surge_current"}},
+        {"resistor", {"power_rating"}}};
+    const auto it = k.find(cat);
+    return it != k.end() && it->second.count(key);
+}
+inline std::string primary_rating_label(const std::string& key) {
+    static const std::map<std::string, std::string> k = {
+        {"vds", "drain-source voltage rating (Vds)"},
+        {"rds_on", "on-resistance (Rds(on))"},
+        {"vrrm", "reverse voltage rating"},
+        {"power_dissipation", "power dissipation rating"},
+        {"peak_pulse_power", "peak pulse power"},
+        {"peak_pulse_current", "peak pulse current"},
+        {"vces", "collector-emitter voltage rating (Vces)"},
+        {"voltage", "rated voltage"},
+        {"rated_current", "rated current"},
+        {"clamping_voltage", "clamping voltage"},
+        {"peak_surge_current", "peak surge current"},
+        {"power_rating", "power rating"}};
+    const auto it = k.find(key);
+    return it != k.end() ? it->second : param_label(key);
+}
+
 inline bool is_hard_param(const std::string& cat, const std::string& key) {
     static const std::set<std::string> magnetic{"saturation_current", "rated_current"};
     // A connector is half of a mated pair: the other gender or another interface
@@ -454,6 +493,16 @@ inline constexpr double kUnknownTempGradePenaltyPerC = 0.002;
 // numeric terms so no single categorical miss can outweigh the primary value.
 inline constexpr double kVerdictWarnPenalty = 0.5;
 inline constexpr double kVerdictFailPenalty = 3.0;
+// Gross over-rating (owner 2026-11-13, Y4): a substitute whose primary voltage or current
+// rating is more than kGrossOverRatingFactor times the original's costs
+// kGrossOverRatingPenalty per such axis, plus a note naming it — a 200 V / 3 A rectifier for
+// a 70 V / 70 mA signal Schottky is "better" on paper and very likely a bigger body, more
+// cost and more capacitance. A fixed step, well below a WARN (0.5), so it only orders among
+// otherwise-equal candidates; grade and direction are unchanged.
+inline constexpr double kGrossOverRatingFactor = 3.0;
+inline constexpr double kGrossOverRatingPenalty = 0.15;
+static_assert(kGrossOverRatingPenalty < kVerdictWarnPenalty / 2,
+              "Y4: the over-rating step must stay well below a WARN");
 // A NUMERIC WARN's penalty scales with its deviation (owner, 2026-11-13). Every WARN used to
 // cost a flat kVerdictWarnPenalty, so a Qg 3 % over the original's and one 93 % over it (both
 // inside the 2x WARN band; STL13NM60N -> SiHH11N60EF / SiHF12N60E) cost the same, and so did
@@ -491,8 +540,15 @@ inline constexpr double kVzGradePrintResolutionPct = 0.01;
 // itself annotates as "a substitute to re-lay-out, not a drop-in" scored 0.5,
 // while the exact-value, exact-power 0402 thin films whose records merely omit a
 // width scored 2.0, and the re-layout parts headed the list (ABT #498).
-inline constexpr double kEstablishedFootprintMismatchPenalty =
-    kUnknownDimPenalty + kVerdictWarnPenalty;
+//
+// Owner 2026-11-13 (Y3) moved the hinge: the unverified rung now costs exactly the
+// established-mismatch rung (2.5, kUnknownDimPenalty in CrossRefDimensions.hpp), so an
+// unknown footprint never outranks a known different case on the footprint term; the ladder
+// is fits < unverified == established different case <= the continuous overhang / undersize
+// terms (floored at this value).
+inline constexpr double kEstablishedFootprintMismatchPenalty = kUnknownDimPenalty;
+static_assert(kUnknownDimPenalty >= kEstablishedFootprintMismatchPenalty,
+              "Y3: an unknown footprint must cost at least a known different case");
 
 // ── Match grade ──────────────────────────────────────────────────────────────
 // The industry cross-reference graders (SiliconExpert A / A-U / A-D / B / C / D
@@ -1083,6 +1139,46 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     bool power_basis_unverified = false;
     // SMD vs through-hole could not be established for this pair (compare_mount Unknown).
     bool mount_unverified = false;
+    // A primary current rating (MOSFET Id, diode If(AV), IGBT Ic) stated by one record only
+    // (owner 2026-11-13, Y1): UNVERIFIED with a note, capped at minor_review.
+    bool current_rating_one_sided = false;
+    // Primary ratings the ORIGINAL does not state and the substitute does (owner 2026-11-13,
+    // Y2; is_primary_rating): each candidate is capped at minor_review with a note.
+    std::vector<std::string> orig_unstated_primary;
+    auto orig_unstated = [&](const std::string& key) {
+        const std::string l = primary_rating_label(key);
+        if (std::find(orig_unstated_primary.begin(), orig_unstated_primary.end(), l) ==
+            orig_unstated_primary.end())
+            orig_unstated_primary.push_back(l);
+    };
+    // Y4: one note and one small penalty per grossly over-rated primary V / A rating.
+    auto gross_over_rating = [&](const std::string& key, std::optional<double> o,
+                                 std::optional<double> s) {
+        if (!o || !s || !(*o > 0) || !(*s > kGrossOverRatingFactor * *o)) return;
+        static const std::map<std::string, std::pair<const char*, const char*>> kWhat = {
+            {"vds", {"drain-source voltage rating", "V"}},
+            {"id", {"continuous drain current rating", "A"}},
+            {"vrrm", {"reverse voltage rating", "V"}},
+            {"if_avg", {"average forward current rating", "A"}},
+            {"voltage", {"rated voltage", "V"}},
+            {"vces", {"collector-emitter voltage rating", "V"}},
+            {"ic", {"continuous collector current rating", "A"}},
+            {"saturation_current", {"saturation current", "A"}},
+            {"rated_current", {"rated current", "A"}},
+            {"rated_current_A", {"rated current", "A"}},
+            {"rated_voltage_V", {"rated voltage", "V"}}};
+        const auto it = kWhat.find(key);
+        if (it == kWhat.end()) return;
+        penalty += opt.gate_weight * kGrossOverRatingPenalty;
+        char b[320];
+        std::snprintf(b, sizeof b,
+                      "%s %g %s is %.3gx the original's %g %s — far above what the original is "
+                      "rated for (more than %gx): a bigger body, higher cost and more "
+                      "capacitance are likely; ranked after closer-rated parts",
+                      it->second.first, *s, it->second.second, *s / *o, *o, it->second.second,
+                      kGrossOverRatingFactor);
+        notes.push_back(b);
+    };
     // Direction bookkeeping: on each directional parameter we could compare,
     // did the substitute come out strictly ahead of the original, or behind?
     int better = 0, worse = 0;
@@ -1894,6 +1990,42 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         }
     }
 
+    // ── diode Vf basis (the forward current the forward voltage is stated at) ─
+    // Owner 2026-11-13 (Y5): Vf rises with forward current, so two forward voltages compare only
+    // at a common test current — the Cj / Coss basis rule, applied to the current:
+    //  * both state Vf and the original states its test current: a substitute stating the same
+    //    current is compared as stated; one stating a different current or none -> UNVERIFIED
+    //    (vf and a vf_basis row), a note giving both values and currents, no direction, no
+    //    penalty, no demotion and no cap (Vf is a secondary electrical);
+    //  * the original states no test current -> compared as stated, exactly as before.
+    // No conversion along the record's Vf(If) curve is attempted.
+    bool vf_basis_unverified = false;
+    if (cat == "diode") {
+        const auto ov = num(original, "vf"), sv = num(cand, "vf");
+        const auto oi = num(original, "vf_test_current"), si = num(cand, "vf_test_current");
+        if (ov && sv && oi &&
+            !(si && std::fabs(*oi - *si) <= 1e-9 * std::max(std::fabs(*oi), std::fabs(*si)))) {
+            vf_basis_unverified = true;
+            params.push_back({{"name", "vf_basis"}, {"verdict", UNVERIFIED}});
+            char buf[400];
+            if (si)
+                std::snprintf(buf, sizeof buf,
+                              "forward voltage quoted at different forward currents (original "
+                              "%g V at %g A, substitute %g V at %g A) — not directly comparable, "
+                              "Vf rises with current; confirm the substitute's Vf at the "
+                              "original's current from its datasheet",
+                              *ov, *oi, *sv, *si);
+            else
+                std::snprintf(buf, sizeof buf,
+                              "the original's forward voltage is %g V at %g A; the substitute's "
+                              "record states %g V at no forward current — not directly "
+                              "comparable, Vf rises with current; confirm its Vf at the "
+                              "original's current from the datasheet",
+                              *ov, *oi, *sv);
+            notes.push_back(buf);
+        }
+    }
+
     // ── capacitance tolerance (the band each record guarantees) ─────────────
     // A capacitor's tolerance is the band the circuit was designed around, exactly as a
     // resistor's is: a +/-5 % C0G is not a drop-in for a +/-1 % one in a filter or timing
@@ -2033,7 +2165,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             cat == "capacitor" && ((spec.key == "ripple_current" &&
                                     (ripple_basis_unverified || ripple_temp_basis_unverified)) ||
                                    (spec.key == "esr" && esr_basis_unverified));
-        const bool coss_blind = cat == "mosfet" && spec.key == "coss" && coss_basis_unverified;
+        const bool coss_blind = (cat == "mosfet" && spec.key == "coss" && coss_basis_unverified) ||
+                                (cat == "diode" && spec.key == "vf" && vf_basis_unverified);
         const bool work_v_basis = spec.key == "max_voltage_V" && work_v.applies;
         // A diode's breakdown grade is DERIVED, (Vz max - Vz min) / (Vz max + Vz min), from two
         // window figures the datasheet states to 0.1 V. Two 5 % TVS grades therefore come out
@@ -2370,6 +2503,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             penalty += opt.overdim_weight * (spec.dir == Dir::Higher
                                                  ? over_dimensioning_penalty(o, s, 1.0)
                                                  : over_dimensioning_penalty(s, o, 1.0));
+            if (spec.dir == Dir::Higher &&
+                (spec.key == "saturation_current" || spec.key == "rated_current" ||
+                 spec.key == "rated_current_A" || spec.key == "rated_voltage_V"))
+                gross_over_rating(spec.key, o, s);
         }
         if (numeric) {
             // Isat is compared at a common inductance-drop criterion, so its direction is too:
@@ -2452,6 +2589,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             direction_blind = true;
             blind_axes.push_back(param_label(spec.key));
         }
+        if (numeric && is_primary_rating(cat, spec.key) && !detail::jnum(original, spec.key) &&
+            detail::jnum(cand, spec.key))
+            orig_unstated(spec.key);
     }
 
     // ── transformer turns ratio (owner 2026-11-13, R2; W4) ───────────────────
@@ -2985,6 +3125,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             const std::string ow = str(original, wf_key), sw = str(cand, wf_key);
             if (!o) {  // the original states nothing to hold the substitute to
                 params.push_back({{"name", key}, {"verdict", UNVERIFIED}});
+                if (is_primary_rating(cat, key)) orig_unstated(key);  // Y2
                 return;
             }
             auto unverified = [&](const std::string& why) {
@@ -3525,6 +3666,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     for (const auto& r : critical_ratings(cat)) {
         auto o = num(original, r.key), s = num(cand, r.key);
         if (!o && !s) continue;
+        if (!o && s && is_primary_rating(cat, r.key)) orig_unstated(r.key);
         if (!current_basis_note.empty() && std::string(r.key) == "if_avg") {
             params.push_back({{"name", r.key}, {"verdict", UNVERIFIED}});
             notes.push_back(current_basis_note);
@@ -3549,6 +3691,33 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         }
         auto v = score_directional(o, s, r.mode, r.warn_factor, r.gate_factor);
         params.push_back({{"name", r.key}, {"verdict", v.verdict}});
+        // A primary CURRENT rating stated by one record only (owner 2026-11-13, Y1). The
+        // voltage ratings are hard (a substitute missing one rejects; an original missing one
+        // is direction_blind below); the current ratings were silently UNVERIFIED, so a dual
+        // whose dies state no Id (CSD88584Q5DC) came back drop_in either way round. Now:
+        // UNVERIFIED, demoted, capped at minor_review (primary_unverified), and a note naming
+        // the side that states it. No penalty and no direction change.
+        if ((r.key == std::string("id") || r.key == std::string("if_avg") ||
+             r.key == std::string("ic")) &&
+            (o.has_value() != s.has_value())) {
+            static const std::map<std::string, const char*> kCur = {
+                {"id", "continuous drain current (Id)"},
+                {"if_avg", "average forward current (If(AV))"},
+                {"ic", "continuous collector current (Ic)"}};
+            const char* what = kCur.at(r.key);
+            char b[96];
+            std::snprintf(b, sizeof b, "%g A", o ? *o : *s);
+            current_rating_one_sided = true;
+            demote();
+            notes.push_back(o ? std::string("the original states a ") + what + " of " + b +
+                                    "; the substitute's record states none — whether it "
+                                    "carries the original's current is unknown; confirm its "
+                                    "rating from the datasheet before this swap"
+                              : std::string("the substitute states a ") + what + " of " + b +
+                                    "; the original's record states none, so it could not be "
+                                    "weighed against the original's requirement — confirm the "
+                                    "original's rating from its datasheet before this swap");
+        }
         // A shortfall that is not a rejection must say so (Qarlos r13 seed 25078643: the
         // 600 V SiHL033N60SF for the 650 V FCH023N65S3L4 carried a 'warn' Vds row and no
         // word about it, so it read as a mild review). The verdict, penalty and grade are
@@ -3588,6 +3757,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             penalty += opt.gate_weight * v.penalty;
         } else {
             penalty += opt.overdim_weight * over_dimensioning_penalty(o, s, 1.0);
+            // A protection diode's standoff has its own above-band rule (standoff_band).
+            if (v.verdict == PASS && r.mode == Mode::HigherBetter &&
+                !(protection && std::string(r.key) == "vrrm"))
+                gross_over_rating(r.key, o, s);
         }
         if (v.verdict == WARN || v.verdict == FAIL)
             ++worse;  // a shortfall verdict is a regression, inside the neutral band or not
@@ -5264,6 +5437,16 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                         "connector; confirm each from the datasheets");
     }
 
+    if (!orig_unstated_primary.empty()) {
+        std::string axes;
+        for (size_t i = 0; i < orig_unstated_primary.size(); ++i)
+            axes += (i ? ", " : "") + orig_unstated_primary[i];
+        demote();
+        notes.push_back("the original's record states no " + axes +
+                        "; the substitute's does, but nothing holds it to the original's "
+                        "requirement there — capped below drop_in; confirm the original's "
+                        "rating from its datasheet before this swap");
+    }
     out["status"] = status;
     out["penalty"] = penalty;
     out["params"] = params;
@@ -5353,8 +5536,13 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //   magnetic Isat stated by NEITHER record (owner
     //     2026-11-13)                                         both-unst. UNVERIFIED row + note,
     //                                                                    no cap, no penalty
-    //   Id / If(AV) / Ic, chip-bead rated current,
-    //     connector rated voltage, diode power dissipation    primary    no cap*
+    //   Id / If(AV) / Ic stated by one record only (owner
+    //     2026-11-13, Y1; current_rating_one_sided)           primary    note, cap minor_review
+    //   chip-bead rated current, connector rated voltage,
+    //     diode power dissipation                             primary    no cap*
+    //   a primary RATING stated by the substitute and NOT by
+    //     the original (owner 2026-11-13, Y2; axes listed in
+    //     is_primary_rating; orig_unstated_primary)            primary    note, cap minor_review
     //   height-only clearance (height_fit unknown)            secondary  note only
     //   operating-temperature range (resistor, magnetic)      secondary  note only
     //   resistor TCR                                          secondary  note only
@@ -5391,7 +5579,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                     qualification_unverified || topology_unverified ||
                                     resistor_connection_unverified ||
                                     mount_unverified || timebase_pin_unverified ||
-                                    timebase_prog_order;
+                                    timebase_prog_order || current_rating_one_sided ||
+                                    !orig_unstated_primary.empty();
     out["grade"] = grade_for(status, tier, any_warn, any_fail, primary_unverified,
                              missing_required_data || connector_identity_gaps_major ||
                                  timebase_tech_major,

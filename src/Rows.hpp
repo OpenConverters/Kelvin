@@ -251,6 +251,10 @@ struct DiodeRow : RowBase {
     // MBRS2560T3G was graded 'pass' on exactly that pair (Qarlos r8, seed 22774605). NaN =
     // not stated; 0 V is a real basis (Cj at zero bias), never read as absent. v21.
     double junction_capacitance_vr = kNaN();
+    // The forward current the forward voltage is stated AT (electrical.forwardVoltageAt, A;
+    // 7,010 of 50,987 records in TAS 6bd04c7). Vf rises with current, so 0.5 V at 1.5 A and
+    // 0.5 V at 3 A are not the same part (owner 2026-11-13, Y5). NaN = not stated. v22.
+    double vf_test_current = kNaN();
     std::string clamping_waveform, peak_pulse_power_waveform, peak_pulse_current_waveform;
     // part.qualification verbatim ("Automotive (AEC-Q101)", 5,352 of 47,193 diode records);
     // empty = the record states none. Not carried, an AEC-Q101 original (ROHM

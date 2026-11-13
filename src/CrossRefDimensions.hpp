@@ -447,7 +447,12 @@ inline std::optional<Dims> resolve_dimensions(const std::string& case_code,
 inline constexpr double kFitAreaWeight = 0.5;
 inline constexpr double kOversizeBase = 10.0;
 inline constexpr double kOversizeScale = 8.0;
-inline constexpr double kUnknownDimPenalty = 2.0;
+// An unknown footprint costs exactly what an established different case does (owner
+// 2026-11-13, Y3): an unknown never outranks a known-different land on the footprint term
+// alone (it was 2.0 against 2.5, so BAS70L's unknown-footprint MBRS3200T3G headed the
+// like-for-like 70 V parts in other cases). Equal, not more: "cannot tell" is not worse
+// than an established "no", and the other terms decide between the two.
+inline constexpr double kUnknownDimPenalty = 2.5;
 inline constexpr double kDimTolerance = 1.02;  // 2% slack for rounding/terminations
 inline constexpr double kSlightlyOversizeOverflow = 0.65;  // ~one EIA size up
 inline constexpr double kSlightlyOversizeBase = 1.0;

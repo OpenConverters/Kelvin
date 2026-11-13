@@ -376,6 +376,9 @@ export const XREF = [
       // v21 (Qarlos r8 seed 22774605): the reverse voltage Cj is stated at — the ranker compares
       // two capacitances only on a common bias. Raw, NOT through nz(): 0 V is a real basis.
       junction_capacitance_vr: r.junction_capacitance_vr ?? null,
+      // v22 (owner 2026-11-13, Y5): the forward current Vf is stated at — the ranker compares two
+      // forward voltages only at a common test current.
+      vf_test_current: nz(r.vf_test_current),
       clamping_waveform: r.clamping_waveform ?? '',
       peak_pulse_power_waveform: r.peak_pulse_power_waveform ?? '',
       peak_pulse_current_waveform: r.peak_pulse_current_waveform ?? '',

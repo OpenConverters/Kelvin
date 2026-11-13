@@ -657,6 +657,8 @@ std::optional<DiodeRow> extract_diode(const json& env) {
     // Its bias basis (v21): 0 V is a real basis, so not `pos`; a negative is unreadable.
     if (auto v = get_num(*elec, "junctionCapacitanceVr"); v && *v >= 0.0)
         r.junction_capacitance_vr = *v;
+    // The Vf test current (v22): a current, so only a positive value is a basis.
+    if (auto v = get_num(*elec, "forwardVoltageAt"); pos(v)) r.vf_test_current = *v;
     r.clamping_waveform = get_str(*elec, "clampingWaveform").value_or("");
     r.peak_pulse_power_waveform = get_str(*elec, "peakPulsePowerWaveform").value_or("");
     r.peak_pulse_current_waveform = get_str(*elec, "peakPulseCurrentWaveform").value_or("");
@@ -813,7 +815,61 @@ int unstate_retracted_ratings(CapacitorRow& r) {
         r.v_rated_ac = kNaN();
         ++n;
     }
+    // The primary value (owner 2026-11-13, C), with the guaranteed band read from the same field.
+    if (present(r.capacitance) && field_retracted(r, "electrical.capacitance")) {
+        r.capacitance = r.capacitance_min = r.capacitance_max = kNaN();
+        ++n;
+    }
     return n;
+}
+
+int unstate_retracted_ratings(ResistorRow& r) {
+    if (!present(r.resistance) || !field_retracted(r, "electrical.resistance")) return 0;
+    r.resistance = kNaN();
+    return 1;
+}
+
+int unstate_retracted_ratings(VaristorRow& r) {
+    if (!present(r.varistor_voltage) || !field_retracted(r, "electrical.varistorVoltage")) return 0;
+    r.varistor_voltage = kNaN();
+    return 1;
+}
+
+int unstate_retracted_ratings(MagneticRow& r) {
+    int n = 0;
+    // electrical is an array; provenance paths drop the index (retracted_only_fields).
+    if (present(r.inductance) && field_retracted(r, "electrical.inductance")) {
+        r.inductance = r.inductance_tol_minus_pct = r.inductance_tol_plus_pct = kNaN();
+        ++n;
+    }
+    // A chip bead's primary value is its impedance (primary_value_spec("chipBead")), read from
+    // the measured curve: Z@100 MHz and the bracketed peak.
+    if ((present(r.impedance_100mhz) || present(r.impedance_peak)) &&
+        field_retracted(r, "electrical.impedancePoints")) {
+        r.impedance_100mhz = r.impedance_peak = r.impedance_peak_freq = kNaN();
+        ++n;
+    }
+    return n;
+}
+
+int unstate_retracted_ratings(TimingRow& r) {
+    int n = 0;
+    if (present(r.frequency) && field_retracted(r, "electrical.frequency")) {
+        r.frequency = kNaN();
+        ++n;
+    }
+    // A programmable blank's frequency datum (owner 2026-11-13: refused without it).
+    if (present(r.frequency_min) && field_retracted(r, "electrical.frequencyRange")) {
+        r.frequency_min = r.frequency_max = kNaN();
+        ++n;
+    }
+    return n;
+}
+
+int unstate_retracted_ratings(ConnectorRow& r) {
+    if (!present(r.positions) || !field_retracted(r, "mechanical.positions")) return 0;
+    r.positions = kNaN();
+    return 1;
 }
 
 FieldRetraction retracted_only_fields(const json& env) {

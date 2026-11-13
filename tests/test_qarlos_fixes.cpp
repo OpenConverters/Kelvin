@@ -33,6 +33,11 @@ bool has_note(const json& c, const std::string& needle) {
         if (n.get<std::string>().find(needle) != std::string::npos) return true;
     return false;
 }
+// Y2 (owner 2026-11-13): the note of the cap a primary rating missing on the ORIGINAL only
+// puts on every candidate ("the original's record states no <axis>; the substitute's does ...
+// capped below drop_in"). Its cap is the only one these notes name.
+const char* kY2CapNote = "; the substitute's does, but nothing holds it to the original's "
+                         "requirement there — capped below drop_in";
 }  // namespace
 
 // ABT #2045: a nominal-only (or minimum-only) gate threshold is not a maximum.
@@ -3912,6 +3917,7 @@ json diode_spec(const json& r) {
         s[k] = r.value(k, "");
     s["tj_max"] = raw_(r["tj_max"]);
     s["junction_capacitance_vr"] = raw_(r["junction_capacitance_vr"]);
+    s["vf_test_current"] = nz_(r["vf_test_current"]);
     return s;
 }
 std::string fixture_(const char* f) {
@@ -5150,7 +5156,15 @@ TEST_CASE("footprint stated by neither record: UNVERIFIED and penalised, not cap
     CHECK(c["footprint"] == "unknown");
     CHECK(verdict_of(c, "footprint") == "unverified");
     CHECK(c["penalty"].get<double>() >= kelvin::crossref::kUnknownDimPenalty - 1e-9);
-    CHECK(c["grade"] == "drop_in");
+    // owner 2026-11-13 (Y2): the original states no saturation current, so every candidate is
+    // capped at minor_review by that rule. The cap comes from it and from nothing else: its note
+    // is the only note naming a cap, and no footprint note is emitted (neither record states a
+    // land or a package, so the footprint gap stays uncapped as before).
+    CHECK(c["grade"] == "minor_review");
+    CHECK(has_note(c, std::string("the original's record states no saturation current") +
+                          kY2CapNote));
+    CHECK(count_notes(c, "capped") == 1);
+    CHECK(count_notes(c, "footprint") == 0);
 }
 
 // Boundary: ONE record states the land or the package, so the gap is one-sided and keeps its
@@ -5166,7 +5180,15 @@ TEST_CASE("footprint stated by one record only keeps its cap",
     CHECK(c["footprint"] == "unknown");
     CHECK(verdict_of(c, "footprint") == "unverified");
     // Owner decision 2026-11-13 (N1b): the original states no land, so no candidate is capped.
-    CHECK(c["grade"] == "drop_in");
+    // owner 2026-11-13 (Y2): the original states no saturation current, so the candidate is
+    // capped at minor_review by that rule — not by its footprint: the Y2 note is the only note
+    // naming a cap, and the footprint note is the uncapped N1b one ("footprint fit is
+    // UNVERIFIED, confirm the pads"), which names no cap.
+    CHECK(c["grade"] == "minor_review");
+    CHECK(has_note(c, std::string("the original's record states no saturation current") +
+                          kY2CapNote));
+    CHECK(count_notes(c, "capped") == 1);
+    CHECK(has_note(c, "the original's record states no land dimensions"));
     // The pair above with a package stated on the original only (the field set here, not
     // taken from the record): one-sided again, capped.
     json oc = o;
@@ -6988,7 +7010,15 @@ TEST_CASE("dec 1113b N1b: no footprint cap for any candidate when the original s
         "magnetic", json::parse(kBWLS0006040426NJ00), json::array({bare}))["candidates"][0];
     INFO("dimensionless twin " << b["grade"]);
     CHECK(xfl["grade"] == b["grade"]);
-    CHECK(xfl["grade"] != "minor_review");
+    // owner 2026-11-13 (Y2): the original states neither a saturation nor a rated current, so
+    // every candidate is capped at minor_review by that rule. The footprint adds no cap of its
+    // own: the twin without dimensions grades the same (above), and the Y2 note is the only
+    // note naming a cap.
+    CHECK(xfl["grade"] == "minor_review");
+    CHECK(has_note(xfl, std::string("the original's record states no saturation current, "
+                                    "rated current") + kY2CapNote));
+    CHECK(count_notes(xfl, "capped") == 1);
+    CHECK(count_notes(b, "capped") == 1);
     // Every candidate still pays the unknown-footprint penalty.
     CHECK(xfl.value("penalty", 0.0) >= kelvin::crossref::kUnknownDimPenalty);
     CHECK(srn.value("penalty", 0.0) >= kelvin::crossref::kUnknownDimPenalty);
@@ -7294,9 +7324,13 @@ TEST_CASE("owner 2026-11-13 S1: fields resting only on a retracted source are li
     CHECK(kelvin::all_provenance_retracted(rec));
 }
 
-// The same pair through the real pipeline: specs are web/src/crossref.js's diode spec of the
+// The same pair as ranker input: specs in the shape of web/src/crossref.js's diode spec of the
 // v22 shard rows built from the frozen data (kelvin-index -> browse -> famFor().spec), so they
-// carry the row's retracted_fields. PU1DFSH -> VS-6CWH02FN-M3: Vr, Vf and Tj max rest on the
+// carry the row's retracted_fields. Since owner 2026-11-13 Z1 the real pipeline no longer
+// produces kSpecVS_6CWH02FN_M3 as written: a retracted-only reverseVoltage is not stated, so the
+// real row's vrrm is null (and the diode pool's hard floor leaves the part out; see the Z1 test
+// below). The hand-written spec keeps vrrm 200, so this is a unit test of the ranker's
+// retracted-field rule, not a pipeline test. PU1DFSH -> VS-6CWH02FN-M3: Vr, Vf and Tj max rest on the
 // retracted source alone and read UNVERIFIED; If(AV) has the live product page and grades
 // normally. (The record's surgeCurrent is retracted-only too, but no rectifier comparison reads
 // a surge rating, so there is no verdict for it to change.)
@@ -7461,8 +7495,13 @@ TEST_CASE("qarlos r23r25 T7/T8: a timing case string establishes a different lan
     CHECK(has_note(same, "both records name the 2520 body"));
     CHECK(big.value("footprint", "") == "different_case");
     CHECK(small.value("footprint", "") == "different_case");
-    CHECK(same["penalty"].get<double>() < big["penalty"].get<double>());
-    CHECK(same["penalty"].get<double>() < small["penalty"].get<double>());
+    // owner 2026-11-13 (Y3): unknown = different case. The same named 2520 body is still
+    // UNVERIFIED (not an established land change, above), and an unverified footprint now costs
+    // exactly what the established 3225 / 2016 different case does: the three tie on penalty.
+    INFO("same " << same.value("footprint", "") << " " << same["penalty"] << " big "
+                 << big["penalty"] << " small " << small["penalty"]);
+    CHECK(same["penalty"].get<double>() == big["penalty"].get<double>());
+    CHECK(same["penalty"].get<double>() == small["penalty"].get<double>());
 
     // T8: a generic package on the original establishes no land, so no different land either.
     const auto r8 = kelvin::crossref::cross_reference(
@@ -7532,7 +7571,9 @@ TEST_CASE("Qarlos r26 X2: ripple ratings at different temperatures are not compa
     CHECK(has_note(c, "ripple current quoted at different temperatures (original 1.67 A at +105 "
                       "degC, substitute 2.25 A at +85 degC)"));
     // The same pair with the substitute stated at the original's temperature: compared as
-    // stated (pass), and the grade is the same — the temperature basis is not capped.
+    // stated (pass), and the grade is the same: the pair is minor_review for its unknown
+    // footprint either way, so the grade cannot show the temperature-basis cap (owner
+    // 2026-11-13 Z3), which is covered by the Z3 test on an otherwise drop-in pair below.
     json same = cand;
     same["ripple_current_temperature"] = 105.0;
     auto r2 = kelvin::crossref::cross_reference("capacitor", orig, json::array({same}));
@@ -7744,6 +7785,176 @@ TEST_CASE("owner 2026-11-13 W4: turns ratio beyond 15 % rejects; the best config
     CHECK(c2->value("status", "") != "no_substitute");
     CHECK(verdict_of(*c2, "turns_ratio") == "pass");
     CHECK(has_note(*c2, "on the original's wiring configuration 2 of 2"));
+}
+
+// ── Owner decisions 2026-11-13 (dec-y) ───────────────────────────────────────────────────
+// Y1: a primary current rating (MOSFET Id, diode If(AV), IGBT Ic) stated on one side only is
+// UNVERIFIED, noted and capped at minor_review. REAL records (n2c fixture, verbatim TAS lines):
+// TI CSD88584Q5DC (dual halfBridge, 40 V, dies state no Id) against Nexperia PSMN4R2-40VSH
+// (dual halfBridge, 40 V, states Id), both directions.
+TEST_CASE("owner 2026-11-13 Y1: a current rating stated on one side only caps minor_review",
+          "[qarlos][crossref][mosfet][dec-1113y]") {
+    const json csd = mosfet_spec(n2c::row("CSD88584Q5DC"));
+    const json psmn = mosfet_spec(n2c::row("PSMN4R2-40VSH"));
+    REQUIRE(csd["id"].is_null());
+    REQUIRE(psmn["id"].is_number());
+    // Original states Id, substitute does not.
+    const json a = kelvin::crossref::cross_reference("mosfet", psmn, json::array({csd}))
+                       ["candidates"][0];
+    CHECK(verdict_of(a, "id") == "unverified");
+    CHECK(a["grade"] != "drop_in");
+    CHECK(has_note(a, "the original states a continuous drain current (Id) of"));
+    CHECK(has_note(a, "the substitute's record states none"));
+    // Original states none, substitute states Id.
+    const json b = kelvin::crossref::cross_reference("mosfet", csd, json::array({psmn}))
+                       ["candidates"][0];
+    CHECK(verdict_of(b, "id") == "unverified");
+    CHECK(b["grade"] != "drop_in");
+    CHECK(has_note(b, "the substitute states a continuous drain current (Id) of"));
+    CHECK(has_note(b, "the original's record states none"));
+    // The real pair also differs on Qg / Coss / package, so its grade is decided elsewhere.
+    // The same record with only Id removed isolates the rule, both ways round.
+    json no_id = psmn;
+    no_id["mpn"] = "PSMN_NO_ID";
+    no_id["id"] = nullptr;
+    json same = psmn;
+    same["mpn"] = "PSMN_SAME";
+    const json r1 = kelvin::crossref::cross_reference("mosfet", psmn, json::array({no_id, same}));
+    CHECK(find_mpn(r1, "PSMN_SAME")["grade"] == "drop_in");
+    CHECK(find_mpn(r1, "PSMN_NO_ID")["grade"] == "minor_review");
+    const json r2 = kelvin::crossref::cross_reference("mosfet", no_id, json::array({same}));
+    CHECK(r2["candidates"][0]["grade"] == "minor_review");
+    CHECK(verdict_of(r2["candidates"][0], "id") == "unverified");
+}
+
+// Y2: a primary rating missing on the ORIGINAL only caps every candidate at minor_review.
+// REAL records (TAS 6bd04c7, data-6bd04c7/magnetics.ndjson), as web/src/crossref.js builds the
+// spec from the v22 shard row: Eaton ACE1V3225-110-R states only its 11 uH; Murata
+// LQH32NH120J23L states Isat (table) and a 0.27 A rated current. It came back drop_in.
+namespace dec1113y {
+const char* kACE1V3225 = R"KSPEC({"mpn":"ACE1V3225-110-R","length_m":0.0034,"width_m":0.0027,"height_m":0.0025,"case_code":"","mount":"SMT","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"retracted_fields":[],"retraction_reason":"","box_axes_ambiguous":false,"value_si":0.000011,"saturation_current":null,"saturation_points":null,"rated_current":null,"dcr":null,"srf":null,"temp_min_C":null,"temp_max_C":125,"tolerance_minus_pct":null,"tolerance_plus_pct":null,"turns_ratios":null,"turns_ratio_configs":null})KSPEC";
+const char* kLQH32NH120 = R"KSPEC({"mpn":"LQH32NH120J23L","length_m":0.0032,"width_m":0.0025,"height_m":0.0022,"case_code":"Nonstandard","mount":"smt","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"retracted_fields":[],"retraction_reason":"","box_axes_ambiguous":false,"value_si":0.000012,"saturation_current":0.7019672099867867,"saturation_points":[{"current":0.635,"percent_drop":10,"temperature":20},{"current":0.7019672099867867,"percent_drop":20,"temperature":20},{"current":0.7297123122349586,"percent_drop":30,"temperature":20}],"rated_current":0.27,"dcr":0.6,"srf":null,"temp_min_C":-40,"temp_max_C":125,"tolerance_minus_pct":19.999999999999996,"tolerance_plus_pct":19.999999999999996,"turns_ratios":null,"turns_ratio_configs":null})KSPEC";
+}  // namespace dec1113y
+
+TEST_CASE("owner 2026-11-13 Y2: a primary rating missing on the original only caps minor_review",
+          "[qarlos][crossref][magnetic][dec-1113y]") {
+    const json o = json::parse(dec1113y::kACE1V3225), c = json::parse(dec1113y::kLQH32NH120);
+    const json r = kelvin::crossref::cross_reference("magnetic", o, json::array({c}));
+    const json cand = r["candidates"][0];
+    CHECK(cand["grade"] == "minor_review");
+    CHECK(cand["direction"] == "unknown");
+    CHECK(has_note(cand, "the original's record states no saturation current, rated current; "
+                         "the substitute's does"));
+    // Reverse: the original states both, nothing caps from this rule.
+    const json rr = kelvin::crossref::cross_reference("magnetic", c, json::array({c}));
+    CHECK(!has_note(rr["candidates"][0], "nothing holds it to the original's requirement"));
+    // Across families: a 40 V MOSFET whose ORIGINAL states no Vds.
+    const json psmn = mosfet_spec(n2c::row("PSMN4R2-40VSH"));
+    json no_vds = psmn;
+    no_vds["mpn"] = "PSMN_NO_VDS";
+    no_vds["vds"] = nullptr;
+    const json m = kelvin::crossref::cross_reference("mosfet", no_vds, json::array({psmn}));
+    CHECK(m["candidates"][0]["grade"] == "minor_review");
+    CHECK(has_note(m["candidates"][0], "states no drain-source voltage rating (Vds)"));
+}
+
+// Y3 / Y4: REAL records (TAS 6bd04c7, data-6bd04c7/diodes.ndjson), as web/src/crossref.js builds
+// the spec from the v22 shard row: Nexperia BAS70L (70 V / 70 mA Schottky, DFN1006-2), onsemi
+// MBRS3200T3G (200 V / 3 A, no package on record), onsemi NSR0170HT1G and BAS70LT1G (70 V
+// small-signal Schottkys in other cases).
+namespace dec1113y {
+const char* kBAS70L = R"KSPEC({"mpn":"BAS70L","length_m":null,"width_m":null,"height_m":null,"case_code":"DFN1006-2","mount":"","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"retracted_fields":[],"retraction_reason":"","box_axes_ambiguous":false,"vrrm":70,"if_avg":0.07,"vf":1,"power_dissipation":null,"qrr":null,"trr":null,"technology":"schottky","die_configuration":null,"internal_connection":null,"vz_min_V":null,"vz_max_V":null,"vz_tolerance_pct":null,"clamping_voltage":null,"clamping_current":null,"peak_pulse_power":null,"peak_pulse_current":null,"junction_capacitance":null,"junction_capacitance_vr":null,"clamping_waveform":"","peak_pulse_power_waveform":"","peak_pulse_current_waveform":"","tj_max":null,"qualification":""})KSPEC";
+const char* kMBRS3200T3G = R"KSPEC({"mpn":"MBRS3200T3G","length_m":null,"width_m":null,"height_m":null,"case_code":"","mount":"","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"retracted_fields":[],"retraction_reason":"","box_axes_ambiguous":false,"vrrm":200,"if_avg":3,"vf":0.7,"power_dissipation":null,"qrr":null,"trr":null,"technology":"schottky","die_configuration":null,"internal_connection":null,"vz_min_V":null,"vz_max_V":null,"vz_tolerance_pct":null,"clamping_voltage":null,"clamping_current":null,"peak_pulse_power":null,"peak_pulse_current":null,"junction_capacitance":null,"junction_capacitance_vr":null,"clamping_waveform":"","peak_pulse_power_waveform":"","peak_pulse_current_waveform":"","tj_max":150,"qualification":""})KSPEC";
+const char* kNSR0170HT1G = R"KSPEC({"mpn":"NSR0170HT1G","length_m":null,"width_m":null,"height_m":null,"case_code":"SOD-323","mount":"","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"retracted_fields":[],"retraction_reason":"","box_axes_ambiguous":false,"vrrm":70,"if_avg":0.07,"vf":0.64,"power_dissipation":null,"qrr":null,"trr":null,"technology":"schottky","die_configuration":null,"internal_connection":null,"vz_min_V":null,"vz_max_V":null,"vz_tolerance_pct":null,"clamping_voltage":null,"clamping_current":null,"peak_pulse_power":null,"peak_pulse_current":null,"junction_capacitance":null,"junction_capacitance_vr":null,"clamping_waveform":"","peak_pulse_power_waveform":"","peak_pulse_current_waveform":"","tj_max":null,"qualification":""})KSPEC";
+const char* kBAS70LT1G = R"KSPEC({"mpn":"BAS70LT1G","length_m":null,"width_m":null,"height_m":null,"case_code":"SOT-23 (TO-236) 2.90x1.30x1.00, 1.90P","mount":"","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"retracted_fields":[],"retraction_reason":"","box_axes_ambiguous":false,"vrrm":70,"if_avg":0.07,"vf":0.41,"power_dissipation":null,"qrr":null,"trr":null,"technology":"schottky","die_configuration":null,"internal_connection":null,"vz_min_V":null,"vz_max_V":null,"vz_tolerance_pct":null,"clamping_voltage":null,"clamping_current":null,"peak_pulse_power":null,"peak_pulse_current":null,"junction_capacitance":2e-12,"junction_capacitance_vr":null,"clamping_waveform":"","peak_pulse_power_waveform":"","peak_pulse_current_waveform":"","tj_max":null,"qualification":""})KSPEC";
+}  // namespace dec1113y
+
+TEST_CASE("owner 2026-11-13 Y3: an unknown footprint never outranks a known different case",
+          "[qarlos][crossref][diode][dec-1113y]") {
+    using namespace dec1113y;
+    STATIC_REQUIRE(kelvin::crossref::kUnknownDimPenalty >=
+                   kelvin::crossref::kEstablishedFootprintMismatchPenalty);
+    const json r = kelvin::crossref::cross_reference(
+        "diode", json::parse(kBAS70L),
+        json::array({json::parse(kMBRS3200T3G), json::parse(kNSR0170HT1G),
+                     json::parse(kBAS70LT1G)}));
+    std::vector<std::string> order;
+    for (const auto& c : r["candidates"]) order.push_back(c["mpn"]);
+    REQUIRE(order.size() == 3);
+    INFO(r["candidates"].dump());
+    CHECK(find_mpn(r, "MBRS3200T3G")["footprint"] == "unknown");
+    CHECK(find_mpn(r, "NSR0170HT1G")["footprint"] == "different_case");
+    CHECK(find_mpn(r, "BAS70LT1G")["footprint"] == "different_case");
+    CHECK(order.back() == "MBRS3200T3G");
+}
+
+// Y4: gross over-rating (> 3x the original's primary V / A rating) costs a small penalty and a
+// note; grade and direction unchanged. Real pair: BAS70L (70 V / 0.07 A) -> MBRS3200T3G
+// (200 V = 2.86x, below the factor; 3 A = 43x, above it).
+TEST_CASE("owner 2026-11-13 Y4: a grossly over-rated substitute pays a small penalty and a note",
+          "[qarlos][crossref][diode][dec-1113y]") {
+    using namespace dec1113y;
+    const json o = json::parse(kBAS70L);
+    json near = json::parse(kMBRS3200T3G);
+    near["mpn"] = "MBRS3200T3G (0.2 A)";
+    near["if_avg"] = 0.2;  // 2.86x: inside the factor
+    const json r = kelvin::crossref::cross_reference(
+        "diode", o, json::array({json::parse(kMBRS3200T3G), near}));
+    const json big = find_mpn(r, "MBRS3200T3G"), ref = find_mpn(r, "MBRS3200T3G (0.2 A)");
+    CHECK(has_note(big, "average forward current rating 3 A is 42.9x the original's 0.07 A"));
+    CHECK_FALSE(has_note(big, "reverse voltage rating 200 V is"));  // 2.86x is not gross
+    CHECK_FALSE(has_note(ref, "far above what the original is rated for"));
+    CHECK(big["grade"] == ref["grade"]);
+    CHECK(big["direction"] == ref["direction"]);
+    const double d = big["penalty"].get<double>() - ref["penalty"].get<double>();
+    CHECK(d >= kelvin::crossref::kGrossOverRatingPenalty - 1e-9);
+    CHECK(d < kelvin::crossref::kVerdictWarnPenalty);
+}
+
+// Y5: diode Vf compared only at a common test current (electrical.forwardVoltageAt). REAL
+// records (TAS 6bd04c7, verbatim lines of data-6bd04c7/diodes.ndjson in
+// tests/fixtures/qarlos_1113_y_diodes.ndjson), through the real extractor and shard.
+namespace dec1113y {
+json drow(const std::string& mpn) {
+    static const json rows = [] {
+        auto sh = kelvin::build_diode_shard(std::string(KELVIN_TEST_DIR) +
+                                            "/fixtures/qarlos_1113_y_diodes.ndjson");
+        return kelvin::browse::browse_rows(sh, json{{"limit", 100}})["rows"];
+    }();
+    for (const auto& r : rows)
+        if (r.value("mpn", "") == mpn) return r;
+    throw std::runtime_error("fixture has no diode " + mpn);
+}
+}  // namespace dec1113y
+
+TEST_CASE("owner 2026-11-13 Y5: diode Vf is compared only at a common test current",
+          "[qarlos][crossref][diode][dec-1113y]") {
+    using dec1113y::drow;
+    // The row carries the test current; unstated is null, never 0.
+    CHECK(drow("SS34")["vf_test_current"] == 3.0);
+    CHECK(drow("RB050LAM-40TR")["vf_test_current"] == 1.5);
+    CHECK(drow("BAS316")["vf_test_current"].is_null());
+    // Vishay SS34 (0.5 V at 3 A) -> ROHM RB050LAM-40TR (0.5 V at 1.5 A): not comparable.
+    const json ss34 = diode_spec(drow("SS34"));
+    const json r = kelvin::crossref::cross_reference(
+        "diode", ss34,
+        json::array({diode_spec(drow("RB050LAM-40TR")), diode_spec(drow("B340A"))}));
+    const json rb = find_mpn(r, "RB050LAM-40TR");
+    CHECK(verdict_of(rb, "vf") == "unverified");
+    CHECK(verdict_of(rb, "vf_basis") == "unverified");
+    CHECK(has_note(rb, "forward voltage quoted at different forward currents (original 0.5 V "
+                       "at 3 A, substitute 0.5 V at 1.5 A)"));
+    // Diodes Inc. B340A states its 0.5 V at the same 3 A: compared as stated.
+    const json b = find_mpn(r, "B340A");
+    CHECK(verdict_of(b, "vf") == "pass");
+    CHECK(verdict_of(b, "vf_basis") == "");
+    // onsemi NSVBAV70TT3G states no test current: compared as stated (1.25 V vs 1.0 V).
+    CHECK(drow("NSVBAV70TT3G")["vf_test_current"].is_null());
+    const json n = kelvin::crossref::cross_reference(
+        "diode", diode_spec(drow("NSVBAV70TT3G")), json::array({diode_spec(drow("BAS316"))}))
+        ["candidates"][0];
+    CHECK(verdict_of(n, "vf_basis") == "");
+    CHECK(verdict_of(n, "vf") != "unverified");
 }
 
 // ── Owner 2026-11-13 Z1: a retracted-only PRIMARY rating is not stated ─────────────────────
@@ -8296,4 +8507,154 @@ TEST_CASE("owner 2026-11-13 AA2: resistor element count and internal connection 
     const json cn = res_find(r5, "COUNTED_NO_FAMILY");
     REQUIRE(cn.is_object());
     CHECK(verdict_of(cn, "configuration") == "fail");
+}
+
+// ── Owner 2026-11-13 (C): a retracted-only PRIMARY VALUE is not stated ───────────────────────
+// The per-field retracted-only rule (Z1, voltage ratings) extends to each family's primary value:
+// capacitance, resistance, varistor voltage, inductance / chip-bead impedance, timing frequency
+// (and a programmable blank's span) and connector positions. Real records, verbatim lines of
+// tools/qarlos/bench/data-6bd04c7/capacitors.ndjson: Samsung CL10C020BB8NNNC (line 5202) states
+// 2 pF / 50 V, but its only source for them is a Digi-Key datasheet entry RETRACTED ("cited
+// document is for a different part"; the live entries cover only part.dielectricCode /
+// part.technology and the derived land pattern). CL10C1R5CB8NNNC (line 5206, 1.5 pF, same
+// series) rests on live sources. Of the frozen bench (data-6bd04c7), it is the only record whose
+// primary value rests on retracted sources only: capacitors 1 of 112 records with a retracted
+// entry, connectors 0 of 1532, magnetics 0 of 2338, resistors and timing 0 (no retracted entry).
+namespace dec_1113_c {
+// capacitors.ndjson line 5202: CL10C020BB8NNNC
+const char* kCL10C020BB8NNNC = R"KREC({"capacitor":{"manufacturerInfo":{"name":"Samsung Electro-Mechanics","reference":"CL10C020BB8NNNC","status":"production","datasheetInfo":{"part":{"partNumber":"CL10C020BB8NNNC","technology":"ceramic-class-1","case":"0603 (1608 Metric)","series":"","dielectricCode":"C0G"},"electrical":{"capacitance":{"nominal":2e-12,"minimum":1.9e-12,"maximum":2.1e-12},"ratedVoltage":50.0,"dissipationFactorFrequency":1000.0,"voltageRatedDcMax":50.0},"thermal":{"temperature":{"minimum":-55.0,"maximum":125.0}},"mechanical":{"dimensions":{"length":{"nominal":0.0016},"width":{"nominal":0.0008}},"shape":{"assembly":"SMT","shapeType":"SMD Chip"},"landPattern":{"pattern":"singleRow","originDatum":"padCentroid","pads":[{"id":"1","x":-0.000775,"y":0.0,"shape":"rectangle","width":0.0009,"height":0.00095},{"id":"2","x":0.000775,"y":0.0,"shape":"rectangle","width":0.0009,"height":0.00095}]}},"provenance":[{"source":"distributor","sourceName":"datasheet via Digi-Key listing","sourceUrl":"https://mm.digikey.com/Volume0/opasdata/d220001/medias/docus/658/CL10C020CB8NNNC_Spec.pdf","verification":"disproven","verificationDate":"2026-09-05","retracted":true,"retractionReason":"cited document is for a different part"},{"source":"manufacturerDatasheet","sourceName":"Samsung Electro-Mechanics MLCC catalogue, December 2025","sourceUrl":"https://product.samsungsem.com/resources/file/product-catalog/MLCC_2512.pdf","retrievedDate":"2026-08-01","fields":["part.dielectricCode","part.technology"]},{"source":"derived","sourceName":"IPC-7351B","retrievedDate":"2026-08-02","fields":["mechanical.landPattern"],"derivation":"IPC-7351B nominal land pattern for the case code"}]}},"distributorsInfo":[{"name":"Digi-Key","reference":"1276-1815-2-ND","link":"https://www.digikey.com/en/products/detail/samsung-electro-mechanics/CL10C020BB8NNNC/3887473","cost":{"value":0.0,"currency":"USD"},"quantity":0,"updatedAt":"2026-04-12"}]}})KREC";
+// capacitors.ndjson line 5206: CL10C1R5CB8NNNC
+const char* kCL10C1R5CB8NNNC = R"KREC({"capacitor":{"manufacturerInfo":{"name":"Samsung Electro-Mechanics","reference":"CL10C1R5CB8NNNC","status":"production","datasheetUrl":"https://weblib.samsungsem.com/mlcc/mlcc-ec-data-sheet.do?partNumber=CL05Y105KP6VPN","datasheetInfo":{"part":{"partNumber":"CL10C1R5CB8NNNC","technology":"ceramic-class-1","case":"0603 (1608 Metric)","series":"","dielectricCode":"C0G"},"electrical":{"capacitance":{"nominal":1.5e-12,"minimum":1.425e-12,"maximum":1.575e-12},"ratedVoltage":50.0,"dissipationFactorFrequency":1000.0,"voltageRatedDcMax":50.0},"thermal":{"temperature":{"minimum":-55.0,"maximum":125.0}},"mechanical":{"dimensions":{"length":{"nominal":0.0016},"width":{"nominal":0.0008}},"shape":{"assembly":"SMT","shapeType":"SMD Chip"},"landPattern":{"pattern":"singleRow","originDatum":"padCentroid","pads":[{"id":"1","x":-0.000775,"y":0.0,"shape":"rectangle","width":0.0009,"height":0.00095},{"id":"2","x":0.000775,"y":0.0,"shape":"rectangle","width":0.0009,"height":0.00095}]}},"provenance":[{"source":"manufacturerDatasheet","sourceName":"Samsung Electro-Mechanics datasheet","sourceUrl":"https://weblib.samsungsem.com/mlcc/mlcc-ec-data-sheet.do?partNumber=CL05Y105KP6VPN"},{"source":"manufacturerDatasheet","sourceName":"Samsung Electro-Mechanics MLCC catalogue, December 2025","sourceUrl":"https://product.samsungsem.com/resources/file/product-catalog/MLCC_2512.pdf","retrievedDate":"2026-08-01","fields":["part.dielectricCode","part.technology"]},{"source":"derived","sourceName":"IPC-7351B","retrievedDate":"2026-08-02","fields":["mechanical.landPattern"],"derivation":"IPC-7351B nominal land pattern for the case code"}]}},"distributorsInfo":[{"name":"Digi-Key","reference":"1276-1819-2-ND","link":"https://www.digikey.com/en/products/detail/samsung-electro-mechanics/CL10C1R5CB8NNNC/3887477","cost":{"value":0.0,"currency":"USD"},"quantity":0,"updatedAt":"2026-04-12"}]}})KREC";
+}  // namespace dec_1113_c
+
+TEST_CASE("owner 2026-11-13 C: a retracted-only capacitance is not stated: no original, out of "
+          "the pool",
+          "[qarlos][index][browse][dec-c]") {
+    using namespace dec_1113_c;
+    namespace fs = std::filesystem;
+    const std::string path = (fs::temp_directory_path() / "kelvin_dec_c_caps.ndjson").string();
+    {
+        std::ofstream o(path);
+        o << kCL10C1R5CB8NNNC << "\n" << kCL10C020BB8NNNC << "\n";
+    }
+    const auto shard = kelvin::build_capacitor_shard(path);
+    fs::remove(path);
+    const json all = kelvin::browse::browse_rows(shard, json{{"limit", 10}});
+    REQUIRE(all.at("total") == 2);  // the record is still indexed and browsable
+    double live_c = 0;
+    for (const json& r : all.at("rows")) {
+        if (r.at("mpn") == "CL10C020BB8NNNC") {
+            // Not stated: web/src/crossref.js spec() reads value_si = nz(capacitance) = null,
+            // so runCrossRef refuses it as an original ("has no C value in the catalogue").
+            CHECK(r.at("capacitance").is_null());
+        } else {
+            live_c = r.at("capacitance").get<double>();
+        }
+    }
+    REQUIRE(live_c == 1.5e-12);
+    // CL10C1R5CB8NNNC's pool on the primary value alone, cut as runCrossRef cuts it
+    // (filters[primary.row] = {min: C x acceptLo 0.80, max: C x acceptHi 4.00}): the stated 2 pF
+    // would be inside it; not stated, it is left out like a record stating no capacitance.
+    const json pool = kelvin::browse::browse_rows(
+        shard, json{{"filters", {{"capacitance", {{"min", live_c * 0.80}, {"max", live_c * 4.00}}}}},
+                    {"limit", 10}});
+    REQUIRE(pool.at("total") == 1);
+    CHECK(pool.at("rows")[0].at("mpn") == "CL10C1R5CB8NNNC");
+}
+
+TEST_CASE("owner 2026-11-13 C: each family's primary value on retracted sources only",
+          "[qarlos][views][dec-c]") {
+    kelvin::CapacitorRow c;
+    c.capacitance = 2e-12;
+    c.capacitance_min = 1.9e-12;
+    c.capacitance_max = 2.1e-12;
+    c.retracted_fields = {"electrical.esr"};
+    CHECK(kelvin::unstate_retracted_ratings(c) == 0);
+    CHECK(c.capacitance == 2e-12);
+    c.retracted_fields = {"electrical.capacitance"};
+    CHECK(kelvin::unstate_retracted_ratings(c) == 1);
+    CHECK(std::isnan(c.capacitance));
+    CHECK(std::isnan(c.capacitance_min));  // the band is read from the same field
+    CHECK(std::isnan(c.capacitance_max));
+
+    kelvin::ResistorRow r;
+    r.resistance = 1000;
+    r.retracted_fields = {"electrical.powerRating"};
+    CHECK(kelvin::unstate_retracted_ratings(r) == 0);
+    r.retracted_fields = {"electrical.resistance"};
+    CHECK(kelvin::unstate_retracted_ratings(r) == 1);
+    CHECK(std::isnan(r.resistance));
+
+    kelvin::VaristorRow v;
+    v.varistor_voltage = 470;
+    v.retracted_fields = {"electrical.varistorVoltage"};
+    CHECK(kelvin::unstate_retracted_ratings(v) == 1);
+    CHECK(std::isnan(v.varistor_voltage));
+
+    kelvin::MagneticRow m;
+    m.inductance = 1e-6;
+    m.inductance_tol_minus_pct = 20;
+    m.inductance_tol_plus_pct = 20;
+    m.impedance_100mhz = 600;
+    m.retracted_fields = {"electrical.dcResistance"};
+    CHECK(kelvin::unstate_retracted_ratings(m) == 0);
+    m.retracted_fields = {"electrical.inductance"};
+    CHECK(kelvin::unstate_retracted_ratings(m) == 1);
+    CHECK(std::isnan(m.inductance));
+    CHECK(std::isnan(m.inductance_tol_minus_pct));
+    CHECK(m.impedance_100mhz == 600);
+    m.retracted_fields = {"electrical.impedancePoints"};
+    CHECK(kelvin::unstate_retracted_ratings(m) == 1);
+    CHECK(std::isnan(m.impedance_100mhz));
+
+    kelvin::TimingRow t;
+    t.frequency = 25e6;
+    t.frequency_min = 1e6;
+    t.frequency_max = 100e6;
+    t.retracted_fields = {"electrical.frequencyTolerance"};
+    CHECK(kelvin::unstate_retracted_ratings(t) == 0);
+    t.retracted_fields = {"electrical.frequency"};
+    CHECK(kelvin::unstate_retracted_ratings(t) == 1);
+    CHECK(std::isnan(t.frequency));
+    CHECK(t.frequency_min == 1e6);
+    t.retracted_fields = {"electrical.frequencyRange"};
+    CHECK(kelvin::unstate_retracted_ratings(t) == 1);
+    CHECK(std::isnan(t.frequency_min));
+    CHECK(std::isnan(t.frequency_max));
+
+    kelvin::ConnectorRow k;
+    k.positions = 20;
+    k.retracted_fields = {"mechanical.pitch"};
+    CHECK(kelvin::unstate_retracted_ratings(k) == 0);
+    k.retracted_fields = {"mechanical.positions"};
+    CHECK(kelvin::unstate_retracted_ratings(k) == 1);
+    CHECK(std::isnan(k.positions));
+}
+
+// The selectors' own value filters: a NaN primary value compares false against both bounds, so
+// without its own reason it would pass the capacitance window and the resistance deviation.
+TEST_CASE("owner 2026-11-13 C: a not-stated primary value fails the selector filters",
+          "[qarlos][select][dec-c]") {
+    kelvin::Shard<kelvin::CapacitorRow> cs;
+    kelvin::CapacitorRow c;
+    c.mpn = "C-RETRACTED";
+    c.is_production = true;
+    c.v_rated = 50;
+    c.capacitance = kelvin::kNaN();  // unstated, as unstate_retracted_ratings leaves it
+    cs.rows.push_back(c);
+    kelvin::CapacitorConstraints cc;
+    cc.capacitance_min = 1e-12;
+    cc.capacitance_max = 3e-12;
+    cc.v_rated_min = 10;
+    CHECK_THROWS_AS(kelvin::select_capacitor(cs, cc, kelvin::CapacitorTiebreaker::LowestEsr),
+                    kelvin::NoCandidates);
+    kelvin::Shard<kelvin::ResistorRow> rs;
+    kelvin::ResistorRow r;
+    r.mpn = "R-RETRACTED";
+    r.tolerance = 0.01;
+    r.resistance = kelvin::kNaN();
+    rs.rows.push_back(r);
+    kelvin::ResistorConstraints rc;
+    rc.target_ohms = 1000;
+    CHECK_THROWS_AS(kelvin::select_resistor(rs, rc), kelvin::NoCandidates);
 }

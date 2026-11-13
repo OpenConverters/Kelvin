@@ -294,11 +294,33 @@ TEST_CASE("golden: the footprint ladder is monotone — fits < unverified < esta
     auto o = order("resistor", original, cands);
     REQUIRE(o.size() == 5);
     CHECK(o[0] == "FITS");
-    CHECK(o[1] == "UNVERIFIED");
+    // owner 2026-11-13 (Y3): unknown = different case. The unverified rung costs exactly the
+    // established different-case rung, so the two tie on penalty and their relative order is
+    // left to the other terms — equal here (the fixture's parts are otherwise identical), so
+    // the ranker's stable sort keeps them in input order, which is not a documented tie-break
+    // and is not pinned. Asserted: the tie, and that both rank after the fit and before the
+    // overhang.
+    Options popt;
+    popt.max_results = 50;
+    const json pr = cross_reference("resistor", original, cands, popt)["candidates"];
+    auto penalty_of = [&](const std::string& m) {
+        for (const auto& c : pr)
+            if (c.value("mpn", std::string()) == m) return c.at("penalty").get<double>();
+        FAIL("no candidate " << m);
+        return 0.0;
+    };
+    CHECK(penalty_of("UNVERIFIED") == penalty_of("DIFFERENT_CASE"));
+    CHECK(penalty_of("UNVERIFIED") == kUnknownDimPenalty);
+    const auto pos_unverified = std::find(o.begin(), o.end(), "UNVERIFIED") - o.begin();
+    CHECK(pos_unverified >= 1);
+    CHECK(pos_unverified <= 3);
     // The three established mismatches follow; a body that grossly overhangs the
     // pads stays the worst of them (the continuous term still separates them).
     CHECK(std::find(o.begin(), o.end(), "SMALLER_BODY") > o.begin() + 1);
-    CHECK(std::find(o.begin(), o.end(), "DIFFERENT_CASE") > o.begin() + 1);
+    // owner 2026-11-13 (Y3): unknown = different case — DIFFERENT_CASE ties UNVERIFIED (above),
+    // so it is only held after the fit and ahead of the overhang, not after UNVERIFIED.
+    CHECK(std::find(o.begin(), o.end(), "DIFFERENT_CASE") > o.begin());
+    CHECK(std::find(o.begin(), o.end(), "DIFFERENT_CASE") < o.begin() + 4);
     CHECK(o[4] == "OVERHANGS");
 }
 
@@ -430,11 +452,16 @@ TEST_CASE("golden: one missing axis on the original does not blank the footprint
     // but "cannot tell" outranks "established different land pattern", and both now
     // carry a footprint verdict where the pair used to be indistinguishable.
     CHECK(same["footprint"] == "unknown");
-    CHECK(same["penalty"].get<double>() < big["penalty"].get<double>());
+    // owner 2026-11-13 (Y3): unknown = different case. The unverified 0805 and the
+    // established one-size-larger 1206 now cost the same, and nothing else separates the two
+    // (same value, voltage and technology), so they tie. The ranker's stable sort then keeps
+    // input order, which is not a documented tie-break, so no order is pinned: both are
+    // returned, viable, on equal penalty.
+    CHECK(same["penalty"].get<double>() == big["penalty"].get<double>());
     auto o = order("capacitor", original, cands);
     REQUIRE(o.size() == 2);
-    CHECK(o[0] == "GRM2195C1H153JA01");
-    CHECK(o[1] == "GRM3195C1H153JA01");
+    CHECK(std::find(o.begin(), o.end(), "GRM2195C1H153JA01") != o.end());
+    CHECK(std::find(o.begin(), o.end(), "GRM3195C1H153JA01") != o.end());
 }
 
 TEST_CASE("golden: an original with no land pattern still reports the package axis — ABT #545",
