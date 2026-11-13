@@ -126,6 +126,7 @@ inline const FieldTable<CapacitorRow>& fields<CapacitorRow>() {
          {"rth", &CapacitorRow::rth},
          {"esr_frequency", &CapacitorRow::esr_frequency},
          {"ripple_current_frequency", &CapacitorRow::ripple_current_frequency},
+         {"ripple_current_temperature", &CapacitorRow::ripple_current_temperature},
          {"capacitance_min", &CapacitorRow::capacitance_min},
          {"capacitance_max", &CapacitorRow::capacitance_max},
          {"qualified_failure_rate", &CapacitorRow::qualified_failure_rate},
@@ -663,8 +664,9 @@ json browse_rows(const Shard<Row>& shard, const json& query) {
         // v22 (owner 2026-11-13, S1): the fields resting only on retracted provenance.
         if (!r.retracted_fields.empty()) {
             o["provenanceRetractedFields"] = r.retracted_fields;
-            o["provenanceRetractionReason"] = r.retraction_reason;
         }
+        // The reason, for a per-field and for a whole-record retraction alike.
+        if (!r.retraction_reason.empty()) o["provenanceRetractionReason"] = r.retraction_reason;
     if (r.box_axes_ambiguous) o["boxAxesAmbiguous"] = true;       // v20, see RowBase
         for (const auto& [name, mem] : t.nums) {
             double v = r.*mem;

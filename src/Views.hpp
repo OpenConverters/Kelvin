@@ -27,6 +27,10 @@ std::string normalize_ctas_topology(const std::string& name);
 // True when the record states provenance and EVERY entry is retracted (ABT #2035).
 // Family-agnostic; the index builder stamps it on every row.
 bool all_provenance_retracted(const json& env);
+// For such a record, the distinct retractionReason labels of its entries joined with "; "
+// (in record order); "" when not every entry is retracted or none states a reason. Qarlos r26
+// 31990757: the Vishay RGF1K's reason reached neither the ranker spec nor any note.
+std::string all_provenance_retraction_reason(const json& env);
 
 // The datasheetInfo fields of a record that rest ONLY on retracted provenance (owner
 // 2026-11-13, S1). A field is covered by a provenance entry when the entry names no `fields`

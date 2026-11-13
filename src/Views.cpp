@@ -664,6 +664,21 @@ bool all_provenance_retracted(const json& env) {
     return true;
 }
 
+std::string all_provenance_retraction_reason(const json& env) {
+    if (!all_provenance_retracted(env)) return "";
+    const json* mi = find_manufacturer_info(env, 0);
+    const json* pv = obj_get(*obj_get(*mi, "datasheetInfo"), "provenance");
+    std::vector<std::string> reasons;
+    for (const json& e : *pv) {
+        const std::string r = get_str(e, "retractionReason").value_or("");
+        if (!r.empty() && std::find(reasons.begin(), reasons.end(), r) == reasons.end())
+            reasons.push_back(r);
+    }
+    std::string out;
+    for (const std::string& r : reasons) out += (out.empty() ? "" : "; ") + r;
+    return out;
+}
+
 namespace {
 // A provenance `fields` entry, in the record-relative form the walk below produces. The corpus
 // writes the same field several ways: "electrical.forwardCurrent",
@@ -884,6 +899,11 @@ std::optional<CapacitorRow> extract_capacitor(const json& env) {
     if (present(r.ripple_current_rms))
         if (auto v = get_num(*elec, "rippleCurrentFrequency"); pos(v))
             r.ripple_current_frequency = *v;
+    // The temperature the scalar ripple rating is stated AT (v22), the same way: only
+    // alongside a ripple value, never inferred from the temperature range or the series.
+    if (present(r.ripple_current_rms))
+        if (auto v = get_num(*elec, "rippleCurrentTemperature"); v && std::isfinite(*v))
+            r.ripple_current_temperature = *v;
     // The IEC 60384-14 safety class the record states (v20), verbatim. Absent or null stays
     // "" (not stated); the explicit token "none" is a stated fact and is kept as such.
     if (const json* sc = obj_get(*part, "safetyClass"); sc && sc->is_object())

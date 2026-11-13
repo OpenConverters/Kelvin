@@ -7461,3 +7461,138 @@ TEST_CASE("qarlos r23r25 T7/T8: a timing case string establishes a different lan
     CHECK_FALSE(has_note(c8, "different package/case"));
     CHECK(verdict_of(c8, "footprint") == "unverified");
 }
+
+// ── Qarlos r26 (agent X) ─────────────────────────────────────────────────────
+
+// X1: a substitute that states its supply range but not its supply current was told "the
+// substitute's record states no supply range": the current_consumption gap set the range
+// flag. Real pair (Qarlos r26 32095486), frozen bench data TAS 6bd04c7, distributorsInfo
+// dropped.
+namespace r26_x {
+// timing_devices.ndjson line 7740: ASDMB-50.000MHZ-C-40-T (1.8 V, 16 mA)
+const char* kASDMB_50_000MHZ_C_40_T = R"KREC({"timeBase":{"oscillator":{"manufacturerInfo":{"name":"Abracon","reference":"ASDMB-50.000MHZ-C-40-T","status":"production","series":"ASDMB","datasheetInfo":{"part":{"partNumber":"ASDMB-50.000MHZ-C-40-T","series":"ASDMB","package":"2520 4-SMD","case":"2520 4-SMD"},"electrical":{"technology":"mems","frequency":50000000.0,"frequencyStability":4.9999999999999996e-05,"outputType":"cmos","supply":{"minimumSupplyVoltage":1.8,"maximumSupplyVoltage":1.8,"currentConsumption":0.016},"enableFunction":"standby"},"provenance":[{"source":"manufacturerParametric","sourceName":"Abracon parametric search","sourceUrl":"https://abracon.com/Oscillators/ASDMB.pdf","retrievedDate":"2026-07-03","fields":["electrical.technology","electrical.frequency","electrical.frequencyStability","electrical.outputType","electrical.supply","electrical.enableFunction"],"verification":"seriesConfirmed","verificationDate":"2026-10-09"}],"thermal":{"operatingTemperature":{"minimum":0.0,"maximum":70.0}}},"datasheetUrl":"https://abracon.com/Oscillators/ASDMB.pdf"}}}})KREC";
+// timing_devices.ndjson line 434: 831056223 (1.8 V, no supply current stated)
+const char* k831056223 = R"KREC({"timeBase":{"oscillator":{"manufacturerInfo":{"name":"W\u00fcrth Elektronik","reference":"831056223","series":"WE-SPXO","datasheetUrl":"https://www.we-online.com/components/products/datasheet/831056223.pdf","datasheetInfo":{"part":{"partNumber":"831056223","case":"IQXO-542"},"electrical":{"technology":"crystalOscillator","frequency":50000000.0,"frequencyStability":4.9999999999999996e-05,"outputType":"cmos","supply":{"minimumSupplyVoltage":1.8,"maximumSupplyVoltage":1.8}},"provenance":[{"source":"manufacturerParametric","verification":"citationOnly","verificationDate":"2026-09-07","sourceName":"W\u00fcrth Elektronik product table","sourceUrl":"https://www.we-online.com/en/components/products/WE-SPXO","retrievedDate":"2026-07-02","fields":["part.partNumber","electrical.technology","electrical.frequency","electrical.frequencyStability","electrical.outputType","electrical.supply"]},{"source":"manufacturerDatabase","sourceName":"W\u00fcrth Elektronik product database","verification":"valuesReadFromSource","verificationDate":"2026-09-07","sourceUrl":null,"retrievedDate":"2026-07-02","fields":["mechanical.length","mechanical.width","mechanical.height","mechanical.case","part.case","mechanical.assemblyType","manufacturerInfo.description"]}],"thermal":{"operatingTemperature":{"minimum":-40.0,"maximum":85.0}},"mechanical":{"length":{"nominal":0.002},"width":{"nominal":0.0016},"height":{"nominal":0.0008},"case":"IQXO-542","assemblyType":"smt"}},"description":"WE-SPXO Simple Packaged Quartz Oscillator, IQXO-542, 50 MHz, 50 ppm, 1.8 V"}}}})KREC";
+}  // namespace r26_x
+
+TEST_CASE("Qarlos r26 X1: a missing supply current is not reported as a missing supply range",
+          "[qarlos][crossref][timing][r26-x1]") {
+    using namespace r26_x;
+    const json c = dec_1113_s::timing_one(kASDMB_50_000MHZ_C_40_T, k831056223);
+    CHECK(verdict_of(c, "supply_min_V") == "pass");
+    CHECK(verdict_of(c, "supply_max_V") == "pass");
+    CHECK(verdict_of(c, "current_consumption") == "unverified");
+    CHECK_FALSE(has_note(c, "states no supply range"));
+    CHECK(has_note(c, "the original draws 16 mA from its supply; the substitute's record states "
+                      "no supply current"));
+}
+
+// X2: the ripple rating's temperature basis. Real pair (Qarlos r26 32304944), frozen bench data
+// TAS 6bd04c7, distributorsInfo dropped: 1.67 A @ 120 Hz / 105 degC against 2.25 A @ 100 Hz /
+// 85 degC (100 and 120 Hz are one basis, so only the temperature differs).
+namespace r26_x {
+// capacitors.ndjson line 137427: 600MXH270MEFCSN35X50
+const char* k600MXH270MEFCSN35X50 = R"KREC({"capacitor":{"manufacturerInfo":{"name":"Rubycon","reference":"600MXH270MEFCSN35X50","datasheetInfo":{"part":{"partNumber":"600MXH270MEFCSN35X50","technology":"aluminum-electrolytic-wet","series":"MXH","case":"35x50"},"electrical":{"capacitance":{"nominal":0.00027,"minimum":0.00021600000000000002,"maximum":0.000324},"ratedVoltage":600.0,"voltageRatedDcMax":600.0,"polarized":true,"rippleCurrent":1.67,"rippleCurrentFrequency":120.0,"rippleCurrentTemperature":105.0},"mechanical":{"shape":{"assembly":"Snap-In","shapeType":"Radial Cylindrical","volume":{"nominal":4.810563750809372e-05},"footprint":{"nominal":0.0009621127501618743}},"dimensions":{"diameter":{"nominal":0.035},"length":{"nominal":0.05}}},"thermal":{"temperature":{"minimum":-25.0,"maximum":105.0}},"lifetime":{"lifetimeEndurance":3000.0},"modelParams":{"cs":0.00027},"provenance":[{"source":"manufacturerParametric","sourceName":"Rubycon product list","sourceUrl":"https://www.rubycon.co.jp/wp-content/uploads/catalog-aluminum/MXH.pdf","retrievedDate":"2026-08-01"},{"source":"manufacturerParametric","sourceName":"Rubycon Product Search CSV export","sourceUrl":"https://tools.rubycon.co.jp/product-search/?class=1","retrievedDate":"2026-10-10","fields":["electrical.capacitance","electrical.ratedVoltage","electrical.voltageRatedDcMax","thermal.temperature","mechanical.dimensions.diameter","mechanical.dimensions.length","part.case"],"verification":"valuesReadFromSource","verificationDate":"2026-10-18"}]},"datasheetUrl":"https://www.rubycon.co.jp/wp-content/uploads/catalog-aluminum/MXH.pdf"}}})KREC";
+// capacitors.ndjson line 632051: B43541A8277M060
+const char* kB43541A8277M060 = R"KREC({"capacitor":{"manufacturerInfo":{"name":"TDK","reference":"B43541A8277M060","status":"production","datasheetUrl":"https://product.tdk.com/en/search/capacitor/aluminum-electrolytic/snap_multi_large/info?part_no=B43541A8277M060","datasheetInfo":{"part":{"partNumber":"B43541A8277M060","technology":"aluminum-electrolytic-wet","series":"B43541"},"electrical":{"capacitance":{"nominal":0.00027,"minimum":0.000216,"maximum":0.000324},"ratedVoltage":600.0,"voltageRatedDcMax":600.0,"rippleCurrent":2.25,"rippleCurrentFrequency":100.0,"rippleCurrentTemperature":85.0},"mechanical":{"dimensions":{"diameter":{"nominal":0.035},"length":{"nominal":0.05}},"shape":{"assembly":"THT","shapeType":"Snap-in"}},"provenance":[{"source":"manufacturerParametric","sourceName":"TDK product center","sourceUrl":"https://product.tdk.com/en/search/capacitor/aluminum-electrolytic/snap_multi_large/info?part_no=B43541A8277M060","retrievedDate":"2026-11-07","fields":["part.partNumber","electrical.capacitance","part.technology","part.series","electrical.ratedVoltage","electrical.rippleCurrent","electrical.rippleCurrentFrequency","electrical.rippleCurrentTemperature","mechanical.dimensions","manufacturerInfo.status"],"verification":"partNamed","verificationDate":"2026-11-07","verificationMethod":"Part number, capacitance, tolerance, voltage ratings, dimensions and lifecycle status read from the TDK Product Center part listing row for this exact code"}]}}}})KREC";
+// cap_spec (web/src/crossref.js) plus the v22 ripple temperature, as crossref.js passes it.
+json cap_spec_t(const kelvin::CapacitorRow& r) {
+    json s = cap_spec(r);
+    s["ripple_current_temperature"] =
+        std::isnan(r.ripple_current_temperature) ? json(nullptr) : json(r.ripple_current_temperature);
+    return s;
+}
+}  // namespace r26_x
+
+TEST_CASE("Qarlos r26 X2: ripple ratings at different temperatures are not compared",
+          "[qarlos][crossref][capacitor][r26-x2]") {
+    using namespace r26_x;
+    const auto o = cap_row(json::parse(k600MXH270MEFCSN35X50));
+    const auto s = cap_row(json::parse(kB43541A8277M060));
+    CHECK(o.ripple_current_temperature == 105.0);
+    CHECK(s.ripple_current_temperature == 85.0);
+    const json orig = cap_spec_t(o);
+    const json cand = cap_spec_t(s);
+    auto r = kelvin::crossref::cross_reference("capacitor", orig, json::array({cand}));
+    REQUIRE(r["candidates"].size() == 1);
+    const json c = r["candidates"][0];
+    CHECK(verdict_of(c, "ripple_current") == "unverified");
+    CHECK(has_note(c, "ripple current quoted at different temperatures (original 1.67 A at +105 "
+                      "degC, substitute 2.25 A at +85 degC)"));
+    // The same pair with the substitute stated at the original's temperature: compared as
+    // stated (pass), and the grade is the same — the temperature basis is not capped.
+    json same = cand;
+    same["ripple_current_temperature"] = 105.0;
+    auto r2 = kelvin::crossref::cross_reference("capacitor", orig, json::array({same}));
+    const json c2 = r2["candidates"][0];
+    CHECK(verdict_of(c2, "ripple_current") == "pass");
+    CHECK_FALSE(has_note(c2, "different temperatures"));
+    CHECK(c["grade"] == c2["grade"]);
+    // Substitute states no temperature: UNVERIFIED with the one-sided note.
+    json none = cand;
+    none["ripple_current_temperature"] = nullptr;
+    auto r3 = kelvin::crossref::cross_reference("capacitor", orig, json::array({none}));
+    CHECK(verdict_of(r3["candidates"][0], "ripple_current") == "unverified");
+    CHECK(has_note(r3["candidates"][0], "states 2.25 A at no temperature"));
+}
+
+// X4: a package string that says "SMD" as a word classifies the mount. Real pair (Qarlos r26
+// 32200215), frozen bench data TAS 6bd04c7, distributorsInfo dropped: the SMD Abracon crystal
+// (package "11x5 4-SMD, No Lead", no assemblyType) against the through-hole WE-XTAL (HC49/4H,
+// assemblyType tht), which ranked #1 at minor_review.
+namespace r26_x {
+// timing_devices.ndjson line 883: ABC2-7.3728MHZ-4-T
+const char* kABC2_7_3728MHZ_4_T = R"KREC({"timeBase":{"oscillator":{"manufacturerInfo":{"name":"Abracon","reference":"ABC2-7.3728MHZ-4-T","status":"production","series":"ABC2","datasheetInfo":{"part":{"partNumber":"ABC2-7.3728MHZ-4-T","series":"ABC2","package":"11x5 4-SMD, No Lead","case":"11x5 4-SMD, No Lead"},"electrical":{"technology":"quartzCrystal","outputType":"none","frequency":7372800.0,"frequencyTolerance":2.9999999999999997e-05,"frequencyStability":2.9999999999999997e-05,"loadCapacitance":1.8e-11,"equivalentSeriesResistance":50.0,"mode":"fundamental"},"provenance":[{"source":"manufacturerParametric","sourceName":"Abracon parametric search","sourceUrl":"https://abracon.com/Resonators/ABC2.pdf","retrievedDate":"2026-07-03","fields":["electrical.technology","electrical.outputType","electrical.frequency","electrical.frequencyTolerance","electrical.frequencyStability","electrical.loadCapacitance","electrical.equivalentSeriesResistance","electrical.mode"],"verification":"seriesConfirmed","verificationDate":"2026-10-09"}],"thermal":{"operatingTemperature":{"minimum":-10.0,"maximum":60.0}}},"datasheetUrl":"https://abracon.com/Resonators/ABC2.pdf"}}}})KREC";
+// timing_devices.ndjson line 73: 830003336
+const char* k830003336 = R"KREC({"timeBase":{"oscillator":{"manufacturerInfo":{"name":"W\u00fcrth Elektronik","reference":"830003336","series":"WE-XTAL","datasheetUrl":"https://www.we-online.com/components/products/datasheet/830003336.pdf","datasheetInfo":{"part":{"partNumber":"830003336","case":"HC49/4H"},"electrical":{"technology":"quartzCrystal","frequency":7372800.0,"frequencyTolerance":1.4999999999999999e-05,"frequencyStability":2.9999999999999997e-05,"loadCapacitance":1.8e-11,"outputType":"none","mode":"fundamental"},"provenance":[{"source":"manufacturerParametric","verification":"seriesConfirmed","verificationDate":"2026-10-09","sourceName":"W\u00fcrth Elektronik product table","sourceUrl":"https://www.we-online.com/en/components/products/WE-XTAL","retrievedDate":"2026-07-02","fields":["part.partNumber","electrical.technology","electrical.frequency","electrical.frequencyTolerance","electrical.frequencyStability","electrical.loadCapacitance"]},{"source":"manufacturerDatabase","sourceName":"W\u00fcrth Elektronik product database","sourceUrl":null,"retrievedDate":"2026-07-02","fields":["mechanical.length","mechanical.width","mechanical.height","mechanical.case","part.case","mechanical.assemblyType","manufacturerInfo.description"]}],"thermal":{"operatingTemperature":{"minimum":-10.0,"maximum":60.0}},"mechanical":{"length":{"nominal":0.011349999999999999},"width":{"nominal":0.004849999999999999},"height":{"nominal":0.004},"case":"HC49/4H","assemblyType":"tht"}},"description":"WE-XTAL Quartz Crystal, THT, HC49/4H, 7.3728 MHz, \u00b115ppm"}}}})KREC";
+}  // namespace r26_x
+
+TEST_CASE("Qarlos r26 X4: an SMD-package crystal is not offered a through-hole one",
+          "[qarlos][crossref][timing][r26-x4]") {
+    using namespace r26_x;
+    using kelvin::crossref::is_smd;
+    CHECK(is_smd("11x5 4-SMD, No Lead"));
+    CHECK(is_smd("3225 4-SMD"));
+    CHECK(is_smd("HC-49/US SMD 4.0mm Height"));
+    CHECK(is_smd("SMD"));
+    CHECK_FALSE(is_smd("Not SMD"));       // 880 capacitor case strings: a negation
+    CHECK_FALSE(is_smd("SMDIP (SDIP)"));  // not a whole word
+    const json c = dec_1113_s::timing_one(kABC2_7_3728MHZ_4_T, k830003336);
+    CHECK(c["status"] == "no_substitute");
+    CHECK(verdict_of(c, "mounting") == "fail");
+    CHECK(has_note(c, "mount type incompatible: 11x5 4-SMD, No Lead -> tht"));
+}
+
+// X3: a wholly retracted ORIGINAL. Real records (Qarlos r26 31990757), frozen bench data TAS
+// 6bd04c7: the Vishay RGF1K's only provenance entry is retracted ("category browse page cited
+// no exact order code; ..."). The reason reached neither the row nor any candidate note; the
+// only signal was original_unverified. Specs are web/src/crossref.js's diode spec of the v22
+// shard rows built BEFORE this fix (retraction_reason ""), with the reason the row now carries
+// set where the fixed index builder puts it.
+namespace r26_x {
+// diodes.ndjson line 12645: RGF1K (Vishay), distributorsInfo dropped
+const char* kRGF1K_Vishay = R"KREC({"semiconductor":{"diode":{"manufacturerInfo":{"name":"Vishay","reference":"RGF1K","status":"production","datasheetInfo":{"part":{"partNumber":"RGF1K","subType":"rectifier","technology":"Si"},"electrical":{"reverseVoltage":800.0,"forwardCurrent":1.0,"surgeCurrent":30.0,"forwardVoltage":1.3,"reverseRecoveryTime":1.5e-07},"provenance":[{"source":"manufacturerParametric","verification":"citationOnly","verificationDate":"2026-09-07","sourceName":"Vishay parametric search","sourceUrl":"https://www.vishay.com/en/diodes/standard-recovery/","retrievedDate":"2026-07-03","retracted":true,"retractionReason":"category browse page cited no exact order code; no part-specific document found"}],"thermal":{"junctionTemperatureMax":175.0},"mechanical":{"case":"GF1 (DO-214BA)"}}}}}})KREC";
+const char* kSpecRGF1K_Vishay = R"KSPEC({"mpn":"RGF1K","length_m":null,"width_m":null,"height_m":null,"case_code":"GF1 (DO-214BA)","mount":"","lead_pitch_m":null,"is_production":true,"provenance_retracted":true,"retracted_fields":[],"retraction_reason":"","box_axes_ambiguous":false,"vrrm":800,"if_avg":1,"vf":1.3,"power_dissipation":null,"qrr":null,"trr":1.5e-07,"technology":"rectifier","die_configuration":null,"internal_connection":null,"vz_min_V":null,"vz_max_V":null,"vz_tolerance_pct":null,"clamping_voltage":null,"clamping_current":null,"peak_pulse_power":null,"peak_pulse_current":null,"junction_capacitance":null,"junction_capacitance_vr":null,"clamping_waveform":"","peak_pulse_power_waveform":"","peak_pulse_current_waveform":"","tj_max":175,"qualification":""})KSPEC";
+const char* kSpecRGF1K_onsemi = R"KSPEC({"mpn":"RGF1K","length_m":null,"width_m":null,"height_m":null,"case_code":"SMA","mount":"","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"retracted_fields":[],"retraction_reason":"","box_axes_ambiguous":false,"vrrm":800,"if_avg":1,"vf":1.3,"power_dissipation":null,"qrr":null,"trr":5.000000000000001e-7,"technology":"fastRecovery","die_configuration":null,"internal_connection":null,"vz_min_V":null,"vz_max_V":null,"vz_tolerance_pct":null,"clamping_voltage":null,"clamping_current":null,"peak_pulse_power":null,"peak_pulse_current":null,"junction_capacitance":null,"junction_capacitance_vr":null,"clamping_waveform":"","peak_pulse_power_waveform":"","peak_pulse_current_waveform":"","tj_max":null,"qualification":""})KSPEC";
+}  // namespace r26_x
+
+TEST_CASE("Qarlos r26 X3: a wholly retracted original is named, with its reason, on candidates",
+          "[qarlos][crossref][diode][r26-x3]") {
+    using namespace r26_x;
+    const std::string why =
+        "category browse page cited no exact order code; no part-specific document found";
+    const json env = json::parse(kRGF1K_Vishay);
+    CHECK(kelvin::all_provenance_retracted(env));
+    CHECK(kelvin::all_provenance_retraction_reason(env) == why);
+    json orig = json::parse(kSpecRGF1K_Vishay);
+    REQUIRE(orig["provenance_retracted"] == true);
+    orig["retraction_reason"] = why;
+    const json cand = json::parse(kSpecRGF1K_onsemi);
+    kelvin::crossref::Options opt;
+    opt.original_verified = false;  // web/src/crossref.js: origVerified is false when retracted
+    auto r = kelvin::crossref::cross_reference("diode", orig, json::array({cand}), opt);
+    REQUIRE(r["candidates"].size() == 1);
+    const json c = r["candidates"][0];
+    CHECK(c["original_unverified"] == true);
+    CHECK(has_note(c, "every source cited by the original's record is retracted (" + why + ")"));
+}

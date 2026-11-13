@@ -111,7 +111,8 @@ struct RowBase {
     // entry, one whose every entry is retracted (provenance_retracted above), or one with a live
     // entry for the whole record. The cross-reference reads a comparison resting on one of them
     // as UNVERIFIED with a note naming the retraction. `retraction_reason` joins the
-    // retractionReason labels of the entries that withdrew them.
+    // retractionReason labels of the entries that withdrew them — or, for a record whose
+    // every entry is retracted, of all its entries (Qarlos r26 31990757).
     std::vector<std::string> retracted_fields;
     std::string retraction_reason;
     // v20 — the record draws its leaded body as L x W x T with no height, and nothing in it
@@ -294,6 +295,12 @@ struct CapacitorRow : RowBase {
     // 40 % or more, so the cross-reference compares the two ratings only on a common basis
     // (Qarlos 2026-11-09, seed 20365838).
     double ripple_current_frequency = kNaN();
+    // v22 (no bump; not yet deployed): the temperature ripple_current_rms is stated AT (CAS
+    // electrical.rippleCurrentTemperature, degC). NaN = not stated. An 85 degC and a 105 degC
+    // rating of the same can differ severalfold, so they are compared only on a common basis
+    // (Qarlos r26 32304944: 600MXH270MEFCSN35X50 1.67 A @ 105 degC passed against
+    // B43541A8277M060 2.25 A @ 85 degC).
+    double ripple_current_temperature = kNaN();
     // v20: the capacitance band the record GUARANTEES (CAS electrical.capacitance.minimum /
     // .maximum, farads), kept in farads exactly as stated. NaN (both) unless the record states
     // both ends and they bracket the nominal with a non-zero width. A small part's tolerance

@@ -141,7 +141,9 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // covers the original's range (owner 2026-11-13). A new TimingRow field changes what a shard
 // row serialises, so every v21 shard must be rebuilt and both engines redeployed together.
 // v22 (not yet deployed when added, so no bump) also carries a timing device's supply current
-// (TimingRow.current_consumption, TDAS electrical.supply.currentConsumption; owner 2026-11-13).
+// (TimingRow.current_consumption, TDAS electrical.supply.currentConsumption; owner 2026-11-13),
+// and a capacitor's ripple-rating temperature (CapacitorRow.ripple_current_temperature, CAS
+// electrical.rippleCurrentTemperature; Qarlos r26).
 constexpr uint32_t kFormatVersion = 22;
 
 // Identity of the code that produces rows, so a cached shard can be recognised as
@@ -378,6 +380,7 @@ void row_io(Ar& ar, CapacitorRow& r) {
     ar.str(r.qualified_grade);           // v20
     ar.dbl(r.qualified_failure_rate);    // v20
     ar.boolean(r.is_production);
+    ar.dbl(r.ripple_current_temperature);  // v22 (Qarlos r26)
 }
 
 template <class Ar>
@@ -717,6 +720,9 @@ void parse_region(const std::string& path, const std::string& content, size_t be
                 FieldRetraction fr = retracted_only_fields(env);
                 row->retracted_fields = std::move(fr.fields);
                 row->retraction_reason = std::move(fr.reason);
+                // A wholly retracted record carries its reason too (Qarlos r26 31990757).
+                if (row->provenance_retracted)
+                    row->retraction_reason = all_provenance_retraction_reason(env);
                 out.rows.push_back(std::move(*row));
                 out.meta.row_count += 1;
             } else {

@@ -275,7 +275,8 @@ inline std::vector<std::string> comparison_source_fields(const std::string& cat,
         if (name == "esr") return {"electrical.esr", "electrical.esrPoints"};
         if (name == "esr_basis") return {"electrical.esr", "electrical.esrFrequency"};
         if (name == "ripple_current")
-            return {"electrical.rippleCurrent", "electrical.rippleCurrentFrequency"};
+            return {"electrical.rippleCurrent", "electrical.rippleCurrentFrequency",
+                    "electrical.rippleCurrentTemperature"};
         if (name == "technology") return {"part.technology", "part.subType"};
         if (name == "dielectric_code") return {"part.dielectricCode"};
         if (name == "safety_class") return {"part.safetyClass"};
@@ -1555,6 +1556,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // original's is rejected inside the loop, owner 2026-11-13; this flag is the one-sided
     // unstated case.)
     bool timebase_supply_unverified = false;
+    // The original states its supply current and the substitute does not (secondary axis:
+    // note only, no cap).
+    bool timebase_current_unverified = false;
     // A timing part's control-pin function stated on one side only: UNVERIFIED, noted, and
     // the grade capped below drop_in — the pin function is the part's pinout, a primary axis,
     // and drop_in asserts the same pinout (Qarlos 2026-11-09). A frequency tolerance /
@@ -1663,6 +1667,39 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         cat == "capacitor" &&
         basis_unverified("ripple_current", "ripple_current_frequency", "ripple current", "A",
                          /*primary=*/true);
+    // The ripple rating's TEMPERATURE basis (v22, Qarlos r26 32304944): an 85 degC rating
+    // and a 105 degC rating of the same can are not the same number — 600MXH270MEFCSN35X50
+    // (1.67 A @ 105 degC) passed against B43541A8277M060 (2.25 A @ 85 degC). The Cj / Coss
+    // basis rule: both state a ripple value and the original states its temperature -> a
+    // substitute at the same temperature is compared as stated; one at a different
+    // temperature or at none is UNVERIFIED, noted, counts in neither direction, and is NOT
+    // demoted or capped (the Cj / Coss basis treatment). The original stating no temperature
+    // -> compared as stated. No conversion between temperatures is attempted.
+    const bool ripple_temp_basis_unverified = [&] {
+        if (cat != "capacitor") return false;
+        const auto o_v = num(original, "ripple_current"), s_v = num(cand, "ripple_current");
+        const auto o_t = num(original, "ripple_current_temperature"),
+                   s_t = num(cand, "ripple_current_temperature");
+        if (!o_v || !s_v || !o_t) return false;
+        if (s_t && std::fabs(*o_t - *s_t) <= 1e-9 * std::max(std::fabs(*o_t), 1.0)) return false;
+        char buf[320];
+        if (s_t)
+            std::snprintf(buf, sizeof buf,
+                          "ripple current quoted at different temperatures (original %g A at "
+                          "%s degC, substitute %g A at %s degC) — not directly comparable; "
+                          "confirm the substitute's ripple current at the original's "
+                          "temperature from its datasheet",
+                          *o_v, degc(*o_t).c_str(), *s_v, degc(*s_t).c_str());
+        else
+            std::snprintf(buf, sizeof buf,
+                          "the original's ripple current is %g A at %s degC; the substitute's "
+                          "record states %g A at no temperature — not directly comparable; "
+                          "confirm its ripple current at the original's temperature from the "
+                          "datasheet",
+                          *o_v, degc(*o_t).c_str(), *s_v);
+        notes.push_back(buf);
+        return true;
+    }();
     const bool esr_basis_unverified =
         cat == "capacitor" && basis_unverified("esr", "esr_frequency", "ESR", "ohm",
                                               /*primary=*/false);
@@ -1845,7 +1882,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             power_at_t && !power_t.subst && *detail::jnum(cand, spec.key) < *power_t.orig;
         const bool pin_field = spec.key == "pitch_mm" && connector_pitch.verdict != nullptr;
         const bool ripple_blind =
-            cat == "capacitor" && ((spec.key == "ripple_current" && ripple_basis_unverified) ||
+            cat == "capacitor" && ((spec.key == "ripple_current" &&
+                                    (ripple_basis_unverified || ripple_temp_basis_unverified)) ||
                                    (spec.key == "esr" && esr_basis_unverified));
         const bool coss_blind = cat == "mosfet" && spec.key == "coss" && coss_basis_unverified;
         const bool work_v_basis = spec.key == "max_voltage_V" && work_v.applies;
@@ -1965,8 +2003,14 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                 " — it will not run correctly from the original's rail");
                 return reject("supply range does not cover the original's rail");
             }
-            if (verdict == UNVERIFIED && detail::present(original, spec.key))
-                timebase_supply_unverified = true;
+            // The supply current shares the supply_key gate but is not the range: a
+            // substitute that states its 1.8 V rail but no current was told "states no supply
+            // range" (Qarlos r26 32095486, ASDMB-50.000MHZ-C-40-T -> 831056223). Each gap
+            // gets the note for the field that is actually missing.
+            if (verdict == UNVERIFIED && detail::present(original, spec.key)) {
+                if (spec.key == "current_consumption") timebase_current_unverified = true;
+                else timebase_supply_unverified = true;
+            }
         }
         if (cat == "timeBase" && spec.key == "frequency" && verdict == FAIL) {
             // Say how far off it is: the reject reason alone ("an identity parameter
@@ -2647,6 +2691,16 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         notes.push_back("the original runs from " + supply_range(original) +
                         "; the substitute's record states no supply range, so the rail could "
                         "not be checked — confirm it from the datasheet");
+    if (timebase_current_unverified) {
+        // %g, not volts()'s three decimals: a 32 kHz oscillator draws microamps (1.5 uA would
+        // print as "0.002 mA").
+        char cur[32];
+        std::snprintf(cur, sizeof cur, "%g mA", *num(original, "current_consumption") * 1000.0);
+        notes.push_back("the original draws " + std::string(cur) +
+                        " from its supply; the substitute's record states no supply current, so "
+                        "the rail's current budget could not be checked — confirm it from the "
+                        "datasheet");
+    }
 
     // Say WHAT the two parts guarantee, in volts. The Vrrm verdict above compares the
     // MARKED voltage, which two grades of the same zener share; the window is what the
@@ -4784,6 +4838,17 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                         "its data is verified; confirm the part from its datasheet before "
                         "relying on any verdict here");
     }
+    // The ORIGINAL's whole-record retraction was stated only as the original_unverified flag
+    // and the site's banner: a consumer of the candidate (the MCP tool, the harness) got no
+    // caveat and no reason (Qarlos r26 31990757, Vishay RGF1K). Named here, with the reason
+    // the record gives. The grading treatment is unchanged (status capped below).
+    if (flag(original, "provenance_retracted")) {
+        const std::string why = str(original, "retraction_reason");
+        notes.push_back("every source cited by the original's record is retracted" +
+                        (why.empty() ? std::string() : " (" + why + ")") +
+                        " — the original's data is unverified, so no verdict against it can be "
+                        "relied on; confirm the original from its datasheet");
+    }
 
     // ── fields resting only on retracted sources (owner 2026-11-13, S1) ────────
     // A record can carry a retracted entry for the whole record beside live entries scoped to
@@ -4984,6 +5049,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //   resistor maximum working voltage                      secondary  note only
     //   capacitor ESR absent (was missing_required)           secondary  note + FAIL penalty
     //   capacitor ESR basis (esr_basis_unverified)            secondary  note only
+    //   capacitor ripple TEMPERATURE basis differs / unstated
+    //     (ripple_temp_basis_unverified; Cj / Coss rule)      basis      note only
     //   capacitance tolerance band                            secondary  note only
     //   capacitor dielectric codes not comparable             secondary  note only
     //   timing frequency tolerance / stability unstated       secondary  note only,
