@@ -733,6 +733,8 @@ void parse_region(const std::string& path, const std::string& content, size_t be
                 FieldRetraction fr = retracted_only_fields(env);
                 row->retracted_fields = std::move(fr.fields);
                 row->retraction_reason = std::move(fr.reason);
+                // Owner 2026-11-13, Z1: a retracted-only primary rating is not stated.
+                unstate_retracted_ratings(*row);
                 // A wholly retracted record carries its reason too (Qarlos r26 31990757).
                 if (row->provenance_retracted)
                     row->retraction_reason = all_provenance_retraction_reason(env);

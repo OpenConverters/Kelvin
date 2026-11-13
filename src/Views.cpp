@@ -735,6 +735,53 @@ void stated_leaves(const json& v, const std::string& path, std::vector<std::stri
 }
 }  // namespace
 
+namespace {
+bool field_retracted(const RowBase& r, const char* field) {
+    return std::find(r.retracted_fields.begin(), r.retracted_fields.end(), field) !=
+           r.retracted_fields.end();
+}
+}  // namespace
+
+int unstate_retracted_ratings(DiodeRow& r) {
+    // The field the rating was read from (extract_diode: one source per subtype, no fallback).
+    const bool protection = r.technology == "tvs" || r.technology == "esd";
+    const char* src = protection                ? "electrical.standoffVoltage"
+                      : r.technology == "zener" ? "electrical.breakdownVoltage"
+                                                : "electrical.reverseVoltage";
+    int n = 0;
+    if (field_retracted(r, src)) {
+        r.vrrm_rated = kNaN();
+        ++n;
+    }
+    // A zener's window is its rating too (the zener pool's range filter); a TVS's breakdown
+    // window is a secondary axis and stays.
+    if (r.technology == "zener" && field_retracted(r, "electrical.breakdownVoltage") &&
+        (!std::isnan(r.vz_min) || !std::isnan(r.vz_max) || !std::isnan(r.vz_tolerance))) {
+        r.vz_min = r.vz_max = r.vz_tolerance = kNaN();
+        ++n;
+    }
+    return n;
+}
+
+int unstate_retracted_ratings(MosfetRow& r) {
+    if (!field_retracted(r, "electrical.drainSourceVoltage")) return 0;
+    r.vds_rated = kNaN();
+    return 1;
+}
+
+int unstate_retracted_ratings(CapacitorRow& r) {
+    int n = 0;
+    if (!std::isnan(r.v_rated) && field_retracted(r, "electrical.ratedVoltage")) {
+        r.v_rated = kNaN();
+        ++n;
+    }
+    if (!std::isnan(r.v_rated_ac) && field_retracted(r, "electrical.voltageRatedAcMax")) {
+        r.v_rated_ac = kNaN();
+        ++n;
+    }
+    return n;
+}
+
 FieldRetraction retracted_only_fields(const json& env) {
     FieldRetraction out;
     const json* mi = find_manufacturer_info(env, 0);

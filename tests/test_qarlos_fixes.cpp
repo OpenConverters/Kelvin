@@ -1,6 +1,7 @@
 // Regression tests for the Qarlos cross-reference audit of 2026-10-24
 // (ABT #2029-#2051). Each case reproduces the reported row in miniature.
 #include <cmath>
+#include <filesystem>
 #include <fstream>
 #include <optional>
 #include <stdexcept>
@@ -7738,4 +7739,71 @@ TEST_CASE("owner 2026-11-13 W4: turns ratio beyond 15 % rejects; the best config
     CHECK(c2->value("status", "") != "no_substitute");
     CHECK(verdict_of(*c2, "turns_ratio") == "pass");
     CHECK(has_note(*c2, "on the original's wiring configuration 2 of 2"));
+}
+
+// ── Owner 2026-11-13 Z1: a retracted-only PRIMARY rating is not stated ─────────────────────
+// VS-6CWH02FN-M3's reverseVoltage rests only on a retracted category-page citation (S1
+// above). The rating is now removed from its row, so the diode pool's hard floor
+// (web/src/crossref.js hardMin vrrm_rated >= 0.9 x the original's) leaves it out exactly like
+// a record stating no Vr. Real records (dec_1113_s, frozen bench diodes.ndjson) through the
+// real index builder and browse.
+TEST_CASE("owner 2026-11-13 Z1: a retracted-only Vr leaves the candidate out of the pool",
+          "[qarlos][index][browse][dec-z1]") {
+    using namespace dec_1113_s;
+    namespace fs = std::filesystem;
+    const std::string path = (fs::temp_directory_path() / "kelvin_dec_z1_diodes.ndjson").string();
+    {
+        std::ofstream o(path);
+        o << kPU1DFSH << "\n" << kVS_6CWH02FN_M3 << "\n";
+    }
+    const auto shard = kelvin::build_diode_shard(path);
+    fs::remove(path);
+    const json all = kelvin::browse::browse_rows(shard, json{{"limit", 10}});
+    REQUIRE(all.at("total") == 2);
+    double pu_vrrm = 0;
+    for (const json& r : all.at("rows")) {
+        if (r.at("mpn") == "VS-6CWH02FN-M3") {
+            CHECK(r.at("vrrm_rated").is_null());          // not exposed
+            CHECK(r.at("if_avg_rated") == 3.0);           // live source: kept
+            CHECK(r.at("vf_typ") == 0.9);                 // secondary axis: S1 rule, kept
+        } else {
+            pu_vrrm = r.at("vrrm_rated").get<double>();
+        }
+    }
+    REQUIRE(pu_vrrm == 200.0);
+    // PU1DFSH's pool, cut as web/src/crossref.js runCrossRef cuts it.
+    const json pool = kelvin::browse::browse_rows(
+        shard, json{{"filters", {{"vrrm_rated", {{"min", pu_vrrm * 0.9}}}}}, {"limit", 10}});
+    REQUIRE(pool.at("total") == 1);
+    CHECK(pool.at("rows")[0].at("mpn") == "PU1DFSH");
+}
+
+TEST_CASE("owner 2026-11-13 Z1: MOSFET Vds and capacitor ratings on retracted sources only",
+          "[qarlos][views][dec-z1]") {
+    kelvin::MosfetRow m;
+    m.vds_rated = 60;
+    m.retracted_fields = {"electrical.onResistance"};
+    CHECK(kelvin::unstate_retracted_ratings(m) == 0);
+    CHECK(m.vds_rated == 60);
+    m.retracted_fields = {"electrical.drainSourceVoltage"};
+    CHECK(kelvin::unstate_retracted_ratings(m) == 1);
+    CHECK(std::isnan(m.vds_rated));
+    kelvin::CapacitorRow c;
+    c.v_rated = 50;
+    c.v_rated_ac = 30;
+    c.retracted_fields = {"electrical.voltageRatedAcMax"};
+    CHECK(kelvin::unstate_retracted_ratings(c) == 1);
+    CHECK(c.v_rated == 50);
+    CHECK(std::isnan(c.v_rated_ac));
+    kelvin::DiodeRow t;  // a TVS's rating is its standoff; its breakdown window stays
+    t.technology = "tvs";
+    t.vrrm_rated = 5;
+    t.vz_min = 6;
+    t.vz_max = 7;
+    t.retracted_fields = {"electrical.breakdownVoltage"};
+    CHECK(kelvin::unstate_retracted_ratings(t) == 0);
+    t.retracted_fields = {"electrical.standoffVoltage"};
+    CHECK(kelvin::unstate_retracted_ratings(t) == 1);
+    CHECK(std::isnan(t.vrrm_rated));
+    CHECK(t.vz_min == 6);
 }
