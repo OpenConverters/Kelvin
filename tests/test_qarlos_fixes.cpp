@@ -5114,7 +5114,8 @@ TEST_CASE("footprint stated by one record only keeps its cap",
     const json c = one(o, d);
     CHECK(c["footprint"] == "unknown");
     CHECK(verdict_of(c, "footprint") == "unverified");
-    CHECK(c["grade"] == "minor_review");
+    // Owner decision 2026-11-13 (N1b): the original states no land, so no candidate is capped.
+    CHECK(c["grade"] == "drop_in");
     // The pair above with a package stated on the original only (the field set here, not
     // taken from the record): one-sided again, capped.
     json oc = o;

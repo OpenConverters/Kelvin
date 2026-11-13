@@ -490,10 +490,9 @@ TEST_CASE("golden: an original with no land pattern still reports the package ax
         // NO_PACKAGE: NEITHER record states a land or a package. Owner decision 2026-11-12:
         // missing data on BOTH sides is not capped — the axis stays UNVERIFIED and penalised
         // (above, and kUnknownDimPenalty), but the grade is not held below drop_in for it.
-        if (std::string(mpn) == "NO_PACKAGE")
-            CHECK(c["grade"] == "drop_in");
-        else
-            CHECK(c["grade"] != "drop_in");
+        // Owner decision 2026-11-13 (N1b): an original that states no land caps no candidate,
+        // whether or not the candidate states one, so every row here may be drop_in.
+        CHECK(c["grade"] == "drop_in");
     }
 
     // The note names what the substitute IS, so the two case sizes are readable even
