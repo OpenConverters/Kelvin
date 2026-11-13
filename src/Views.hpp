@@ -28,6 +28,21 @@ std::string normalize_ctas_topology(const std::string& name);
 // Family-agnostic; the index builder stamps it on every row.
 bool all_provenance_retracted(const json& env);
 
+// The datasheetInfo fields of a record that rest ONLY on retracted provenance (owner
+// 2026-11-13, S1). A field is covered by a provenance entry when the entry names no `fields`
+// (it covers the whole record) or names the field, a parent of it or a part of it. A STATED
+// field covered by a retracted entry and by no live entry is retracted-only. Reported as the
+// field's first two path segments with array indices dropped ("electrical.reverseVoltage",
+// "mechanical.case"), sorted; `reason` joins the distinct retractionReason labels of the
+// retracted entries that cover them. Empty when the record has no retracted entry, when every
+// entry is retracted (all_provenance_retracted covers that), or when a live entry names no
+// fields (it covers every field).
+struct FieldRetraction {
+    std::vector<std::string> fields;
+    std::string reason;
+};
+FieldRetraction retracted_only_fields(const json& env);
+
 // The function a resistor record STATES for itself (ResistorRow.current_sense /
 // pulse_withstanding). Read from the RAS technology enum and the record's own class text
 // (manufacturerInfo.family, part.series, part.description) — never from the MPN.

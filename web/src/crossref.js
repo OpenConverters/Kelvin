@@ -548,6 +548,11 @@ export function base(r) {
     // Every provenance entry of the record is retracted: the ranker treats its data as
     // unverified (ABT #2035).
     provenance_retracted: r.provenanceRetracted === true,
+    // v22 (owner 2026-11-13): the datasheet fields resting ONLY on retracted provenance while
+    // other fields have a live source ("electrical.reverseVoltage", ...). The ranker reads a
+    // comparison drawn from one of them as UNVERIFIED and names the retraction.
+    retracted_fields: Array.isArray(r.provenanceRetractedFields) ? r.provenanceRetractedFields : [],
+    retraction_reason: r.provenanceRetractionReason ?? '',
     // A leaded L x W x T body with no height whose record does not say which of L and W
     // stands up from the board: the row carries no box and the ranker reports the
     // footprint UNVERIFIED with a note (v20).

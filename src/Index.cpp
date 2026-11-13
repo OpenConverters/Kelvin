@@ -293,6 +293,8 @@ void io_base(Ar& ar, RowBase& r) {
     ar.boolean(r.provenance_retracted);  // v17
     ar.dbl(r.lead_pitch_m);              // v19
     ar.boolean(r.box_axes_ambiguous);    // v20
+    ar.strvec(r.retracted_fields);       // v22 (owner 2026-11-13, S1)
+    ar.str(r.retraction_reason);         // v22
 }
 
 template <class Ar>
@@ -708,6 +710,9 @@ void parse_region(const std::string& path, const std::string& content, size_t be
                 row->src_offset = static_cast<uint64_t>(i);
                 row->src_length = static_cast<uint32_t>(raw_len);
                 row->provenance_retracted = all_provenance_retracted(env);
+                FieldRetraction fr = retracted_only_fields(env);
+                row->retracted_fields = std::move(fr.fields);
+                row->retraction_reason = std::move(fr.reason);
                 out.rows.push_back(std::move(*row));
                 out.meta.row_count += 1;
             } else {

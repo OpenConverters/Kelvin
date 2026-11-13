@@ -105,6 +105,15 @@ struct RowBase {
     // the record states no provenance at all — that is a different gap, not a retraction
     // (ABT #2035).
     bool provenance_retracted = false;
+    // v22 (owner 2026-11-13, S1) — the datasheetInfo fields that rest ONLY on retracted
+    // provenance while other fields have a live source (retracted_only_fields, Views.hpp):
+    // "electrical.reverseVoltage", "mechanical.case", ... Empty for a record with no retracted
+    // entry, one whose every entry is retracted (provenance_retracted above), or one with a live
+    // entry for the whole record. The cross-reference reads a comparison resting on one of them
+    // as UNVERIFIED with a note naming the retraction. `retraction_reason` joins the
+    // retractionReason labels of the entries that withdrew them.
+    std::vector<std::string> retracted_fields;
+    std::string retraction_reason;
     // v20 — the record draws its leaded body as L x W x T with no height, and nothing in it
     // says which of L and W is the height above the board: TDK and Murata put L across the
     // leads and W upward, KEMET the other way round (Views.cpp fill_dimensions). The box is

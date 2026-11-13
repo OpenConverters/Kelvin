@@ -196,6 +196,142 @@ inline std::string land_mm(const Dims& d) {
     return "no land dimensions on record";
 }
 
+// ── Which datasheet fields a comparison rests on (owner 2026-11-13, S1) ─────
+// A row's `retracted_fields` lists the datasheetInfo fields of its record that rest only on
+// retracted provenance (two path segments, Views.hpp retracted_only_fields). A comparison
+// drawn from one of them is UNVERIFIED. This names, per category and comparison (params[] name),
+// the fields the compared value is read from by the extractor (src/Views.cpp). A comparison
+// not listed here is not attributed to any field, so a retraction never touches it.
+inline std::vector<std::string> comparison_source_fields(const std::string& cat,
+                                                         const std::string& name,
+                                                         const json& row) {
+    using V = std::vector<std::string>;
+    // Body size and case code: the footprint and clearance axes (fill_dimensions).
+    static const V kBody = {"mechanical.length",  "mechanical.width",     "mechanical.height",
+                            "mechanical.diameter", "mechanical.thickness", "mechanical.dimensions",
+                            "mechanical.landPattern", "mechanical.case",   "part.case",
+                            "part.package"};
+    static const V kHeight = {"mechanical.height", "mechanical.thickness", "mechanical.dimensions"};
+    static const V kMount = {"mechanical.assemblyType", "mechanical.mountingStyle",
+                             "mechanical.shape", "mechanical.mounting"};
+    static const V kOpTemp = {"thermal.operatingTemperature"};
+    if (name == "footprint") return kBody;
+    if (name == "height") return kHeight;
+    if (name == "mounting") return kMount;
+    if (cat == "diode") {
+        if (name == "vrrm") {
+            const std::string t = str(row, "technology");
+            if (t == "tvs" || t == "esd") return {"electrical.standoffVoltage"};
+            if (t == "zener") return {"electrical.breakdownVoltage"};
+            return {"electrical.reverseVoltage"};
+        }
+        if (name == "if_avg") return {"electrical.forwardCurrent"};
+        if (name == "vf") return {"electrical.forwardVoltage"};
+        if (name == "qrr") return {"electrical.reverseRecoveryCharge"};
+        if (name == "trr") return {"electrical.reverseRecoveryTime"};
+        if (name == "zener_voltage" || name == "breakdown_window" || name == "vz_tolerance_pct")
+            return {"electrical.breakdownVoltage"};
+        if (name == "standoff_band") return {"electrical.standoffVoltage"};
+        if (name == "power_dissipation") return {"electrical.powerDissipation"};
+        if (name == "tj_max") return {"thermal.junctionTemperatureMax"};
+        if (name == "junction_capacitance") return {"electrical.junctionCapacitance"};
+        if (name == "junction_capacitance_basis")
+            return {"electrical.junctionCapacitance", "electrical.junctionCapacitanceVr"};
+        if (name == "clamping_voltage") return {"electrical.clampingVoltage"};
+        if (name == "peak_pulse_power") return {"electrical.peakPulsePower"};
+        if (name == "peak_pulse_current") return {"electrical.peakPulseCurrent"};
+        if (name == "configuration") return {"part.dieConfiguration", "part.internalConnection"};
+        if (name == "technology") return {"part.subType"};
+        if (name == "automotive_grade") return {"part.qualification"};
+        if (name == "temp_min_C" || name == "temp_max_C") return kOpTemp;
+        return {};
+    }
+    if (cat == "mosfet") {
+        if (name == "vds") return {"electrical.drainSourceVoltage"};
+        if (name == "id") return {"electrical.continuousDrainCurrent"};
+        if (name == "rds_on") return {"electrical.onResistance"};
+        if (name == "rds_on_basis") return {"electrical.onResistance", "electrical.onResistanceVgs"};
+        if (name == "qg") return {"electrical.totalGateCharge"};
+        if (name == "coss") return {"electrical.outputCapacitance"};
+        if (name == "coss_basis")
+            return {"electrical.outputCapacitance", "electrical.capacitanceMeasurementVds"};
+        if (name == "vgs_threshold_max") return {"electrical.gateThresholdVoltage"};
+        if (name == "vgs_max") return {"electrical.gateSourceVoltageMax"};
+        if (name == "channel") return {"part.subType"};
+        if (name == "technology") return {"part.technology"};
+        if (name == "automotive_grade") return {"part.qualification"};
+        return {};
+    }
+    if (cat == "capacitor") {
+        if (name == "value") return {"electrical.capacitance"};
+        if (name == "capacitance_tolerance") return {"electrical.capacitance"};
+        if (name == "voltage") return {"electrical.ratedVoltage"};
+        if (name == "voltage_ac") return {"electrical.voltageRatedAcMax"};
+        if (name == "esr") return {"electrical.esr", "electrical.esrPoints"};
+        if (name == "esr_basis") return {"electrical.esr", "electrical.esrFrequency"};
+        if (name == "ripple_current")
+            return {"electrical.rippleCurrent", "electrical.rippleCurrentFrequency"};
+        if (name == "technology") return {"part.technology", "part.subType"};
+        if (name == "dielectric_code") return {"part.dielectricCode"};
+        if (name == "safety_class") return {"part.safetyClass"};
+        if (name == "qualified_reliability") return {"part.qualifiedReliability"};
+        if (name == "lead_form") return {"mechanical.shape"};
+        if (name == "temp_max_C") return {"thermal.operatingTemperature", "thermal.temperature"};
+        return {};
+    }
+    if (cat == "magnetic" || cat == "chipBead") {
+        if (name == "value") return {"electrical.inductance"};
+        if (name == "saturation_current")
+            return {"electrical.saturationCurrents", "electrical.saturationCurrentPeak"};
+        if (name == "rated_current") return {"electrical.ratedCurrents", "electrical.ratedCurrentPoints"};
+        if (name == "dcr") return {"electrical.dcResistance", "electrical.dcResistances"};
+        if (name == "srf") return {"electrical.selfResonantFrequency"};
+        if (name == "impedance_100mhz" || name == "impedance_peak" || name == "impedance_peak_freq")
+            return {"electrical.impedancePoints"};
+        if (name == "temp_min_C" || name == "temp_max_C") return kOpTemp;
+        return {};
+    }
+    if (cat == "connector") {
+        if (name == "rated_current_A") return {"electrical.ratedCurrentPerContact"};
+        if (name == "rated_voltage_V") return {"electrical.ratedVoltage"};
+        if (name == "positions") return {"mechanical.positions"};
+        if (name == "pitch_mm") return {"mechanical.pitch"};
+        if (name == "rows") return {"mechanical.rows"};
+        if (name == "mating_cycles") return {"mechanical.matingCycles"};
+        if (name == "orientation") return {"mechanical.orientation"};
+        if (name == "polarity") return {"part.matingPolarity"};
+        if (name == "contact_plating") return {"material.contactPlating"};
+        if (name == "family" || name == "interface_standard" || name == "termination" ||
+            name == "actuator_type" || name == "coupling_type" || name == "coding" ||
+            name == "shell_size")
+            return {"familyDetails." + std::string(name == "interface_standard" ? "interfaceStandard"
+                                                   : name == "actuator_type"    ? "actuatorType"
+                                                   : name == "coupling_type"    ? "couplingType"
+                                                   : name == "shell_size"       ? "shellSize"
+                                                                                : name)};
+        if (name == "temp_min_C" || name == "temp_max_C") return {"environmental.operatingTemperature"};
+        return {};
+    }
+    if (cat == "timeBase") {
+        if (name == "frequency") return {"electrical.frequency"};
+        if (name == "tolerance_ppm") return {"electrical.frequencyTolerance"};
+        if (name == "stability_ppm") return {"electrical.frequencyStability"};
+        if (name == "load_capacitance" || name == "load_capacitance_pF")
+            return {"electrical.loadCapacitance"};
+        if (name == "built_in_capacitance") return {"electrical.builtInCapacitance"};
+        if (name == "esr") return {"electrical.equivalentSeriesResistance"};
+        if (name == "supply_min_V" || name == "supply_max_V" || name == "current_consumption")
+            return {"electrical.supply"};
+        if (name == "technology") return {"electrical.technology"};
+        if (name == "output_type") return {"electrical.outputType"};
+        if (name == "mode") return {"electrical.mode"};
+        if (name == "enable_function") return {"electrical.enableFunction"};
+        if (name == "temp_min_C" || name == "temp_max_C") return kOpTemp;
+        return {};
+    }
+    return {};
+}
+
 // ── Critical ratings ─────────────────────────────────────────────────────────
 // Directional ratings that PARAM_SPECS leaves out because Heaviside gates them
 // in its stress guardrails (G7 voltage stress, G8 current stress). `hard` means
@@ -4393,6 +4529,73 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                         "relying on any verdict here");
     }
 
+    // ── fields resting only on retracted sources (owner 2026-11-13, S1) ────────
+    // A record can carry a retracted entry for the whole record beside live entries scoped to
+    // a few fields (VS-6CWH02FN-M3: a withdrawn category-page citation, and a live product page
+    // for electrical.forwardCurrent only). Every other field then rests on the withdrawn source
+    // alone. A comparison drawn from such a field, on either record, is read as UNVERIFIED (a
+    // PASS cannot be verified by it) and a note names the retraction; a field with a live
+    // source grades normally. Regressions stay as they are, as in the whole-record rule above.
+    // The direction cannot then read 'upgrade' or 'equivalent' on unverified evidence.
+    bool field_retraction_blind = false;
+    if (!cand_retracted) {
+        auto in_list = [](const json& row, const std::vector<std::string>& fields) {
+            auto it = row.find("retracted_fields");
+            if (it == row.end() || !it->is_array()) return false;
+            for (const json& f : *it)
+                if (f.is_string() &&
+                    std::find(fields.begin(), fields.end(), f.get<std::string>()) != fields.end())
+                    return true;
+            return false;
+        };
+        const bool orig_whole = flag(original, "provenance_retracted");
+        std::vector<std::string> cand_axes, orig_axes;
+        auto add = [](std::vector<std::string>& v, const std::string& label) {
+            if (std::find(v.begin(), v.end(), label) == v.end()) v.push_back(label);
+        };
+        for (auto& p : params) {
+            if (p.value("verdict", "") != PASS) continue;
+            const std::string name = p.value("name", "");
+            const bool s = in_list(cand, comparison_source_fields(cat, name, cand));
+            const bool o = !orig_whole && in_list(original, comparison_source_fields(cat, name, original));
+            if (!s && !o) continue;
+            p["verdict"] = UNVERIFIED;
+            if (s) add(cand_axes, param_label(name));
+            if (o) add(orig_axes, param_label(name));
+        }
+        for (const char* axis : {"footprint", "height_fit"}) {
+            if (out.value(axis, "") != "fits") continue;
+            const std::string name = std::string(axis) == "footprint" ? "footprint" : "height";
+            const bool s = in_list(cand, comparison_source_fields(cat, name, cand));
+            const bool o = !orig_whole && in_list(original, comparison_source_fields(cat, name, original));
+            if (!s && !o) continue;
+            out[axis] = "unknown";
+            if (s) add(cand_axes, name == "footprint" ? "footprint" : "height");
+            if (o) add(orig_axes, name == "footprint" ? "footprint" : "height");
+        }
+        auto join = [](const std::vector<std::string>& v) {
+            std::string s;
+            for (size_t i = 0; i < v.size(); ++i)
+                s += (i == 0 ? "" : i + 1 == v.size() ? " and " : ", ") + v[i];
+            return s;
+        };
+        auto because = [&](const json& row) {
+            const std::string r = str(row, "retraction_reason");
+            return r.empty() ? std::string() : " (" + r + ")";
+        };
+        if (!cand_axes.empty())
+            notes.push_back("the substitute's " + join(cand_axes) +
+                            " rest only on a source its record has retracted" + because(cand) +
+                            " — no live source verifies them, so they read unverified; confirm "
+                            "them from the datasheet");
+        if (!orig_axes.empty())
+            notes.push_back("the original's " + join(orig_axes) +
+                            " rest only on a source its record has retracted" + because(original) +
+                            " — the comparison against them is unverified; confirm them from the "
+                            "datasheet");
+        field_retraction_blind = !cand_axes.empty() || !orig_axes.empty();
+    }
+
     // Honesty: an unverified original can never be a clean 'recommended'. An original
     // whose every source is retracted is unverified the same way (ABT #2035).
     if (!opt.original_verified || flag(original, "provenance_retracted")) {
@@ -4568,7 +4771,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // on evidence that never covered the parameter the match turns on. A measured regression
     // stands — blindness elsewhere cannot make a regression we did see disappear — and so does
     // "mixed", which already carries one.
-    out["direction"] = (cand_retracted || ((direction_blind || isat_basis_blind || surge_blind ||
+    out["direction"] = (cand_retracted || ((direction_blind || field_retraction_blind || isat_basis_blind || surge_blind ||
                                             current_basis_blind || !magnetic_unweighed.empty() ||
                                             magnetic_rated_absent || timing_accuracy_unweighed) &&
                                            (dir == "upgrade" || dir == "equivalent")) ||
