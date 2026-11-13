@@ -732,7 +732,13 @@ inline TvsPolarity tvs_polarity_from_mpn(const std::string& mpn) {
     // 5KSMC (Taiwan Semiconductor, owner 2026-11-13): 5KSMC75AH uni, 5KSMC75CAH bi — the
     // grade letter after the standoff is read the same way (68 records, 34 AH / 34 CAH,
     // every one agreeing with the record's own description).
-    static const char* const kSeries[] = {"5.0SMDJ", "1.5SMC", "1.5SMB", "5KSMC", "30KPA", "20KPA",
+    // 1V5KE (Taiwan Semiconductor's 1.5KE, same grade convention, Qarlos r23 30629280 /
+    // 30524551): 1V5KE120A uni, 1V5KE170CA bi. 86 records; the 78 with an integer standoff
+    // code decode (39 A / 39 CA), every one agreeing with its description ("Unidirectional"
+    // / "Bidirectional"); the 8 with a V-as-decimal-point code (1V5KE6V8A, 1V5KE6V8CA, ...)
+    // stop at the 'V' and stay UNKNOWN, never guessed.
+    static const char* const kSeries[] = {"5.0SMDJ", "1.5SMC", "1.5SMB", "5KSMC", "1V5KE",
+                                          "30KPA",   "20KPA",
                                           "15KPA",   "1.5KE",  "P4SMA",  "P6SMB", "P4KE",
                                           "P6KE",    "SMAJ",   "SMBJ",   "SMCJ",  "SMDJ",
                                           "SMLJ",    "15KP",   "5KP",    "3KP",   "SA"};

@@ -392,6 +392,25 @@ TEST_CASE("qarlos 2026-11-13: 5KSMC polarity decodes; uni 5KSMC fails a bidirect
     }
 }
 
+// Qarlos r23 (seeds 30629280, 30524551): Taiwan Semiconductor's 1V5KE series (its 1.5KE)
+// carries the same grade letter — 1V5KE120A "Unidirectional", 1V5KE170CA "Bidirectional"
+// per the records' own descriptions — but was not decoded, so 30KPA144A-HR (uni) took
+// 1V5KE170CA (bi) with polarity only 'unverified'. Standoffs from the records (144 V / 145 V).
+TEST_CASE("qarlos r23: 1V5KE polarity decodes; bi 1V5KE fails a unidirectional original",
+          "[qarlos][crossref]") {
+    using kelvin::crossref::TvsPolarity;
+    using kelvin::crossref::tvs_polarity_from_mpn;
+    CHECK(tvs_polarity_from_mpn("1V5KE120A") == TvsPolarity::Uni);
+    CHECK(tvs_polarity_from_mpn("1V5KE170CA") == TvsPolarity::Bi);
+    // V as the decimal point: not read, stays unknown.
+    CHECK(tvs_polarity_from_mpn("1V5KE6V8CA") == TvsPolarity::Unknown);
+    auto r = kelvin::crossref::cross_reference("diode", tvs("30KPA144A-HR", 144.0),
+                                               json::array({tvs("1V5KE170CA", 145.0)}));
+    const json& c = r["candidates"][0];
+    CHECK(verdict_of(c, "polarity") == "fail");
+    CHECK(c["grade"] == "major_review");
+}
+
 // #2035: a record whose every provenance entry is retracted verifies nothing.
 TEST_CASE("qarlos #2035: all-retracted provenance is flagged and verifies nothing",
           "[qarlos][views][crossref]") {
