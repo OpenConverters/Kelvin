@@ -295,11 +295,23 @@ TEST_CASE("qarlos #2034: standoff more than 10 % above the original's warns",
     json cand = {{"mpn", "SD12T1G"}, {"technology", "esd"}, {"vrrm", 12.0}, {"case_code", "SOD-323"}};
     auto r = kelvin::crossref::cross_reference("diode", orig, json::array({cand}));
     const json& c = r["candidates"][0];
-    CHECK(verdict_of(c, "standoff_band") == "warn");
+    // Owner, 2026-11-13 (approved assertion change): the 1.5x standoff FAIL extends to ESD
+    // originals, and 12 V against 5.5 V is 2.18x — FAIL, major_review (was WARN, minor_review).
+    CHECK(verdict_of(c, "standoff_band") == "fail");
     CHECK(verdict_of(c, "vrrm") == "pass");
-    CHECK(c["grade"] == "minor_review");
+    CHECK(c["grade"] == "major_review");
     CHECK(c["status"] != "no_substitute");
     CHECK(has_note(c, "standoff 12 V against the original's 5.5 V"));
+}
+
+TEST_CASE("ESD standoff between 1.1x and 1.5x the original's still warns",
+          "[qarlos][crossref][dec-1113]") {
+    // Boundary for the owner's 2026-11-13 extension of the 1.5x standoff FAIL to ESD originals.
+    json orig = {{"mpn", "ESD-O"}, {"technology", "esd"}, {"vrrm", 5.5}, {"case_code", "SOD-323"}};
+    json cand = {{"mpn", "ESD-C"}, {"technology", "esd"}, {"vrrm", 7.5}, {"case_code", "SOD-323"}};
+    const json c = kelvin::crossref::cross_reference("diode", orig, json::array({cand}))["candidates"][0];
+    CHECK(verdict_of(c, "standoff_band") == "warn");
+    CHECK(c["grade"] == "minor_review");
 }
 
 // #2040 / #2049: clamping voltage compared at equal waveforms; #2050: Cj compared.

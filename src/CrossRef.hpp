@@ -2265,13 +2265,13 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // a 12 V part on a 5.5 V line. WARN; for a TVS original, above kStandoffFailRatio a
         // FAIL (caps at major_review), owner 2026-11-13: a 13.6 V-standoff 1.5KE16CA for a
         // 6.5 V SA6.5CA (2.09x) came back a WARN like a 1.2x part (Qarlos bench 20575296).
-        // The decision names TVS; an ESD original keeps the WARN at any ratio (a question
-        // left for the owner).
+        // Extended to ESD originals (owner, 2026-11-13): the same physics — a 12 V-standoff
+        // part does not clamp a 5.5 V line.
         constexpr double kStandoffWarnRatio = 1.10;
         constexpr double kStandoffFailRatio = 1.50;
         if (const auto ov = num(original, "vrrm"), sv = num(cand, "vrrm");
             ov && sv && *sv > *ov * kStandoffWarnRatio) {
-            const bool far_above = o_tech == "tvs" && *sv > *ov * kStandoffFailRatio;
+            const bool far_above = (o_tech == "tvs" || o_tech == "esd") && *sv > *ov * kStandoffFailRatio;
             params.push_back({{"name", "standoff_band"}, {"verdict", far_above ? FAIL : WARN}});
             demote();
             penalty += opt.gate_weight * (far_above ? kVerdictFailPenalty : kVerdictWarnPenalty);
