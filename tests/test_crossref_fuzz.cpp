@@ -131,7 +131,16 @@ void fuzz_family(const std::string& cat, const Shard<Row>& shard) {
         INFO(cat << " self-copy graded " << self->value("grade", std::string())
                  << " / " << self->value("direction", std::string()));
         CHECK(self->value("status", std::string()) != "no_substitute");
-        CHECK(self->value("direction", std::string()) == "equivalent");
+        // A magnetic whose record states no saturation current reads 'unknown', not
+        // 'equivalent': Isat stated by neither record (the copy is the original) leaves the axis
+        // the match turns on uncompared (owner 2026-11-13, N1c, approved this exception).
+        const bool isat_absent_both =
+            cat == "magnetic" && !kelvin::crossref::detail::present(orig, "saturation_current") &&
+            !kelvin::crossref::detail::present(orig, "saturation_points");
+        if (isat_absent_both)
+            CHECK(self->value("direction", std::string()) == "unknown");
+        else
+            CHECK(self->value("direction", std::string()) == "equivalent");
         CHECK(self->value("grade", std::string()) != "major_review");
         CHECK(self->value("grade", std::string()) != "redesign");
     }

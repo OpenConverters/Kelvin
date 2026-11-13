@@ -5138,7 +5138,8 @@ TEST_CASE("footprint stated by one record only keeps its cap",
     const json c = one(o, d);
     CHECK(c["footprint"] == "unknown");
     CHECK(verdict_of(c, "footprint") == "unverified");
-    CHECK(c["grade"] == "minor_review");
+    // Owner decision 2026-11-13 (N1b): the original states no land, so no candidate is capped.
+    CHECK(c["grade"] == "drop_in");
     // The pair above with a package stated on the original only (the field set here, not
     // taken from the record): one-sided again, capped.
     json oc = o;
@@ -6694,4 +6695,138 @@ TEST_CASE("owner 2026-11-13 N2c: MOSFET die configuration is graded like the dio
         CHECK(c["status"] == "no_substitute");
         CHECK(verdict_of(c, "die_configuration") == "fail");
     }
+}
+
+// ── Owner decisions 2026-11-13 (b), N1a: a numeric WARN's penalty scales with its deviation ──
+// Real records (TAS 3d2be2e, as web/src/crossref.js builds the spec from the v22 shard row).
+namespace dec1113b {
+// mosfets: STL13NM60N (ST, Qg 30 nC), SiHH11N60EF (Vishay, Qg 31 nC: +3 %),
+// SiHF12N60E (Vishay, Qg 58 nC: +93 %)
+const char* kSTL13NM60N = R"KSPEC({"mpn":"STL13NM60N","length_m":null,"width_m":null,"height_m":null,"case_code":"PowerFLAT 8x8 HV","mount":"","lead_pitch_m":null,"is_production":false,"provenance_retracted":false,"box_axes_ambiguous":false,"vds":600,"id":10,"rds_on":0.385,"qg":3e-8,"coss":null,"coss_vds":null,"vgs_threshold_max":4,"vgs_threshold_typ":3,"rds_on_vgs":10,"vgs_max":null,"technology":"Si","qualification":"","channel":"nChannel"})KSPEC";
+const char* kSiHH11N60EF = R"KSPEC({"mpn":"SiHH11N60EF","length_m":null,"width_m":null,"height_m":null,"case_code":"","mount":"","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"box_axes_ambiguous":false,"vds":600,"id":11,"rds_on":0.357,"qg":3.1e-8,"coss":5.7e-11,"coss_vds":null,"vgs_threshold_max":4,"vgs_threshold_typ":null,"rds_on_vgs":null,"vgs_max":30,"technology":"Si","qualification":"","channel":"nChannel"})KSPEC";
+const char* kSiHF12N60E = R"KSPEC({"mpn":"SiHF12N60E","length_m":null,"width_m":null,"height_m":null,"case_code":"","mount":"","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"box_axes_ambiguous":false,"vds":600,"id":12,"rds_on":0.38,"qg":5.8e-8,"coss":null,"coss_vds":null,"vgs_threshold_max":4,"vgs_threshold_typ":null,"rds_on_vgs":null,"vgs_max":30,"technology":"Si","qualification":"","channel":"nChannel"})KSPEC";
+// diodes: 1.5SMC100CA-M3/9AT (Vishay TVS, standoff 85.5 V), 5.0SMDJ100CA (Littelfuse, 100 V:
+// +17 %), 5.0SMDJ120CA (Littelfuse, 120 V: +40 %)
+const char* k1_5SMC100CA = R"KSPEC({"mpn":"1.5SMC100CA-M3/9AT","length_m":null,"width_m":null,"height_m":null,"case_code":"SMC (DO-214AB)","mount":"","lead_pitch_m":null,"is_production":false,"provenance_retracted":false,"box_axes_ambiguous":false,"vrrm":85.5,"if_avg":null,"vf":null,"power_dissipation":null,"qrr":null,"trr":null,"technology":"tvs","die_configuration":null,"internal_connection":null,"vz_min_V":95,"vz_max_V":105,"vz_tolerance_pct":5,"clamping_voltage":137,"clamping_current":10.9,"peak_pulse_power":1500,"peak_pulse_current":10.9,"junction_capacitance":null,"junction_capacitance_vr":null,"clamping_waveform":"10/1000","peak_pulse_power_waveform":"10/1000","peak_pulse_current_waveform":"10/1000","tj_max":150,"qualification":""})KSPEC";
+const char* k5_0SMDJ100CA = R"KSPEC({"mpn":"5.0SMDJ100CA","length_m":null,"width_m":null,"height_m":null,"case_code":"DO-214AB","mount":"","lead_pitch_m":null,"is_production":false,"provenance_retracted":false,"box_axes_ambiguous":false,"vrrm":100,"if_avg":null,"vf":null,"power_dissipation":null,"qrr":null,"trr":null,"technology":"tvs","die_configuration":null,"internal_connection":null,"vz_min_V":111,"vz_max_V":123,"vz_tolerance_pct":5.128205128205128,"clamping_voltage":162,"clamping_current":30.9,"peak_pulse_power":5000,"peak_pulse_current":30.9,"junction_capacitance":null,"junction_capacitance_vr":null,"clamping_waveform":"10/1000","peak_pulse_power_waveform":"10/1000","peak_pulse_current_waveform":"10/1000","tj_max":150,"qualification":""})KSPEC";
+const char* k5_0SMDJ120CA = R"KSPEC({"mpn":"5.0SMDJ120CA","length_m":null,"width_m":null,"height_m":null,"case_code":"DO-214AB","mount":"","lead_pitch_m":null,"is_production":false,"provenance_retracted":false,"box_axes_ambiguous":false,"vrrm":120,"if_avg":null,"vf":null,"power_dissipation":null,"qrr":null,"trr":null,"technology":"tvs","die_configuration":null,"internal_connection":null,"vz_min_V":133,"vz_max_V":147,"vz_tolerance_pct":5,"clamping_voltage":193,"clamping_current":26,"peak_pulse_power":5000,"peak_pulse_current":26,"junction_capacitance":null,"junction_capacitance_vr":null,"clamping_waveform":"10/1000","peak_pulse_power_waveform":"10/1000","peak_pulse_current_waveform":"10/1000","tj_max":150,"qualification":""})KSPEC";
+
+json rank(const std::string& cat, const char* orig, std::initializer_list<const char*> cands) {
+    json arr = json::array();
+    for (const char* c : cands) arr.push_back(json::parse(c));
+    return kelvin::crossref::cross_reference(cat, json::parse(orig), arr)["candidates"];
+}
+const json& by_mpn(const json& cands, const std::string& mpn) {
+    for (const auto& c : cands)
+        if (c.value("mpn", "") == mpn) return c;
+    throw std::runtime_error("candidate not ranked: " + mpn);
+}
+}  // namespace dec1113b
+
+// Both Qg values are inside the 2x WARN band; +3 % and +93 % cost the same flat 0.5 and the
+// ranking fell back on input order. The near-miss must rank first and both stay WARN.
+TEST_CASE("dec 1113b N1a: a MOSFET Qg WARN costs more the further past the pass limit",
+          "[qarlos][crossref][mosfet][dec-1113b]") {
+    using namespace dec1113b;
+    // The +93 % part is passed FIRST, so input order cannot produce the expected ranking.
+    const json c = rank("mosfet", kSTL13NM60N, {kSiHF12N60E, kSiHH11N60EF});
+    REQUIRE(c.size() == 2);
+    CHECK(c[0]["mpn"] == "SiHH11N60EF");
+    CHECK(c[1]["mpn"] == "SiHF12N60E");
+    CHECK(verdict_of(by_mpn(c, "SiHH11N60EF"), "qg") == "warn");
+    CHECK(verdict_of(by_mpn(c, "SiHF12N60E"), "qg") == "warn");
+    CHECK(by_mpn(c, "SiHH11N60EF")["grade"] == by_mpn(c, "SiHF12N60E")["grade"]);
+    // The formula: W + d * 0.95 * (F - W), d = (value - pass) / (fail - pass).
+    using kelvin::crossref::warn_penalty;
+    CHECK(warn_penalty(std::nullopt) == Approx(0.5));
+    CHECK(warn_penalty(0.0) == Approx(0.5));
+    CHECK(warn_penalty(1.0) == Approx(2.875));
+    CHECK(warn_penalty(1.0) < kelvin::crossref::kVerdictFailPenalty);
+    const auto d = kelvin::crossref::compare_numeric(
+        {"qg", kelvin::crossref::Dir::Lower, 2.0, std::nullopt, false, false, nullptr}, 30e-9, 58e-9);
+    REQUIRE(d.warn_depth);
+    CHECK(*d.warn_depth == Approx(28.0 / 30.0));
+}
+
+// A TVS standoff +17 % and +40 % over the original's: both inside the 1.10x-1.50x WARN band,
+// both cost the flat 0.5. The closer standoff must rank first; grades unchanged (WARN).
+TEST_CASE("dec 1113b N1a: a TVS standoff WARN costs more the closer it is to the FAIL limit",
+          "[qarlos][crossref][diode][dec-1113b]") {
+    using namespace dec1113b;
+    const json c = rank("diode", k1_5SMC100CA, {k5_0SMDJ120CA, k5_0SMDJ100CA});
+    REQUIRE(c.size() == 2);
+    CHECK(c[0]["mpn"] == "5.0SMDJ100CA");
+    CHECK(c[1]["mpn"] == "5.0SMDJ120CA");
+    CHECK(verdict_of(by_mpn(c, "5.0SMDJ100CA"), "standoff_band") == "warn");
+    CHECK(verdict_of(by_mpn(c, "5.0SMDJ120CA"), "standoff_band") == "warn");
+    CHECK(by_mpn(c, "5.0SMDJ100CA")["grade"] == by_mpn(c, "5.0SMDJ120CA")["grade"]);
+}
+
+// ── Owner decisions 2026-11-13 (b), N1b: original states no land -> no candidate capped ──
+namespace dec1113b {
+// magnetics: BWLS0006040426NJ00 (Pulse, 1 uH, no dimensions, no case code),
+// SRN3015C-1R0M (Bourns, 1 uH, no dimensions), XFL3012-102MEC (Coilcraft, 1 uH, 3 x 3 mm, '3012')
+const char* kBWLS0006040426NJ00 = R"KSPEC({"mpn":"BWLS0006040426NJ00","length_m":null,"width_m":null,"height_m":null,"case_code":"","mount":"","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"box_axes_ambiguous":false,"value_si":0.000001,"saturation_current":null,"saturation_points":null,"rated_current":null,"dcr":0.1,"srf":null,"temp_min_C":-40,"temp_max_C":125})KSPEC";
+const char* kSRN3015C_1R0M = R"KSPEC({"mpn":"SRN3015C-1R0M","length_m":null,"width_m":null,"height_m":null,"case_code":"","mount":"","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"box_axes_ambiguous":false,"value_si":0.000001,"saturation_current":3,"saturation_points":[{"current":3,"percent_drop":null,"temperature":null}],"rated_current":null,"dcr":0.1,"srf":null,"temp_min_C":-40,"temp_max_C":125})KSPEC";
+const char* kXFL3012_102MEC = R"KSPEC({"mpn":"XFL3012-102MEC","length_m":0.003,"width_m":0.003,"height_m":0.0012,"case_code":"3012","mount":"","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"box_axes_ambiguous":false,"value_si":0.000001,"saturation_current":2.3,"saturation_points":[{"current":2.3,"percent_drop":null,"temperature":null}],"rated_current":2.6,"dcr":0.046,"srf":115000000,"temp_min_C":null,"temp_max_C":null})KSPEC";
+}  // namespace dec1113b
+
+// The candidate that states its dimensions kept a minor_review cap for an unverified footprint
+// while the dimensionless one was uncapped, although neither can be checked against an original
+// that states no land. Both are now uncapped; both still pay the unknown-footprint penalty.
+TEST_CASE("dec 1113b N1b: no footprint cap for any candidate when the original states no land",
+          "[qarlos][crossref][magnetic][dec-1113b]") {
+    using namespace dec1113b;
+    const json c = rank("magnetic", kBWLS0006040426NJ00, {kXFL3012_102MEC, kSRN3015C_1R0M});
+    REQUIRE(c.size() == 2);
+    const json& xfl = by_mpn(c, "XFL3012-102MEC");
+    const json& srn = by_mpn(c, "SRN3015C-1R0M");
+    INFO("XFL3012 " << xfl["grade"] << " / SRN3015C " << srn["grade"]);
+    CHECK(xfl["footprint"] == "unknown");
+    CHECK(srn["footprint"] == "unknown");
+    CHECK(verdict_of(xfl, "footprint") == "unverified");
+    CHECK(verdict_of(srn, "footprint") == "unverified");
+    // The same record with its dimensions and case code removed grades the same: the stated
+    // land no longer costs a cap the dimensionless twin escapes.
+    json bare = json::parse(kXFL3012_102MEC);
+    bare["mpn"] = "XFL3012-102MEC (no land)";
+    bare["length_m"] = nullptr;
+    bare["width_m"] = nullptr;
+    bare["height_m"] = nullptr;
+    bare["case_code"] = "";
+    const json b = kelvin::crossref::cross_reference(
+        "magnetic", json::parse(kBWLS0006040426NJ00), json::array({bare}))["candidates"][0];
+    INFO("dimensionless twin " << b["grade"]);
+    CHECK(xfl["grade"] == b["grade"]);
+    CHECK(xfl["grade"] != "minor_review");
+    // Every candidate still pays the unknown-footprint penalty.
+    CHECK(xfl.value("penalty", 0.0) >= kelvin::crossref::kUnknownDimPenalty);
+    CHECK(srn.value("penalty", 0.0) >= kelvin::crossref::kUnknownDimPenalty);
+}
+
+// ── Owner decisions 2026-11-13 (b), N1c: Isat stated by neither record -> 'unknown' ──
+namespace dec1113b {
+// magnetics: PA4304.153NLT (Pulse, 15 uH, 12.5 x 12.5 mm) and B82477G2153M000 (TDK, 15 uH,
+// 12.3 x 12.3 mm); neither states a saturation current.
+const char* kPA4304_153NLT = R"KSPEC({"mpn":"PA4304.153NLT","length_m":0.0125,"width_m":0.0125,"height_m":0.006,"case_code":"","mount":"","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"box_axes_ambiguous":false,"value_si":0.000015,"saturation_current":null,"saturation_points":null,"rated_current":3.3,"dcr":0.03,"srf":null,"temp_min_C":-40,"temp_max_C":125})KSPEC";
+const char* kB82477G2153M000 = R"KSPEC({"mpn":"B82477G2153M000","length_m":0.0123,"width_m":0.0123,"height_m":0.006,"case_code":"","mount":"","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"box_axes_ambiguous":false,"value_si":0.000015,"saturation_current":null,"saturation_points":null,"rated_current":3.3,"dcr":0.03,"srf":null,"temp_min_C":-55,"temp_max_C":125})KSPEC";
+}  // namespace dec1113b
+
+// Every compared axis is equal (L, Ir 3.3 A, DCR 30 mOhm) and Isat is on neither record: the
+// pair read 'equivalent', which asserts nothing is behind on the axis the match turns on.
+TEST_CASE("dec 1113b N1c: Isat stated by neither record reads direction 'unknown', not "
+          "'equivalent'",
+          "[qarlos][crossref][magnetic][dec-1113b]") {
+    using namespace dec1113b;
+    const json c = rank("magnetic", kPA4304_153NLT, {kB82477G2153M000});
+    REQUIRE(c.size() == 1);
+    CHECK(verdict_of(c[0], "saturation_current") == "unverified");
+    CHECK(c[0]["direction"] == "unknown");
+    // With Isat stated on both (equal), the same pair is 'equivalent' again.
+    json o = json::parse(kPA4304_153NLT), s = json::parse(kB82477G2153M000);
+    o["saturation_current"] = 4.0;
+    s["saturation_current"] = 4.0;
+    const json e =
+        kelvin::crossref::cross_reference("magnetic", o, json::array({s}))["candidates"][0];
+    CHECK(e["direction"] == "equivalent");
 }

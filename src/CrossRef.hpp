@@ -312,6 +312,26 @@ inline constexpr double kUnknownTempGradePenaltyPerC = 0.002;
 // numeric terms so no single categorical miss can outweigh the primary value.
 inline constexpr double kVerdictWarnPenalty = 0.5;
 inline constexpr double kVerdictFailPenalty = 3.0;
+// A NUMERIC WARN's penalty scales with its deviation (owner, 2026-11-13). Every WARN used to
+// cost a flat kVerdictWarnPenalty, so a Qg 3 % over the original's and one 93 % over it (both
+// inside the 2x WARN band; STL13NM60N -> SiHH11N60EF / SiHF12N60E) cost the same, and so did
+// a TVS standoff +17 % and +40 % (1.5SMC100CA -> 5.0SMDJ100CA / 5.0SMDJ120CA): the ranking
+// could not tell a near-miss from a near-FAIL. The rule, linear in the compared value:
+//
+//     penalty = W + d * k * (F - W),   d = (value - pass limit) / (fail limit - pass limit)
+//
+// with W = kVerdictWarnPenalty, F = kVerdictFailPenalty, d in [0, 1] and
+// k = kWarnDepthFailFraction. So a WARN at the pass boundary costs W (0.5) as before, one at
+// the fail boundary costs W + 0.95 (F - W) = 2.875 — just under a FAIL's 3.0, so the FAIL
+// stays the worse answer — and the penalty is monotonic in between. The GRADE is untouched:
+// a WARN is still a WARN. A WARN that is not a position between two numeric limits (a class
+// difference, an unstated basis, a numeric axis with no fail limit) keeps the flat W.
+inline constexpr double kWarnDepthFailFraction = 0.95;
+inline double warn_penalty(std::optional<double> depth) {
+    if (!depth) return kVerdictWarnPenalty;
+    const double d = std::clamp(*depth, 0.0, 1.0);
+    return kVerdictWarnPenalty + d * kWarnDepthFailFraction * (kVerdictFailPenalty - kVerdictWarnPenalty);
+}
 // plain_pct prints a percentage to 0.01 %: the resolution a breakdown-grade note shows.
 inline constexpr double kVzGradePrintResolutionPct = 0.01;
 
@@ -1593,13 +1613,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // penalised (owner 2026-11-12: identical for every candidate, it cannot skew one against
         // another), but the gap is shown as an UNVERIFIED row with a note (owner, 2026-11-13;
         // test_crossref_ranking_golden ABT #545 was narrowed to "no footprint/package note"
-        // with the owner's approval). The owner also decided the direction becomes 'unknown'
-        // here; that is NOT applied yet, because three existing assertions pin the old
-        // reading ('upgrade' / 'equivalent' with Isat stated by neither record):
-        // test_crossref_classes "direction is not a verdict when the deciding axis was never
-        // compared", the magnetic self-copy invariant of test_crossref_fuzz, and
-        // test_qarlos_fixes "the real LQW04 / CWW0402 pair ..." (r3). Changing them needs the
-        // owner's yes.
+        // with the owner's approval). The direction becomes 'unknown' for 'upgrade' and
+        // 'equivalent' (owner 2026-11-13; see out["direction"] below).
         if (!has_data && cat == "magnetic" && spec.key == "saturation_current") {
             params.push_back({{"name", spec.key}, {"verdict", UNVERIFIED}});
             isat_unstated_both = true;
@@ -1915,7 +1930,11 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             penalty += opt.gate_weight * kVerdictFailPenalty;
         } else if (verdict == WARN) {
             demote();
-            penalty += opt.gate_weight * kVerdictWarnPenalty;
+            // A WARN the comparison produced carries its depth; one rewritten to WARN above
+            // (an allowed timing-technology cross) or taken from the connector pitch rule has
+            // none and costs the flat warn.
+            penalty += opt.gate_weight *
+                       warn_penalty(verdict == outcome.verdict ? outcome.warn_depth : std::nullopt);
         } else if (verdict == PASS && numeric && o && s) {
             // Right-sizing tie-breaker: a rating that vastly exceeds the
             // original's costs a little, with diminishing returns.
@@ -2385,11 +2404,13 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 }
             }
             const ParamSpec spec{key, dir, tol, std::nullopt, false, false, nullptr};
-            const char* v = compare_numeric(spec, o, s).verdict;
+            const ParamOutcome cmp = compare_numeric(spec, o, s);
+            const char* v = cmp.verdict;
             params.push_back({{"name", key}, {"verdict", v}});
             if (v == FAIL || v == WARN) {
                 demote();
-                penalty += opt.gate_weight * (v == FAIL ? kVerdictFailPenalty : kVerdictWarnPenalty);
+                penalty += opt.gate_weight *
+                           (v == FAIL ? kVerdictFailPenalty : warn_penalty(cmp.warn_depth));
                 ++worse;
                 notes.push_back(std::string(label) + " " + fmt(*s, unit) + " against the original's " +
                                 fmt(*o, unit) + " " + at_wf(ow) + " (" +
@@ -2467,7 +2488,17 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             const bool far_above = (o_tech == "tvs" || o_tech == "esd") && *sv > *ov * kStandoffFailRatio;
             params.push_back({{"name", "standoff_band"}, {"verdict", far_above ? FAIL : WARN}});
             demote();
-            penalty += opt.gate_weight * (far_above ? kVerdictFailPenalty : kVerdictWarnPenalty);
+            // The WARN band runs from 1.10x to the 1.50x FAIL limit for a TVS / ESD original,
+            // so its penalty scales across it (warn_penalty). Any other original has no fail
+            // limit on this axis, so its WARN keeps the flat warn.
+            const bool has_fail_limit = o_tech == "tvs" || o_tech == "esd";
+            penalty += opt.gate_weight *
+                       (far_above ? kVerdictFailPenalty
+                                  : warn_penalty(has_fail_limit
+                                                     ? warn_depth_between(*sv / *ov,
+                                                                          kStandoffWarnRatio,
+                                                                          kStandoffFailRatio)
+                                                     : std::nullopt));
             ++worse;
             notes.push_back("standoff " + volts(*sv) + " V against the original's " + volts(*ov) +
                             " V (" + signed_pct(100.0 * (*sv / *ov - 1.0)) +
@@ -2648,10 +2679,12 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         if (cj_bound_worse) {
             const ParamSpec spec{"junction_capacitance", Dir::Lower, 2.0, std::nullopt, false,
                                  false, nullptr};
-            const char* v = compare_numeric(spec, oc, sc).verdict;
+            const ParamOutcome cmp = compare_numeric(spec, oc, sc);
+            const char* v = cmp.verdict;
             params.push_back({{"name", "junction_capacitance"}, {"verdict", v}});
             demote();
-            penalty += opt.gate_weight * (v == FAIL ? kVerdictFailPenalty : kVerdictWarnPenalty);
+            penalty += opt.gate_weight *
+                       (v == FAIL ? kVerdictFailPenalty : warn_penalty(cmp.warn_depth));
             ++worse;
             notes.push_back("junction capacitance " + pf(*sc) + at_bias(svr) +
                             " against the original's " + pf(*oc) + " at " + bias(*ovr) +
@@ -2679,11 +2712,13 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         } else if (oc && sc) {
             const ParamSpec spec{"junction_capacitance", Dir::Lower, 2.0, std::nullopt, false,
                                  false, nullptr};
-            const char* v = compare_numeric(spec, oc, sc).verdict;
+            const ParamOutcome cmp = compare_numeric(spec, oc, sc);
+            const char* v = cmp.verdict;
             params.push_back({{"name", "junction_capacitance"}, {"verdict", v}});
             if (v == FAIL || v == WARN) {
                 demote();
-                penalty += opt.gate_weight * (v == FAIL ? kVerdictFailPenalty : kVerdictWarnPenalty);
+                penalty += opt.gate_weight *
+                           (v == FAIL ? kVerdictFailPenalty : warn_penalty(cmp.warn_depth));
                 ++worse;
                 notes.push_back("junction capacitance " + pf(*sc) + " against the original's " +
                                 pf(*oc) + " — " + load);
@@ -3690,8 +3725,19 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 // 2026-11-12), exactly as the generic-package branch above. A substitute
                 // that states a land or a package, or an original that states a package,
                 // is one-sided and keeps the cap.
-                if (o_pkg.empty() && s_pkg.empty() && (!s_dims || !has_any_land(*s_dims)))
-                    footprint_unstated_both = true;
+                //
+                // When the ORIGINAL states no land, no candidate is capped for footprint (owner,
+                // 2026-11-13, N1b): with nothing to fit against, a candidate that states its
+                // dimensions has not been shown to fit any less than one that states none, yet
+                // it kept the minor_review cap while the dimensionless one did not
+                // (BWLS0006040426NJ00: XFL3012-102MEC capped, SRN3015C-1R0M uncapped). Every
+                // candidate still pays kUnknownDimPenalty above. "States no land" is no land
+                // dimension (true to reach this branch) and no package / case code. (A magnetic
+                // original stating only a case code is left capped: whether that code counts as
+                // "no land" is an open question for the owner.) This branch is shared by every
+                // family whose footprint is the body, so the rule applies to all of them alike.
+                const bool original_states_no_land = o_pkg.empty();
+                if (original_states_no_land) footprint_unstated_both = true;
                 // Name what the substitute IS, so an engineer can see the two case
                 // sizes for themselves even though the ranker cannot compare them.
                 // Only where the substitute states a package at all: where neither
@@ -3914,7 +3960,11 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                     const bool fail = *s_typ > *o_th * 2.0;
                     p["verdict"] = fail ? FAIL : WARN;
                     demote();
-                    penalty += opt.gate_weight * (fail ? kVerdictFailPenalty : kVerdictWarnPenalty);
+                    // WARN band: above the original's maximum up to the 2x FAIL limit.
+                    penalty += opt.gate_weight *
+                               (fail ? kVerdictFailPenalty
+                                     : warn_penalty(warn_depth_between(*s_typ, *o_th,
+                                                                       *o_th * 2.0)));
                     ++worse;
                     notes.push_back("higher gate threshold than the original: the substitute's "
                                     "TYPICAL Vgs(th) is " + volts(*s_typ) +
@@ -4455,7 +4505,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //   land / footprint unknown (footprint_unverified)       primary    cap minor_review
     //   land / footprint unknown, NEITHER record states a
     //     land or a package (footprint_unstated_both; also
-    //     both naming one generic package string)             both-unst. UNVERIFIED + penalty,
+    //     both naming one generic package string; or the
+    //     ORIGINAL states no land and no package,
+    //     owner 2026-11-13 N1b)                               both-unst. UNVERIFIED + penalty,
     //                                                                    no cap
     //   lead form axial/radial (lead_form_unverified)         primary    cap minor_review
     //   SMD / THT / board mount (mount_unverified)            primary    cap minor_review
@@ -4547,12 +4599,12 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                             current_basis_blind || !magnetic_unweighed.empty() ||
                                             magnetic_rated_absent || timing_accuracy_unweighed) &&
                                            (dir == "upgrade" || dir == "equivalent")) ||
-                            // Isat stated by neither record (owner, 2026-11-13): an 'upgrade'
-                            // would claim the comparison the match turns on, so it reads
-                            // 'unknown'. 'equivalent' stands: a record identical to the original
-                            // on every stated axis cannot be the worse part for an axis neither
-                            // states (the fuzz self-copy invariant).
-                            (isat_unstated_both && dir == "upgrade"))
+                            // Isat stated by neither record (owner, 2026-11-13): 'upgrade' and
+                            // 'equivalent' would both claim the comparison the match turns on, so
+                            // both read 'unknown' (87ab9dd did 'upgrade'; 'equivalent' followed
+                            // with the owner's yes, N1c, and the fuzz self-copy invariant accepts
+                            // 'unknown' for exactly this case).
+                            (isat_unstated_both && (dir == "upgrade" || dir == "equivalent")))
                            ? "unknown"
                            : dir;
     // A different nominal resistance (see value_differs above): an alternative only. Its
