@@ -124,7 +124,10 @@ struct RowBase {
 
 struct MosfetRow : RowBase {
     // Required by the extractor (a record lacking one is unreadable), so never absent.
-    double vds_rated = 0, id_continuous = 0, rds_on = 0;
+    double vds_rated = 0, rds_on = 0;
+    // NaN when unstated: only a multi-die record whose dies state no Id (see extract_mosfet,
+    // owner 2026-11-13 V1). Never 0 — a filter or margin must read it as not stated.
+    double id_continuous = kNaN();
     // NaN when the record states none — NOT 0, which is what both of these used to hold for
     // an absent field. 0 C of gate charge and a 0 V worst-case threshold are physically
     // impossible and are the same bits a stated 0 would produce, so the browse row and every

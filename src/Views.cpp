@@ -405,7 +405,16 @@ std::optional<MosfetRow> extract_mosfet(const json& env) {
     auto vds = rating_magnitude(get_num(*elec, "drainSourceVoltage"), p_channel);
     auto id = rating_magnitude(get_num(*elec, "continuousDrainCurrent"), p_channel);
     auto rds = get_num(*elec, "onResistance");
-    if (!pos(vds) || !pos(id) || !pos(rds)) return std::nullopt;
+    if (!pos(vds) || !pos(rds)) return std::nullopt;
+    // Id is required, with ONE exception (owner 2026-11-13, V1): a multi-die record whose
+    // dies (identical, see above) state no continuousDrainCurrent at all and that has no
+    // package electrical block to state one either. 46 catalogue duals are that shape (TI
+    // CSD885xx/CSD873xx power blocks, AOS AO48xx ...): read with Id UNSET (NaN, never 0),
+    // which the ranker grades UNVERIFIED, the selector and browse filters exclude as not
+    // stated. A stated non-positive Id, or a single-die record without one, stays unread.
+    const bool id_unstated_on_dies =
+        die_channel.has_value() && !elec->contains("continuousDrainCurrent");
+    if (!pos(id) && !id_unstated_on_dies) return std::nullopt;
 
     // Absent stays ABSENT (NaN in the row), never 0: see MosfetRow::qg_total. The selector's
     // Qg constraint is vacuous for a row without one, and the evidence tier counts it as
@@ -469,7 +478,7 @@ std::optional<MosfetRow> extract_mosfet(const json& env) {
     r.manufacturer = *manuf;
     fill_dimensions(r, *di, *part);
     r.vds_rated = *vds;
-    r.id_continuous = *id;
+    if (pos(id)) r.id_continuous = *id;
     r.rds_on = *rds;
     if (pos(qg)) r.qg_total = *qg;
     if (pos(coss_o)) r.coss = *coss_o;

@@ -6724,6 +6724,56 @@ TEST_CASE("owner 2026-11-13 N2c: MOSFET die configuration is graded like the dio
     }
 }
 
+// ── Owner decision 2026-11-13 V1: duals whose dies state no Id are read with Id unset ────
+// REAL records (data-3d2be2e, verbatim in the n2c fixture): TI CSD88584Q5DC (halfBridge power
+// block) and AOS AO4800 (dual SO8) state identical dies with no continuousDrainCurrent and no
+// package electrical block. They were unreadable rows; now Id is NaN on the row (null in
+// browse), never 0.
+TEST_CASE("owner 2026-11-13 V1: a dual whose dies state no Id is read with Id unset",
+          "[qarlos][views][mosfet][dec-1113v]") {
+    for (const char* mpn : {"CSD88584Q5DC", "AO4800"}) {
+        INFO(mpn);
+        const json r = n2c::row(mpn);
+        REQUIRE(r.is_object());
+        CHECK(r["id_continuous"].is_null());
+        CHECK(r["die_configuration"] == "dual");
+    }
+    const json csd = n2c::row("CSD88584Q5DC");
+    CHECK(csd["vds_rated"] == 40.0);
+    CHECK(csd["rds_on"] == 0.00095);
+
+    // Browse: an Id filter excludes the unset rows (not stated), an unfiltered page keeps them.
+    auto sh = kelvin::build_mosfet_shard(std::string(KELVIN_TEST_DIR) +
+                                         "/fixtures/qarlos_1113_n2c_mosfets.ndjson");
+    const json filt = kelvin::browse::browse_rows(
+        sh, json{{"limit", 100}, {"filters", {{"id_continuous", {{"min", 0.0}}}}}})["rows"];
+    for (const auto& r : filt) {
+        CHECK(r["mpn"] != "CSD88584Q5DC");
+        CHECK(r["mpn"] != "AO4800");
+    }
+    CHECK(!filt.empty());
+
+    // Selector: an unset Id never meets an Id floor; it is counted as unstated, not as low.
+    kelvin::MosfetConstraints c;
+    c.vds_min = 20; c.id_min = 1; c.rds_on_max = 1; c.qg_max = 1;
+    c.exclude_discontinued = false;
+    const json sel = kelvin::select_mosfet(sh, c, kelvin::MosfetTiebreaker::LowestRdsOn, 50);
+    for (const auto& cd : sel["candidates"]) {
+        CHECK(cd["mpn"] != "CSD88584Q5DC");
+        CHECK(cd["mpn"] != "AO4800");
+    }
+    CHECK(sel["rejections"].value("id_continuous_unstated", 0) == 2);
+
+    // Ranker: an unset Id is UNVERIFIED on either side, never compared as 0.
+    const json csd_spec = mosfet_spec(csd);
+    CHECK(csd_spec["id"].is_null());
+    const json psmn = mosfet_spec(n2c::row("PSMN4R2-40VSH"));
+    auto r1 = kelvin::crossref::cross_reference("mosfet", psmn, json::array({csd_spec}));
+    CHECK(verdict_of(r1["candidates"][0], "id") == "unverified");
+    auto r2 = kelvin::crossref::cross_reference("mosfet", csd_spec, json::array({psmn}));
+    CHECK(verdict_of(r2["candidates"][0], "id") == "unverified");
+}
+
 // ── Owner decisions 2026-11-13 (b), N1a: a numeric WARN's penalty scales with its deviation ──
 // Real records (TAS 3d2be2e, as web/src/crossref.js builds the spec from the v22 shard row).
 namespace dec1113b {

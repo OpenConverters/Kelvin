@@ -66,6 +66,9 @@ json select_mosfet(const Shard<MosfetRow>& shard, const MosfetConstraints& c, Mo
         }
         if (c.channel && m.channel != *c.channel) { rej["channel_mismatch"]++; continue; }
         if (m.vds_rated < c.vds_min) { rej["vds_rated_low"]++; continue; }
+        // An unstated Id (NaN: a dual whose dies state none) does not meet an Id floor — it
+        // is not read as passing (NaN < x is false) nor as 0; it has its own bucket.
+        if (!present(m.id_continuous)) { rej["id_continuous_unstated"]++; continue; }
         if (m.id_continuous < c.id_min) { rej["id_continuous_low"]++; continue; }
         if (m.rds_on > c.rds_on_max) { rej["rds_on_high"]++; continue; }
         // A row with no stated Qg (NaN) is not rejected by a Qg ceiling: the constraint is
