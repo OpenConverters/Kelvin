@@ -5256,6 +5256,27 @@ TEST_CASE("qarlos r22: the TCXO-for-XO note claims no supply-current direction",
     CHECK_FALSE(has_note(c, "higher supply current"));
 }
 
+// Qarlos r20 seed 28744158: AVTX-13-E-40.000MHZ-E05 (Abracon TCXO, +/-0.5 ppm) ->
+// ECS-TXO-25CSMV-400-AN-TR (ECS TCXO, no stability on record) read 'upgrade' on its wider
+// supply and temperature ranges alone. Stability unstated stays a secondary axis (no cap), but
+// the direction is 'unknown': the accuracy the TCXO exists for was never compared.
+namespace timing_tech {
+const char* kAVTX_13_E_40_000MHZ_E05 = R"KREC({"timeBase":{"oscillator":{"manufacturerInfo":{"name":"Abracon","reference":"AVTX-13-E-40.000MHZ-E05","status":"production","series":"AVTX-13","datasheetInfo":{"part":{"partNumber":"AVTX-13-E-40.000MHZ-E05","series":"AVTX-13","package":"2016 4-SMD","case":"2016 4-SMD"},"electrical":{"technology":"tcxo","frequency":40000000.0,"frequencyStability":5e-07,"outputType":"clippedSine","supply":{"minimumSupplyVoltage":3.3,"maximumSupplyVoltage":3.3,"currentConsumption":0.0025},"enableFunction":"none"},"provenance":[{"source":"manufacturerParametric","sourceName":"Abracon parametric search","sourceUrl":"https://abracon.com/datasheets/AVTX-13.pdf","retrievedDate":"2026-07-03","fields":["electrical.technology","electrical.frequency","electrical.frequencyStability","electrical.outputType","electrical.supply","electrical.enableFunction"],"verification":"seriesConfirmed","verificationDate":"2026-10-09"}],"thermal":{"operatingTemperature":{"minimum":-30.0,"maximum":85.0}}},"datasheetUrl":"https://abracon.com/datasheets/AVTX-13.pdf"}}}})KREC";
+const char* kECS_TXO_25CSMV_400_AN_TR = R"KREC({"timeBase":{"oscillator":{"manufacturerInfo":{"name":"ECS Inc.","reference":"ECS-TXO-25CSMV-400-AN-TR","datasheetInfo":{"part":{"partNumber":"ECS-TXO-25CSMV-400-AN-TR","package":"4-SMD, No Lead"},"electrical":{"technology":"tcxo","frequency":40000000.0,"outputType":"clippedSine","supply":{"minimumSupplyVoltage":1.7,"maximumSupplyVoltage":3.465,"currentConsumption":0.0025}},"provenance":[{"source":"distributor","sourceName":"Digi-Key Product Search v3","retrievedDate":"2026-07-02","verification":"citationOnly","verificationDate":"2026-10-09"}],"thermal":{"operatingTemperature":{"minimum":-40.0,"maximum":85.0}}},"datasheetUrl":"https://ecsxtal.com/store/pdf/ECS-TXO-25CSMV.pdf","series":"ECS-TXO-25CSMV MultiVolt\u2122"}}}})KREC";
+}  // namespace timing_tech
+
+TEST_CASE("qarlos r20: a TCXO with no stated stability is not an 'upgrade'",
+          "[qarlos][crossref][timing][timing-tech]") {
+    using namespace timing_tech;
+    const json c = one(kAVTX_13_E_40_000MHZ_E05, kECS_TXO_25CSMV_400_AN_TR);
+    CHECK(c["status"] != "no_substitute");
+    CHECK(verdict_of(c, "stability_ppm") == "unverified");
+    CHECK(has_note(c, "the original's frequency stability is +/-0.5 ppm; the substitute's record "
+                      "states none"));
+    CHECK(c["direction"] == "unknown");
+    CHECK(c["grade"] == "minor_review");  // the grade is the owner's (secondary: no cap added)
+}
+
 TEST_CASE("timing technology: every other pair stays a strict identity",
           "[qarlos][crossref][timing][timing-tech]") {
     using namespace timing_tech;
