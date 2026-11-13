@@ -1372,8 +1372,9 @@ std::optional<MagneticRow> extract_magnetic(const json& env) {
             // unset, so the next point overwrote it and the 5 MHz proximity
             // test then failed. Every bead measured at the conventional test
             // point — which is most of them — lost its headline figure.
-            double best_z = 0.0, best_f = 0.0, at_100m = 0.0, closest = 0.0;
+            double at_100m = 0.0, closest = 0.0;
             bool have_closest = false;
+            std::vector<std::pair<double, double>> curve;  // (frequency, |Z|)
             for (const auto& pt : *pts) {
                 if (!pt.is_object()) continue;
                 auto f = get_num(pt, "frequency");
@@ -1381,14 +1382,32 @@ std::optional<MagneticRow> extract_magnetic(const json& env) {
                 if (!f || !z) continue;
                 auto mag = get_num(*z, "magnitude");
                 if (!mag || *mag <= 0 || *f <= 0) continue;
-                if (*mag > best_z) { best_z = *mag; best_f = *f; }
+                curve.emplace_back(*f, *mag);
                 // nearest sample to the conventional 100 MHz test point
                 const double d = std::fabs(*f - 1e8);
                 if (!have_closest || d < closest) {
                     closest = d; at_100m = *mag; have_closest = true;
                 }
             }
-            if (best_z > 0) { r.impedance_peak = best_z; r.impedance_peak_freq = best_f; }
+            // A peak is only a peak when the curve is seen to fall on BOTH
+            // sides of it. The largest sample of a curve that ends while still
+            // rising (or starts while falling) is just where the measurement
+            // stopped: a bead catalogued with a single 100 MHz point carried
+            // that point as its "peak" and its "peak frequency", and the exact
+            // match on peak frequency then failed every substitute whose real
+            // peak was known. Unbracketed maximum -> no peak (UNVERIFIED).
+            std::sort(curve.begin(), curve.end());
+            if (!curve.empty()) {
+                std::size_t first = 0, last = 0;
+                for (std::size_t k = 1; k < curve.size(); ++k) {
+                    if (curve[k].second > curve[first].second) first = last = k;
+                    else if (curve[k].second == curve[first].second) last = k;
+                }
+                if (first > 0 && last + 1 < curve.size()) {
+                    r.impedance_peak = curve[first].second;
+                    r.impedance_peak_freq = curve[first].first;
+                }
+            }
             // Only claim a 100 MHz value when a sample is actually near it —
             // extrapolating from a distant point would invent a datum.
             if (have_closest && at_100m > 0 && closest <= 5e6)
