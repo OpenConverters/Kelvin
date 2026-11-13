@@ -6727,3 +6727,17 @@ TEST_CASE("owner 2026-11-13 P0: one-sided connector orientation counts toward th
     CHECK(c["grade"] == "major_review");
 }
 
+// Qarlos r20 seed 29058345 (P1): TW-02-09-F-S-225-090 (2 pos, 2.00 mm, rows unstated) took
+// 67997-202HLF (2 pos in 2 rows, 2.54 mm) with pitch 'pass': 2 / 2 rows gave a per-row count
+// of 1 and an end-pin offset of 0. Fixed on main by the per-row floor of 2 in
+// connector_pitch_fit (b75c9a5, group L); this pins the reported pair.
+TEST_CASE("qarlos r20 P1: a 2.54 mm header is not a pitch pass against a 2.00 mm original",
+          "[qarlos][crossref][connector-identity]") {
+    using namespace variant_ids;
+    const json c = rank_one(r20p::kTW02, r20p::k67997);
+    CHECK(verdict_of(c, "pitch_mm") == "fail");
+    CHECK(c["footprint"] == "different_land_pattern");
+    CHECK(notes_with(c, "pitch differs: 2 -> 2.54 mm") == 1);
+    CHECK(c["grade"] != "drop_in");
+    CHECK(c["grade"] != "minor_review");
+}
