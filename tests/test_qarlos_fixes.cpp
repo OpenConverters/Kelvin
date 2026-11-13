@@ -7319,9 +7319,13 @@ TEST_CASE("owner 2026-11-13 S1: fields resting only on a retracted source are li
     CHECK(kelvin::all_provenance_retracted(rec));
 }
 
-// The same pair through the real pipeline: specs are web/src/crossref.js's diode spec of the
+// The same pair as ranker input: specs in the shape of web/src/crossref.js's diode spec of the
 // v22 shard rows built from the frozen data (kelvin-index -> browse -> famFor().spec), so they
-// carry the row's retracted_fields. PU1DFSH -> VS-6CWH02FN-M3: Vr, Vf and Tj max rest on the
+// carry the row's retracted_fields. Since owner 2026-11-13 Z1 the real pipeline no longer
+// produces kSpecVS_6CWH02FN_M3 as written: a retracted-only reverseVoltage is not stated, so the
+// real row's vrrm is null (and the diode pool's hard floor leaves the part out; see the Z1 test
+// below). The hand-written spec keeps vrrm 200, so this is a unit test of the ranker's
+// retracted-field rule, not a pipeline test. PU1DFSH -> VS-6CWH02FN-M3: Vr, Vf and Tj max rest on the
 // retracted source alone and read UNVERIFIED; If(AV) has the live product page and grades
 // normally. (The record's surgeCurrent is retracted-only too, but no rectifier comparison reads
 // a surge rating, so there is no verdict for it to change.)
@@ -7562,7 +7566,9 @@ TEST_CASE("Qarlos r26 X2: ripple ratings at different temperatures are not compa
     CHECK(has_note(c, "ripple current quoted at different temperatures (original 1.67 A at +105 "
                       "degC, substitute 2.25 A at +85 degC)"));
     // The same pair with the substitute stated at the original's temperature: compared as
-    // stated (pass), and the grade is the same — the temperature basis is not capped.
+    // stated (pass), and the grade is the same: the pair is minor_review for its unknown
+    // footprint either way, so the grade cannot show the temperature-basis cap (owner
+    // 2026-11-13 Z3), which is covered by the Z3 test on an otherwise drop-in pair below.
     json same = cand;
     same["ripple_current_temperature"] = 105.0;
     auto r2 = kelvin::crossref::cross_reference("capacitor", orig, json::array({same}));
