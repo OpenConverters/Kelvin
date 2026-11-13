@@ -711,7 +711,10 @@ inline TvsPolarity tvs_polarity_from_mpn(const std::string& mpn) {
     std::string u;
     for (char c : mpn) u += static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
     // Longest first, so 15KPA is not read as 15KP + "A…".
-    static const char* const kSeries[] = {"5.0SMDJ", "1.5SMC", "1.5SMB", "30KPA", "20KPA",
+    // 5KSMC (Taiwan Semiconductor, owner 2026-11-13): 5KSMC75AH uni, 5KSMC75CAH bi — the
+    // grade letter after the standoff is read the same way (68 records, 34 AH / 34 CAH,
+    // every one agreeing with the record's own description).
+    static const char* const kSeries[] = {"5.0SMDJ", "1.5SMC", "1.5SMB", "5KSMC", "30KPA", "20KPA",
                                           "15KPA",   "1.5KE",  "P4SMA",  "P6SMB", "P4KE",
                                           "P6KE",    "SMAJ",   "SMBJ",   "SMCJ",  "SMDJ",
                                           "SMLJ",    "15KP",   "5KP",    "3KP",   "SA"};

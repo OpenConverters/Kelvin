@@ -5,6 +5,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -367,6 +368,27 @@ TEST_CASE("qarlos #2038/#2049: unidirectional for bidirectional fails; unknown i
         } else {
             CHECK(verdict_of(c, "polarity") == "pass");
         }
+    }
+}
+
+// Owner 2026-11-13: the 5KSMC series decodes too (...CAH bi, ...AH uni). 30KPA72CA-B ->
+// 5KSMC75AH and 5.0SMDJ70CA-T7 -> 5KSMC70AH passed with no polarity mismatch.
+TEST_CASE("qarlos 2026-11-13: 5KSMC polarity decodes; uni 5KSMC fails a bidirectional original",
+          "[qarlos][crossref]") {
+    using kelvin::crossref::TvsPolarity;
+    using kelvin::crossref::tvs_polarity_from_mpn;
+    CHECK(tvs_polarity_from_mpn("5KSMC75AH") == TvsPolarity::Uni);
+    CHECK(tvs_polarity_from_mpn("5KSMC75CAH") == TvsPolarity::Bi);
+    CHECK(tvs_polarity_from_mpn("5KSMC10AH") == TvsPolarity::Uni);
+    CHECK(tvs_polarity_from_mpn("5KSMC10CAH") == TvsPolarity::Bi);
+    for (auto [o, s, v] : {std::tuple{"30KPA72CA-B", "5KSMC75AH", 72.0},
+                           std::tuple{"5.0SMDJ70CA-T7", "5KSMC70AH", 70.0}}) {
+        auto r = kelvin::crossref::cross_reference("diode", tvs(o, v),
+                                                   json::array({tvs(s, v)}));
+        const json& c = r["candidates"][0];
+        CHECK(verdict_of(c, "polarity") == "fail");
+        CHECK(c["grade"] == "major_review");
+        CHECK(has_note(c, "unidirectional substitute for a bidirectional original"));
     }
 }
 
@@ -6251,3 +6273,4 @@ TEST_CASE("r17 M8: a candidate rejected for missing data reads direction 'unknow
     CHECK(m["reason"] == "breakdown minimum at or below the original's working voltage");
     CHECK(m["direction"] == "downgrade");
 }
+
