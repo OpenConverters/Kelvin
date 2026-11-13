@@ -751,15 +751,56 @@ inline std::string canonical_mosfet_case(const std::string& s) {
     return canonical_case_in(kGroups, s);
 }
 
+// Two more groups (Qarlos r14/r15):
+//   * onsemi's parametric package names 'SMA-2' (116 diode records) and 'SMB-2' (131) are its
+//     SMA and SMB: the 1SMA59xxBT3G and 1SMB59xxBT3G datasheets, whose parts carry those
+//     records, print the package as "SMA CASE 403D" and "SMB CASE 403A" and order them as
+//     'SMA' / 'SMB'. 1SMA5940BT3G 'SMA-2' was "a different land pattern" from 1SMA5940H
+//     'DO-214AC (SMA)' (r14 seed 25707017). onsemi's 'SMC-2' is NOT folded in: no datasheet
+//     has been read for it, so it stays itself.
+//   * SOT-23 = TO-236 / TO-236AB / SOT-23-3, the same group the MOSFET table has; it was
+//     missing here.
+// onsemi also appends the body and pitch to the name ("SOT-23 (TO-236) 2.90x1.30x1.00, 1.90P",
+// 480 diode records). That suffix is dropped only when the name before it is a member of a
+// group AND the stated length and width agree (within kSuffixBodyTolMm, either way round) with
+// the registered outline's table body (dims_detail::package_mm); anything else is left as
+// written. SZMMBZ5228BLT1G was "different_case" against BZX84-A3V9 'SOT-23' with identical
+// pads (r15 seed 26544849).
 inline std::string canonical_diode_case(const std::string& s) {
     static const std::vector<std::vector<std::string>> kGroups = {
-        {"DO214AC", "SMA"},      {"DO214AA", "SMB"},     {"DO214AB", "SMC"},
+        {"DO214AC", "SMA", "SMA2"}, {"DO214AA", "SMB", "SMB2"}, {"DO214AB", "SMC"},
+        {"SOT23", "TO236", "TO236AB", "SOT233"},
         {"DO204AL", "DO41"},     {"DO204AC", "DO15"},    {"DO204AH", "DO35"},
         {"DO213AB", "MELF"},     {"SOD80", "MINIMELF"},  {"DO219AB", "SMF"},
         {"DO219AC", "MICROSMF"}, {"DO219AD", "MICROSMP"}, {"DO220AA", "SMP"},
         {"DO215AA", "SMBG"},     {"DO215AB", "SMCG"},    {"DO221AC", "SLIMSMA"},
         {"DO221BC", "SMPA"},     {"TO277A", "SMPC"},     {"TO263AC", "SMPD"}};
-    return canonical_case_in(kGroups, s);
+    const std::string plain = canonical_case_in(kGroups, s);
+    // onsemi's "<name> LxW[xH][, pitchP]" form (see above).
+    static const std::regex onsemi_body(
+        R"(^\s*(.*\S)\s+(\d+(?:\.\d+)?)\s*[xX]\s*(\d+(?:\.\d+)?)(?:\s*[xX]\s*\d+(?:\.\d+)?)?(?:\s*,\s*\d+(?:\.\d+)?\s*P)?\s*$)");
+    std::smatch m;
+    if (!std::regex_match(s, m, onsemi_body)) return plain;
+    const std::string head = m[1].str();
+    const std::string c = canonical_case_in(kGroups, head);
+    const bool in_group = std::any_of(kGroups.begin(), kGroups.end(),
+                                      [&](const auto& g) { return g.front() == c; });
+    if (!in_group) return plain;
+    // The registered outline's body: resolved from the group's members, so a pair form
+    // like "SOT-23 (TO-236)" finds the SOT-23 row through its first name.
+    std::optional<dims_detail::LWH> body;
+    for (const auto& g : kGroups) {
+        if (g.front() != c) continue;
+        for (const auto& member : g)
+            if (!body) body = dims_detail::resolve_package(member);
+    }
+    if (!body) return plain;  // no table outline to check the stated body against
+    constexpr double kSuffixBodyTolMm = 0.1;
+    const double l = std::stod(m[2].str()), w = std::stod(m[3].str());
+    auto near = [&](double a, double b) { return std::fabs(a - b) <= kSuffixBodyTolMm; };
+    const bool agrees = (near(l, body->l) && near(w, body->w)) ||
+                        (near(l, body->w) && near(w, body->l));
+    return agrees ? c : plain;
 }
 
 // Chip-passive case identity with EXPLICITLY marked metric codes resolved to their imperial
