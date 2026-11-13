@@ -491,6 +491,7 @@ std::optional<MosfetRow> extract_mosfet(const json& env) {
         r.vgs_max = *v;
     r.channel = channel;
     r.die_configuration = get_str(*part, "dieConfiguration").value_or("");
+    r.internal_connection = get_str(*part, "internalConnection").value_or("");
     r.qualification = get_str(*part, "qualification").value_or("");
     r.technology = get_str(*part, "technology").value_or("");
     auto status = get_str(*mi, "status");

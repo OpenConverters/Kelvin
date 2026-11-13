@@ -3858,6 +3858,8 @@ json mosfet_spec(const json& r) {
     s["channel"] = ch.empty() ? json(nullptr) : json(ch);
     const std::string dc = r.value("die_configuration", "");
     s["die_configuration"] = dc.empty() ? json(nullptr) : json(dc);
+    const std::string ic = r.value("internal_connection", "");
+    s["internal_connection"] = ic.empty() ? json(nullptr) : json(ic);
     return s;
 }
 // XREF diode spec (web/src/crossref.js).
@@ -6772,6 +6774,61 @@ TEST_CASE("owner 2026-11-13 V1: a dual whose dies state no Id is read with Id un
     CHECK(verdict_of(r1["candidates"][0], "id") == "unverified");
     auto r2 = kelvin::crossref::cross_reference("mosfet", csd_spec, json::array({psmn}));
     CHECK(verdict_of(r2["candidates"][0], "id") == "unverified");
+}
+
+// ── Owner decision 2026-11-13 V2: MOSFET internal connection graded like the diode one ───
+// REAL records (data-3d2be2e, n2c fixture): Nexperia PSMN4R2-40VSH (dual, halfBridge),
+// onsemi NTMFD5C446NLT1G (dual, independent), YAGEO XSemi XP9938GEY (dual, commonDrain),
+// Infineon IPG20N04S4L-18A (dual, no internal connection stated).
+TEST_CASE("owner 2026-11-13 V2: MOSFET internal connection is an identity",
+          "[qarlos][crossref][mosfet][dec-1113v]") {
+    const json hb = n2c::row("PSMN4R2-40VSH");
+    REQUIRE(hb.is_object());
+    CHECK(hb["internal_connection"] == "halfBridge");
+    CHECK(n2c::row("NTMFD5C446NLT1G")["internal_connection"] == "independent");
+    CHECK(n2c::row("XP9938GEY")["internal_connection"] == "commonDrain");
+    CHECK(n2c::row("IPG20N04S4L-18A")["internal_connection"] == "");
+
+    const json orig = mosfet_spec(hb);
+    auto r = kelvin::crossref::cross_reference(
+        "mosfet", orig,
+        json::array({mosfet_spec(n2c::row("NTMFD5C446NLT1G")),
+                     mosfet_spec(n2c::row("IPG20N04S4L-18A"))}));
+    // Both stated and different: rejected, the note names both.
+    const json ind = find_mpn(r, "NTMFD5C446NLT1G");
+    CHECK(ind["status"] == "no_substitute");
+    CHECK(verdict_of(ind, "internal_connection") == "fail");
+    CHECK(has_note(ind, "internal connection differs: the original is 'halfBridge', the "
+                        "substitute 'independent'"));
+    // The 20 V commonDrain XP9938GEY as the original: the 40 V half bridge clears every
+    // rating, so only the connection rejects it.
+    auto rc = kelvin::crossref::cross_reference(
+        "mosfet", mosfet_spec(n2c::row("XP9938GEY")), json::array({orig}));
+    const json cd = rc["candidates"][0];
+    CHECK(cd["status"] == "no_substitute");
+    CHECK(verdict_of(cd, "internal_connection") == "fail");
+    CHECK(has_note(cd, "the original is 'commonDrain', the substitute 'halfBridge'"));
+    // One-sided: UNVERIFIED, noted, capped below drop_in (the die-configuration cap).
+    const json uns = find_mpn(r, "IPG20N04S4L-18A");
+    CHECK(verdict_of(uns, "internal_connection") == "unverified");
+    CHECK(has_note(uns, "internal connection 'halfBridge' and the substitute's states none"));
+    CHECK(uns["grade"] != "drop_in");
+
+    // The same record with only the connection varied isolates the rule.
+    auto as = [&](const char* mpn, json ic) {
+        json s = orig;
+        s["mpn"] = mpn;
+        s["internal_connection"] = ic;
+        return s;
+    };
+    auto r2 = kelvin::crossref::cross_reference(
+        "mosfet", orig, json::array({as("SAME", "halfBridge"), as("UNSTATED", nullptr)}));
+    const json same = find_mpn(r2, "SAME");
+    CHECK(verdict_of(same, "internal_connection") == "pass");
+    CHECK(same["grade"] == "drop_in");
+    const json u2 = find_mpn(r2, "UNSTATED");
+    CHECK(verdict_of(u2, "internal_connection") == "unverified");
+    CHECK(u2["grade"] == "minor_review");
 }
 
 // ── Owner decisions 2026-11-13 (b), N1a: a numeric WARN's penalty scales with its deviation ──
