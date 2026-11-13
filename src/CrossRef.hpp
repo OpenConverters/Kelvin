@@ -2127,10 +2127,15 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                     " — vendors use both words for a mating axis parallel to the "
                                     "board; confirm from the drawings that the counterpart "
                                     "arrives the same way");
-                else
+                else {
+                    // One-sided orientation is one of the identity gaps counted towards the
+                    // 3+ cap (owner decision 2026-11-13); the horizontal/rightAngle pair is
+                    // stated on both sides and is not a gap.
+                    connector_identity_gaps.push_back("orientation");
                     notes.push_back("orientation not established (original: " + said(oo) +
                                     ", substitute: " + said(so) +
                                     ") — confirm vertical / right-angle from the datasheets");
+                }
             }
         }
         // ── pluggable vs fixed terminal block (CONAS familyTerminalBlock.pluggable) ──
@@ -4433,10 +4438,11 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // YDIV46E21-11PNC009, whose record states none of the five, as minor_review (Qarlos bench
     // 20365838; it is a wire-to-wire plug). Counted: axes exactly one record states — gender,
     // wire termination, contact pitch, contact rows, contact positions (owner, 2026-11-13),
-    // board mount, and the family-variant identities. DECISION for the owner: the variant identities (actuator type, shell size,
-    // coding, coupling type) count although a single one is uncapped (interface_standard's
-    // treatment, which is NOT counted); orientation and pluggable are capped one-sided
-    // connector axes but not identities in the owner's list, and are not counted either.
+    // board mount, orientation stated on one side only (owner, 2026-11-13; TW-03-05-F-Q-365-090
+    // -> WT12PD9), and the family-variant identities. DECISION for the owner: the variant
+    // identities (actuator type, shell size, coding, coupling type) count although a single one
+    // is uncapped (interface_standard's treatment, which is NOT counted); pluggable is a capped
+    // one-sided connector axis but not an identity in the owner's list, and is not counted.
     constexpr size_t kConnectorIdentityGapsMajor = 3;
     const bool connector_identity_gaps_major =
         connector_identity_gaps.size() >= kConnectorIdentityGapsMajor;
@@ -4516,8 +4522,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //   connector variant identity (actuator type, shell
     //     size, coding, coupling type), one alone             primary    note only, no cap
     //   connector identities one-sided, 3 or more of gender,
-    //     termination, pitch, rows, positions, board mount
-    //     and the variant identities (connector_identity_gaps) primary   cap major_review
+    //     termination, pitch, rows, positions, board mount,
+    //     orientation and the variant identities (connector_identity_gaps) primary   cap major_review
     //   connector orientation (connector_orientation_unv.)    primary    cap minor_review
     //   connector pluggable vs fixed (pluggable_unverified)   primary    cap minor_review
     //   diode die configuration / internal connection         primary    cap minor_review
