@@ -2368,7 +2368,11 @@ json res_record_spec(const char* raw) {
               {"temp_max_C", num_or_null(row->temp_max_c)},
               {"current_sense", row->current_sense},
               {"pulse_withstanding", row->pulse_withstanding},
-              {"max_voltage_V", pos_or_null(row->max_voltage)}};
+              {"max_voltage_V", pos_or_null(row->max_voltage)},
+              {"number_of_elements", pos_or_null(row->number_of_elements)},
+              {"internal_connection", row->internal_connection.empty()
+                                          ? json(nullptr)
+                                          : json(row->internal_connection)}};
     s["derating_temperature"] =
         row->derating_temperature.empty() ? json(nullptr) : json(row->derating_temperature);
     s["derating_amplitude"] =
@@ -3895,6 +3899,7 @@ json diode_spec(const json& r) {
     const std::string dc = r.value("die_configuration", ""), ic = r.value("internal_connection", "");
     s["die_configuration"] = dc.empty() ? json(nullptr) : json(dc);
     s["internal_connection"] = ic.empty() ? json(nullptr) : json(ic);
+    s["number_of_elements"] = nz_(r["number_of_elements"]);
     s["vz_min_V"] = nz_(r["vz_min"]);
     s["vz_max_V"] = nz_(r["vz_max"]);
     s["vz_tolerance_pct"] =
@@ -7990,3 +7995,305 @@ TEST_CASE("owner 2026-11-13 Z5: Isat read at the same drop on both curves",
     CHECK(verdict_of(c4, "saturation_current") == "pass");
 }
 
+
+// ── Owner 2026-11-13 AA1: diode arrays — dieConfiguration 'array', numberOfElements, dies[] ──
+// SAS bcc7a93 added part.dieConfiguration 'array', electrical.numberOfElements (per-diode
+// values) and datasheetInfo.dies[] (INSTEAD of electrical when the diodes differ). No TAS
+// record states them yet (ABT #2390 asks TAS to fill them), so the tests take REAL records of
+// the frozen bench data (tools/qarlos/bench/data-6bd04c7/diodes.ndjson, distributorsInfo
+// dropped) and ADD the new fields here, in the test; each addition is named where it is made.
+namespace aa1 {
+// diodes.ndjson: STPS30L60CT (dual, commonCathode, 15 A per leg).
+const char* kSTPS30L60CT = R"J({"semiconductor":{"diode":{"manufacturerInfo":{"name":"STMicroelectronics","reference":"STPS30L60CT","status":"production","datasheetUrl":"https://www.st.com/resource/en/datasheet/stps30l60c.pdf","datasheetInfo":{"part":{"partNumber":"STPS30L60CT","technology":"Si","subType":"schottky","case":"TO-220AB","dieConfiguration":"dual","internalConnection":"commonCathode"},"electrical":{"reverseVoltage":60,"forwardCurrent":15.0,"surgeCurrent":400,"forwardVoltage":0.42,"forwardVoltageAt":15,"reverseLeakageCurrent":0.0003,"junctionCapacitance":1.5e-09,"junctionCapacitanceVr":5,"powerDissipation":75},"thermal":{"thermalResistanceJunctionCase":2.0,"thermalResistanceJunctionAmbient":50,"junctionTemperatureMax":175,"junctionTemperatureMin":-65},"mechanical":{"assemblyType":"tht","case":"TO-220AB","length":{"nominal":0.0157},"width":{"nominal":0.0102},"height":{"nominal":0.0045}},"provenance":[{"source":"manufacturerDatasheet","sourceName":"STMicroelectronics datasheet","sourceUrl":"https://www.st.com/resource/en/datasheet/stps30l60c.pdf","retrievedDate":"2026-10-10","fields":["part.dieConfiguration","part.internalConnection","electrical.forwardCurrent"],"verification":"valuesReadFromSource","verificationDate":"2026-10-10"}]}}}}})J";
+// diodes.ndjson: TPD4E02B04 and TPD4E6B06 (TI 4-channel ESD arrays; the records state no
+// die configuration — the count and 'array' are added below).
+const char* kTPD4E02B04 = R"J({"semiconductor":{"diode":{"manufacturerInfo":{"name":"Texas Instruments","reference":"TPD4E02B04","status":"production","datasheetUrl":"https://www.ti.com/product/TPD4E02B04","datasheetInfo":{"part":{"partNumber":"TPD4E02B04","technology":"Si","subType":"esd","case":"USON"},"electrical":{"junctionCapacitance":2.5e-13,"reverseLeakageCurrent":1e-08,"esdVoltageContact":12000.0,"peakPulseCurrent":2.0,"standoffVoltage":3.6},"thermal":{"junctionTemperatureMin":-40.0,"junctionTemperatureMax":125.0},"mechanical":{"assemblyType":"smt","case":"USON","length":{"nominal":0.0025},"width":{"nominal":0.001}},"provenance":[{"source":"manufacturerParametric","verification":"partNamed","verificationDate":"2026-10-09","sourceName":"Texas Instruments parametric search","sourceUrl":"https://www.ti.com/product/TPD4E02B04"}]}}}}})J";
+const char* kTPD4E6B06 = R"J({"semiconductor":{"diode":{"manufacturerInfo":{"name":"Texas Instruments","reference":"TPD4E6B06","status":"production","datasheetUrl":"https://www.ti.com/product/TPD4E6B06","datasheetInfo":{"part":{"partNumber":"TPD4E6B06","technology":"Si","subType":"esd","case":"X2SON"},"electrical":{"junctionCapacitance":4.8e-12,"reverseLeakageCurrent":1e-07,"peakPulseCurrent":3.0,"standoffVoltage":5.5,"peakPulseCurrentWaveform":"8/20"},"thermal":{"junctionTemperatureMin":-40.0,"junctionTemperatureMax":125.0},"mechanical":{"assemblyType":"smt","case":"X2SON","length":{"nominal":0.0008},"width":{"nominal":0.0008}},"provenance":[{"source":"manufacturerParametric","verification":"partNamed","verificationDate":"2026-10-09","sourceName":"Texas Instruments parametric search","sourceUrl":"https://www.ti.com/product/TPD4E6B06"}]}}}}})J";
+
+json& dinfo(json& rec) { return rec["semiconductor"]["diode"]["manufacturerInfo"]["datasheetInfo"]; }
+json renamed(json rec, const std::string& mpn) {
+    rec["semiconductor"]["diode"]["manufacturerInfo"]["reference"] = mpn;
+    dinfo(rec)["part"]["partNumber"] = mpn;
+    return rec;
+}
+// The real record described per die instead of by one block (dies[] added in the test).
+json as_dies(const char* raw, const std::string& mpn, bool differ) {
+    json rec = renamed(json::parse(raw), mpn);
+    json& di = dinfo(rec);
+    const json e = di["electrical"];
+    const std::string st = di["part"]["subType"];
+    di.erase("electrical");
+    json d2 = e;
+    if (differ) d2["forwardVoltage"] = 0.55;  // a second diode with a different V_F
+    di["dies"] = json::array({{{"name", "D1"}, {"subType", st}, {"electrical", e}},
+                              {{"name", "D2"}, {"subType", st}, {"electrical", d2}}});
+    return rec;
+}
+const json& rows() {
+    static const json r = [] {
+        namespace fs = std::filesystem;
+        json stps = json::parse(kSTPS30L60CT);
+        dinfo(stps)["electrical"]["numberOfElements"] = 2;  // added: SAS 'a dual ... is then 2'
+        json tpd = json::parse(kTPD4E02B04);
+        dinfo(tpd)["part"]["dieConfiguration"] = "array";   // added: a 4-channel ESD array
+        dinfo(tpd)["electrical"]["numberOfElements"] = 4;   // added: TPD4E = 4 channels
+        const std::string path = (fs::temp_directory_path() / "kelvin_aa1_diodes.ndjson").string();
+        {
+            std::ofstream o(path);
+            o << stps.dump() << "\n"
+              << tpd.dump() << "\n"
+              << kTPD4E6B06 << "\n"
+              << as_dies(kSTPS30L60CT, "STPS30L60CT-DIES", false).dump() << "\n"
+              << as_dies(kSTPS30L60CT, "STPS30L60CT-DIFFER", true).dump() << "\n";
+        }
+        const auto sh = kelvin::build_diode_shard(path);
+        fs::remove(path);
+        return kelvin::browse::browse_rows(sh, json{{"limit", 100}})["rows"];
+    }();
+    return r;
+}
+json row(const std::string& mpn) {
+    for (const auto& r : rows())
+        if (r.value("mpn", "") == mpn) return r;
+    return json(nullptr);
+}
+}  // namespace aa1
+
+TEST_CASE("owner 2026-11-13 AA1: diode count and identical dies are read; differing dies unread",
+          "[qarlos][views][index][browse][aa1]") {
+    const json stps = aa1::row("STPS30L60CT");
+    REQUIRE(stps.is_object());
+    CHECK(stps["number_of_elements"] == 2.0);
+    CHECK(stps["die_configuration"] == "dual");
+    const json tpd = aa1::row("TPD4E02B04");
+    REQUIRE(tpd.is_object());
+    CHECK(tpd["die_configuration"] == "array");
+    CHECK(tpd["number_of_elements"] == 4.0);
+    // A record that states no count reads as before: null, not 1 and not a pin count.
+    const json plain = aa1::row("TPD4E6B06");
+    REQUIRE(plain.is_object());
+    CHECK(plain["number_of_elements"].is_null());
+    // Identical dies: that die's values are the part's, per diode, and the count is the dies'.
+    const json dies = aa1::row("STPS30L60CT-DIES");
+    REQUIRE(dies.is_object());
+    CHECK(dies["number_of_elements"] == 2.0);
+    CHECK(dies["technology"] == "schottky");
+    CHECK(dies["vrrm_rated"] == 60.0);
+    CHECK(dies["if_avg_rated"] == 15.0);
+    CHECK(dies["vf_typ"] == 0.42);
+    CHECK(dies["junction_capacitance"] == 1.5e-09);
+    // Differing dies: no single V_F for the part — left unread, not given D1's numbers.
+    CHECK(aa1::row("STPS30L60CT-DIFFER").is_null());
+}
+
+TEST_CASE("owner 2026-11-13 AA1: diode count is graded as an identity",
+          "[qarlos][crossref][aa1]") {
+    // TPD4E6B06 (it states its surge waveform, so nothing else caps a copy of it), with
+    // 'array' / 4 channels added at spec level; the same record with the count varied
+    // isolates the rule.
+    json orig = diode_spec(aa1::row("TPD4E6B06"));
+    orig["die_configuration"] = "array";
+    orig["number_of_elements"] = 4.0;
+    auto as = [&](const char* mpn, json n, json dc = "array") {
+        json s = orig;
+        s["mpn"] = mpn;
+        s["number_of_elements"] = n;
+        s["die_configuration"] = dc;
+        return s;
+    };
+    auto r = kelvin::crossref::cross_reference(
+        "diode", orig,
+        json::array({as("SAME4", 4.0), as("SIX", 6.0), as("UNCOUNTED", nullptr)}));
+    const json same = find_mpn(r, "SAME4");
+    CHECK(verdict_of(same, "number_of_elements") == "pass");
+    CHECK(same["grade"] == "drop_in");
+    const json six = find_mpn(r, "SIX");
+    CHECK(six["status"] == "no_substitute");
+    CHECK(verdict_of(six, "number_of_elements") == "fail");
+    CHECK(has_note(six, "the original holds 4, the substitute 6"));
+    const json unc = find_mpn(r, "UNCOUNTED");
+    CHECK(verdict_of(unc, "number_of_elements") == "unverified");
+    CHECK(unc["grade"] == "minor_review");
+    CHECK(has_note(unc, "states 4 diodes in the package and the substitute's states no count"));
+
+    // A stated 'dual' without a count is 2 (SAS): it matches a dual stating 2 and is told
+    // apart from a 3-count; nothing is graded when neither side states a count.
+    const json dual = diode_spec(aa1::row("STPS30L60CT-DIES"));  // dual, 2 dies
+    json dual_uncounted = dual;
+    dual_uncounted["mpn"] = "DUAL_NO_COUNT";
+    dual_uncounted["number_of_elements"] = nullptr;
+    auto r2 = kelvin::crossref::cross_reference("diode", dual_uncounted, json::array({dual}));
+    CHECK(verdict_of(find_mpn(r2, "STPS30L60CT-DIES"), "number_of_elements") == "pass");
+    json dual_uncounted2 = dual_uncounted;
+    dual_uncounted2["mpn"] = "DUAL_NO_COUNT_2";
+    auto r3 = kelvin::crossref::cross_reference("diode", dual_uncounted,
+                                                json::array({dual_uncounted2}));
+    CHECK(verdict_of(find_mpn(r3, "DUAL_NO_COUNT_2"), "number_of_elements") == "");
+}
+
+// ── Owner 2026-11-13 AA2: resistor networks — numberOfElements, internalConnection, elements[] ─
+// RAS 3ba21f6 / 66a3d72 added electrical.numberOfElements (per-element values),
+// part.internalConnection and datasheetInfo.elements[]. No TAS record states them yet (ABT
+// #2390), so the tests take REAL records of tools/qarlos/bench/data-6bd04c7/resistors.ndjson
+// (distributorsInfo dropped) and ADD the fields here, in the test.
+namespace aa2 {
+// resistors.ndjson: Panasonic EXB14V100JX, whose record's own matchcodeDescription reads
+// "Number of Elements: 2; Type of Circuit: Isolated Circuit" (Kelvin never parses it; the
+// structured fields carrying that are added below).
+const char* kEXB14V100JX = R"J({"resistor":{"manufacturerInfo":{"name":"Panasonic","reference":"EXB14V100JX","status":"production","datasheetUrl":"https://industrial.panasonic.com/cdbs/www-data/pdf/AOC0000/AOC0000C14.pdf","family":"Chip Resistor Array","datasheetInfo":{"part":{"partNumber":"EXB14V100JX","technology":"thickFilm","series":"Chip Resistor Array","matchcodeDescription":"Number of Elements: 2; Type of Circuit: Isolated Circuit"},"electrical":{"resistance":{"nominal":10.0},"tolerance":0.05,"powerRating":0.031,"temperatureCoefficient":200.0},"mechanical":{"length":{"nominal":0.0008},"width":{"nominal":0.0006}}}}}})J";
+// resistors.ndjson: Stackpole RAVF104DFT10R0, case "0402x4" (four 0402 elements).
+const char* kRAVF104DFT10R0 = R"J({"resistor":{"manufacturerInfo":{"name":"SEI Stackpole","reference":"RAVF104DFT10R0","datasheetUrl":"https://www.seielect.com/catalog/SEI-RAVF.pdf","datasheetInfo":{"part":{"partNumber":"RAVF104DFT10R0","series":"RAVF","description":"RES ARRAY, 10 ohm, 1%, 0402x4, CONVEX | Convex Termination Thick Film Chip Resistor Array","technology":"thickFilm","case":"0402x4"},"electrical":{"resistance":{"nominal":10.0},"powerRating":0.063,"tolerance":0.01,"temperatureCoefficient":200.0,"maxVoltage":25.0},"thermal":{"operatingTemperature":{"minimum":-55.0,"maximum":155.0}},"mechanical":{"assemblyType":"smt"}}}}})J";
+
+json& rinfo(json& rec) { return rec["resistor"]["manufacturerInfo"]["datasheetInfo"]; }
+json renamed(json rec, const std::string& mpn) {
+    rec["resistor"]["manufacturerInfo"]["reference"] = mpn;
+    rinfo(rec)["part"]["partNumber"] = mpn;
+    return rec;
+}
+json as_elements(const std::string& mpn, bool differ) {
+    json rec = renamed(json::parse(kEXB14V100JX), mpn);
+    json& di = rinfo(rec);
+    const json e = di["electrical"];
+    di.erase("electrical");
+    json e2 = e;
+    if (differ) e2["resistance"] = {{"nominal", 22.0}};  // a divider-like second element
+    di["elements"] = json::array({{{"name", "R1"}, {"electrical", e}},
+                                  {{"name", "R2"}, {"electrical", e2}}});
+    di["part"]["internalConnection"] = "isolated";
+    return rec;
+}
+json exb_counted() {
+    json rec = json::parse(kEXB14V100JX);
+    rinfo(rec)["electrical"]["numberOfElements"] = 2;          // added (record's own text: 2)
+    rinfo(rec)["part"]["internalConnection"] = "isolated";     // added ("Isolated Circuit")
+    return rec;
+}
+const json& rows() {
+    static const json r = [] {
+        namespace fs = std::filesystem;
+        const std::string path = (fs::temp_directory_path() / "kelvin_aa2_resistors.ndjson").string();
+        {
+            std::ofstream o(path);
+            o << exb_counted().dump() << "\n"
+              << kRAVF104DFT10R0 << "\n"
+              << as_elements("EXB14V100JX-ELEMENTS", false).dump() << "\n"
+              << as_elements("EXB14V100JX-DIFFER", true).dump() << "\n";
+        }
+        const auto sh = kelvin::build_resistor_shard(path);
+        fs::remove(path);
+        return kelvin::browse::browse_rows(sh, json{{"limit", 100}})["rows"];
+    }();
+    return r;
+}
+json row(const std::string& mpn) {
+    for (const auto& r : rows())
+        if (r.value("mpn", "") == mpn) return r;
+    return json(nullptr);
+}
+}  // namespace aa2
+
+TEST_CASE("owner 2026-11-13 AA2: resistor element count, connection and identical elements are read",
+          "[qarlos][views][index][browse][aa2]") {
+    const json exb = aa2::row("EXB14V100JX");
+    REQUIRE(exb.is_object());
+    CHECK(exb["number_of_elements"] == 2.0);
+    CHECK(exb["internal_connection"] == "isolated");
+    // A record that states neither reads as before (the case string is not copied in).
+    const json ravf = aa2::row("RAVF104DFT10R0");
+    REQUIRE(ravf.is_object());
+    CHECK(ravf["number_of_elements"].is_null());
+    CHECK(ravf["internal_connection"] == "");
+    // Identical elements: the element's values are the part's, the count is the elements'.
+    const json el = aa2::row("EXB14V100JX-ELEMENTS");
+    REQUIRE(el.is_object());
+    CHECK(el["number_of_elements"] == 2.0);
+    CHECK(el["resistance"] == 10.0);
+    CHECK(el["tolerance"] == 0.05);
+    CHECK(el["power_rating"] == 0.031);
+    // Differing elements: no single resistance — left unread.
+    CHECK(aa2::row("EXB14V100JX-DIFFER").is_null());
+}
+
+TEST_CASE("owner 2026-11-13 AA2: resistor element count and internal connection are identities",
+          "[qarlos][crossref][aa2]") {
+    kelvin::crossref::Options opt = res_opt();
+    json orig = res_record_spec(aa2::exb_counted().dump().c_str());
+    auto as = [&](const char* mpn, json n, json ic) {
+        json s = orig;
+        s["mpn"] = mpn;
+        s["number_of_elements"] = n;
+        s["internal_connection"] = ic;
+        return s;
+    };
+    auto r = kelvin::crossref::cross_reference(
+        "resistor", orig,
+        json::array({as("SAME", 2.0, "isolated"), as("FOUR", 4.0, "isolated"),
+                     as("UNCOUNTED", nullptr, "isolated"), as("BUSSED", 2.0, "bussed"),
+                     as("NO_CONN", 2.0, nullptr)}),
+        opt);
+    const json same = res_find(r, "SAME");
+    REQUIRE(same.is_object());
+    CHECK(verdict_of(same, "number_of_elements") == "pass");
+    CHECK(verdict_of(same, "internal_connection") == "pass");
+    CHECK(same["grade"] == "drop_in");
+    const json four = res_find(r, "FOUR");
+    REQUIRE(four.is_object());
+    CHECK(four["status"] == "no_substitute");
+    CHECK(verdict_of(four, "number_of_elements") == "fail");
+    // One side uncounted (still a declared array by its family): UNVERIFIED, network cap.
+    const json unc = res_find(r, "UNCOUNTED");
+    REQUIRE(unc.is_object());
+    CHECK(verdict_of(unc, "number_of_elements") == "unverified");
+    CHECK(unc["grade"] == "major_review");
+    const json bus = res_find(r, "BUSSED");
+    REQUIRE(bus.is_object());
+    CHECK(bus["status"] == "no_substitute");
+    CHECK(verdict_of(bus, "internal_connection") == "fail");
+    const json nc = res_find(r, "NO_CONN");
+    REQUIRE(nc.is_object());
+    CHECK(verdict_of(nc, "internal_connection") == "unverified");
+    CHECK(nc["grade"] == "minor_review");
+
+    // Case-derived count (RAVF "0402x4" = 4) against a stated 2: different -> rejected.
+    json ravf = res_record_spec(aa2::kRAVF104DFT10R0);
+    json two = ravf;
+    two["mpn"] = "RAVF_STATED_2_OTHER_CASE";
+    two["case_code"] = "";
+    two["family"] = "Chip Resistor Array";
+    two["number_of_elements"] = 2.0;
+    auto r2 = kelvin::crossref::cross_reference("resistor", ravf, json::array({two}), opt);
+    const json t = res_find(r2, "RAVF_STATED_2_OTHER_CASE");
+    REQUIRE(t.is_object());
+    CHECK(verdict_of(t, "number_of_elements") == "fail");
+    CHECK(t["status"] == "no_substitute");
+    // A record stating a count its own case contradicts: reported as a data defect, not chosen.
+    json defect = ravf;
+    defect["mpn"] = "RAVF_DEFECT";
+    defect["number_of_elements"] = 2.0;  // the case says 4
+    auto r3 = kelvin::crossref::cross_reference("resistor", ravf, json::array({defect}), opt);
+    const json d = res_find(r3, "RAVF_DEFECT");
+    REQUIRE(d.is_object());
+    CHECK(verdict_of(d, "number_of_elements") == "unverified");
+    CHECK(has_note(d, "data defect: the substitute's record states 2 elements but its case "
+                      "'0402x4' names 4"));
+    CHECK(d["grade"] == "major_review");
+    // A stated count wins over the case: RAVF + a stated 4 against a non-case array stating 4.
+    json four_stated = two;
+    four_stated["mpn"] = "STATED_4";
+    four_stated["number_of_elements"] = 4.0;
+    auto r4 = kelvin::crossref::cross_reference("resistor", ravf, json::array({four_stated}), opt);
+    CHECK(verdict_of(res_find(r4, "STATED_4"), "number_of_elements") == "pass");
+    // A stated count declares a network: against a discrete original it is the
+    // array<->discrete configuration FAIL (the existing network cap).
+    json discrete = ravf;
+    discrete["mpn"] = "DISCRETE";
+    discrete["case_code"] = "0402";
+    discrete["family"] = "";
+    json counted = discrete;
+    counted["mpn"] = "COUNTED_NO_FAMILY";
+    counted["number_of_elements"] = 4.0;
+    auto r5 = kelvin::crossref::cross_reference("resistor", discrete, json::array({counted}), opt);
+    const json cn = res_find(r5, "COUNTED_NO_FAMILY");
+    REQUIRE(cn.is_object());
+    CHECK(verdict_of(cn, "configuration") == "fail");
+}

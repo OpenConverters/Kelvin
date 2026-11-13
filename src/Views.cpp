@@ -518,11 +518,38 @@ std::optional<DiodeRow> extract_diode(const json& env) {
     if (!mi) return std::nullopt;
     const json* di = obj_get(*mi, "datasheetInfo");
     if (!di) return std::nullopt;
-    const json* elec = obj_get(*di, "electrical");
-    if (!elec) return std::nullopt;
     const json empty = json::object();
     const json* part = obj_get(*di, "part");
     if (!part) part = &empty;
+    const json* elec = obj_get(*di, "electrical");
+    // A multi-diode package whose diodes are described one by one carries `dies` (SAS
+    // bcc7a93: one subType + electrical block per diode) INSTEAD of a package-level block.
+    // Read exactly as extract_mosfet reads MOSFET dies (owner 2026-11-13): when every die
+    // states the SAME diode — subType, electrical block and any die thermal block identical
+    // — that die's values are the part's, per diode, as for a dual with one block; dies that
+    // differ (a steering pair beside a different clamp) give the part no single V_F, V_RWM
+    // or I_PP and the record is left unread rather than given one die's numbers.
+    std::optional<std::string> die_subtype;
+    std::optional<double> die_count;
+    if (!elec) {
+        const json* dies = obj_get(*di, "dies");
+        if (!dies || !dies->is_array() || dies->size() < 2) return std::nullopt;
+        const json& first = (*dies)[0];
+        const json* e0 = obj_get(first, "electrical");
+        auto st0 = get_str(first, "subType");
+        if (!e0 || !st0) return std::nullopt;
+        const json* t0 = obj_get(first, "thermal");
+        for (const auto& d : *dies) {
+            const json* e = obj_get(d, "electrical");
+            auto st = get_str(d, "subType");
+            const json* t = obj_get(d, "thermal");
+            if (!e || !st || *e != *e0 || *st != *st0) return std::nullopt;
+            if ((t == nullptr) != (t0 == nullptr) || (t && *t != *t0)) return std::nullopt;
+        }
+        elec = e0;
+        die_subtype = st0;
+        die_count = static_cast<double>(dies->size());
+    }
 
     auto mpn = get_str(*mi, "reference");
     if (!mpn) mpn = get_str(*part, "partNumber");
@@ -538,7 +565,7 @@ std::optional<DiodeRow> extract_diode(const json& env) {
     //   tvs/esd  carry standoffVoltage; NEITHER carries forwardCurrent at all
     // So take each subtype's own reverse-direction rating, and require forward
     // parameters only where the subtype actually has them.
-    const std::string sub = get_str(*part, "subType").value_or("");
+    const std::string sub = die_subtype ? *die_subtype : get_str(*part, "subType").value_or("");
     const bool rectifier_like = (sub != "zener" && sub != "tvs" && sub != "esd");
 
     const bool protection = (sub == "tvs" || sub == "esd");
@@ -606,11 +633,18 @@ std::optional<DiodeRow> extract_diode(const json& env) {
         // whose bounds are inverted states no window we can read.
         if (pos(lo) && pos(hi) && *hi >= *lo) r.vz_tolerance = (*hi - *lo) / (*hi + *lo);
     }
-    r.technology = get_str(*part, "subType").value_or("");
+    r.technology = sub;
     // The die configuration the record STATES, verbatim; absent stays "" (unknown to the
     // ranker), never filled from the part number or the package.
     if (auto v = get_str(*part, "dieConfiguration")) r.die_configuration = *v;
     if (auto v = get_str(*part, "internalConnection")) r.internal_connection = *v;
+    // How many diodes (v22): the count the identical-diode block states, else the number of
+    // dies read above. Only an integer >= 2 is a count (SAS minimum); anything else is
+    // unreadable and stays NaN, never rounded into one.
+    if (auto n = get_num(*elec, "numberOfElements"); n && *n >= 2 && *n == std::floor(*n))
+        r.number_of_elements = *n;
+    else if (die_count)
+        r.number_of_elements = *die_count;
     // Continuous dissipation rating. Absent stays NaN; a 0 or negative is unreadable.
     if (auto v = get_num(*elec, "powerDissipation"); pos(v)) r.power_dissipation = *v;
     // The surge / clamp / capacitance specs, each with the impulse it was stated at
@@ -1037,7 +1071,29 @@ std::optional<ResistorRow> extract_resistor(const json& env) {
     const json* di = obj_get(*mi, "datasheetInfo");
     if (!di) return std::nullopt;
     const json* elec = obj_get(*di, "electrical");
-    if (!elec) return std::nullopt;
+    // A network whose elements are described one by one carries `elements` (RAS 3ba21f6: one
+    // electrical block per element) INSTEAD of a package-level block. Read as extract_diode
+    // reads dies (owner 2026-11-13, AA2): when every element states the SAME electrical block
+    // (and the same thermal block, if any) its values are the part's, per element; elements
+    // that differ (a divider, a terminator) give the network no single resistance and the
+    // record is left unread rather than given one element's value.
+    std::optional<double> element_count;
+    if (!elec) {
+        const json* els = obj_get(*di, "elements");
+        if (!els || !els->is_array() || els->size() < 2) return std::nullopt;
+        const json& first = (*els)[0];
+        const json* e0 = obj_get(first, "electrical");
+        if (!e0) return std::nullopt;
+        const json* t0 = obj_get(first, "thermal");
+        for (const auto& el : *els) {
+            const json* e = obj_get(el, "electrical");
+            const json* t = obj_get(el, "thermal");
+            if (!e || *e != *e0) return std::nullopt;
+            if ((t == nullptr) != (t0 == nullptr) || (t && *t != *t0)) return std::nullopt;
+        }
+        elec = e0;
+        element_count = static_cast<double>(els->size());
+    }
     const json empty = json::object();
     const json* part = obj_get(*di, "part");
     if (!part) part = &empty;
@@ -1137,6 +1193,13 @@ std::optional<ResistorRow> extract_resistor(const json& env) {
     r.pulse_withstanding = fn.pulse_withstanding;
     // v21: the maximum continuous working voltage, as stated. Absent / non-positive stays NaN.
     if (auto v = get_num(*elec, "maxVoltage"); pos(v)) r.max_voltage = *v;
+    // v22: the network structure the record states. Only an integer >= 2 is a count (RAS
+    // minimum); anything else is unreadable and stays NaN, never rounded into one.
+    if (auto n = get_num(*elec, "numberOfElements"); n && *n >= 2 && *n == std::floor(*n))
+        r.number_of_elements = *n;
+    else if (element_count)
+        r.number_of_elements = *element_count;
+    r.internal_connection = get_str(*part, "internalConnection").value_or("");
     return r;
 }
 

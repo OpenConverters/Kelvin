@@ -364,6 +364,7 @@ void row_io(Ar& ar, DiodeRow& r) {
     ar.str(r.peak_pulse_current_waveform);  // v17
     ar.str(r.qualification);           // v20
     ar.dbl(r.junction_capacitance_vr); // v21
+    ar.dbl(r.number_of_elements);      // v22 (SAS bcc7a93)
     ar.boolean(r.is_production);
 }
 
@@ -413,6 +414,8 @@ void row_io(Ar& ar, ResistorRow& r) {
     ar.boolean(r.current_sense);         // v19
     ar.boolean(r.pulse_withstanding);    // v19
     ar.dbl(r.max_voltage);               // v21
+    ar.dbl(r.number_of_elements);        // v22 (RAS 3ba21f6)
+    ar.str(r.internal_connection);       // v22 (RAS 3ba21f6)
 }
 
 template <class Ar>

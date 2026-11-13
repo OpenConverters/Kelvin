@@ -565,11 +565,19 @@ inline std::string safety_class_unverified(char axis, int orig_rank,
 // minor_review (Qarlos r19 seed 28429971). This reads the structured case field, exactly as a
 // metric-height "3528-21" is read; it is not a description or an MPN parse. The count must
 // be 2 or more and the chip half a 4-digit code: anything else declares nothing.
-inline bool case_declares_resistor_network(const std::string& case_code) {
+// The element count such a case string names (AA2, owner 2026-11-13: a STATED
+// electrical.numberOfElements wins over it, and the two disagreeing is a data defect the
+// ranker reports instead of choosing). nullopt when the case names no count.
+inline std::optional<int> case_resistor_element_count(const std::string& case_code) {
     static const std::regex chip_times_n(R"(^\s*\d{4}\s*[xX]\s*(\d{1,2})\s*$)");
     std::smatch m;
-    if (!std::regex_match(case_code, m, chip_times_n)) return false;
-    return std::stoi(m[1].str()) >= 2;
+    if (!std::regex_match(case_code, m, chip_times_n)) return std::nullopt;
+    const int n = std::stoi(m[1].str());
+    if (n < 2) return std::nullopt;
+    return n;
+}
+inline bool case_declares_resistor_network(const std::string& case_code) {
+    return case_resistor_element_count(case_code).has_value();
 }
 inline bool declares_resistor_network(const std::string& family, const std::string& mpn,
                                       const std::string& case_code = std::string()) {

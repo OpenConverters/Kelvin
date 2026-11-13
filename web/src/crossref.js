@@ -143,7 +143,12 @@ export const XREF = [
       current_sense: r.current_sense === true, pulse_withstanding: r.pulse_withstanding === true,
       // v21 (Qarlos r8/r10): the maximum continuous working voltage (RAS electrical.maxVoltage),
       // which the substitute must reach. Absent -> null -> UNVERIFIED in the ranker.
-      max_voltage_V: nz(r.max_voltage) }),
+      max_voltage_V: nz(r.max_voltage),
+      // v22 (RAS 3ba21f6): the network structure the record states — element count
+      // (electrical.numberOfElements, or the count of elements[]) and part.internalConnection.
+      // Both graded as identities; null when unstated, never guessed.
+      number_of_elements: nz(r.number_of_elements),
+      internal_connection: r.internal_connection || null }),
     params: [
       { key: 'value', label: 'R', row: 'resistance', unit: 'Ω' },
       { key: 'power_rating', label: 'P', row: 'power_rating', unit: 'W' },
@@ -357,6 +362,9 @@ export const XREF = [
       // null when unstated, never guessed from the MPN.
       die_configuration: r.die_configuration || null,
       internal_connection: r.internal_connection || null,
+      // How many diodes the package holds (SAS electrical.numberOfElements, or the count of
+      // dies[]), graded as an identity beside the die configuration. null when unstated.
+      number_of_elements: nz(r.number_of_elements),
       vz_min_V: nz(r.vz_min), vz_max_V: nz(r.vz_max),
       vz_tolerance_pct: r.vz_tolerance != null ? r.vz_tolerance * 100 : null,
       // tvs / esd protection specs, each with the impulse it is stated at: the ranker
