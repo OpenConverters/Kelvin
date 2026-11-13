@@ -1172,9 +1172,40 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                o_band_plus = num(original, "tolerance_plus_pct");
     const bool magnetic_band =
         cat == "magnetic" && tolerance_band_stated(o_band_minus, o_band_plus);
+    // Capacitors (owner 2026-11-13, Z4): the original's STATED capacitance band (the row's
+    // capacitance minimum / maximum in farads, as percent below / above its nominal) bounds the
+    // PASS window the same way. Narrowed here, not in primary_value_spec("capacitor"), whose
+    // 0.90-1.50 window the golden table pins; it only ever narrows, so a -20/+80 % part keeps
+    // the 1.50 top. No band stated: the 0.90-1.50 window stands.
+    std::optional<double> cap_band_minus, cap_band_plus;
+    if (cat == "capacitor" && o_val && *o_val > 0) {
+        const auto lo = num(original, "capacitance_min"), hi = num(original, "capacitance_max");
+        if (lo && hi) {
+            cap_band_minus = (1.0 - *lo / *o_val) * 100.0;
+            cap_band_plus = (*hi / *o_val - 1.0) * 100.0;
+        }
+    }
+    const bool capacitor_band =
+        cat == "capacitor" && tolerance_band_stated(cap_band_minus, cap_band_plus);
     auto pv = magnetic_band
                   ? score_primary_value(cat, o_val, s_val, has_pv, o_band_minus, o_band_plus)
                   : score_primary_value(cat, o_val, s_val, has_pv, o_tol);
+    if (capacitor_band) {
+        PrimaryValueSpec cs{};
+        has_pv = primary_value_spec(cat, cs);
+        cs.tight_lo = std::max(cs.tight_lo, 1.0 - *cap_band_minus / 100.0);
+        cs.tight_hi = std::min(cs.tight_hi, 1.0 + *cap_band_plus / 100.0);
+        pv = score_range(o_val, s_val, cs.tight_lo, cs.tight_hi, cs.accept_lo, cs.accept_hi);
+    }
+    // A capacitance outside the original's stated band (inside the accept window): WARN with a
+    // note, ranked after the in-tolerance candidates (the "value_differs" tier), as for an
+    // inductance.
+    bool capacitance_off_band = false;
+    if (capacitor_band && has_pv && pv.verdict != FAIL && o_val && s_val && *s_val > 0 &&
+        outside_band(*s_val / *o_val, *cap_band_minus, *cap_band_plus)) {
+        capacitance_off_band = true;
+        pv.verdict = WARN;
+    }
     // An inductance outside the original's stated band (but inside the accept window) is a
     // different value: WARN (score_range already said so), ranked after every in-band and
     // exact-value candidate — the resistor near-value sort tier ("value_differs"). Grade and
@@ -1252,6 +1283,20 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                 signed_pct((*s_val / *o_val - 1.0) * 100.0) +
                                 "): outside the original's stated " + band +
                                 " tolerance — a different inductance value, ranked after the "
+                                "in-tolerance candidates; check the circuit tolerates it");
+            }
+            if (capacitance_off_band) {
+                const double m = *cap_band_minus, pl = *cap_band_plus;
+                const std::string band =
+                    std::fabs(m - pl) < 0.005 ? "+/-" + plain_pct(m)
+                                              : "+" + plain_pct(pl) + " / -" + plain_pct(m);
+                char buf[160];
+                std::snprintf(buf, sizeof buf, "capacitance %.4g F against the original's %.4g F",
+                              *s_val, *o_val);
+                notes.push_back(std::string(buf) + " (" +
+                                signed_pct((*s_val / *o_val - 1.0) * 100.0) +
+                                "): outside the original's stated " + band +
+                                " tolerance — a different capacitance value, ranked after the "
                                 "in-tolerance candidates; check the circuit tolerates it");
             }
             if (value_differs)
@@ -5207,6 +5252,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // An inductance outside the original's stated tolerance (see inductance_off_band): the
     // same sort tier; grade and direction stay the WARN's (owner 2026-11-13, R1).
     if (inductance_off_band) out["value_differs"] = true;
+    if (capacitance_off_band) out["value_differs"] = true;  // owner 2026-11-13, Z4
     return out;
 }
 

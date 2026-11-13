@@ -7854,3 +7854,50 @@ TEST_CASE("owner 2026-11-13 Z3: ripple temperature basis mismatch demotes and ca
     CHECK(verdict_of(x2, "ripple_current") == "unverified");
     CHECK(x2["status"] == "partial");
 }
+
+// ── Owner 2026-11-13 Z4: a capacitor's stated tolerance bounds the value PASS window ───────
+// VJ0603D750FEBAR (Vishay, 75 pF, stated 74.25-75.75 pF = +/-1 %) took CBR06C680FAGAC (KEMET,
+// 68 pF, -9.3 %) as a value PASS inside the 0.90-1.50 window. Now PASS only inside the
+// original's stated band; outside it (inside the old window) WARN with a note, ranked after
+// the in-tolerance candidates (value_differs tier). An in-band candidate (CBR06C750FAGAC,
+// 75 pF) stays PASS. Verbatim lines of tools/qarlos/bench/data-6bd04c7/capacitors.ndjson,
+// distributorsInfo dropped.
+namespace dec_1113_z4 {
+// capacitors.ndjson line 546259: VJ0603D750FEBAR
+const char* kVJ0603D750FEBAR = R"KREC({"capacitor":{"manufacturerInfo":{"name":"Vishay","reference":"VJ0603D750FEBAR","datasheetUrl":"https://www.vishay.com/docs/45258/vjhifreqseries.pdf","datasheetInfo":{"part":{"partNumber":"VJ0603D750FEBAR","technology":"ceramic-class-1","dielectricCode":"C0G","case":"0603"},"electrical":{"capacitance":{"nominal":7.5e-11,"minimum":7.425e-11,"maximum":7.575e-11},"ratedVoltage":100.0,"polarized":false,"dissipationFactor":0.0005,"dissipationFactorFrequency":1000000},"thermal":{"temperature":{"minimum":-55,"maximum":125},"temperatureCoefficient":{"nominal":0,"minimum":-30,"maximum":30}},"mechanical":{"shape":{"assembly":"SMT","shapeType":"SMD Chip"}},"provenance":[{"source":"manufacturerDatasheet","sourceName":"Vishay VJ HIFREQ Series datasheet","sourceUrl":"https://www.vishay.com/docs/45258/vjhifreqseries.pdf","retrievedDate":"2026-11-08","fields":["part.technology","part.dielectricCode","part.case","electrical.capacitance","electrical.ratedVoltage","electrical.polarized","electrical.dissipationFactor","thermal.temperature","thermal.temperatureCoefficient","mechanical.shape"],"verification":"seriesConfirmed","verificationDate":"2026-11-08","verificationMethod":"Capacitance, tolerance, voltage, dielectric and case size decoded from the ordering code and compared with the selection-chart row for that capacitance code, case and voltage code; tolerance letter, termination, marking and packaging letters checked against the ordering information and the packaging table; operating temperature range, temperature coefficient (0 +/- 30 ppm/degC) and dissipation factor (0.05 % max at 1.0 VRMS, 1 MHz for values up to 1000 pF, 1 kHz above) from the electrical specifications of the C0G (D) dielectric."},{"source":"manufacturerDatabase","sourceName":"Vishay product part list","sourceUrl":"https://www.vishay.com/en/product/45258/tab/designtools-ppg/","retrievedDate":"2026-11-06","fields":["part.partNumber"],"verification":"partNamed","verificationDate":"2026-11-06","verificationMethod":"Order code listed by Vishay under this series document."}]}}}})KREC";
+// capacitors.ndjson line 7996: CBR06C680FAGAC
+const char* kCBR06C680FAGAC = R"KREC({"capacitor":{"manufacturerInfo":{"name":"KEMET","reference":"CBR06C680FAGAC","status":"production","datasheetUrl":"https://www.mouser.com/datasheet/3/72/1/CBR06C680FAGAC.pdf","datasheetInfo":{"part":{"partNumber":"CBR06C680FAGAC","technology":"ceramic-class-1","case":"0603","series":""},"electrical":{"capacitance":{"nominal":6.8e-11},"ratedVoltage":250.0,"dissipationFactorFrequency":1000.0,"voltageRatedDcMax":250.0},"thermal":{"temperature":{"minimum":-55,"maximum":125}},"mechanical":{"shape":{"assembly":"SMT","shapeType":"SMD Chip"},"dimensions":{},"landPattern":{"pattern":"singleRow","originDatum":"padCentroid","pads":[{"id":"1","x":-0.000775,"y":0.0,"shape":"rectangle","width":0.0009,"height":0.00095},{"id":"2","x":0.000775,"y":0.0,"shape":"rectangle","width":0.0009,"height":0.00095}]}},"provenance":[{"source":"distributor","sourceName":"datasheet via Mouser listing","sourceUrl":"https://www.mouser.com/datasheet/3/72/1/CBR06C680FAGAC.pdf","verification":"partNamed","verificationDate":"2026-10-10"},{"source":"derived","sourceName":"IPC-7351B","retrievedDate":"2026-08-02","fields":["mechanical.landPattern"],"derivation":"IPC-7351B nominal land pattern for the case code"}]}}}})KREC";
+// capacitors.ndjson line 7993: CBR06C750FAGAC
+const char* kCBR06C750FAGAC = R"KREC({"capacitor":{"manufacturerInfo":{"name":"KEMET","reference":"CBR06C750FAGAC","status":"production","datasheetUrl":"https://www.mouser.com/datasheet/3/508/1/KEM_C1030_CBR_SMD.pdf","datasheetInfo":{"part":{"partNumber":"CBR06C750FAGAC","technology":"ceramic-class-1","case":"0603","series":""},"electrical":{"capacitance":{"nominal":7.5e-11},"ratedVoltage":250.0,"dissipationFactorFrequency":1000.0,"voltageRatedDcMax":250.0},"thermal":{"temperature":{"minimum":-55,"maximum":125}},"mechanical":{"shape":{"assembly":"SMT","shapeType":"SMD Chip"},"dimensions":{},"landPattern":{"pattern":"singleRow","originDatum":"padCentroid","pads":[{"id":"1","x":-0.000775,"y":0.0,"shape":"rectangle","width":0.0009,"height":0.00095},{"id":"2","x":0.000775,"y":0.0,"shape":"rectangle","width":0.0009,"height":0.00095}]}},"provenance":[{"source":"distributor","sourceName":"datasheet via Mouser listing","sourceUrl":"https://www.mouser.com/datasheet/3/508/1/KEM_C1030_CBR_SMD.pdf","verification":"sourceUnreachable","verificationDate":"2026-09-05"},{"source":"derived","sourceName":"IPC-7351B","retrievedDate":"2026-08-02","fields":["mechanical.landPattern"],"derivation":"IPC-7351B nominal land pattern for the case code"}]}}}})KREC";
+}  // namespace dec_1113_z4
+
+TEST_CASE("owner 2026-11-13 Z4: capacitance outside the original's stated tolerance warns",
+          "[qarlos][crossref][capacitor][dec-z4]") {
+    using namespace dec_1113_z4;
+    const json orig = cap_spec(cap_row(json::parse(kVJ0603D750FEBAR)));
+    const json off = cap_spec(cap_row(json::parse(kCBR06C680FAGAC)));
+    const json in = cap_spec(cap_row(json::parse(kCBR06C750FAGAC)));
+    REQUIRE(orig["capacitance_min"].get<double>() == Approx(74.25e-12));
+    REQUIRE(orig["capacitance_max"].get<double>() == Approx(75.75e-12));
+    // off first in the input: the order of the result is the ranker's.
+    auto r = kelvin::crossref::cross_reference("capacitor", orig, json::array({off, in}));
+    REQUIRE(r["candidates"].size() == 2);
+    const json& first = r["candidates"][0];
+    const json& second = r["candidates"][1];
+    INFO(r.dump());
+    CHECK(first["mpn"] == "CBR06C750FAGAC");
+    CHECK(verdict_of(first, "value") == "pass");
+    CHECK_FALSE(first.value("value_differs", false));
+    CHECK(second["mpn"] == "CBR06C680FAGAC");
+    CHECK(verdict_of(second, "value") == "warn");
+    CHECK(second.value("value_differs", false));
+    CHECK(has_note(second, "outside the original's stated +/-1 % tolerance"));
+    // No tolerance stated on the original: the old 0.90-1.50 window, 68 pF passes.
+    json bare = orig;
+    bare["capacitance_min"] = nullptr;
+    bare["capacitance_max"] = nullptr;
+    const json c3 =
+        kelvin::crossref::cross_reference("capacitor", bare, json::array({off}))["candidates"][0];
+    CHECK(verdict_of(c3, "value") == "pass");
+    CHECK_FALSE(c3.value("value_differs", false));
+}
