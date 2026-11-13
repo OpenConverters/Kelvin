@@ -6316,3 +6316,45 @@ TEST_CASE("dec 1113b N1a: a TVS standoff WARN costs more the closer it is to the
     CHECK(verdict_of(by_mpn(c, "5.0SMDJ120CA"), "standoff_band") == "warn");
     CHECK(by_mpn(c, "5.0SMDJ100CA")["grade"] == by_mpn(c, "5.0SMDJ120CA")["grade"]);
 }
+
+// ── Owner decisions 2026-11-13 (b), N1b: original states no land -> no candidate capped ──
+namespace dec1113b {
+// magnetics: BWLS0006040426NJ00 (Pulse, 1 uH, no dimensions, no case code),
+// SRN3015C-1R0M (Bourns, 1 uH, no dimensions), XFL3012-102MEC (Coilcraft, 1 uH, 3 x 3 mm, '3012')
+const char* kBWLS0006040426NJ00 = R"KSPEC({"mpn":"BWLS0006040426NJ00","length_m":null,"width_m":null,"height_m":null,"case_code":"","mount":"","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"box_axes_ambiguous":false,"value_si":0.000001,"saturation_current":null,"saturation_points":null,"rated_current":null,"dcr":0.1,"srf":null,"temp_min_C":-40,"temp_max_C":125})KSPEC";
+const char* kSRN3015C_1R0M = R"KSPEC({"mpn":"SRN3015C-1R0M","length_m":null,"width_m":null,"height_m":null,"case_code":"","mount":"","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"box_axes_ambiguous":false,"value_si":0.000001,"saturation_current":3,"saturation_points":[{"current":3,"percent_drop":null,"temperature":null}],"rated_current":null,"dcr":0.1,"srf":null,"temp_min_C":-40,"temp_max_C":125})KSPEC";
+const char* kXFL3012_102MEC = R"KSPEC({"mpn":"XFL3012-102MEC","length_m":0.003,"width_m":0.003,"height_m":0.0012,"case_code":"3012","mount":"","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"box_axes_ambiguous":false,"value_si":0.000001,"saturation_current":2.3,"saturation_points":[{"current":2.3,"percent_drop":null,"temperature":null}],"rated_current":2.6,"dcr":0.046,"srf":115000000,"temp_min_C":null,"temp_max_C":null})KSPEC";
+}  // namespace dec1113b
+
+// The candidate that states its dimensions kept a minor_review cap for an unverified footprint
+// while the dimensionless one was uncapped, although neither can be checked against an original
+// that states no land. Both are now uncapped; both still pay the unknown-footprint penalty.
+TEST_CASE("dec 1113b N1b: no footprint cap for any candidate when the original states no land",
+          "[qarlos][crossref][magnetic][dec-1113b]") {
+    using namespace dec1113b;
+    const json c = rank("magnetic", kBWLS0006040426NJ00, {kXFL3012_102MEC, kSRN3015C_1R0M});
+    REQUIRE(c.size() == 2);
+    const json& xfl = by_mpn(c, "XFL3012-102MEC");
+    const json& srn = by_mpn(c, "SRN3015C-1R0M");
+    INFO("XFL3012 " << xfl["grade"] << " / SRN3015C " << srn["grade"]);
+    CHECK(xfl["footprint"] == "unknown");
+    CHECK(srn["footprint"] == "unknown");
+    CHECK(verdict_of(xfl, "footprint") == "unverified");
+    CHECK(verdict_of(srn, "footprint") == "unverified");
+    // The same record with its dimensions and case code removed grades the same: the stated
+    // land no longer costs a cap the dimensionless twin escapes.
+    json bare = json::parse(kXFL3012_102MEC);
+    bare["mpn"] = "XFL3012-102MEC (no land)";
+    bare["length_m"] = nullptr;
+    bare["width_m"] = nullptr;
+    bare["height_m"] = nullptr;
+    bare["case_code"] = "";
+    const json b = kelvin::crossref::cross_reference(
+        "magnetic", json::parse(kBWLS0006040426NJ00), json::array({bare}))["candidates"][0];
+    INFO("dimensionless twin " << b["grade"]);
+    CHECK(xfl["grade"] == b["grade"]);
+    CHECK(xfl["grade"] != "minor_review");
+    // Every candidate still pays the unknown-footprint penalty.
+    CHECK(xfl.value("penalty", 0.0) >= kelvin::crossref::kUnknownDimPenalty);
+    CHECK(srn.value("penalty", 0.0) >= kelvin::crossref::kUnknownDimPenalty);
+}

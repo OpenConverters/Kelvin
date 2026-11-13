@@ -3674,8 +3674,19 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 // 2026-11-12), exactly as the generic-package branch above. A substitute
                 // that states a land or a package, or an original that states a package,
                 // is one-sided and keeps the cap.
-                if (o_pkg.empty() && s_pkg.empty() && (!s_dims || !has_any_land(*s_dims)))
-                    footprint_unstated_both = true;
+                //
+                // When the ORIGINAL states no land, no candidate is capped for footprint (owner,
+                // 2026-11-13, N1b): with nothing to fit against, a candidate that states its
+                // dimensions has not been shown to fit any less than one that states none, yet
+                // it kept the minor_review cap while the dimensionless one did not
+                // (BWLS0006040426NJ00: XFL3012-102MEC capped, SRN3015C-1R0M uncapped). Every
+                // candidate still pays kUnknownDimPenalty above. "States no land" is no land
+                // dimension (true to reach this branch) and no package / case code. (A magnetic
+                // original stating only a case code is left capped: whether that code counts as
+                // "no land" is an open question for the owner.) This branch is shared by every
+                // family whose footprint is the body, so the rule applies to all of them alike.
+                const bool original_states_no_land = o_pkg.empty();
+                if (original_states_no_land) footprint_unstated_both = true;
                 // Name what the substitute IS, so an engineer can see the two case
                 // sizes for themselves even though the ranker cannot compare them.
                 // Only where the substitute states a package at all: where neither
@@ -4409,7 +4420,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //   land / footprint unknown (footprint_unverified)       primary    cap minor_review
     //   land / footprint unknown, NEITHER record states a
     //     land or a package (footprint_unstated_both; also
-    //     both naming one generic package string)             both-unst. UNVERIFIED + penalty,
+    //     both naming one generic package string; or the
+    //     ORIGINAL states no land and no package,
+    //     owner 2026-11-13 N1b)                               both-unst. UNVERIFIED + penalty,
     //                                                                    no cap
     //   lead form axial/radial (lead_form_unverified)         primary    cap minor_review
     //   SMD / THT / board mount (mount_unverified)            primary    cap minor_review
