@@ -140,6 +140,8 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // for a programmable original only when its range contains the original's frequency, or
 // covers the original's range (owner 2026-11-13). A new TimingRow field changes what a shard
 // row serialises, so every v21 shard must be rebuilt and both engines redeployed together.
+// v22 (not yet deployed when added, so no bump) also carries a timing device's supply current
+// (TimingRow.current_consumption, TDAS electrical.supply.currentConsumption; owner 2026-11-13).
 constexpr uint32_t kFormatVersion = 22;
 
 // Identity of the code that produces rows, so a cached shard can be recognised as
@@ -291,6 +293,8 @@ void io_base(Ar& ar, RowBase& r) {
     ar.boolean(r.provenance_retracted);  // v17
     ar.dbl(r.lead_pitch_m);              // v19
     ar.boolean(r.box_axes_ambiguous);    // v20
+    ar.strvec(r.retracted_fields);       // v22 (owner 2026-11-13, S1)
+    ar.str(r.retraction_reason);         // v22
 }
 
 template <class Ar>
@@ -500,6 +504,7 @@ void row_io(Ar& ar, TimingRow& r) {
     ar.dbl(r.built_in_capacitance);  // v21
     ar.dbl(r.frequency_min);  // v22
     ar.dbl(r.frequency_max);  // v22
+    ar.dbl(r.current_consumption);  // v22 (owner 2026-11-13, S3)
     ar.boolean(r.is_production);
 }
 
@@ -708,6 +713,9 @@ void parse_region(const std::string& path, const std::string& content, size_t be
                 row->src_offset = static_cast<uint64_t>(i);
                 row->src_length = static_cast<uint32_t>(raw_len);
                 row->provenance_retracted = all_provenance_retracted(env);
+                FieldRetraction fr = retracted_only_fields(env);
+                row->retracted_fields = std::move(fr.fields);
+                row->retraction_reason = std::move(fr.reason);
                 out.rows.push_back(std::move(*row));
                 out.meta.row_count += 1;
             } else {

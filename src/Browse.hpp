@@ -268,7 +268,8 @@ inline const FieldTable<TimingRow>& fields<TimingRow>() {
          {"temp_max_c", &TimingRow::temp_max_c},
          {"built_in_capacitance", &TimingRow::built_in_capacitance},
          {"frequency_min", &TimingRow::frequency_min},   // v22: programmable range
-         {"frequency_max", &TimingRow::frequency_max}},
+         {"frequency_max", &TimingRow::frequency_max},
+         {"current_consumption", &TimingRow::current_consumption}},  // v22: supply current
         {{"device_type", &TimingRow::device_type},
          {"technology", &TimingRow::technology},
          {"output_type", &TimingRow::output_type},
@@ -658,6 +659,11 @@ json browse_rows(const Shard<Row>& shard, const json& query) {
         // A leaded body's lead pitch (m), its land datum; absent when unstated (v19).
         if (!std::isnan(r.lead_pitch_m)) o["leadPitchM"] = r.lead_pitch_m;
         if (r.provenance_retracted) o["provenanceRetracted"] = true;  // ABT #2035
+        // v22 (owner 2026-11-13, S1): the fields resting only on retracted provenance.
+        if (!r.retracted_fields.empty()) {
+            o["provenanceRetractedFields"] = r.retracted_fields;
+            o["provenanceRetractionReason"] = r.retraction_reason;
+        }
     if (r.box_axes_ambiguous) o["boxAxesAmbiguous"] = true;       // v20, see RowBase
         for (const auto& [name, mem] : t.nums) {
             double v = r.*mem;

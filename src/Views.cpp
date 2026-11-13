@@ -654,6 +654,130 @@ bool all_provenance_retracted(const json& env) {
     return true;
 }
 
+namespace {
+// A provenance `fields` entry, in the record-relative form the walk below produces. The corpus
+// writes the same field several ways: "electrical.forwardCurrent",
+// "datasheetInfo.electrical.breakdownVoltage", "manufacturerInfo.datasheetInfo.electrical.x",
+// and with an array index for an array-valued block ("electrical.0.inductance").
+std::string normalize_provenance_path(std::string p) {
+    for (const char* pre : {"manufacturerInfo.datasheetInfo.", "datasheetInfo."})
+        if (p.rfind(pre, 0) == 0) p = p.substr(std::char_traits<char>::length(pre));
+    std::string out, seg;
+    auto flush = [&] {
+        const bool index = !seg.empty() && std::all_of(seg.begin(), seg.end(), [](char c) {
+            return std::isdigit(static_cast<unsigned char>(c)) != 0;
+        });
+        if (!seg.empty() && !index) out += (out.empty() ? "" : ".") + seg;
+        seg.clear();
+    };
+    for (char c : p) {
+        if (c == '.') flush();
+        else seg += c;
+    }
+    flush();
+    return out;
+}
+// `scope` ("" = the whole record) covers `path` when it is the path, a parent of it, or a part
+// of it (a scope deeper than the leaf names part of that leaf's value).
+bool scope_covers(const std::string& scope, const std::string& path) {
+    if (scope.empty() || scope == path) return true;
+    if (path.size() > scope.size())
+        return path.compare(0, scope.size(), scope) == 0 && path[scope.size()] == '.';
+    return scope.compare(0, path.size(), path) == 0 && scope[path.size()] == '.';
+}
+// Every stated leaf of datasheetInfo (provenance itself excluded), array indices dropped.
+void stated_leaves(const json& v, const std::string& path, std::vector<std::string>& out) {
+    if (v.is_null()) return;
+    if (v.is_object()) {
+        for (const auto& [k, sub] : v.items()) {
+            if (path.empty() && k == "provenance") continue;
+            stated_leaves(sub, path.empty() ? k : path + "." + k, out);
+        }
+        return;
+    }
+    if (v.is_array()) {
+        bool scalar = true;
+        for (const json& e : v)
+            if (e.is_object() || e.is_array()) scalar = false;
+        if (scalar) {
+            if (!v.empty()) out.push_back(path);
+            return;
+        }
+        for (const json& e : v) stated_leaves(e, path, out);
+        return;
+    }
+    out.push_back(path);
+}
+}  // namespace
+
+FieldRetraction retracted_only_fields(const json& env) {
+    FieldRetraction out;
+    const json* mi = find_manufacturer_info(env, 0);
+    const json* di = mi ? obj_get(*mi, "datasheetInfo") : nullptr;
+    const json* pv = di ? obj_get(*di, "provenance") : nullptr;
+    if (!pv || !pv->is_array()) return out;
+    struct Scope {
+        std::string path;
+        std::string reason;
+    };
+    std::vector<Scope> retracted;
+    std::vector<std::string> live;
+    bool any_live = false;
+    for (const json& e : *pv) {
+        if (!e.is_object()) continue;
+        const json* r = obj_get(e, "retracted");
+        const bool is_retracted = r && r->is_boolean() && r->get<bool>();
+        const json* f = obj_get(e, "fields");
+        const bool scoped = f && f->is_array() && !f->empty();
+        if (!is_retracted) {
+            any_live = true;
+            if (!scoped) return out;  // a live entry for the whole record covers every field
+            for (const json& p : *f)
+                if (p.is_string()) live.push_back(normalize_provenance_path(p.get<std::string>()));
+            continue;
+        }
+        const std::string reason = get_str(e, "retractionReason").value_or("");
+        if (!scoped) {
+            retracted.push_back({"", reason});
+            continue;
+        }
+        for (const json& p : *f)
+            if (p.is_string())
+                retracted.push_back({normalize_provenance_path(p.get<std::string>()), reason});
+    }
+    if (retracted.empty() || !any_live) return out;  // nothing retracted, or all of it
+    std::vector<std::string> leaves;
+    stated_leaves(*di, "", leaves);
+    std::vector<std::string> reasons;
+    for (const std::string& leaf : leaves) {
+        const Scope* by = nullptr;
+        for (const Scope& s : retracted)
+            if (scope_covers(s.path, leaf)) {
+                by = &s;
+                break;
+            }
+        if (!by) continue;
+        bool live_cover = false;
+        for (const std::string& s : live)
+            if (scope_covers(s, leaf)) {
+                live_cover = true;
+                break;
+            }
+        if (live_cover) continue;
+        const size_t dot = leaf.find('.');
+        const size_t dot2 = dot == std::string::npos ? dot : leaf.find('.', dot + 1);
+        const std::string field = dot2 == std::string::npos ? leaf : leaf.substr(0, dot2);
+        if (std::find(out.fields.begin(), out.fields.end(), field) == out.fields.end())
+            out.fields.push_back(field);
+        if (!by->reason.empty() &&
+            std::find(reasons.begin(), reasons.end(), by->reason) == reasons.end())
+            reasons.push_back(by->reason);
+    }
+    std::sort(out.fields.begin(), out.fields.end());
+    for (const std::string& r : reasons) out.reason += (out.reason.empty() ? "" : "; ") + r;
+    return out;
+}
+
 std::optional<CapacitorRow> extract_capacitor(const json& env) {
     const json* cap = obj_get(env, "capacitor");
     if (!cap) return std::nullopt;
@@ -1638,6 +1762,7 @@ std::optional<TimingRow> extract_timing(const json& env) {
         if (supply) {
             set_if_pos(r.vsupply_min, get_num(*supply, "minimumSupplyVoltage"));
             set_if_pos(r.vsupply_max, get_num(*supply, "maximumSupplyVoltage"));
+            set_if_pos(r.current_consumption, get_num(*supply, "currentConsumption"));
         }
         r.technology = get_str(*elec, "technology").value_or("");
         r.output_type = get_str(*elec, "outputType").value_or("");

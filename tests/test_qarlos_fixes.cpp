@@ -5299,7 +5299,34 @@ TEST_CASE("qarlos r20: a TCXO with no stated stability is not an 'upgrade'",
     CHECK(has_note(c, "the original's frequency stability is +/-0.5 ppm; the substitute's record "
                       "states none"));
     CHECK(c["direction"] == "unknown");
-    CHECK(c["grade"] == "minor_review");  // the grade is the owner's (secondary: no cap added)
+    // Owner 2026-11-13 (S2) replaced the secondary-axis grade this line pinned (minor_review):
+    // for a TCXO original that states its stability, stability is a PRIMARY axis.
+    CHECK(c["grade"] == "major_review");
+}
+
+// Owner 2026-11-13 (S2): TCXO stability is a primary axis. The same real pair as above, read
+// for the grade: a TCXO substitute that states no stability for a TCXO original that states
+// one is capped at major_review (it was note-only, minor_review). Plain XOs are unchanged.
+namespace timing_tech {
+// timing_devices.ndjson line 7323: ASAK-32.768KHZ-LRS-T (Abracon XO, 32.768 kHz, stability stated)
+const char* kASAK_32_768KHZ_LRS_T = R"KREC({"timeBase":{"oscillator":{"manufacturerInfo":{"name":"Abracon","reference":"ASAK-32.768KHZ-LRS-T","status":"production","series":"ASAK","datasheetInfo":{"part":{"partNumber":"ASAK-32.768KHZ-LRS-T","series":"ASAK","package":"2016 4-SMD","case":"2016 4-SMD"},"electrical":{"technology":"crystalOscillator","frequency":32768.0,"frequencyStability":2.4999999999999998e-05,"outputType":"cmos","supply":{"minimumSupplyVoltage":3.3,"maximumSupplyVoltage":3.3,"currentConsumption":0.00024},"enableFunction":"standby"},"provenance":[{"source":"manufacturerParametric","sourceName":"Abracon parametric search","sourceUrl":"https://abracon.com/Oscillators/ASAK.pdf","retrievedDate":"2026-07-03","fields":["electrical.technology","electrical.frequency","electrical.frequencyStability","electrical.outputType","electrical.supply","electrical.enableFunction"],"verification":"seriesConfirmed","verificationDate":"2026-10-09"}],"thermal":{"operatingTemperature":{"minimum":-40.0,"maximum":85.0}}},"datasheetUrl":"https://abracon.com/Oscillators/ASAK.pdf"}}}})KREC";
+// timing_devices.ndjson line 8937: ASH5KW-32.768KHZ-L-T (Abracon XO, 32.768 kHz, no stability)
+const char* kASH5KW_32_768KHZ_L_T = R"KREC({"timeBase":{"oscillator":{"manufacturerInfo":{"name":"Abracon","reference":"ASH5KW-32.768KHZ-L-T","status":"production","series":"ASH5KW","datasheetInfo":{"part":{"partNumber":"ASH5KW-32.768KHZ-L-T","series":"ASH5KW","package":"1610 4-SMD","case":"1610 4-SMD"},"electrical":{"technology":"crystalOscillator","frequency":32768.0,"outputType":"cmos","supply":{"minimumSupplyVoltage":1.6,"maximumSupplyVoltage":5.5,"currentConsumption":0.0018000000000000002},"enableFunction":"standby"},"provenance":[{"source":"manufacturerParametric","sourceName":"Abracon parametric search","sourceUrl":"https://abracon.com/datasheets/ASH5KW.pdf","retrievedDate":"2026-07-03","fields":["electrical.technology","electrical.frequency","electrical.outputType","electrical.supply","electrical.enableFunction"],"verification":"seriesConfirmed","verificationDate":"2026-10-09"},{"source":"manufacturerDatasheet","sourceName":"Abracon ASH5KW datasheet","sourceUrl":"https://abracon.com/datasheets/ASH5KW.pdf","retrievedDate":"2026-11-09","fields":["electrical.supply"],"verification":"seriesConfirmed","verificationDate":"2026-11-09","verificationMethod":"Electrical characteristics table of the ASH5KW datasheet prints Supply Voltage (Vdd) 1.6 to 5.5 V as one continuous range for the series; compared with the stored zero-width supply 1.6 V = 1.6 V (the stored value equals the printed minimum)"}],"thermal":{"operatingTemperature":{"minimum":-40.0,"maximum":85.0}}},"datasheetUrl":"https://abracon.com/datasheets/ASH5KW.pdf"}}}})KREC";
+}  // namespace timing_tech
+
+TEST_CASE("owner 2026-11-13 S2: TCXO stability unstated on a TCXO substitute caps major_review",
+          "[qarlos][crossref][timing][timing-tech][dec-s2]") {
+    using namespace timing_tech;
+    const json c = one(kAVTX_13_E_40_000MHZ_E05, kECS_TXO_25CSMV_400_AN_TR);
+    CHECK(c["status"] == "partial");
+    CHECK(verdict_of(c, "stability_ppm") == "unverified");
+    CHECK(c["grade"] == "major_review");
+    // A plain XO original stating stability, an XO substitute stating none: still note-only.
+    const json x = one(kASAK_32_768KHZ_LRS_T, kASH5KW_32_768KHZ_L_T);
+    CHECK(x["status"] != "no_substitute");
+    CHECK(verdict_of(x, "stability_ppm") == "unverified");
+    CHECK(has_note(x, "the original's frequency stability is"));
+    CHECK(x["grade"] != "major_review");
 }
 
 TEST_CASE("timing technology: every other pair stays a strict identity",
@@ -6993,4 +7020,151 @@ TEST_CASE("owner 2026-11-13 R2: the transformer turns ratio is compared",
                           "none"));
     CHECK(verdict_of(*two, "turns_ratio") == "fail");
     CHECK(has_note(*two, "winding structure differs"));
+}
+
+// ── Owner decisions 2026-11-13, agent S ──────────────────────────────────────
+
+// S3: the timing table's current_consumption spec (lower is better, 3x warn band) had no row
+// field behind it, so it never ran. The row now carries TDAS electrical.supply.currentConsumption
+// and web/src/crossref.js passes it as current_consumption. Real pair (Qarlos r22 30000906):
+// ASDAIG-48.000MHZ-X-K-T (Abracon XO, 13 mA) -> 7N48071001 (TXC TCXO, 10 mA).
+namespace dec_1113_s {
+// timing_tech::spec plus the supply current, exactly as web/src/crossref.js builds it
+// (current_consumption: nz(r.current_consumption)).
+json timing_spec(const char* line) {
+    json s = timing_tech::spec(line);
+    auto r = kelvin::extract_timing(json::parse(line));
+    REQUIRE(r.has_value());
+    s["current_consumption"] =
+        std::isnan(r->current_consumption) || !(r->current_consumption > 0)
+            ? json(nullptr) : json(r->current_consumption);
+    return s;
+}
+json timing_one(const char* orig, const char* cand) {
+    auto r = kelvin::crossref::cross_reference("timeBase", timing_spec(orig),
+                                               json::array({timing_spec(cand)}));
+    REQUIRE(r["candidates"].size() == 1);
+    return r["candidates"][0];
+}
+}  // namespace dec_1113_s
+
+TEST_CASE("owner 2026-11-13 S3: the timing supply current reaches the row and is compared",
+          "[qarlos][crossref][timing][dec-s3]") {
+    using namespace dec_1113_s;
+    auto o = kelvin::extract_timing(json::parse(timing_tech::kASDAIG_48_000MHZ_X_K_T));
+    auto s = kelvin::extract_timing(json::parse(timing_tech::k7N48071001));
+    REQUIRE(o.has_value());
+    REQUIRE(s.has_value());
+    CHECK(o->current_consumption == Catch::Approx(0.013));
+    CHECK(s->current_consumption == Catch::Approx(0.010));
+    const json c = timing_one(timing_tech::kASDAIG_48_000MHZ_X_K_T, timing_tech::k7N48071001);
+    CHECK(verdict_of(c, "current_consumption") == "pass");  // 10 mA <= 13 mA
+    // The TCXO note no longer says the current is not compared when both records state it.
+    CHECK(has_note(c, "technology differs: a TCXO offered for a quartz crystal oscillator (XO)"));
+    CHECK_FALSE(has_note(c, "its supply current is not compared here"));
+    // The other way round the substitute draws more (13 mA vs 10 mA, inside the 3x band): WARN.
+    // (An XO for a TCXO original is refused on technology, so judge the pair as XO -> XO by
+    // reading the TCXO record's current against the XO's through the spec table directly.)
+    const json orig = timing_spec(timing_tech::k7N48071001);
+    const json cand = timing_spec(timing_tech::kASDAIG_48_000MHZ_X_K_T);
+    const auto reports = kelvin::crossref::evaluate_params("timeBase", orig, cand);
+    bool seen = false;
+    for (const auto& rp : reports)
+        if (rp.key == "current_consumption") {
+            seen = true;
+            CHECK(rp.verdict == "warn");
+        }
+    CHECK(seen);
+}
+
+// S1: retracted provenance, per field. A record with an unscoped retracted entry and live
+// entries scoped to some fields: the other fields rest only on the withdrawn source and read
+// UNVERIFIED in the cross-reference. Real records (diodes.ndjson of the frozen bench data,
+// TAS 3d2be2e, distributorsInfo dropped).
+namespace dec_1113_s {
+// diodes.ndjson line 13484: VS-6CWH02FN-M3 (unscoped retracted entry + live entry scoped to
+// electrical.forwardCurrent)
+const char* kVS_6CWH02FN_M3 = R"KREC({"semiconductor":{"diode":{"manufacturerInfo":{"name":"Vishay","reference":"VS-6CWH02FN-M3","status":"production","datasheetInfo":{"part":{"partNumber":"VS-6CWH02FN-M3","subType":"ultrafast","technology":"Si"},"electrical":{"reverseVoltage":200.0,"forwardCurrent":3.0,"surgeCurrent":50.0,"forwardVoltage":0.9},"provenance":[{"source":"manufacturerParametric","verification":"inferredNotVerified","verificationDate":"2026-09-07","sourceName":"Vishay parametric search","sourceUrl":"https://www.vishay.com/en/diodes/ultrafast-recovery/","retrievedDate":"2026-07-03","retracted":true,"retractionReason":"category browse page cited no exact order code; no part-specific document found"},{"source":"manufacturerParametric","sourceName":"Vishay product page","sourceUrl":"https://www.vishay.com/en/product/93498/","retrievedDate":"2026-11-13","fields":["electrical.forwardCurrent"],"verification":"seriesConfirmed","verificationDate":"2026-11-13","verificationMethod":"Vishay parametric table row for the part prints IF(AV) as '2 x 3' (two diodes of 3 A, per-diode convention as on dual parts already stored); stored 2 A is the leading multiplier, not a current"}],"thermal":{"junctionTemperatureMax":175.0},"mechanical":{"case":"DPAK (TO-252AA)"}}}}}})KREC";
+// diodes.ndjson line 43752: PU1DFSH (live scoped entry + live unscoped datasheet entry)
+const char* kPU1DFSH = R"KREC({"semiconductor":{"diode":{"manufacturerInfo":{"name":"Taiwan Semiconductor","reference":"PU1DFSH","status":"production","description":"25ns, 1A, 200V, Ultra Fast Recovery Rectifier","datasheetUrl":"https://services.taiwansemi.com/storage/resources/datasheet/PU1BFSH%20SERIES_A2109.pdf","family":"Ultra Fast Recovery","datasheetInfo":{"part":{"partNumber":"PU1DFSH","technology":"Si","case":"SOD-128","package":"SOD-128","description":"25ns, 1A, 200V, Ultra Fast Recovery Rectifier","qualification":"Automotive (AEC-Q)","subType":"ultrafast"},"electrical":{"reverseVoltage":200.0,"forwardCurrent":1.0,"surgeCurrent":45.0,"forwardVoltage":0.93,"reverseLeakageCurrent":2e-06,"reverseRecoveryTime":2.5e-08},"thermal":{"junctionTemperatureMax":175.0},"mechanical":{"weight":2.7e-05,"case":"SOD-128"},"provenance":[{"source":"manufacturerParametric","sourceName":"Taiwan Semiconductor product table","sourceUrl":"https://services.taiwansemi.com/api/products_v2?is_with_datasheet=true&category=ultra-fast-recovery-16","retrievedDate":"2026-11-08","fields":["part.partNumber","part.case","part.package","part.description","part.qualification","part.subType","electrical.reverseVoltage","electrical.forwardCurrent","electrical.surgeCurrent","electrical.forwardVoltage","electrical.reverseLeakageCurrent","electrical.reverseRecoveryTime","thermal.junctionTemperatureMax","mechanical.weight","mechanical.case","manufacturerInfo.status"],"verification":"valuesReadFromSource","verificationDate":"2026-11-08","verificationMethod":"Values taken from this part's row of the vendor's own product table, which the vendor's product-filter page loads for its category; converted to SI units only, none derived or added."},{"source":"manufacturerDatasheet","sourceName":"Taiwan Semiconductor datasheet","sourceUrl":"https://services.taiwansemi.com/storage/resources/datasheet/PU1BFSH%20SERIES_A2109.pdf","retrievedDate":"2026-11-08","verification":"partNamed","verificationDate":"2026-11-08","verificationMethod":"Datasheet retrieved and its text prints this part number."}]}}}}})KREC";
+}  // namespace dec_1113_s
+
+TEST_CASE("owner 2026-11-13 S1: fields resting only on a retracted source are listed per record",
+          "[qarlos][views][dec-s1]") {
+    using namespace dec_1113_s;
+    const auto vs = kelvin::retracted_only_fields(json::parse(kVS_6CWH02FN_M3));
+    auto has = [&](const std::string& f) {
+        return std::find(vs.fields.begin(), vs.fields.end(), f) != vs.fields.end();
+    };
+    CHECK(has("electrical.reverseVoltage"));
+    CHECK(has("electrical.surgeCurrent"));
+    CHECK(has("electrical.forwardVoltage"));
+    CHECK(has("mechanical.case"));
+    CHECK(has("thermal.junctionTemperatureMax"));
+    CHECK_FALSE(has("electrical.forwardCurrent"));  // the live product page covers it
+    CHECK(vs.reason.find("category browse page cited no exact order code") != std::string::npos);
+    // A live entry for the whole record covers every field.
+    CHECK(kelvin::retracted_only_fields(json::parse(kPU1DFSH)).fields.empty());
+    // Scoping forms: datasheetInfo. prefix, a parent scope, an array index.
+    json rec = json::parse(kVS_6CWH02FN_M3);
+    json& pv = rec["semiconductor"]["diode"]["manufacturerInfo"]["datasheetInfo"]["provenance"];
+    pv[1]["fields"] = json::array({"datasheetInfo.electrical", "mechanical.0.case"});
+    const auto scoped = kelvin::retracted_only_fields(rec);
+    CHECK(std::find(scoped.fields.begin(), scoped.fields.end(), "electrical.reverseVoltage") ==
+          scoped.fields.end());
+    CHECK(std::find(scoped.fields.begin(), scoped.fields.end(), "mechanical.case") ==
+          scoped.fields.end());
+    CHECK(std::find(scoped.fields.begin(), scoped.fields.end(),
+                    "thermal.junctionTemperatureMax") != scoped.fields.end());
+    // A retracted entry scoped to one field leaves the unscoped-by-anyone fields alone.
+    pv[0]["fields"] = json::array({"thermal.junctionTemperatureMax"});
+    pv[1]["fields"] = json::array({"electrical.forwardCurrent"});
+    const auto one_field = kelvin::retracted_only_fields(rec);
+    CHECK(one_field.fields == std::vector<std::string>{"thermal.junctionTemperatureMax"});
+    // Every entry retracted: the whole-record flag covers it, the per-field list stays empty.
+    pv.erase(1);
+    CHECK(kelvin::retracted_only_fields(rec).fields.empty());
+    CHECK(kelvin::all_provenance_retracted(rec));
+}
+
+// The same pair through the real pipeline: specs are web/src/crossref.js's diode spec of the
+// v22 shard rows built from the frozen data (kelvin-index -> browse -> famFor().spec), so they
+// carry the row's retracted_fields. PU1DFSH -> VS-6CWH02FN-M3: Vr, Vf and Tj max rest on the
+// retracted source alone and read UNVERIFIED; If(AV) has the live product page and grades
+// normally. (The record's surgeCurrent is retracted-only too, but no rectifier comparison reads
+// a surge rating, so there is no verdict for it to change.)
+namespace dec_1113_s {
+const char* kSpecPU1DFSH = R"KSPEC({"mpn":"PU1DFSH","length_m":null,"width_m":null,"height_m":null,"case_code":"SOD-128","mount":"","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"retracted_fields":[],"retraction_reason":"","box_axes_ambiguous":false,"vrrm":200,"if_avg":1,"vf":0.93,"power_dissipation":null,"qrr":null,"trr":2.5e-8,"technology":"ultrafast","die_configuration":null,"internal_connection":null,"vz_min_V":null,"vz_max_V":null,"vz_tolerance_pct":null,"clamping_voltage":null,"clamping_current":null,"peak_pulse_power":null,"peak_pulse_current":null,"junction_capacitance":null,"junction_capacitance_vr":null,"clamping_waveform":"","peak_pulse_power_waveform":"","peak_pulse_current_waveform":"","tj_max":175,"qualification":"Automotive (AEC-Q)"})KSPEC";
+const char* kSpecVS_6CWH02FN_M3 = R"KSPEC({"mpn":"VS-6CWH02FN-M3","length_m":null,"width_m":null,"height_m":null,"case_code":"DPAK (TO-252AA)","mount":"","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"retracted_fields":["electrical.forwardVoltage","electrical.reverseVoltage","electrical.surgeCurrent","mechanical.case","part.partNumber","part.subType","part.technology","thermal.junctionTemperatureMax"],"retraction_reason":"category browse page cited no exact order code; no part-specific document found","box_axes_ambiguous":false,"vrrm":200,"if_avg":3,"vf":0.9,"power_dissipation":null,"qrr":null,"trr":null,"technology":"ultrafast","die_configuration":null,"internal_connection":null,"vz_min_V":null,"vz_max_V":null,"vz_tolerance_pct":null,"clamping_voltage":null,"clamping_current":null,"peak_pulse_power":null,"peak_pulse_current":null,"junction_capacitance":null,"junction_capacitance_vr":null,"clamping_waveform":"","peak_pulse_power_waveform":"","peak_pulse_current_waveform":"","tj_max":175,"qualification":""})KSPEC";
+}  // namespace dec_1113_s
+
+TEST_CASE("owner 2026-11-13 S1: a comparison drawn from a retracted-only field is UNVERIFIED",
+          "[qarlos][crossref][dec-s1]") {
+    using namespace dec_1113_s;
+    const json orig = json::parse(kSpecPU1DFSH), cand = json::parse(kSpecVS_6CWH02FN_M3);
+    auto r = kelvin::crossref::cross_reference("diode", orig, json::array({cand}));
+    REQUIRE(r["candidates"].size() == 1);
+    const json& c = r["candidates"][0];
+    CHECK(verdict_of(c, "vrrm") == "unverified");
+    CHECK(verdict_of(c, "vf") == "unverified");
+    CHECK(verdict_of(c, "tj_max") == "unverified");
+    CHECK(verdict_of(c, "if_avg") == "pass");  // live source: graded normally
+    CHECK(has_note(c, "rest only on a source its record has retracted (category browse page "
+                      "cited no exact order code"));
+    CHECK(c["direction"] == "unknown");
+    // As the ORIGINAL the same record's fields are unverified too; If(AV) is not.
+    auto r2 = kelvin::crossref::cross_reference("diode", cand, json::array({orig}));
+    REQUIRE(r2["candidates"].size() == 1);
+    const json& c2 = r2["candidates"][0];
+    if (c2["status"] != "no_substitute") {
+        CHECK(verdict_of(c2, "if_avg") != "unverified");
+        CHECK(verdict_of(c2, "vrrm") == "unverified");
+        CHECK(has_note(c2, "the comparison against them is unverified"));
+    }
+    // A record with no retracted-only fields is graded as before.
+    json clean = cand;
+    clean["retracted_fields"] = json::array();
+    auto r3 = kelvin::crossref::cross_reference("diode", orig, json::array({clean}));
+    CHECK(verdict_of(r3["candidates"][0], "vrrm") == "pass");
+    CHECK_FALSE(has_note(r3["candidates"][0], "retracted"));
 }
