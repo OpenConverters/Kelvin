@@ -135,7 +135,12 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // v21 also carries a ceramic resonator's built-in load capacitors (TimingRow.built_in_capacitance,
 // TDAS electrical.builtInCapacitance), compared by the cross-reference (Qarlos r11/r13: a
 // 15 pF resonator took 22 pF and capacitor-less parts with no verdict).
-constexpr uint32_t kFormatVersion = 21;
+// v22 carries a timing device's programmable frequency range (TimingRow.frequency_min /
+// frequency_max, TDAS electrical.frequencyRange, ab9f3c4): a programmable blank is admitted
+// for a programmable original only when its range contains the original's frequency, or
+// covers the original's range (owner 2026-11-13). A new TimingRow field changes what a shard
+// row serialises, so every v21 shard must be rebuilt and both engines redeployed together.
+constexpr uint32_t kFormatVersion = 22;
 
 // Identity of the code that produces rows, so a cached shard can be recognised as
 // having been built by a DIFFERENT extractor than the one running now (ABT #426).
@@ -489,6 +494,8 @@ void row_io(Ar& ar, TimingRow& r) {
     ar.dbl(r.temp_max_c);   // v16
     ar.str(r.enable_function);  // v20
     ar.dbl(r.built_in_capacitance);  // v21
+    ar.dbl(r.frequency_min);  // v22
+    ar.dbl(r.frequency_max);  // v22
     ar.boolean(r.is_production);
 }
 

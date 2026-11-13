@@ -445,6 +445,111 @@ inline std::optional<Dims> dims_of(const json& p, const std::string& category) {
     return partial();
 }
 
+// The two case identities the case-kept gates compare. For capacitors they are
+// series-aware: an EIA-letter series' case letter is its EIA size code (owner 2026-11-13,
+// capacitor_case_identities); a leaded capacitor's letter is never a chip case (the same
+// leaded_body rule dims_of applies). Every other family: case_identity on both codes.
+inline std::pair<std::string, std::string> case_identities_of(const std::string& cat,
+                                                              const json& original,
+                                                              const json& cand) {
+    const std::string oc = str(original, "case_code"), sc = str(cand, "case_code");
+    if (cat != "capacitor") return {case_identity(cat, oc), case_identity(cat, sc)};
+    auto letter_ok = [](const json& p) {
+        return !(normalize_mount(str(p, "mount")) == "leaded" || !str(p, "lead_form").empty());
+    };
+    return capacitor_case_identities(oc, str(original, "family"), letter_ok(original), sc,
+                                     str(cand, "family"), letter_ok(cand));
+}
+
+// ── programmable oscillator frequency range (owner 2026-11-13, K2) ───────────
+// A factory-programmable blank (TDAS technology "programmable", e.g. SiTime SiT3901) is sold
+// for a SPAN of frequencies, stated as electrical.frequencyRange {minimum, maximum} (TDAS
+// ab9f3c4); `frequency` is then absent, or the one frequency it was ordered at. The span is
+// read only between two programmable parts: the technology is an identity
+// (timing_technology_cross lists no crossing for "programmable"), so a programmable part
+// never stands in for, or is replaced by, a fixed XO / MEMS / TCXO. Rules:
+//   * the original states a frequency -> a substitute that states a frequency must equal it
+//     (the ordinary exact identity, not handled here); a BLANK substitute (range, no
+//     frequency) is admitted when the original's frequency lies inside its range — PASS,
+//     with a note to order it programmed to that frequency — and rejected otherwise;
+//   * the original states only a range -> the substitute's range must cover it, at both
+//     ends; a substitute stating a frequency (an ordered part) cannot cover a range, and is
+//     rejected;
+//   * anything else (no range on the side that needs one) is the ordinary frequency compare.
+// An original with neither a frequency nor a range is refused before ranking
+// (web/src/crossref.js timingNeedsFrequency), worded as every missing-primary refusal.
+// Range ends are compared within the representation epsilon (same_stated_value).
+struct ProgrammableFrequencyFit {
+    bool applies = false;  // the frequency verdict below replaces the ordinary compare
+    bool pass = false;
+    std::string note;
+    const char* reject_reason = nullptr;
+};
+
+inline ProgrammableFrequencyFit programmable_frequency_fit(const json& original,
+                                                           const json& cand) {
+    ProgrammableFrequencyFit out;
+    if (str(original, "technology") != "programmable" ||
+        str(cand, "technology") != "programmable")
+        return out;
+    const auto o_f = num(original, "frequency"), s_f = num(cand, "frequency");
+    const auto o_lo = num(original, "frequency_range_min"),
+               o_hi = num(original, "frequency_range_max");
+    const auto s_lo = num(cand, "frequency_range_min"), s_hi = num(cand, "frequency_range_max");
+    const bool o_range = o_lo && o_hi, s_blank = !s_f && s_lo && s_hi;
+    auto at_or_above = [](double v, double floor) { return v >= floor || same_stated_value(v, floor); };
+    auto hz = [](double v) {
+        char b[64];
+        std::snprintf(b, sizeof b, "%.10g Hz", v);
+        return std::string(b);
+    };
+    auto span = [&](double lo, double hi) { return hz(lo) + " to " + hz(hi); };
+    if (o_f) {
+        if (!s_blank) return out;  // a stated frequency: the ordinary exact identity
+        out.applies = true;
+        out.pass = at_or_above(*o_f, *s_lo) && at_or_above(*s_hi, *o_f);
+        if (out.pass) {
+            out.note = "programmable blank: the original's " + hz(*o_f) +
+                       " lies inside the substitute's programmable range (" + span(*s_lo, *s_hi) +
+                       ") — order it programmed to " + hz(*o_f);
+        } else {
+            out.note = "the original's " + hz(*o_f) +
+                       " lies outside the substitute's programmable range (" + span(*s_lo, *s_hi) +
+                       ") — it cannot be programmed to the original's frequency";
+            out.reject_reason = "the original's frequency lies outside the substitute's "
+                                "programmable range";
+        }
+        return out;
+    }
+    if (!o_range) return out;
+    out.applies = true;
+    if (s_blank) {
+        out.pass = at_or_above(*o_lo, *s_lo) && at_or_above(*s_hi, *o_hi);
+        if (out.pass) {
+            out.note = "programmable range covers the original's: the substitute spans " +
+                       span(*s_lo, *s_hi) + ", the original " + span(*o_lo, *o_hi);
+        } else {
+            out.note = "programmable range does not cover the original's: the substitute spans " +
+                       span(*s_lo, *s_hi) + ", the original " + span(*o_lo, *o_hi) +
+                       " — it cannot be programmed to every frequency the original can";
+            out.reject_reason = "the substitute's programmable range does not cover the original's";
+        }
+        return out;
+    }
+    out.pass = false;
+    out.note = s_f ? "the original is a programmable blank spanning " + span(*o_lo, *o_hi) +
+                         "; the substitute is ordered at one frequency (" + hz(*s_f) +
+                         ") — it does not cover the original's range"
+                   : "the original is a programmable blank spanning " + span(*o_lo, *o_hi) +
+                         "; the substitute's record states neither a frequency nor a "
+                         "programmable range — its span cannot be checked";
+    out.reject_reason = s_f ? "a fixed-frequency part does not cover the original's "
+                              "programmable range"
+                            : "a parameter the match turns on is absent from the substitute's "
+                              "record — cannot be verified";
+    return out;
+}
+
 // ── resistor power at the original's rating temperature ─────────────────────
 // A resistor's power rating is the power it carries up to a STATED ambient, and above that
 // ambient it derates along its curve. RN50C5000FR36 is 0.05 W at 125 degC (flat to 125,
@@ -1205,6 +1310,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                                     str(cand, "technology"))
                           : TimingTechCross::Same;
     bool timebase_tech_major = false;
+    const ProgrammableFrequencyFit prog_freq =
+        cat == "timeBase" ? programmable_frequency_fit(original, cand) : ProgrammableFrequencyFit{};
     const bool timebase_passive =
         cat == "timeBase" && (str(original, "technology") == "quartzCrystal" ||
                               str(original, "technology") == "ceramicResonator");
@@ -1409,6 +1516,15 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     for (const ParamSpec& spec : params_for(cat)) {
         const bool supply_key = spec.key == "supply_min_V" || spec.key == "supply_max_V";
         if (cat == "timeBase" && supply_key && timebase_passive) continue;
+        // A programmable original or blank substitute: the frequency verdict is the range
+        // check (programmable_frequency_fit), which also runs when neither record states a
+        // single frequency.
+        if (cat == "timeBase" && spec.key == "frequency" && prog_freq.applies) {
+            params.push_back({{"name", "frequency"}, {"verdict", prog_freq.pass ? PASS : FAIL}});
+            notes.push_back(prog_freq.note);
+            if (!prog_freq.pass) return reject(prog_freq.reject_reason);
+            continue;
+        }
         if (cat == "capacitor" && spec.key == "tolerance_pct" && cap_tol_judged) continue;
         bool has_data = detail::present(original, spec.key) || detail::present(cand, spec.key);
         if (spec.key == "saturation_current")
@@ -2932,6 +3048,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // ── physical fit ─────────────────────────────────────────────────────────
     if (opt.check_footprint) {
         auto o_dims = dims_of(original, cat), s_dims = dims_of(cand, cat);
+        // The case identities every case-kept gate below compares (series-aware for capacitors).
+        const auto case_ids = case_identities_of(cat, original, cand);
         // A part with NO dimensions must not be offered as a substitute for an
         // original whose footprint we DO know: its fit can never be verified. For
         // families where the footprint is the mechanical fit and the case code is
@@ -3038,7 +3156,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             const bool magnetic_case = cat == "magnetic" || cat == "chipBead";
             if (magnetic_case ? magnetic_case_codes_differ(oc, sc)
                               : (!oc.empty() && !sc.empty() &&
-                                 case_identity(cat, oc) != case_identity(cat, sc))) {
+                                 case_ids.first != case_ids.second)) {
                 out["footprint"] = "different_case";
                 params.push_back({{"name", "footprint"}, {"verdict", WARN}});
                 demote();
@@ -3098,7 +3216,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 // (generic_package_names_no_land, Qarlos r12/r13).
                 const bool same_case = cat != "magnetic" && cat != "chipBead" && !oc.empty() &&
                                        !sc.empty() &&
-                                       case_identity(cat, oc) == case_identity(cat, sc) &&
+                                       case_ids.first == case_ids.second &&
                                        !generic_package_names_no_land(oc);
                 lead_land_unverified = !same_case;
             }
@@ -3206,7 +3324,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             auto drawn_land = [](const std::optional<Dims>& d) {
                 return d && has_land(*d) && !d->land_from_table;
             };
-            if (!oc.empty() && !sc.empty() && case_identity(cat, oc) == case_identity(cat, sc) &&
+            if (!oc.empty() && !sc.empty() && case_ids.first == case_ids.second &&
                 !(drawn_land(o_dims) && drawn_land(s_dims))) {
                 out["footprint"] = "fits";
                 params.push_back({{"name", "footprint"}, {"verdict", PASS}});
@@ -3395,7 +3513,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             // "1210" is an EIA chip or a molded power inductor, so equal codes are not
             // an equal land.
             const bool same_code = cat != "magnetic" && cat != "chipBead" && !oc.empty() &&
-                                   !sc.empty() && case_identity(cat, oc) == case_identity(cat, sc);
+                                   !sc.empty() && case_ids.first == case_ids.second;
             // ... unless the shared code is a generic style string ("4-SMD, No Lead", "SMD")
             // that names a pad count, not a size: it establishes nothing, so the fit is
             // UNVERIFIED, never 'fits' (generic_package_names_no_land; Qarlos r12/r13,

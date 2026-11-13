@@ -263,7 +263,9 @@ inline const FieldTable<TimingRow>& fields<TimingRow>() {
          {"vsupply_max", &TimingRow::vsupply_max},
          {"temp_min_c", &TimingRow::temp_min_c},
          {"temp_max_c", &TimingRow::temp_max_c},
-         {"built_in_capacitance", &TimingRow::built_in_capacitance}},
+         {"built_in_capacitance", &TimingRow::built_in_capacitance},
+         {"frequency_min", &TimingRow::frequency_min},   // v22: programmable range
+         {"frequency_max", &TimingRow::frequency_max}},
         {{"device_type", &TimingRow::device_type},
          {"technology", &TimingRow::technology},
          {"output_type", &TimingRow::output_type},

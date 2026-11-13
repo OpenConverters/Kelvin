@@ -5895,3 +5895,232 @@ TEST_CASE("dec 2026-11-13 I4: a one-sided positions gap counts toward the identi
     CHECK(c2["grade"] == "minor_review");
     CHECK_FALSE(has_note(c2, "connector identity axes are unverified"));
 }
+
+
+// ── Owner decisions 2026-11-13, agent K: programmable oscillator frequency range ──
+// TDAS ab9f3c4 added electrical.frequencyRange {minimum, maximum} (Hz) for a programmable
+// blank. No TAS record states it yet (ABT #2381 asks TAS to fill it), so the tests take the
+// REAL SiTime records (timing_devices.ndjson of the frozen bench data, TAS 9cb6cf8,
+// distributorsInfo dropped) and add the range the test needs; the extractor reads it and the
+// spec block is built as web/src/crossref.js builds it.
+namespace dec_1113_k {
+// timing_devices.ndjson line 594: SiT3901 (programmable, CMOS, 1.8-2.25 V, no frequency)
+const char* kSiT3901 = R"KREC({"timeBase":{"oscillator":{"manufacturerInfo":{"name":"SiTime","reference":"SiT3901","status":"production","datasheetUrl":"https://www.sitime.com/datasheet/SiT3901","series":"SiT3901","datasheetInfo":{"part":{"partNumber":"SiT3901","series":"SiT3901","package":"1508, 4 pad","qualification":"Automotive (AEC-Q100)","description":"SiTime Digitally Controlled XO, configurable 1-26 MHz"},"electrical":{"technology":"programmable","frequencyStability":4.9999999999999996e-05,"outputType":"cmos","supply":{"minimumSupplyVoltage":1.8,"maximumSupplyVoltage":2.25,"currentConsumption":0.00011},"startupTime":0.075,"rmsPhaseJitter":8e-10,"jitterBandLow":12000.0,"jitterBandHigh":20000000.0,"pullRange":0.15},"provenance":[{"source":"manufacturerParametric","sourceName":"SiTime parametric search","fields":["electrical.technology","electrical.frequencyStability","electrical.outputType","electrical.supply","electrical.startupTime","electrical.rmsPhaseJitter","electrical.jitterBandLow","electrical.jitterBandHigh","electrical.pullRange"],"verification":"partNamed","verificationDate":"2026-10-09"}],"thermal":{"operatingTemperature":{"minimum":-40,"maximum":85}}}}}}})KREC";
+// timing_devices.ndjson line 595: SiT3907 (programmable, CMOS, 1.8-3.3 V, no frequency)
+const char* kSiT3907 = R"KREC({"timeBase":{"oscillator":{"manufacturerInfo":{"name":"SiTime","reference":"SiT3907","status":"production","datasheetUrl":"https://www.sitime.com/datasheet/SiT3907","series":"SiT3907","datasheetInfo":{"part":{"partNumber":"SiT3907","series":"SiT3907","package":"3225, 4 pad","description":"SiTime Digitally Controlled XO, configurable 1-220 MHz"},"electrical":{"technology":"programmable","frequencyStability":9.999999999999999e-06,"outputType":"cmos","supply":{"minimumSupplyVoltage":1.8,"maximumSupplyVoltage":3.3,"currentConsumption":0.032},"startupTime":0.01,"rmsPhaseJitter":6e-13,"jitterBandLow":12000.0,"jitterBandHigh":20000000.0,"pullRange":0.0015999999999999999},"provenance":[{"source":"manufacturerParametric","sourceName":"SiTime parametric search","fields":["electrical.technology","electrical.frequencyStability","electrical.outputType","electrical.supply","electrical.startupTime","electrical.rmsPhaseJitter","electrical.jitterBandLow","electrical.jitterBandHigh","electrical.pullRange"],"verification":"partNamed","verificationDate":"2026-10-09"}],"thermal":{"operatingTemperature":{"minimum":-40,"maximum":85}}}}}}})KREC";
+
+// The record with frequencyRange (and optionally an ordered frequency) set, Hz.
+json with_range(const char* line, std::optional<double> lo, std::optional<double> hi,
+                std::optional<double> f = std::nullopt) {
+    json rec = json::parse(line);
+    json& e = rec["timeBase"]["oscillator"]["manufacturerInfo"]["datasheetInfo"]["electrical"];
+    if (lo && hi) e["frequencyRange"] = {{"minimum", *lo}, {"maximum", *hi}};
+    if (f) e["frequency"] = *f;
+    return rec;
+}
+json spec(const json& rec, const std::string& mpn) {
+    auto r = kelvin::extract_timing(rec);
+    REQUIRE(r.has_value());
+    auto nz = [](double v) { return std::isnan(v) || !(v > 0) ? json(nullptr) : json(v); };
+    auto raw = [](double v) { return std::isnan(v) ? json(nullptr) : json(v); };
+    auto str_or_null = [](const std::string& s) { return s.empty() ? json(nullptr) : json(s); };
+    return json{{"mpn", mpn},
+                {"length_m", nz(r->length_m)}, {"width_m", nz(r->width_m)},
+                {"height_m", nz(r->height_m)}, {"case_code", r->case_code}, {"mount", r->mount},
+                {"lead_pitch_m", nz(r->lead_pitch_m)}, {"is_production", r->is_production},
+                {"provenance_retracted", r->provenance_retracted},
+                {"box_axes_ambiguous", r->box_axes_ambiguous},
+                {"subtype", r->device_type}, {"technology", r->technology},
+                {"device_type", r->device_type}, {"frequency", nz(r->frequency)},
+                {"frequency_range_min", nz(r->frequency_min)},
+                {"frequency_range_max", nz(r->frequency_max)},
+                {"load_capacitance", nullptr}, {"load_capacitance_pF", nullptr},
+                {"built_in_capacitance", nz(r->built_in_capacitance)}, {"esr", nz(r->esr)},
+                {"output_type", str_or_null(r->output_type)}, {"mode", str_or_null(r->mode)},
+                {"enable_function", str_or_null(r->enable_function)},
+                {"supply_min_V", nz(r->vsupply_min)}, {"supply_max_V", nz(r->vsupply_max)},
+                {"tolerance_ppm", std::isnan(r->frequency_tolerance) ? json(nullptr)
+                                                                    : json(r->frequency_tolerance * 1e6)},
+                {"stability_ppm", std::isnan(r->frequency_stability) ? json(nullptr)
+                                                                    : json(r->frequency_stability * 1e6)},
+                {"temp_min_C", raw(r->temp_min_c)}, {"temp_max_C", raw(r->temp_max_c)}};
+}
+json rank(const json& orig, const json& cands) {
+    return kelvin::crossref::cross_reference("timeBase", orig, cands);
+}
+json by_mpn(const json& r, const std::string& mpn) {
+    for (const auto& c : r.at("candidates"))
+        if (c.value("mpn", "") == mpn) return c;
+    FAIL("candidate " << mpn << " not in the ranking");
+    return json();
+}
+}  // namespace dec_1113_k
+
+TEST_CASE("dec-1113 K2: the extractor reads a programmable frequency range, both ends or neither",
+          "[qarlos][crossref][timing][programmable][dec-1113-k]") {
+    using namespace dec_1113_k;
+    auto r = kelvin::extract_timing(with_range(kSiT3901, 1e6, 26e6));
+    REQUIRE(r);
+    CHECK(r->frequency_min == Approx(1e6));
+    CHECK(r->frequency_max == Approx(26e6));
+    CHECK(std::isnan(r->frequency));
+    // The record as TAS has it (no range): nothing read.
+    auto bare = kelvin::extract_timing(json::parse(kSiT3901));
+    REQUIRE(bare);
+    CHECK(std::isnan(bare->frequency_min));
+    CHECK(std::isnan(bare->frequency_max));
+    // A range whose minimum exceeds its maximum states no span.
+    auto inverted = kelvin::extract_timing(with_range(kSiT3901, 26e6, 1e6));
+    REQUIRE(inverted);
+    CHECK(std::isnan(inverted->frequency_min));
+    CHECK(std::isnan(inverted->frequency_max));
+}
+
+TEST_CASE("dec-1113 K2: a programmable blank is admitted only when the original's frequency is in its range",
+          "[qarlos][crossref][timing][programmable][dec-1113-k]") {
+    using namespace dec_1113_k;
+    // SiT3901 ordered at 10 MHz (a programmable original that states its frequency) against
+    // SiT3907 blanks: 1-220 MHz holds 10 MHz; 20-220 MHz does not.
+    const json orig = spec(with_range(kSiT3901, 1e6, 26e6, 10e6), "SiT3901@10MHz");
+    const json in_range = spec(with_range(kSiT3907, 1e6, 220e6), "SiT3907 1-220");
+    const json out_range = spec(with_range(kSiT3907, 20e6, 220e6), "SiT3907 20-220");
+    // Boundary: the range ends exactly on the original's frequency (inclusive).
+    const json edge = spec(with_range(kSiT3907, 10e6, 220e6), "SiT3907 10-220");
+    const json r = rank(orig, json::array({in_range, out_range, edge}));
+    const json a = by_mpn(r, "SiT3907 1-220");
+    CHECK(a["status"] != "no_substitute");
+    CHECK(verdict_of(a, "frequency") == "pass");
+    CHECK(has_note(a, "programmable blank: the original's 10000000 Hz lies inside the substitute's "
+                      "programmable range (1000000 Hz to 220000000 Hz) — order it programmed to "
+                      "10000000 Hz"));
+    const json b = by_mpn(r, "SiT3907 20-220");
+    CHECK(b["status"] == "no_substitute");
+    CHECK(b["reason"] == "the original's frequency lies outside the substitute's programmable range");
+    CHECK(has_note(b, "lies outside the substitute's programmable range"));
+    CHECK(by_mpn(r, "SiT3907 10-220")["status"] != "no_substitute");
+    CHECK(verdict_of(by_mpn(r, "SiT3907 10-220"), "frequency") == "pass");
+    // An ORDERED programmable part still needs the exact frequency (range ignored once a
+    // frequency is stated): 12 MHz inside 1-220 MHz is still a different part.
+    const json ordered = spec(with_range(kSiT3907, 1e6, 220e6, 12e6), "SiT3907@12MHz");
+    const json ro = rank(orig, json::array({ordered}));
+    CHECK(by_mpn(ro, "SiT3907@12MHz")["status"] == "no_substitute");
+    CHECK(by_mpn(ro, "SiT3907@12MHz")["reason"] == "an identity parameter differs from the original");
+}
+
+TEST_CASE("dec-1113 K2: a programmable original stating only a range takes candidates covering it",
+          "[qarlos][crossref][timing][programmable][dec-1113-k]") {
+    using namespace dec_1113_k;
+    const json orig = spec(with_range(kSiT3901, 1e6, 26e6), "SiT3901 1-26");
+    const json covers = spec(with_range(kSiT3907, 1e6, 220e6), "SiT3907 1-220");
+    const json short_lo = spec(with_range(kSiT3907, 2e6, 220e6), "SiT3907 2-220");
+    const json short_hi = spec(with_range(kSiT3907, 1e6, 25e6), "SiT3907 1-25");
+    const json ordered = spec(with_range(kSiT3907, std::nullopt, std::nullopt, 10e6), "SiT3907@10MHz");
+    const json none = spec(json::parse(kSiT3907), "SiT3907 as in TAS");
+    const json r = rank(orig, json::array({covers, short_lo, short_hi, ordered, none}));
+    CHECK(by_mpn(r, "SiT3907 1-220")["status"] != "no_substitute");
+    CHECK(verdict_of(by_mpn(r, "SiT3907 1-220"), "frequency") == "pass");
+    CHECK(has_note(by_mpn(r, "SiT3907 1-220"), "programmable range covers the original's"));
+    for (const char* m : {"SiT3907 2-220", "SiT3907 1-25"}) {
+        CHECK(by_mpn(r, m)["status"] == "no_substitute");
+        CHECK(by_mpn(r, m)["reason"] == "the substitute's programmable range does not cover the original's");
+    }
+    CHECK(by_mpn(r, "SiT3907@10MHz")["status"] == "no_substitute");
+    CHECK(by_mpn(r, "SiT3907@10MHz")["reason"] ==
+          "a fixed-frequency part does not cover the original's programmable range");
+    CHECK(by_mpn(r, "SiT3907 as in TAS")["status"] == "no_substitute");
+}
+
+TEST_CASE("dec-1113 K2: fixed-frequency oscillators are unaffected by the programmable range",
+          "[qarlos][crossref][timing][programmable][dec-1113-k]") {
+    using namespace dec_1113_k;
+    // A quartz XO (MSH302548AH-50.000MHZ-T3, 50 MHz) against a programmable blank whose range
+    // holds 50 MHz: still the technology identity's rejection, never a range admission.
+    const json xo = timing_tech::spec(timing_tech::kMSH302548AH_50_000MHZ_T3);
+    const json blank = spec(with_range(kSiT3907, 1e6, 220e6), "SiT3907 1-220");
+    const json r = rank(xo, json::array({blank}));
+    CHECK(by_mpn(r, "SiT3907 1-220")["status"] == "no_substitute");
+    CHECK(by_mpn(r, "SiT3907 1-220")["reason"] == "an identity parameter differs from the original");
+    CHECK_FALSE(has_note(by_mpn(r, "SiT3907 1-220"), "programmable"));
+    // And a programmable original never takes a fixed XO through its range.
+    json xo50 = xo;
+    xo50["mpn"] = "XO-10MHz";
+    xo50["frequency"] = 10e6;
+    const json porig = spec(with_range(kSiT3901, 1e6, 26e6, 10e6), "SiT3901@10MHz");
+    const json rp = rank(porig, json::array({xo50}));
+    CHECK(by_mpn(rp, "XO-10MHz")["status"] == "no_substitute");
+    CHECK_FALSE(has_note(by_mpn(rp, "XO-10MHz"), "programmable"));
+}
+
+
+// ── Owner decisions 2026-11-13, agent K: tantalum EIA letter = EIA size code ────
+// Within an EIA-letter series (293D, 593D, T83, T55, T50, T51, TMCH) a case letter and its EIA
+// size code are one case identity: A = 1206 / 3216, B = 1210 / 3528, C = 2312 / 6032,
+// D = 2917 / 7343. KEMET T499 states "1206" for its A case.
+namespace dec_1113_k1 {
+// capacitors.ndjson line 434685: 293D225X9010A2TE3 (Vishay 293D, case "A", 2.2 uF / 10 V),
+// spec as web/src/crossref.js builds it from the v22 shard row of the frozen bench data.
+const char* k293D225X9010A2TE3 = R"KSPEC({"mpn":"293D225X9010A2TE3","length_m":null,"width_m":null,"height_m":null,"case_code":"A","mount":"SMT","lead_pitch_m":null,"is_production":false,"provenance_retracted":false,"box_axes_ambiguous":false,"value_si":0.0000022,"voltage":10,"esr":6.3,"ripple_current":0.11,"technology":"tantalum-mno2","dielectric_code":"","family":"293D","voltage_ac":null,"esr_frequency":100000,"temp_min_C":-55,"temp_max_C":125,"ripple_current_frequency":100000,"safety_class":null,"capacitance_min":0.00000198,"capacitance_max":0.00000242,"lead_form":null,"qualified_spec":null,"qualified_grade":null,"qualified_failure_rate":null})KSPEC";
+}  // namespace dec_1113_k1
+
+TEST_CASE("dec-1113 K1: an EIA-series tantalum letter and its EIA size code are one case",
+          "[qarlos][crossref][tantalum][dec-1113-k]") {
+    using kelvin::crossref::capacitor_case_identities;
+    auto same = [](const std::string& oc, const std::string& os, const std::string& sc,
+                   const std::string& ss, bool o_ok = true, bool s_ok = true) {
+        const auto ids = capacitor_case_identities(oc, os, o_ok, sc, ss, s_ok);
+        return ids.first == ids.second;
+    };
+    // The four owner pairs, both spellings, both directions.
+    CHECK(same("A", "293D", "1206", ""));
+    CHECK(same("A", "293D", "3216", ""));
+    CHECK(same("1206", "", "A", "T83"));
+    CHECK(same("B", "593D", "1210", ""));
+    CHECK(same("B", "T55", "3528", ""));
+    CHECK(same("C", "T83", "2312", ""));
+    CHECK(same("C", "T51", "6032", ""));
+    CHECK(same("D", "TMCH", "2917", ""));
+    CHECK(same("D", "T50", "7343", ""));
+    // The catalogue's other spellings of the same sizes: metric-height, dual, marked metric.
+    CHECK(same("A", "293D", "3216-18", ""));
+    CHECK(same("B", "293D", "3528-21", ""));
+    CHECK(same("D", "293D", "7343-31", ""));
+    CHECK(same("D", "293D", "2917 (7343 Metric)", ""));
+    CHECK(same("B", "293D", "1411 (3528 Metric)", ""));  // the metric half names 3528
+    CHECK(same("A", "293D", "3216M/1206", ""));
+    // Boundaries: a different size, or a dual string contradicting itself, is still different.
+    CHECK_FALSE(same("A", "293D", "1210", ""));
+    CHECK_FALSE(same("A", "293D", "3528-21", ""));
+    CHECK_FALSE(same("D", "293D", "1206 (7343 Metric)", ""));
+    CHECK_FALSE(same("B", "293D", "1411", ""));  // bare 1411 is not in the owner's list
+    // Only EIA-letter series: CWR06's "A" (2.54 x 1.27 mm) is not 1206, nor is a letter with no
+    // series, nor an EIA-series letter on a leaded body.
+    CHECK_FALSE(same("A", "CWR06", "1206", ""));
+    CHECK_FALSE(same("A", "194D", "3216", ""));
+    CHECK_FALSE(same("A", "", "1206", ""));
+    CHECK_FALSE(same("A", "293D", "1206", "", /*o_ok=*/false));
+    // Letters outside A-D are not mapped (E = 7343-43 shares D's land at another height: the
+    // owner's call, not made here).
+    CHECK_FALSE(same("E", "293D", "7343-43", ""));
+    // Unchanged where no EIA-series letter is involved: an unmarked metric "3216" against
+    // "1206" is not guessed, and letter against letter compares as before.
+    CHECK_FALSE(same("3216", "", "1206", ""));
+    CHECK(same("A", "293D", "A", "T95"));
+    CHECK(same("A", "CWR06", "A", "293D"));
+
+    // The real pair: Vishay 293D225X9010A2TE3 ("A") against KEMET T499A225K010ATE8K0 ("1206"),
+    // same 2.2 uF / 10 V. It came back different_case ("A -> 1206"); now the same case.
+    using namespace dec_1113_j;
+    const json v293 = sp(dec_1113_k1::k293D225X9010A2TE3), t499 = sp(kT499A225K010ATE8K0);
+    const json c = by_mpn(rank("capacitor", v293, json::array({t499})), "T499A225K010ATE8K0");
+    CHECK(c["footprint"] != "different_case");
+    CHECK_FALSE(has_note(c, "different package/case"));
+    CHECK(c["footprint"] == "fits");
+    const json back = by_mpn(rank("capacitor", t499, json::array({v293})), "293D225X9010A2TE3");
+    CHECK(back["footprint"] != "different_case");
+    CHECK_FALSE(has_note(back, "different package/case"));
+    // CWR06DC155JCA's sibling path stays different: its "A" is CWR06's 2.54 x 1.27 mm.
+    const json cwr = by_mpn(rank("capacitor", sp(kCWR06DC155JCA), json::array({t499})),
+                            "T499A225K010ATE8K0");
+    CHECK(cwr["footprint"] == "different_case");
+    CHECK(has_note(cwr, "different package/case (A -> 1206) — 2.54 x 1.27 mm against 3.2 x 1.6 mm"));
+}
