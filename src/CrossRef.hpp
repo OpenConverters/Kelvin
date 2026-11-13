@@ -445,6 +445,26 @@ inline std::optional<Dims> dims_of(const json& p, const std::string& category) {
     return partial();
 }
 
+// One capacitor's side of the case gate (capacitor_case_identities): its case string, series,
+// technology, whether its letter may be read as a chip case (never for a leaded body: the
+// leaded_body rule dims_of applies), and the body its record DRAWS — length_m / width_m as
+// stated, never a table outline resolved from the code.
+inline CapacitorCaseSide capacitor_case_side(const json& p) {
+    CapacitorCaseSide x;
+    x.code = str(p, "case_code");
+    x.series = str(p, "family");
+    x.technology = str(p, "technology");
+    x.letter_ok = !(normalize_mount(str(p, "mount")) == "leaded" || !str(p, "lead_form").empty());
+    const auto l = num(p, "length_m"), w = num(p, "width_m");
+    if (l && *l > 0 && w && *w > 0) {
+        Dims d;
+        d.length = *l;
+        d.width = *w;
+        x.drawn = d;
+    }
+    return x;
+}
+
 // The two case identities the case-kept gates compare. For capacitors they are
 // series-aware: an EIA-letter series' case letter is its EIA size code (owner 2026-11-13,
 // capacitor_case_identities); a leaded capacitor's letter is never a chip case (the same
@@ -454,11 +474,7 @@ inline std::pair<std::string, std::string> case_identities_of(const std::string&
                                                               const json& cand) {
     const std::string oc = str(original, "case_code"), sc = str(cand, "case_code");
     if (cat != "capacitor") return {case_identity(cat, oc), case_identity(cat, sc)};
-    auto letter_ok = [](const json& p) {
-        return !(normalize_mount(str(p, "mount")) == "leaded" || !str(p, "lead_form").empty());
-    };
-    return capacitor_case_identities(oc, str(original, "family"), letter_ok(original), sc,
-                                     str(cand, "family"), letter_ok(cand));
+    return capacitor_case_identities(capacitor_case_side(original), capacitor_case_side(cand));
 }
 
 // ── programmable oscillator frequency range (owner 2026-11-13, K2) ───────────
@@ -786,6 +802,12 @@ inline ConnectorPitchFit connector_pitch_fit(const json& original, const json& c
         const auto n = num(*rec, "positions"), rows = num(*rec, "rows");
         if (n && rows && *rows >= 1.0) per_row = std::max(per_row, std::ceil(*n / *rows));
     }
+    // The lower bound of 2 above holds here too: a stated contact-to-contact pitch means two
+    // contacts sit that far apart, so a row is never read as one contact long. Amphenol
+    // 10167520-121253CLF states 6 positions in 6 rows; the per-row count came out 1, the
+    // end-pin offset 0, and its 3.0 mm pitch was graded 'pass' against TE 3-641148-5's
+    // 3.96 mm (Qarlos r17 seed 27487410).
+    if (per_row > 0.0) per_row = std::max(per_row, 2.0);
     const std::string pitches =
         "pitch " + mm(*o_p * 1e-3) + " -> " + mm(*s_p * 1e-3) + " mm";
     if (per_row > 0.0) {
@@ -1129,8 +1151,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     bool resistor_class_conflict = false;
     if (cat == "resistor") {
         const std::string conflict = resistor_network_conflict(
-            declares_resistor_network(str(original, "family"), str(original, "mpn")),
-            declares_resistor_network(str(cand, "family"), str(cand, "mpn")));
+            declares_resistor_network(str(original, "family"), str(original, "mpn"),
+                                      str(original, "case_code")),
+            declares_resistor_network(str(cand, "family"), str(cand, "mpn"),
+                                      str(cand, "case_code")));
         if (!conflict.empty()) {
             params.push_back({{"name", "configuration"}, {"verdict", FAIL}});
             demote();
@@ -3151,7 +3175,21 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // read, and LQW04AN47NH20D came back 'upgrade' for CWW0402-47RGS with no package note
         // (Qarlos 2026-11-09, seed 20784754). Their undecodable strings still fall through to
         // the SIZE check.
-        if (!out.contains("footprint")) {
+        // A LEADED pair whose records both state the lead pitch, and the same one: the holes
+        // are the land (see "lead pitch" below), so the case STRINGS do not decide it. WIMA
+        // FKP2C016801D00HO00 ("PCM 5", 7.2 x 4.5 x 6 mm, 5 mm pitch) took KEMET
+        // PFR5682G63J11L4Bulk ("7.2x6x4.5mm", the same box, 5 mm pitch) as "different
+        // package/case — different land pattern" (Qarlos bench seed 20575296). The body
+        // compare below still decides clearance and keep-out; a different lead pitch is
+        // still a different land, and the lead-pitch rule below (FAIL, "lead pitch differs")
+        // says so — the case-string gate must not pre-empt it with its WARN when both
+        // pitches are on record.
+        constexpr double kLeadPitchTolM = 0.1e-3;
+        const auto o_lp = num(original, "lead_pitch_m"), s_lp = num(cand, "lead_pitch_m");
+        const std::string o_mcls = mount_class(o_mt, o_pkg), s_mcls = mount_class(s_mt, s_pkg);
+        const bool leaded_pair = cat != "connector" && (o_mcls == "leaded" || s_mcls == "leaded");
+        const bool pitches_decide = leaded_pair && o_lp && s_lp;
+        if (!out.contains("footprint") && !pitches_decide) {
             const std::string oc = str(original, "case_code"), sc = str(cand, "case_code");
             const bool magnetic_case = cat == "magnetic" || cat == "chipBead";
             if (magnetic_case ? magnetic_case_codes_differ(oc, sc)
@@ -3193,10 +3231,6 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // 5.00 / 5.08 mm as one hole pattern (the usual metric/inch cross-use); and an
         // axial part with no pitch on record is held to the same rule, although its lead
         // bend is chosen by the layout rather than by the part.
-        constexpr double kLeadPitchTolM = 0.1e-3;
-        const std::string o_mcls = mount_class(o_mt, o_pkg), s_mcls = mount_class(s_mt, s_pkg);
-        const bool leaded_pair = cat != "connector" && (o_mcls == "leaded" || s_mcls == "leaded");
-        const auto o_lp = num(original, "lead_pitch_m"), s_lp = num(cand, "lead_pitch_m");
         bool lead_land_unverified = false;
         if (leaded_pair && !out.contains("footprint")) {
             if (o_lp && s_lp) {
@@ -3594,6 +3628,40 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // pattern AND more headroom, and an engineer has to be told both. Only a
         // TALLER substitute is a risk; a shorter one keeps the pads and asks less
         // of the enclosure.
+        // ── two tantalum cases on one land, at different heights (owner 2026-11-13, L2) ──
+        // An EIA-series D (7343-31) and E (7343-43), a V (7343-20), or a "7343-43" string all
+        // name the 7343 land (capacitor_case_identities), so they pass the case gate; what
+        // they differ in is the HEIGHT, compared here on its own axis. A side whose record
+        // draws no height takes the height its case string designates (tantalum_case_height:
+        // a code that spells its height, never a table value); the ordinary clearance rule
+        // below then grades it — taller WARN, much taller FAIL, shorter pass. Only for two
+        // DIFFERENT case strings that the gate found to be one land.
+        if (cat == "capacitor" && case_ids.first == case_ids.second &&
+            normalize_case_code(str(original, "case_code")) !=
+                normalize_case_code(str(cand, "case_code"))) {
+            const auto oh = tantalum_case_height(capacitor_case_side(original));
+            const auto sh = tantalum_case_height(capacitor_case_side(cand));
+            std::vector<std::string> read;
+            auto fill = [&](std::optional<Dims>& d, const std::optional<CaseHeight>& h,
+                            const char* who) {
+                if (!h || (d && d->height)) return;
+                if (!d) d = Dims{};
+                d->height = h->height_m;
+                d->height_from_table = false;
+                read.push_back(std::string(who) + " " + h->designation + " (" +
+                               mm(h->height_m) + " mm)");
+            };
+            fill(o_dims, oh, "the original's");
+            fill(s_dims, sh, "the substitute's");
+            if (!read.empty() && o_dims && o_dims->height && s_dims && s_dims->height) {
+                std::string what;
+                for (size_t i = 0; i < read.size(); ++i) what += (i ? ", " : "") + read[i];
+                notes.push_back("same land (" + str(original, "case_code") + " -> " +
+                                str(cand, "case_code") +
+                                "); the case heights differ by designation, read as " + what +
+                                " — height compared on its own axis");
+            }
+        }
         HeightFit hfit = height_fit(o_dims, s_dims);
         // A magnetic is verified ONLY from its drawing (see dims_of), and its height is the
         // axis that varies most across one footprint: a 2.5 x 2.0 mm body ships 1.0 to 1.2 mm

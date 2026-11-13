@@ -25,6 +25,7 @@
 #include <optional>
 #include <regex>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -144,22 +145,45 @@ inline const std::map<std::string, LWH>& tantalum_cwr06_letter() {
     return t;
 }
 
+// The EIA-letter series' own table: the EIA A-D bodies, plus E (7343-43) and V (7343-20), which
+// are D's 7.3 x 4.3 mm land at another height (owner 2026-11-13, L2: land = case, the height is
+// compared separately). No height is listed for E / V: the case's height is read from its EIA
+// designation (tantalum_eia_letter_designation), never from a typical table value.
+inline const std::map<std::string, LWH>& tantalum_eia_series_letter() {
+    static const std::map<std::string, LWH> t = [] {
+        std::map<std::string, LWH> m = tantalum_letter();
+        m["E"] = {7.30, 4.30, -1};
+        m["V"] = {7.30, 4.30, -1};
+        return m;
+    }();
+    return t;
+}
+
 inline const std::map<std::string, LWH>* tantalum_series_letter_table(const std::string& series) {
     const std::string s = upper(trim(series));
-    if (tantalum_eia_letter_series().count(s)) return &tantalum_letter();
+    if (tantalum_eia_letter_series().count(s)) return &tantalum_eia_series_letter();
     if (s == "CWR06" || s == "194D") return &tantalum_cwr06_letter();
     return nullptr;
 }
 
 // The EIA size code a tantalum case letter IS, within an EIA-letter series (owner 2026-11-13):
 // A = 1206 / 3216, B = 1210 / 3528, C = 2312 / 6032, D = 2917 / 7343. The imperial code is
-// the identity the case gate compares; the metric code maps onto it. Later letters (E, V, ...)
-// are not listed: the owner admitted them only where the series' datasheet maps them
-// unambiguously, and E (7343-43) and V (7343-20) share D's 7343 land at another height, so
-// merging them with D is a decision left to the owner.
+// the identity the case gate compares; the metric code maps onto it. E (7343-43) and V
+// (7343-20) are D's 7343 land at another height: land = case, so they map to 2917 like D, and
+// the height difference is compared on its own axis (owner 2026-11-13, L2).
 inline const std::map<std::string, std::string>& tantalum_eia_letter_imperial() {
     static const std::map<std::string, std::string> t{
-        {"A", "1206"}, {"B", "1210"}, {"C", "2312"}, {"D", "2917"}};
+        {"A", "1206"}, {"B", "1210"}, {"C", "2312"}, {"D", "2917"}, {"E", "2917"}, {"V", "2917"}};
+    return t;
+}
+// The EIA metric-height designation each EIA-series letter names (L x W in tenths of a mm,
+// then the maximum height): A-D from the "EIA SIZE" column of the Vishay datasheets listed
+// above (A 3216-18, B 3528-21, C 6032-28, D 7343-31), E 7343-43 and V 7343-20 as the owner gave
+// them (2026-11-13). Used only for the height of two cases that share a land.
+inline const std::map<std::string, std::string>& tantalum_eia_letter_designation() {
+    static const std::map<std::string, std::string> t{
+        {"A", "3216-18"}, {"B", "3528-21"}, {"C", "6032-28"},
+        {"D", "7343-31"}, {"E", "7343-43"}, {"V", "7343-20"}};
     return t;
 }
 inline const std::map<std::string, std::string>& tantalum_eia_metric_imperial() {
@@ -636,7 +660,16 @@ inline const std::vector<std::string>& leaded_tokens() {
     return t;
 }
 
+// A wide-terminal chip code (1225, 0612, 1218, ...; defined with the footprint rules below) is
+// an SMD chip outline as surely as the 2512 / 1206 it turns, but none of them is a token
+// above: YAGEO AC1225FK-07249RL and AC0612FR-07680RL (case "1225" / "0612", no assembly type
+// on record) read as mount 'not stated', and ranked FIRST for the through-hole Stackpole
+// RNF12DTE249R / RNMF14DTC680R instead of being rejected as a different board process
+// (Qarlos bench seed 20575296). Matched on the WHOLE normalised string, never as a
+// substring, so a "12.25 mm" or a part number containing the digits does not classify.
+inline bool wide_terminal_chip_code(const std::string& code);
 inline bool is_smd(const std::string& package) {
+    if (wide_terminal_chip_code(package)) return true;
     const std::string p = dims_detail::upper(package);
     for (const auto& tok : smd_tokens())
         if (p.find(tok) != std::string::npos) return true;
@@ -907,7 +940,20 @@ inline const std::map<std::string, std::string>& chip_metric_to_imperial() {
     return t;
 }
 
-inline std::string canonical_chip_case(const std::string& s) {
+// A case string that is a body size in millimetres with the unit written out ("6.3x8mm",
+// "7.2x6x4.5mm"; 9,932 capacitor records in data-3d2be2e) is the same case as the same size
+// written without it ("6.3x8"): KEMET A758EK477M0ECAE018 "6.3x8mm" was called a different case
+// from Nichicon RS80E471MCNASQ "6.3x8", the same 6.3 x 8 mm radial can (Qarlos r19 seed
+// 28325242). Only a pure "AxB[xC] mm" string loses its unit; anything else is untouched.
+inline std::string strip_mm_unit(const std::string& s) {
+    static const std::regex sized_mm(
+        R"(^\s*(\d+(?:\.\d+)?(?:\s*[xX]\s*\d+(?:\.\d+)?){1,2})\s*mm\s*$)", std::regex::icase);
+    std::smatch m;
+    return std::regex_match(s, m, sized_mm) ? m[1].str() : s;
+}
+
+inline std::string canonical_chip_case(const std::string& s_in) {
+    const std::string s = strip_mm_unit(s_in);
     const std::map<std::string, std::string>& kMetricToImperial = chip_metric_to_imperial();
     static const std::regex pair_mi(R"(^\s*(\d{4,5})M\s*/\s*(\d{4,6})\s*$)",
                                     std::regex::icase);
@@ -954,7 +1000,7 @@ inline std::string case_identity(const std::string& category, const std::string&
 // compared exactly as before, and the bodies (or an UNVERIFIED footprint) decide.
 
 // The imperial size an EIA-letter series' case letter names; nullopt for any other code or
-// series, and for letters outside A-D.
+// series, and for letters outside A-D, E and V.
 inline std::optional<std::string> tantalum_eia_letter_size(const std::string& code,
                                                            const std::string& series) {
     using namespace dims_detail;
@@ -1008,31 +1054,6 @@ inline std::optional<std::string> tantalum_eia_numeric_size(const std::string& c
     const std::string canon = canonical_chip_case(code);
     if (is_imperial(canon)) return canon;
     return std::nullopt;
-}
-
-// The two identities the capacitor case gate compares. `*_letter_ok` is false for a leaded
-// body (a chip case table never sizes one; resolve_dimensions leaded_body). With no
-// EIA-series letter on either side this is exactly case_identity on both codes.
-inline std::pair<std::string, std::string> capacitor_case_identities(
-    const std::string& oc, const std::string& o_series, bool o_letter_ok,
-    const std::string& sc, const std::string& s_series, bool s_letter_ok) {
-    const auto ol = o_letter_ok ? tantalum_eia_letter_size(oc, o_series) : std::nullopt;
-    const auto sl = s_letter_ok ? tantalum_eia_letter_size(sc, s_series) : std::nullopt;
-    std::string oi = case_identity("capacitor", oc), si = case_identity("capacitor", sc);
-    if (!ol && !sl) return {oi, si};
-    // An EIA-series letter against a letter whose series is not an EIA-letter one (CWR06,
-    // T95, 595D, or none named): that letter's size is its series' own drawing or unknown
-    // (owner 2026-11-13, J4), so the plain strings are compared as before and the bodies, or
-    // an UNVERIFIED footprint, decide — the letter is not turned into an established case
-    // mismatch here.
-    if ((ol && !sl && is_case_letter(sc)) || (sl && !ol && is_case_letter(oc))) return {oi, si};
-    auto read = [](const std::optional<std::string>& letter, const std::string& code,
-                   const std::string& plain) {
-        if (letter) return *letter;
-        if (auto n = tantalum_eia_numeric_size(code)) return *n;
-        return plain;
-    };
-    return {read(ol, oc, oi), read(sl, sc, si)};
 }
 
 // A package string that names a MOUNTING STYLE and a pad/lead count but no size and no
@@ -1176,6 +1197,143 @@ inline bool same_standard_chip_code(const std::string& a, const std::string& b) 
     const std::string na = normalize_case_code(a), nb = normalize_case_code(b);
     if (na.empty() || na != nb) return false;
     return dims_detail::chip_imperial().count(na) > 0;
+}
+
+// ── Tantalum case identity: KEMET codes and stated bodies (owner 2026-11-13, L1) ──
+// KEMET writes its EIA tantalum bodies with codes of its own: "1411" for the 3528 B body
+// (2,995 records, all 3.5 x 2.8 mm) and "2817" for the 7343 D body (6,578 tantalum records,
+// 7.3 x 4.3 mm, at heights from 1.4 to 4.1 mm). On a TANTALUM record (CAS technology
+// tantalum-*) they are the B and D sizes. The 247 KEMET aluminium-polymer records that also
+// write "2817" are not covered by the owner's decision and keep their plain string.
+inline bool capacitor_is_tantalum(const std::string& technology) {
+    std::string t;
+    for (unsigned char c : technology) t += static_cast<char>(std::tolower(c));
+    return t.rfind("tantalum", 0) == 0;
+}
+inline std::optional<std::string> kemet_tantalum_case_size(const std::string& code,
+                                                           const std::string& technology) {
+    if (!capacitor_is_tantalum(technology)) return std::nullopt;
+    const std::string n = normalize_case_code(code);
+    if (n == "1411") return std::string("1210");
+    if (n == "2817") return std::string("2917");
+    return std::nullopt;
+}
+
+// "Map by dimensions, not only case" (owner 2026-11-13): a tantalum record that DRAWS its body
+// (length x width stated in the record, never a table outline) is the EIA size whose body it
+// draws, as its imperial code (3216 -> 1206, 3528 -> 1210, 6032 -> 2312, 7343 -> 2917). Matched
+// orientation-agnostic within kSameChipCodeBodySpread on BOTH axes, the spread one chip code's
+// drawings take; the four EIA bodies are 20 % or more apart on at least one axis, so no
+// drawing can match two. A record with no complete drawing reads nothing (unverified, as
+// before) — never a guessed size.
+inline std::optional<std::string> tantalum_eia_body_size(const std::optional<Dims>& drawn) {
+    if (!drawn || !has_land(*drawn) || drawn->land_from_table) return std::nullopt;
+    std::optional<std::string> hit;
+    for (const auto& [metric, imperial] : dims_detail::tantalum_eia_metric_imperial()) {
+        const auto body = dims_detail::tantalum_metric().find(metric);
+        if (body == dims_detail::tantalum_metric().end())
+            throw std::logic_error("tantalum_eia_body_size: no body for EIA size " + metric);
+        const LandCompare lc = compare_land(dims_detail::to_metres(body->second), *drawn);
+        if (lc.overflow <= kSameChipCodeBodySpread && lc.lin >= 1.0 - kSameChipCodeBodySpread) {
+            if (hit) return std::nullopt;  // cannot happen with the four bodies; never guess
+            hit = imperial;
+        }
+    }
+    return hit;
+}
+
+// One side of the capacitor case gate: the record's case string, series, technology, whether
+// its letter may be read as a chip case (false for a leaded body), and its DRAWN body.
+struct CapacitorCaseSide {
+    std::string code;
+    std::string series;
+    std::string technology;
+    bool letter_ok = true;
+    std::optional<Dims> drawn;
+};
+
+// The two identities the capacitor case gate compares. With no EIA reading on either side this
+// is exactly case_identity on both codes. An EIA reading is:
+//   * strong — an EIA-series letter (tantalum_eia_letter_size) or a KEMET tantalum code
+//     (kemet_tantalum_case_size): the string names its EIA size outright;
+//   * a numeric EIA size string (tantalum_eia_numeric_size: "1210", "3528", "3528-21",
+//     "2917 (7343 Metric)") — read only against an EIA reading on the other side, so an
+//     unmarked metric "3216" is never guessed in a plain chip compare;
+//   * the drawn body of a tantalum record (tantalum_eia_body_size) — read only for a side whose
+//     string gives no EIA reading, against a strong or numeric reading on the other side.
+// A letter that is NOT an EIA-series letter (CWR06, T95, 595D, or no series) is its series' own
+// drawing (owner 2026-11-13, J4): against it the plain strings are compared as before.
+inline std::pair<std::string, std::string> capacitor_case_identities(const CapacitorCaseSide& o,
+                                                                     const CapacitorCaseSide& s) {
+    auto strong = [](const CapacitorCaseSide& x) -> std::optional<std::string> {
+        if (x.letter_ok)
+            if (auto l = tantalum_eia_letter_size(x.code, x.series)) return l;
+        return kemet_tantalum_case_size(x.code, x.technology);
+    };
+    auto body = [](const CapacitorCaseSide& x) -> std::optional<std::string> {
+        if (!capacitor_is_tantalum(x.technology)) return std::nullopt;
+        return tantalum_eia_body_size(x.drawn);
+    };
+    const std::string oi = case_identity("capacitor", o.code), si = case_identity("capacitor", s.code);
+    const auto os = strong(o), ss = strong(s);
+    if (os || ss) {
+        if ((os && !ss && is_case_letter(s.code)) || (ss && !os && is_case_letter(o.code)))
+            return {oi, si};
+        auto read = [&](const std::optional<std::string>& st, const CapacitorCaseSide& x,
+                        const std::string& plain) {
+            if (st) return *st;
+            if (auto n = tantalum_eia_numeric_size(x.code)) return *n;
+            if (auto b = body(x)) return *b;
+            return plain;
+        };
+        return {read(os, o, oi), read(ss, s, si)};
+    }
+    // No strong reading: a numeric EIA size string against a tantalum body drawn by a record
+    // whose own string reads as no EIA size.
+    const auto on = is_case_letter(o.code) ? std::nullopt : tantalum_eia_numeric_size(o.code);
+    const auto sn = is_case_letter(s.code) ? std::nullopt : tantalum_eia_numeric_size(s.code);
+    if (on && !sn && !is_case_letter(s.code))
+        if (auto b = body(s)) return {*on, *b};
+    if (sn && !on && !is_case_letter(o.code))
+        if (auto b = body(o)) return {*b, *sn};
+    return {oi, si};
+}
+
+// The pre-L1 signature (no technology, no drawing): only the letter / numeric readings.
+inline std::pair<std::string, std::string> capacitor_case_identities(
+    const std::string& oc, const std::string& o_series, bool o_letter_ok,
+    const std::string& sc, const std::string& s_series, bool s_letter_ok) {
+    return capacitor_case_identities(CapacitorCaseSide{oc, o_series, "", o_letter_ok, std::nullopt},
+                                     CapacitorCaseSide{sc, s_series, "", s_letter_ok, std::nullopt});
+}
+
+// The height a tantalum case string designates, metres, with the designation it was read
+// from (owner 2026-11-13, L2): an EIA-series letter through its EIA designation
+// (tantalum_eia_letter_designation: E -> 7343-43 -> 4.3 mm), or a metric-height string
+// ("7343-43", "3528-21") through its own suffix. nullopt for anything else, KEMET's "2817"
+// included (its height is the record's drawing). Used only when two different case strings
+// name the same land, so that the height they differ in is compared on its own axis.
+struct CaseHeight {
+    std::string designation;
+    double height_m = 0.0;
+};
+inline std::optional<CaseHeight> tantalum_case_height(const CapacitorCaseSide& x) {
+    std::string designation;
+    if (x.letter_ok && tantalum_eia_letter_size(x.code, x.series)) {
+        const auto& t = dims_detail::tantalum_eia_letter_designation();
+        auto it = t.find(dims_detail::upper(dims_detail::trim(x.code)));
+        if (it == t.end())
+            throw std::logic_error("tantalum_case_height: EIA letter '" + x.code +
+                                   "' has no designation");
+        designation = it->second;
+    } else {
+        designation = dims_detail::trim(x.code);
+    }
+    static const std::regex metric_height(R"(^\s*(\d{4})\s*-\s*(\d{2})\s*$)");
+    std::smatch m;
+    if (!std::regex_match(designation, m, metric_height)) return std::nullopt;
+    if (!dims_detail::tantalum_eia_metric_imperial().count(m[1].str())) return std::nullopt;
+    return CaseHeight{m[1].str() + "-" + m[2].str(), std::stod(m[2].str()) / 10000.0};
 }
 
 // Categories whose land pattern is the part's BODY, so an original with no body
