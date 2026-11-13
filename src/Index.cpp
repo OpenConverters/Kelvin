@@ -477,6 +477,9 @@ void row_io(Ar& ar, MagneticRow& r) {
     ar.dblvecvec(r.turns_ratio_configs);   // v22 (W4)
     ar.dbl(r.inductance_tol_minus_pct);    // v22
     ar.dbl(r.inductance_tol_plus_pct);     // v22
+    ar.dblvec(r.bias_curve_current);       // v22 (Z5)
+    ar.dblvec(r.bias_curve_ratio);         // v22 (Z5)
+    ar.boolean(r.sat_table_from_curve);    // v22 (Z5)
     ar.boolean(r.is_production);
 }
 
@@ -733,6 +736,8 @@ void parse_region(const std::string& path, const std::string& content, size_t be
                 FieldRetraction fr = retracted_only_fields(env);
                 row->retracted_fields = std::move(fr.fields);
                 row->retraction_reason = std::move(fr.reason);
+                // Owner 2026-11-13, Z1: a retracted-only primary rating is not stated.
+                unstate_retracted_ratings(*row);
                 // A wholly retracted record carries its reason too (Qarlos r26 31990757).
                 if (row->provenance_retracted)
                     row->retraction_reason = all_provenance_retraction_reason(env);

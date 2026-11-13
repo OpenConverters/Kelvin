@@ -1,6 +1,7 @@
 // Regression tests for the Qarlos cross-reference audit of 2026-10-24
 // (ABT #2029-#2051). Each case reproduces the reported row in miniature.
 #include <cmath>
+#include <filesystem>
 #include <fstream>
 #include <optional>
 #include <stdexcept>
@@ -7739,3 +7740,253 @@ TEST_CASE("owner 2026-11-13 W4: turns ratio beyond 15 % rejects; the best config
     CHECK(verdict_of(*c2, "turns_ratio") == "pass");
     CHECK(has_note(*c2, "on the original's wiring configuration 2 of 2"));
 }
+
+// ── Owner 2026-11-13 Z1: a retracted-only PRIMARY rating is not stated ─────────────────────
+// VS-6CWH02FN-M3's reverseVoltage rests only on a retracted category-page citation (S1
+// above). The rating is now removed from its row, so the diode pool's hard floor
+// (web/src/crossref.js hardMin vrrm_rated >= 0.9 x the original's) leaves it out exactly like
+// a record stating no Vr. Real records (dec_1113_s, frozen bench diodes.ndjson) through the
+// real index builder and browse.
+TEST_CASE("owner 2026-11-13 Z1: a retracted-only Vr leaves the candidate out of the pool",
+          "[qarlos][index][browse][dec-z1]") {
+    using namespace dec_1113_s;
+    namespace fs = std::filesystem;
+    const std::string path = (fs::temp_directory_path() / "kelvin_dec_z1_diodes.ndjson").string();
+    {
+        std::ofstream o(path);
+        o << kPU1DFSH << "\n" << kVS_6CWH02FN_M3 << "\n";
+    }
+    const auto shard = kelvin::build_diode_shard(path);
+    fs::remove(path);
+    const json all = kelvin::browse::browse_rows(shard, json{{"limit", 10}});
+    REQUIRE(all.at("total") == 2);
+    double pu_vrrm = 0;
+    for (const json& r : all.at("rows")) {
+        if (r.at("mpn") == "VS-6CWH02FN-M3") {
+            CHECK(r.at("vrrm_rated").is_null());          // not exposed
+            CHECK(r.at("if_avg_rated") == 3.0);           // live source: kept
+            CHECK(r.at("vf_typ") == 0.9);                 // secondary axis: S1 rule, kept
+        } else {
+            pu_vrrm = r.at("vrrm_rated").get<double>();
+        }
+    }
+    REQUIRE(pu_vrrm == 200.0);
+    // PU1DFSH's pool, cut as web/src/crossref.js runCrossRef cuts it.
+    const json pool = kelvin::browse::browse_rows(
+        shard, json{{"filters", {{"vrrm_rated", {{"min", pu_vrrm * 0.9}}}}}, {"limit", 10}});
+    REQUIRE(pool.at("total") == 1);
+    CHECK(pool.at("rows")[0].at("mpn") == "PU1DFSH");
+}
+
+TEST_CASE("owner 2026-11-13 Z1: MOSFET Vds and capacitor ratings on retracted sources only",
+          "[qarlos][views][dec-z1]") {
+    kelvin::MosfetRow m;
+    m.vds_rated = 60;
+    m.retracted_fields = {"electrical.onResistance"};
+    CHECK(kelvin::unstate_retracted_ratings(m) == 0);
+    CHECK(m.vds_rated == 60);
+    m.retracted_fields = {"electrical.drainSourceVoltage"};
+    CHECK(kelvin::unstate_retracted_ratings(m) == 1);
+    CHECK(std::isnan(m.vds_rated));
+    kelvin::CapacitorRow c;
+    c.v_rated = 50;
+    c.v_rated_ac = 30;
+    c.retracted_fields = {"electrical.voltageRatedAcMax"};
+    CHECK(kelvin::unstate_retracted_ratings(c) == 1);
+    CHECK(c.v_rated == 50);
+    CHECK(std::isnan(c.v_rated_ac));
+    kelvin::DiodeRow t;  // a TVS's rating is its standoff; its breakdown window stays
+    t.technology = "tvs";
+    t.vrrm_rated = 5;
+    t.vz_min = 6;
+    t.vz_max = 7;
+    t.retracted_fields = {"electrical.breakdownVoltage"};
+    CHECK(kelvin::unstate_retracted_ratings(t) == 0);
+    t.retracted_fields = {"electrical.standoffVoltage"};
+    CHECK(kelvin::unstate_retracted_ratings(t) == 1);
+    CHECK(std::isnan(t.vrrm_rated));
+    CHECK(t.vz_min == 6);
+}
+
+// ── Owner 2026-11-13 Z3: a ripple TEMPERATURE basis mismatch demotes and caps minor_review ──
+// Consistent with the ripple FREQUENCY basis rule: UNVERIFIED, demoted (never 'recommended')
+// and the grade at most minor_review. The r26 X2 pair (600MXH270MEFCSN35X50 ->
+// B43541A8277M060) is already minor_review on its unknown footprint, so the cap is shown on a
+// real pair that is otherwise a drop-in: Nichicon GWC1E471MCO1GS (470 uF 25 V +/-20 %, 3.7 A at
+// 100 kHz / 135 degC) -> TDK B40910A5477M000 (same, 5.1 A at 100 kHz / 125 degC). Verbatim lines of
+// tools/qarlos/bench/data-6bd04c7/capacitors.ndjson, distributorsInfo dropped.
+namespace dec_1113_z3 {
+// capacitors.ndjson line 581139: GWC1E471MCO1GS
+const char* kGWC1E471MCO1GS = R"KREC({"capacitor":{"manufacturerInfo":{"name":"Nichicon","reference":"GWC1E471MCO1GS","datasheetUrl":"https://www.nichicon.co.jp/series_items/catalog_pdf/ja/pdf/xja042/gwc.pdf","status":"production","datasheetInfo":{"part":{"partNumber":"GWC1E471MCO1GS","series":"GWC","technology":"aluminum-hybrid-polymer","case":"10x12.5"},"electrical":{"capacitance":{"nominal":0.00047,"minimum":0.000376,"maximum":0.000564},"ratedVoltage":25.0,"voltageRatedDcMax":25.0,"polarized":true,"dissipationFactor":0.14,"dissipationFactorFrequency":120,"leakageCurrent":0.0001175,"esr":0.014,"esrFrequency":100000,"rippleCurrent":3.7,"rippleCurrentTemperature":135.0,"rippleCurrentFrequency":100000.0},"application":"AEC-Q200","thermal":{"temperature":{"minimum":-55.0,"maximum":135.0}},"mechanical":{"dimensions":{"diameter":{"nominal":0.01},"length":{"nominal":0.0125}},"shape":{"assembly":"SMT","shapeType":"SMD Chip"}},"lifetime":{"lifetimeEndurance":4000.0},"provenance":[{"source":"manufacturerParametric","sourceName":"Nichicon aluminum electrolytic capacitor product search","sourceUrl":"https://www.nichicon.co.jp/products/electronics/aec/","retrievedDate":"2026-11-08","fields":["part.partNumber","part.series","part.technology","part.case","electrical.capacitance","electrical.ratedVoltage","electrical.voltageRatedDcMax","electrical.polarized","electrical.dissipationFactor","electrical.leakageCurrent","electrical.esr","electrical.rippleCurrent","electrical.rippleCurrentTemperature","electrical.rippleCurrentFrequency","application","thermal.temperature","mechanical.dimensions.diameter","mechanical.dimensions.length","mechanical.shape","lifetime.lifetimeEndurance","manufacturerInfo.status","manufacturerInfo.datasheetUrl"],"verification":"valuesReadFromSource","verificationDate":"2026-11-08","verificationMethod":"Capacitance and tolerance, rated voltage, case diameter and height, category temperature range, endurance hours, tan delta, leakage current (the search table prints whole microamperes), rated ripple current with its stated temperature and frequency, ESR at 20 C and 100 kHz where printed, and lifecycle status read from this exact part number's row of the Nichicon aluminum electrolytic capacitor search table; capacitance and rated voltage compared with the codes in the part number"},{"source":"manufacturerDatasheet","sourceName":"Nichicon GWC series catalogue","sourceUrl":"https://www.nichicon.co.jp/series_items/catalog_pdf/ja/pdf/xja042/gwc.pdf","retrievedDate":"2026-11-08","fields":["electrical.dissipationFactorFrequency","electrical.leakageCurrent","electrical.esrFrequency"],"verification":"seriesConfirmed","verificationDate":"2026-11-08","verificationMethod":"Test conditions (tan delta at 120 Hz and 20 C, ESR specified at 20 C and 100 kHz) read from the series specification table; leakage current read from this part's row of the series ratings table, which prints it to a finer digit than the search table"}]}}}})KREC";
+// capacitors.ndjson line 625380: B40910A5477M000
+const char* kB40910A5477M000 = R"KREC({"capacitor":{"manufacturerInfo":{"name":"TDK","reference":"B40910A5477M000","status":"production","datasheetUrl":"https://product.tdk.com/en/search/capacitor/aluminum-electrolytic/hybrid-polymer/info?part_no=B40910A5477M000","datasheetInfo":{"part":{"partNumber":"B40910A5477M000","technology":"aluminum-hybrid-polymer","series":"B40910"},"electrical":{"capacitance":{"nominal":0.00047,"minimum":0.000376,"maximum":0.000564},"ratedVoltage":25.0,"voltageRatedDcMax":25.0,"rippleCurrent":5.1,"rippleCurrentFrequency":100000.0,"rippleCurrentTemperature":125.0},"mechanical":{"dimensions":{"diameter":{"nominal":0.01},"length":{"nominal":0.0125}},"shape":{"assembly":"SMT","shapeType":"SMD"}},"provenance":[{"source":"manufacturerParametric","sourceName":"TDK product center","sourceUrl":"https://product.tdk.com/en/search/capacitor/aluminum-electrolytic/hybrid-polymer/info?part_no=B40910A5477M000","retrievedDate":"2026-11-07","fields":["part.partNumber","electrical.capacitance","part.technology","part.series","electrical.ratedVoltage","electrical.rippleCurrent","electrical.rippleCurrentFrequency","electrical.rippleCurrentTemperature","mechanical.dimensions","manufacturerInfo.status"],"verification":"partNamed","verificationDate":"2026-11-07","verificationMethod":"Part number, capacitance, tolerance, voltage ratings, dimensions and lifecycle status read from the TDK Product Center part listing row for this exact code"}]}}}})KREC";
+}  // namespace dec_1113_z3
+
+TEST_CASE("owner 2026-11-13 Z3: ripple temperature basis mismatch demotes and caps",
+          "[qarlos][crossref][capacitor][dec-z3]") {
+    using namespace r26_x;
+    using namespace dec_1113_z3;
+    const json orig = cap_spec_t(cap_row(json::parse(kGWC1E471MCO1GS)));
+    const json cand = cap_spec_t(cap_row(json::parse(kB40910A5477M000)));
+    REQUIRE(orig["ripple_current_temperature"] == 135.0);
+    REQUIRE(cand["ripple_current_temperature"] == 125.0);
+    auto r = kelvin::crossref::cross_reference("capacitor", orig, json::array({cand}));
+    REQUIRE(r["candidates"].size() == 1);
+    const json c = r["candidates"][0];
+    INFO(c.dump());
+    CHECK(verdict_of(c, "ripple_current") == "unverified");
+    CHECK(has_note(c, "ripple current quoted at different temperatures"));
+    CHECK(c["status"] == "partial");
+    CHECK(c["grade"] == "minor_review");
+    // Premise: at a common temperature the same pair is a drop-in, so the cap above is the
+    // temperature basis's.
+    json same = cand;
+    same["ripple_current_temperature"] = 135.0;
+    const json c2 =
+        kelvin::crossref::cross_reference("capacitor", orig, json::array({same}))["candidates"][0];
+    INFO(c2.dump());
+    CHECK(c2["status"] == "recommended");
+    CHECK(c2["grade"] == "drop_in");
+    // The X2 pair still reads the basis as unverified, with its note.
+    const json x2 = kelvin::crossref::cross_reference(
+        "capacitor", cap_spec_t(cap_row(json::parse(k600MXH270MEFCSN35X50))),
+        json::array({cap_spec_t(cap_row(json::parse(kB43541A8277M060)))}))["candidates"][0];
+    CHECK(verdict_of(x2, "ripple_current") == "unverified");
+    CHECK(x2["status"] == "partial");
+}
+
+// ── Owner 2026-11-13 Z4: a capacitor's stated tolerance bounds the value PASS window ───────
+// VJ0603D750FEBAR (Vishay, 75 pF, stated 74.25-75.75 pF = +/-1 %) took CBR06C680FAGAC (KEMET,
+// 68 pF, -9.3 %) as a value PASS inside the 0.90-1.50 window. Now PASS only inside the
+// original's stated band; outside it (inside the old window) WARN with a note, ranked after
+// the in-tolerance candidates (value_differs tier). An in-band candidate (CBR06C750FAGAC,
+// 75 pF) stays PASS. Verbatim lines of tools/qarlos/bench/data-6bd04c7/capacitors.ndjson,
+// distributorsInfo dropped.
+namespace dec_1113_z4 {
+// capacitors.ndjson line 546259: VJ0603D750FEBAR
+const char* kVJ0603D750FEBAR = R"KREC({"capacitor":{"manufacturerInfo":{"name":"Vishay","reference":"VJ0603D750FEBAR","datasheetUrl":"https://www.vishay.com/docs/45258/vjhifreqseries.pdf","datasheetInfo":{"part":{"partNumber":"VJ0603D750FEBAR","technology":"ceramic-class-1","dielectricCode":"C0G","case":"0603"},"electrical":{"capacitance":{"nominal":7.5e-11,"minimum":7.425e-11,"maximum":7.575e-11},"ratedVoltage":100.0,"polarized":false,"dissipationFactor":0.0005,"dissipationFactorFrequency":1000000},"thermal":{"temperature":{"minimum":-55,"maximum":125},"temperatureCoefficient":{"nominal":0,"minimum":-30,"maximum":30}},"mechanical":{"shape":{"assembly":"SMT","shapeType":"SMD Chip"}},"provenance":[{"source":"manufacturerDatasheet","sourceName":"Vishay VJ HIFREQ Series datasheet","sourceUrl":"https://www.vishay.com/docs/45258/vjhifreqseries.pdf","retrievedDate":"2026-11-08","fields":["part.technology","part.dielectricCode","part.case","electrical.capacitance","electrical.ratedVoltage","electrical.polarized","electrical.dissipationFactor","thermal.temperature","thermal.temperatureCoefficient","mechanical.shape"],"verification":"seriesConfirmed","verificationDate":"2026-11-08","verificationMethod":"Capacitance, tolerance, voltage, dielectric and case size decoded from the ordering code and compared with the selection-chart row for that capacitance code, case and voltage code; tolerance letter, termination, marking and packaging letters checked against the ordering information and the packaging table; operating temperature range, temperature coefficient (0 +/- 30 ppm/degC) and dissipation factor (0.05 % max at 1.0 VRMS, 1 MHz for values up to 1000 pF, 1 kHz above) from the electrical specifications of the C0G (D) dielectric."},{"source":"manufacturerDatabase","sourceName":"Vishay product part list","sourceUrl":"https://www.vishay.com/en/product/45258/tab/designtools-ppg/","retrievedDate":"2026-11-06","fields":["part.partNumber"],"verification":"partNamed","verificationDate":"2026-11-06","verificationMethod":"Order code listed by Vishay under this series document."}]}}}})KREC";
+// capacitors.ndjson line 7996: CBR06C680FAGAC
+const char* kCBR06C680FAGAC = R"KREC({"capacitor":{"manufacturerInfo":{"name":"KEMET","reference":"CBR06C680FAGAC","status":"production","datasheetUrl":"https://www.mouser.com/datasheet/3/72/1/CBR06C680FAGAC.pdf","datasheetInfo":{"part":{"partNumber":"CBR06C680FAGAC","technology":"ceramic-class-1","case":"0603","series":""},"electrical":{"capacitance":{"nominal":6.8e-11},"ratedVoltage":250.0,"dissipationFactorFrequency":1000.0,"voltageRatedDcMax":250.0},"thermal":{"temperature":{"minimum":-55,"maximum":125}},"mechanical":{"shape":{"assembly":"SMT","shapeType":"SMD Chip"},"dimensions":{},"landPattern":{"pattern":"singleRow","originDatum":"padCentroid","pads":[{"id":"1","x":-0.000775,"y":0.0,"shape":"rectangle","width":0.0009,"height":0.00095},{"id":"2","x":0.000775,"y":0.0,"shape":"rectangle","width":0.0009,"height":0.00095}]}},"provenance":[{"source":"distributor","sourceName":"datasheet via Mouser listing","sourceUrl":"https://www.mouser.com/datasheet/3/72/1/CBR06C680FAGAC.pdf","verification":"partNamed","verificationDate":"2026-10-10"},{"source":"derived","sourceName":"IPC-7351B","retrievedDate":"2026-08-02","fields":["mechanical.landPattern"],"derivation":"IPC-7351B nominal land pattern for the case code"}]}}}})KREC";
+// capacitors.ndjson line 7993: CBR06C750FAGAC
+const char* kCBR06C750FAGAC = R"KREC({"capacitor":{"manufacturerInfo":{"name":"KEMET","reference":"CBR06C750FAGAC","status":"production","datasheetUrl":"https://www.mouser.com/datasheet/3/508/1/KEM_C1030_CBR_SMD.pdf","datasheetInfo":{"part":{"partNumber":"CBR06C750FAGAC","technology":"ceramic-class-1","case":"0603","series":""},"electrical":{"capacitance":{"nominal":7.5e-11},"ratedVoltage":250.0,"dissipationFactorFrequency":1000.0,"voltageRatedDcMax":250.0},"thermal":{"temperature":{"minimum":-55,"maximum":125}},"mechanical":{"shape":{"assembly":"SMT","shapeType":"SMD Chip"},"dimensions":{},"landPattern":{"pattern":"singleRow","originDatum":"padCentroid","pads":[{"id":"1","x":-0.000775,"y":0.0,"shape":"rectangle","width":0.0009,"height":0.00095},{"id":"2","x":0.000775,"y":0.0,"shape":"rectangle","width":0.0009,"height":0.00095}]}},"provenance":[{"source":"distributor","sourceName":"datasheet via Mouser listing","sourceUrl":"https://www.mouser.com/datasheet/3/508/1/KEM_C1030_CBR_SMD.pdf","verification":"sourceUnreachable","verificationDate":"2026-09-05"},{"source":"derived","sourceName":"IPC-7351B","retrievedDate":"2026-08-02","fields":["mechanical.landPattern"],"derivation":"IPC-7351B nominal land pattern for the case code"}]}}}})KREC";
+}  // namespace dec_1113_z4
+
+TEST_CASE("owner 2026-11-13 Z4: capacitance outside the original's stated tolerance warns",
+          "[qarlos][crossref][capacitor][dec-z4]") {
+    using namespace dec_1113_z4;
+    const json orig = cap_spec(cap_row(json::parse(kVJ0603D750FEBAR)));
+    const json off = cap_spec(cap_row(json::parse(kCBR06C680FAGAC)));
+    const json in = cap_spec(cap_row(json::parse(kCBR06C750FAGAC)));
+    REQUIRE(orig["capacitance_min"].get<double>() == Approx(74.25e-12));
+    REQUIRE(orig["capacitance_max"].get<double>() == Approx(75.75e-12));
+    // off first in the input: the order of the result is the ranker's.
+    auto r = kelvin::crossref::cross_reference("capacitor", orig, json::array({off, in}));
+    REQUIRE(r["candidates"].size() == 2);
+    const json& first = r["candidates"][0];
+    const json& second = r["candidates"][1];
+    INFO(r.dump());
+    CHECK(first["mpn"] == "CBR06C750FAGAC");
+    CHECK(verdict_of(first, "value") == "pass");
+    CHECK_FALSE(first.value("value_differs", false));
+    CHECK(second["mpn"] == "CBR06C680FAGAC");
+    CHECK(verdict_of(second, "value") == "warn");
+    CHECK(second.value("value_differs", false));
+    CHECK(has_note(second, "outside the original's stated +/-1 % tolerance"));
+    // No tolerance stated on the original: the old 0.90-1.50 window, 68 pF passes.
+    json bare = orig;
+    bare["capacitance_min"] = nullptr;
+    bare["capacitance_max"] = nullptr;
+    const json c3 =
+        kelvin::crossref::cross_reference("capacitor", bare, json::array({off}))["candidates"][0];
+    CHECK(verdict_of(c3, "value") == "pass");
+    CHECK_FALSE(c3.value("value_differs", false));
+}
+
+// ── Owner 2026-11-13 Z2: a wholly retracted ORIGINAL — candidates' PASSes read UNVERIFIED ──
+// The Vishay RGF1K's only provenance entry is retracted (r26 X3 above). Its candidates kept
+// PASS verdicts and 'upgrade' (only the status was capped); now every PASS reads UNVERIFIED
+// and the direction 'unknown', as for a per-field retraction. Specs: web/src/crossref.js's
+// diode spec of v22 shard rows built from tools/qarlos/bench/data-6bd04c7/diodes.ndjson
+// (kelvin-index -> browse -> famFor().spec).
+namespace dec_1113_z2 {
+const char* kSpecRGF1K_Vishay = R"KSPEC({"mpn":"RGF1K","length_m":null,"width_m":null,"height_m":null,"case_code":"GF1 (DO-214BA)","mount":"","lead_pitch_m":null,"is_production":true,"provenance_retracted":true,"retracted_fields":[],"retraction_reason":"category browse page cited no exact order code; no part-specific document found","box_axes_ambiguous":false,"vrrm":800,"if_avg":1,"vf":1.3,"power_dissipation":null,"qrr":null,"trr":1.5e-07,"technology":"rectifier","die_configuration":null,"internal_connection":null,"vz_min_V":null,"vz_max_V":null,"vz_tolerance_pct":null,"clamping_voltage":null,"clamping_current":null,"peak_pulse_power":null,"peak_pulse_current":null,"junction_capacitance":null,"junction_capacitance_vr":null,"clamping_waveform":"","peak_pulse_power_waveform":"","peak_pulse_current_waveform":"","tj_max":175,"qualification":""})KSPEC";
+const char* kSpec1N4006RLG = R"KSPEC({"mpn":"1N4006RLG","length_m":null,"width_m":null,"height_m":null,"case_code":"Axial Lead-2","mount":"","lead_pitch_m":0.01016,"is_production":true,"provenance_retracted":false,"retracted_fields":[],"retraction_reason":"","box_axes_ambiguous":false,"vrrm":800,"if_avg":1,"vf":1.1,"power_dissipation":null,"qrr":null,"trr":null,"technology":"rectifier","die_configuration":null,"internal_connection":null,"vz_min_V":null,"vz_max_V":null,"vz_tolerance_pct":null,"clamping_voltage":null,"clamping_current":null,"peak_pulse_power":null,"peak_pulse_current":null,"junction_capacitance":null,"junction_capacitance_vr":null,"clamping_waveform":"","peak_pulse_power_waveform":"","peak_pulse_current_waveform":"","tj_max":null,"qualification":""})KSPEC";
+}  // namespace dec_1113_z2
+
+TEST_CASE("owner 2026-11-13 Z2: a wholly retracted original verifies no candidate PASS",
+          "[qarlos][crossref][diode][dec-z2]") {
+    using namespace dec_1113_z2;
+    const json orig = json::parse(kSpecRGF1K_Vishay), cand = json::parse(kSpec1N4006RLG);
+    REQUIRE(orig["provenance_retracted"] == true);
+    kelvin::crossref::Options opt;
+    opt.original_verified = false;  // web/src/crossref.js: origVerified is false when retracted
+    auto r = kelvin::crossref::cross_reference("diode", orig, json::array({cand}), opt);
+    REQUIRE(r["candidates"].size() == 1);
+    const json c = r["candidates"][0];
+    INFO(c.dump());
+    REQUIRE(c["status"] != "no_substitute");
+    CHECK(c["direction"] == "unknown");
+    for (const auto& p : c["params"]) CHECK(p["verdict"] != "pass");
+    CHECK(verdict_of(c, "vrrm") == "unverified");
+    CHECK(c["footprint"] != "fits");
+    CHECK(has_note(c, "every source cited by the original's record is retracted"));
+    // Premise: the same original with a live source reads the candidate as an upgrade.
+    json live = orig;
+    live["provenance_retracted"] = false;
+    live["retraction_reason"] = "";
+    const json c2 = kelvin::crossref::cross_reference("diode", live, json::array({cand}))["candidates"][0];
+    INFO(c2.dump());
+    CHECK(c2["direction"] == "upgrade");
+    CHECK(verdict_of(c2, "vrrm") == "pass");
+}
+
+// ── Owner 2026-11-13 Z5: Isat compared on the two L(I) curves ─────────────────────────────
+// XFL3012-682MEC (Coilcraft, Isat 0.61 A bare) took VLS3010CX-6R8M-1 (TDK, 0.71 A bare) as a
+// saturation PASS. Both records state an inductancePoints curve, and the substitute reaches
+// each drop at a lower current: 10 % 0.377 vs 0.538 A, 20 % 0.581 vs 0.741 A, 30 % 0.707 vs
+// 0.906 A. Compared on the curves (the original states no structured criterion -> 10/20/30 %,
+// graded on the worst) it is no longer a PASS. Specs from v22 shard rows of
+// tools/qarlos/bench/data-6bd04c7/magnetics.ndjson through web/src/crossref.js.
+namespace dec_1113_z5 {
+const char* kSpecXFL3012_682MEC = R"KSPEC({"mpn":"XFL3012-682MEC","length_m":0.0032,"width_m":0.0032,"height_m":0.0013,"case_code":"3012","mount":"smt","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"retracted_fields":[],"retraction_reason":"","box_axes_ambiguous":false,"value_si":6.799999999999999e-06,"saturation_current":0.61,"saturation_points":[{"current":0.61,"percent_drop":null,"temperature":null}],"rated_current":1.3,"dcr":0.2,"srf":null,"temp_min_C":null,"temp_max_C":null,"tolerance_minus_pct":19.999999999999996,"tolerance_plus_pct":19.999999999999996,"bias_curve":{"current":[0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1,1.1,1.2,1.3,1.4,1.5,1.6],"ratio":[1,0.9971066227783676,0.9887932622597345,0.9731867773742717,0.9490755387197144,0.9158955767434527,0.8737499046095937,0.8233891846686001,0.7661314179871664,0.7037221378126195,0.6381535485884058,0.5714707769811466,0.5055946153809582,0.44218378888563314,0.3825489738949754,0.3276194133920477,0.2779541126583831]},"saturation_from_curve":false,"turns_ratios":null,"turns_ratio_configs":null})KSPEC";
+const char* kSpecVLS3010CX_6R8M_1 = R"KSPEC({"mpn":"VLS3010CX-6R8M-1","length_m":0.003,"width_m":0.003,"height_m":null,"case_code":"3.0x3.0","mount":"","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"retracted_fields":[],"retraction_reason":"","box_axes_ambiguous":false,"value_si":6.8e-06,"saturation_current":0.71,"saturation_points":[{"current":0.71,"percent_drop":null,"temperature":null}],"rated_current":1.69,"dcr":0.179,"srf":null,"temp_min_C":-40,"temp_max_C":105,"tolerance_minus_pct":19.999999999999996,"tolerance_plus_pct":19.999999999999996,"bias_curve":{"current":[0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9],"ratio":[1,0.9905511811023622,0.963779527559055,0.9291338582677166,0.8913385826771654,0.8472440944881889,0.7889763779527559,0.7070866141732284,0.6,0.48031496062992124]},"saturation_from_curve":false,"turns_ratios":null,"turns_ratio_configs":null})KSPEC";
+}  // namespace dec_1113_z5
+
+TEST_CASE("owner 2026-11-13 Z5: Isat read at the same drop on both curves",
+          "[qarlos][crossref][magnetic][dec-z5]") {
+    using namespace dec_1113_z5;
+    const json orig = json::parse(kSpecXFL3012_682MEC), cand = json::parse(kSpecVLS3010CX_6R8M_1);
+    REQUIRE(orig["bias_curve"].is_object());
+    REQUIRE(cand["bias_curve"].is_object());
+    const auto cc = kelvin::crossref::isat::compare_curves(orig, cand, 0.9);
+    REQUIRE(cc.applies);
+    CHECK_FALSE(cc.stated_criterion);
+    REQUIRE(cc.rows.size() == 3);
+    CHECK(*cc.rows[0].sub_at == Approx(0.377).margin(0.002));
+    CHECK(*cc.rows[0].orig_at == Approx(0.538).margin(0.002));
+    CHECK(*cc.rows[1].sub_at == Approx(0.581).margin(0.002));
+    CHECK(*cc.rows[1].orig_at == Approx(0.741).margin(0.002));
+    CHECK(*cc.rows[2].sub_at == Approx(0.707).margin(0.002));
+    CHECK(*cc.rows[2].orig_at == Approx(0.906).margin(0.002));
+    auto r = kelvin::crossref::cross_reference("magnetic", orig, json::array({cand}));
+    REQUIRE(r["candidates"].size() == 1);
+    const json c = r["candidates"][0];
+    INFO(c.dump());
+    CHECK(verdict_of(c, "saturation_current") != "pass");
+    CHECK(verdict_of(c, "saturation_current") == "fail");
+    // No extrapolation: a drop beyond the substitute's measured range is UNVERIFIED.
+    json shallow = cand;
+    shallow["bias_curve"]["current"] = json::array({0.0, 0.3, 0.5});
+    shallow["bias_curve"]["ratio"] = json::array({1.0, 0.95, 0.85});
+    const auto c3 = kelvin::crossref::isat::compare_curves(orig, shallow, 0.9);
+    REQUIRE(c3.rows[0].sub_at.has_value());  // 10 % reached at 0.4 A
+    CHECK(*c3.rows[0].sub_at == Approx(0.4));
+    CHECK_FALSE(c3.rows[1].sub_at.has_value());
+    CHECK(std::string(c3.rows[1].verdict) == "unverified");
+    // One side without a curve: the bare values are compared as before (pass).
+    json bare = cand;
+    bare["bias_curve"] = nullptr;
+    const json c4 = kelvin::crossref::cross_reference("magnetic", orig, json::array({bare}))["candidates"][0];
+    CHECK(verdict_of(c4, "saturation_current") == "pass");
+}
+

@@ -1172,9 +1172,40 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                o_band_plus = num(original, "tolerance_plus_pct");
     const bool magnetic_band =
         cat == "magnetic" && tolerance_band_stated(o_band_minus, o_band_plus);
+    // Capacitors (owner 2026-11-13, Z4): the original's STATED capacitance band (the row's
+    // capacitance minimum / maximum in farads, as percent below / above its nominal) bounds the
+    // PASS window the same way. Narrowed here, not in primary_value_spec("capacitor"), whose
+    // 0.90-1.50 window the golden table pins; it only ever narrows, so a -20/+80 % part keeps
+    // the 1.50 top. No band stated: the 0.90-1.50 window stands.
+    std::optional<double> cap_band_minus, cap_band_plus;
+    if (cat == "capacitor" && o_val && *o_val > 0) {
+        const auto lo = num(original, "capacitance_min"), hi = num(original, "capacitance_max");
+        if (lo && hi) {
+            cap_band_minus = (1.0 - *lo / *o_val) * 100.0;
+            cap_band_plus = (*hi / *o_val - 1.0) * 100.0;
+        }
+    }
+    const bool capacitor_band =
+        cat == "capacitor" && tolerance_band_stated(cap_band_minus, cap_band_plus);
     auto pv = magnetic_band
                   ? score_primary_value(cat, o_val, s_val, has_pv, o_band_minus, o_band_plus)
                   : score_primary_value(cat, o_val, s_val, has_pv, o_tol);
+    if (capacitor_band) {
+        PrimaryValueSpec cs{};
+        has_pv = primary_value_spec(cat, cs);
+        cs.tight_lo = std::max(cs.tight_lo, 1.0 - *cap_band_minus / 100.0);
+        cs.tight_hi = std::min(cs.tight_hi, 1.0 + *cap_band_plus / 100.0);
+        pv = score_range(o_val, s_val, cs.tight_lo, cs.tight_hi, cs.accept_lo, cs.accept_hi);
+    }
+    // A capacitance outside the original's stated band (inside the accept window): WARN with a
+    // note, ranked after the in-tolerance candidates (the "value_differs" tier), as for an
+    // inductance.
+    bool capacitance_off_band = false;
+    if (capacitor_band && has_pv && pv.verdict != FAIL && o_val && s_val && *s_val > 0 &&
+        outside_band(*s_val / *o_val, *cap_band_minus, *cap_band_plus)) {
+        capacitance_off_band = true;
+        pv.verdict = WARN;
+    }
     // An inductance outside the original's stated band (but inside the accept window) is a
     // different value: WARN (score_range already said so), ranked after every in-band and
     // exact-value candidate — the resistor near-value sort tier ("value_differs"). Grade and
@@ -1252,6 +1283,20 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                 signed_pct((*s_val / *o_val - 1.0) * 100.0) +
                                 "): outside the original's stated " + band +
                                 " tolerance — a different inductance value, ranked after the "
+                                "in-tolerance candidates; check the circuit tolerates it");
+            }
+            if (capacitance_off_band) {
+                const double m = *cap_band_minus, pl = *cap_band_plus;
+                const std::string band =
+                    std::fabs(m - pl) < 0.005 ? "+/-" + plain_pct(m)
+                                              : "+" + plain_pct(pl) + " / -" + plain_pct(m);
+                char buf[160];
+                std::snprintf(buf, sizeof buf, "capacitance %.4g F against the original's %.4g F",
+                              *s_val, *o_val);
+                notes.push_back(std::string(buf) + " (" +
+                                signed_pct((*s_val / *o_val - 1.0) * 100.0) +
+                                "): outside the original's stated " + band +
+                                " tolerance — a different capacitance value, ranked after the "
                                 "in-tolerance candidates; check the circuit tolerates it");
             }
             if (value_differs)
@@ -1672,9 +1717,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // (1.67 A @ 105 degC) passed against B43541A8277M060 (2.25 A @ 85 degC). The Cj / Coss
     // basis rule: both state a ripple value and the original states its temperature -> a
     // substitute at the same temperature is compared as stated; one at a different
-    // temperature or at none is UNVERIFIED, noted, counts in neither direction, and is NOT
-    // demoted or capped (the Cj / Coss basis treatment). The original stating no temperature
-    // -> compared as stated. No conversion between temperatures is attempted.
+    // temperature or at none is UNVERIFIED, noted and counts in neither direction. Owner
+    // 2026-11-13, Z3: it is also demoted and capped at minor_review, as the ripple FREQUENCY
+    // basis rule above is (it was note-only, the Cj / Coss treatment). The original stating no
+    // temperature -> compared as stated. No conversion between temperatures is attempted.
     const bool ripple_temp_basis_unverified = [&] {
         if (cat != "capacitor") return false;
         const auto o_v = num(original, "ripple_current"), s_v = num(cand, "ripple_current");
@@ -1698,6 +1744,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                           "datasheet",
                           *o_v, degc(*o_t).c_str(), *s_v);
         notes.push_back(buf);
+        demote();
         return true;
     }();
     const bool esr_basis_unverified =
@@ -2230,7 +2277,38 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             // and the note names both bases (ABT #2042).
             std::optional<double> od = o, sd = s;
             bool basis_mismatch = false;
-            if (spec.key == "saturation_current") {
+            const auto curves = spec.key == "saturation_current"
+                                    ? isat::compare_curves(original, cand, spec.tol_factor)
+                                    : isat::CurveCompare{};
+            if (curves.applies) {
+                // Owner 2026-11-13, Z5: the two L(I) curves decided (compare_saturation_current).
+                // Direction from the worst criterion read on both; none read -> blind.
+                char buf[96];
+                std::string list;
+                for (const auto& row : curves.rows) {
+                    auto amps = [](const std::optional<double>& a) {
+                        char b[32];
+                        if (!a) return std::string("not reached");
+                        std::snprintf(b, sizeof b, "%.3g A", *a);
+                        return std::string(b);
+                    };
+                    std::snprintf(buf, sizeof buf, "%g %% drop ", row.drop_pct);
+                    list += (list.empty() ? "" : "; ") + std::string(buf) + amps(row.sub_at) +
+                            " vs " + amps(row.orig_at);
+                }
+                notes.push_back(std::string("saturation compared on both L(I) curves at ") +
+                                (curves.stated_criterion ? "the original's stated criterion"
+                                                         : "10, 20 and 30 % inductance drop") +
+                                " (substitute vs original: " + list +
+                                ") — a drop outside a curve's measured range is not "
+                                "extrapolated and reads unverified");
+                if (curves.decisive && verdict != UNVERIFIED) {
+                    od = curves.rows[*curves.decisive].orig_at;
+                    sd = curves.rows[*curves.decisive].sub_at;
+                } else {
+                    basis_mismatch = true;
+                }
+            } else if (spec.key == "saturation_current") {
                 const auto op = isat::resolve_points(original), sp = isat::resolve_points(cand);
                 if (!op.empty() && !sp.empty() && (isat::has_basis(op) || isat::has_basis(sp))) {
                     if (auto t = isat::common_percent_drop(op, sp)) {
@@ -4914,8 +4992,17 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // The ORIGINAL's whole-record retraction was stated only as the original_unverified flag
     // and the site's banner: a consumer of the candidate (the MCP tool, the harness) got no
     // caveat and no reason (Qarlos r26 31990757, Vishay RGF1K). Named here, with the reason
-    // the record gives. The grading treatment is unchanged (status capped below).
-    if (flag(original, "provenance_retracted")) {
+    // the record gives. Owner 2026-11-13, Z2: the same treatment as a per-field retraction —
+    // no PASS can be verified against the original's data, so each reads UNVERIFIED (a
+    // 'fits' reads 'unknown') and the direction cannot read 'upgrade' or 'equivalent' (it was
+    // PASS / 'upgrade' before: Vishay RGF1K -> 1N4006RLG). Regressions stay as they are. The
+    // status stays capped as below; no grade cap beyond what UNVERIFIED implies.
+    const bool orig_retracted_blind = flag(original, "provenance_retracted");
+    if (orig_retracted_blind) {
+        for (auto& p : params)
+            if (p.value("verdict", "") == PASS) p["verdict"] = UNVERIFIED;
+        if (out.value("footprint", "") == "fits") out["footprint"] = "unknown";
+        if (out.value("height_fit", "") == "fits") out["height_fit"] = "unknown";
         const std::string why = str(original, "retraction_reason");
         notes.push_back("every source cited by the original's record is retracted" +
                         (why.empty() ? std::string() : " (" + why + ")") +
@@ -5101,6 +5188,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //   oscillator control-pin function (timebase_pin_unv.)   primary    cap minor_review
     //   resistor power at rating temp (power_basis_unverif.)  primary    cap minor_review
     //   capacitor ripple-current basis (ripple_basis_unv.)    primary    cap minor_review
+    //   capacitor ripple TEMPERATURE basis differs / unstated
+    //     (ripple_temp_basis_unverified; owner 2026-11-13 Z3) primary    cap minor_review
     //   MIL qualified reliability (qualification_unverified)  primary    cap minor_review
     //   safety class / AC rating, Isat, ripple, bead |Z|,
     //     connector family/positions/rated current, analog
@@ -5126,8 +5215,6 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //   resistor maximum working voltage                      secondary  note only
     //   capacitor ESR absent (was missing_required)           secondary  note + FAIL penalty
     //   capacitor ESR basis (esr_basis_unverified)            secondary  note only
-    //   capacitor ripple TEMPERATURE basis differs / unstated
-    //     (ripple_temp_basis_unverified; Cj / Coss rule)      basis      note only
     //   capacitance tolerance band                            secondary  note only
     //   capacitor dielectric codes not comparable             secondary  note only
     //   timing frequency tolerance / stability unstated       secondary  note only,
@@ -5150,7 +5237,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     if (connector_pluggable_unverified) footprint_unverified = true;
     if (connector_identity_unverified) footprint_unverified = true;
     const bool primary_unverified = footprint_unverified || power_basis_unverified ||
-                                    ripple_basis_unverified || lead_form_unverified ||
+                                    ripple_basis_unverified || ripple_temp_basis_unverified ||
+                                    lead_form_unverified ||
                                     qualification_unverified || topology_unverified ||
                                     mount_unverified || timebase_pin_unverified ||
                                     timebase_prog_order;
@@ -5174,7 +5262,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // on evidence that never covered the parameter the match turns on. A measured regression
     // stands — blindness elsewhere cannot make a regression we did see disappear — and so does
     // "mixed", which already carries one.
-    out["direction"] = (cand_retracted || ((direction_blind || field_retraction_blind || isat_basis_blind || surge_blind ||
+    out["direction"] = (cand_retracted || ((direction_blind || field_retraction_blind || orig_retracted_blind || isat_basis_blind || surge_blind ||
                                             current_basis_blind || !magnetic_unweighed.empty() ||
                                             magnetic_rated_absent || timing_accuracy_unweighed) &&
                                            (dir == "upgrade" || dir == "equivalent")) ||
@@ -5204,6 +5292,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // An inductance outside the original's stated tolerance (see inductance_off_band): the
     // same sort tier; grade and direction stay the WARN's (owner 2026-11-13, R1).
     if (inductance_off_band) out["value_differs"] = true;
+    if (capacitance_off_band) out["value_differs"] = true;  // owner 2026-11-13, Z4
     return out;
 }
 
