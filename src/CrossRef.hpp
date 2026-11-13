@@ -482,6 +482,12 @@ inline std::pair<std::string, std::string> case_identities_of(const std::string&
 struct ProgrammableFrequencyFit {
     bool applies = false;  // the frequency verdict below replaces the ordinary compare
     bool pass = false;
+    // A blank substitute admitted for an original stating one fixed frequency: it needs an
+    // ordering step (programmed to that frequency), so the grade is capped at minor_review.
+    bool blank_for_fixed = false;
+    // The rejection is for an ABSENT datum (the substitute states neither a frequency nor a
+    // range), not a compared mismatch: the reject reads direction 'unknown'.
+    bool unverifiable = false;
     std::string note;
     const char* reject_reason = nullptr;
 };
@@ -508,6 +514,7 @@ inline ProgrammableFrequencyFit programmable_frequency_fit(const json& original,
         if (!s_blank) return out;  // a stated frequency: the ordinary exact identity
         out.applies = true;
         out.pass = at_or_above(*o_f, *s_lo) && at_or_above(*s_hi, *o_f);
+        out.blank_for_fixed = out.pass;
         if (out.pass) {
             out.note = "programmable blank: the original's " + hz(*o_f) +
                        " lies inside the substitute's programmable range (" + span(*s_lo, *s_hi) +
@@ -543,6 +550,7 @@ inline ProgrammableFrequencyFit programmable_frequency_fit(const json& original,
                    : "the original is a programmable blank spanning " + span(*o_lo, *o_hi) +
                          "; the substitute's record states neither a frequency nor a "
                          "programmable range — its span cannot be checked";
+    out.unverifiable = !s_f;
     out.reject_reason = s_f ? "a fixed-frequency part does not cover the original's "
                               "programmable range"
                             : "a parameter the match turns on is absent from the substitute's "
@@ -904,7 +912,13 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         else if (ratio < 0.95) (dir == Dir::Higher ? worse : better)++;
     };
 
-    auto reject = [&](const char* reason) {
+    // `unverifiable`: the candidate is rejected because a datum the match needs is ABSENT
+    // (no land pattern on record, a hard-gate parameter missing), not because a compared
+    // parameter came out worse. Its direction is then 'unknown': 'downgrade' claimed a
+    // regression nobody measured (Qarlos r17 27173223: AISC-0402HP-21NJ-T -> AC2218SQ-23NG,
+    // rejected for no dimensions, read 'downgrade' though its every compared parameter was
+    // equal or better).
+    auto reject = [&](const char* reason, bool unverifiable = false) {
         out["status"] = "no_substitute";
         out["reason"] = reason;
         out["penalty"] = 1e9;
@@ -914,7 +928,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // result has the same shape — a consumer should never have to special-case
         // the rejects to render a table.
         out["grade"] = "no_substitute";
-        out["direction"] = "downgrade";
+        out["direction"] = unverifiable ? "unknown" : "downgrade";
         return out;
     };
     auto demote = [&] {
@@ -1312,6 +1326,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     bool timebase_tech_major = false;
     const ProgrammableFrequencyFit prog_freq =
         cat == "timeBase" ? programmable_frequency_fit(original, cand) : ProgrammableFrequencyFit{};
+    // Set when prog_freq admits a blank for a fixed-frequency original (M0): caps minor_review.
+    bool timebase_prog_order = false;
     const bool timebase_passive =
         cat == "timeBase" && (str(original, "technology") == "quartzCrystal" ||
                               str(original, "technology") == "ceramicResonator");
@@ -1522,7 +1538,16 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         if (cat == "timeBase" && spec.key == "frequency" && prog_freq.applies) {
             params.push_back({{"name", "frequency"}, {"verdict", prog_freq.pass ? PASS : FAIL}});
             notes.push_back(prog_freq.note);
-            if (!prog_freq.pass) return reject(prog_freq.reject_reason);
+            if (!prog_freq.pass) return reject(prog_freq.reject_reason, prog_freq.unverifiable);
+            // A blank admitted for an original that states one fixed frequency is not a plain
+            // drop-in: it must be ORDERED programmed to that frequency (owner, 2026-11-13, M0).
+            // Capped at minor_review and demoted; the 'order it programmed to X Hz' note above
+            // says what the step is. A blank covering a programmable original's range is not
+            // capped here — that original was itself a blank.
+            if (prog_freq.blank_for_fixed) {
+                timebase_prog_order = true;
+                demote();
+            }
             continue;
         }
         if (cat == "capacitor" && spec.key == "tolerance_pct" && cap_tol_judged) continue;
@@ -1833,7 +1858,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                             " — the original states one, so this comparison could not be made; "
                             "confirm it from the datasheet before this swap");
             if (hard_gate) return reject("a parameter the match turns on is absent from the "
-                                         "substitute's record — cannot be verified");
+                                         "substitute's record — cannot be verified", true);
             penalty += opt.gate_weight * kVerdictFailPenalty;
             // Only a PRIMARY rating's absence is missing required data (owner, 2026-11-09).
             // The one secondary axis the shared table marks exclude_missing_sub is a
@@ -2349,13 +2374,28 @@ inline json score_candidate(const std::string& cat, const json& original, const 
 
         // Breakdown window: where the part begins to conduct. Upper ends when both state
         // one, else lower ends.
+        // The original's UPPER end with none on the substitute (Qarlos bench 20575296:
+        // 5.0SMDJ100A-QH 111-123 V against 15KP100A, 111 V minimum and no maximum): the
+        // lower ends alone cannot show that the substitute's window stays under the
+        // original's top, so equal lower ends are no PASS — the axis is UNVERIFIED, noted.
+        // A substitute minimum already above the original's would still be the WARN below
+        // (that much is established whatever its maximum).
         {
             const auto olo = num(original, "vz_min_V"), ohi = num(original, "vz_max_V");
             const auto slo = num(cand, "vz_min_V"), shi = num(cand, "vz_max_V");
             std::optional<double> oe, se;
             if (ohi && shi) oe = ohi, se = shi;
             else if (olo && slo) oe = olo, se = slo;
-            if (oe && se) {
+            const bool upper_unstated_sub = ohi && !shi;
+            if (oe && se && upper_unstated_sub && !(*se > *oe * (1.0 + 1e-3))) {
+                params.push_back({{"name", "breakdown_window"}, {"verdict", UNVERIFIED}});
+                notes.push_back("the original's breakdown window tops out at " + volts(*ohi) +
+                                " V; the substitute's record states only its minimum (" +
+                                volts(*slo) +
+                                " V), so whether its window reaches above the original's is "
+                                "unknown — confirm its maximum breakdown voltage from the "
+                                "datasheet");
+            } else if (oe && se) {
                 const bool above = *se > *oe * (1.0 + 1e-3);
                 params.push_back({{"name", "breakdown_window"}, {"verdict", above ? WARN : PASS}});
                 if (above) {
@@ -2546,7 +2586,47 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         const bool cj_basis_differs =
             oc && sc && ovr &&
             !(svr && std::fabs(*ovr - *svr) <= 1e-9 * std::max(std::fabs(*ovr), std::fabs(*svr)));
-        if (cj_basis_differs) {
+        // A different bias does not always leave the comparison open. Cj only FALLS as the
+        // reverse bias rises (a depletion capacitance), and every stated or unstated bias is a
+        // reverse bias >= 0 V. So (Qarlos bench 20300704: CDSOD323-T12C-DSL, 3 pF at 0 V,
+        // against SD12T1G's 150 pF at no stated bias, called "not directly comparable"):
+        //  * the substitute's value was taken at a bias at or ABOVE the original's — always so
+        //    when the original's is 0 V — and already exceeds the original's: at the
+        //    original's bias it is at least that large, so it is worse by at least that ratio.
+        //    Judged as stated (the both-state rule: up to 2x WARN, beyond FAIL); a ratio of
+        //    2x or less is only a lower bound, so the verdict is WARN with a note saying so.
+        //  * the substitute's value was taken at a bias at or BELOW the original's (both
+        //    stated) and is already no larger: at the original's bias it is smaller still —
+        //    PASS.
+        // Anything else stays UNVERIFIED as below. No C(V) model is used: only the sign of
+        // the slope.
+        const bool sub_bias_at_or_above =
+            ovr && (*ovr <= 0.0 || (svr && *svr >= *ovr));
+        const bool sub_bias_at_or_below = ovr && svr && *svr <= *ovr;
+        const bool cj_bound_worse = cj_basis_differs && sub_bias_at_or_above && *sc > *oc;
+        const bool cj_bound_pass = cj_basis_differs && sub_bias_at_or_below && *sc <= *oc;
+        auto at_bias = [&](const std::optional<double>& v) {
+            return v ? " at " + bias(*v) : std::string(" at no stated reverse voltage");
+        };
+        if (cj_bound_worse) {
+            const ParamSpec spec{"junction_capacitance", Dir::Lower, 2.0, std::nullopt, false,
+                                 false, nullptr};
+            const char* v = compare_numeric(spec, oc, sc).verdict;
+            params.push_back({{"name", "junction_capacitance"}, {"verdict", v}});
+            demote();
+            penalty += opt.gate_weight * (v == FAIL ? kVerdictFailPenalty : kVerdictWarnPenalty);
+            ++worse;
+            notes.push_back("junction capacitance " + pf(*sc) + at_bias(svr) +
+                            " against the original's " + pf(*oc) + " at " + bias(*ovr) +
+                            " — Cj only falls as reverse bias rises, so at the original's bias "
+                            "the substitute's is at least " + pf(*sc) +
+                            (v == FAIL ? std::string("")
+                                       : std::string(" (a lower bound: it may be more than 2x)")) +
+                            "; " + load);
+        } else if (cj_bound_pass) {
+            params.push_back({{"name", "junction_capacitance"}, {"verdict", PASS}});
+            note_direction(Dir::Lower, oc, sc);
+        } else if (cj_basis_differs) {
             params.push_back({{"name", "junction_capacitance"}, {"verdict", UNVERIFIED}});
             params.push_back({{"name", "junction_capacitance_basis"}, {"verdict", UNVERIFIED}});
             notes.push_back(
@@ -3073,7 +3153,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             notes.push_back(
                 "no complete land pattern on record — footprint fit cannot be verified; excluded "
                 "from cross-reference until its dimensions are added (catalogue data gap)");
-            return reject("no dimensional data — cannot verify footprint fit");
+            return reject("no dimensional data — cannot verify footprint fit", true);
         }
         // strict_case: a true drop-in KEEPS the footprint. Only a same-size
         // substitute (the case kept) scores 0 on footprint and ranks first; a
@@ -4333,6 +4413,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //   timing technology MEMS <-> quartz XO (established,
     //     owner 2026-11-13; timebase_tech_major)              crossing   WARN, cap major_review
     //   timing technology TCXO for a quartz XO (upgrade)      crossing   WARN -> minor_review
+    //   programmable blank for a fixed-frequency original
+    //     (owner 2026-11-13, M0; timebase_prog_order)          ordering   cap minor_review + note
     //   MOSFET Vgs(th) max, Coss, Qg and other secondary
     //     electricals (table verdicts)                        secondary  note only
     //   MOSFET Coss Vds basis differs / unstated (coss basis) secondary  note only
@@ -4348,7 +4430,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     const bool primary_unverified = footprint_unverified || power_basis_unverified ||
                                     ripple_basis_unverified || lead_form_unverified ||
                                     qualification_unverified || topology_unverified ||
-                                    mount_unverified || timebase_pin_unverified;
+                                    mount_unverified || timebase_pin_unverified ||
+                                    timebase_prog_order;
     out["grade"] = grade_for(status, tier, any_warn, any_fail, primary_unverified,
                              missing_required_data || connector_identity_gaps_major ||
                                  timebase_tech_major,
