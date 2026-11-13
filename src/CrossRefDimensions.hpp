@@ -668,12 +668,31 @@ inline const std::vector<std::string>& leaded_tokens() {
 // (Qarlos bench seed 20575296). Matched on the WHOLE normalised string, never as a
 // substring, so a "12.25 mm" or a part number containing the digits does not classify.
 inline bool wide_terminal_chip_code(const std::string& code);
+// "SMD" itself, as a WHOLE word of the package string: Digi-Key's "Package / Case"
+// descriptors that the timing catalogue carries as its package ("11x5 4-SMD, No Lead",
+// "3225 4-SMD", "HC-49/US SMD 4.0mm Height", 14,261 timing records with no assemblyType) say
+// outright that the part is surface-mount, yet no token above matched them, so the SMD
+// ABC2-7.3728MHZ-4-T read mount 'not stated' and the through-hole WE 830003336 (HC49/4H, tht)
+// ranked #1 at minor_review instead of being rejected (Qarlos r26 32200215). A whole word
+// only (not inside "SMDIP"), and never the negated "Not SMD" (880 capacitor records use it
+// as their case string for a leaded part).
+inline bool package_says_smd_word(const std::string& upper_package) {
+    const std::string& p = upper_package;
+    auto alnum = [](char c) { return std::isalnum(static_cast<unsigned char>(c)) != 0; };
+    for (std::size_t at = p.find("SMD"); at != std::string::npos; at = p.find("SMD", at + 1)) {
+        if (at > 0 && alnum(p[at - 1])) continue;
+        if (at + 3 < p.size() && alnum(p[at + 3])) continue;
+        if (at >= 4 && p.compare(at - 4, 4, "NOT ") == 0) continue;
+        return true;
+    }
+    return false;
+}
 inline bool is_smd(const std::string& package) {
     if (wide_terminal_chip_code(package)) return true;
     const std::string p = dims_detail::upper(package);
     for (const auto& tok : smd_tokens())
         if (p.find(tok) != std::string::npos) return true;
-    return false;
+    return package_says_smd_word(p);
 }
 
 inline bool is_leaded(const std::string& package) {

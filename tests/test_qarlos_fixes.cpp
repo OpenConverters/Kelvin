@@ -7397,3 +7397,30 @@ TEST_CASE("Qarlos r26 X2: ripple ratings at different temperatures are not compa
     CHECK(verdict_of(r3["candidates"][0], "ripple_current") == "unverified");
     CHECK(has_note(r3["candidates"][0], "states 2.25 A at no temperature"));
 }
+
+// X4: a package string that says "SMD" as a word classifies the mount. Real pair (Qarlos r26
+// 32200215), frozen bench data TAS 6bd04c7, distributorsInfo dropped: the SMD Abracon crystal
+// (package "11x5 4-SMD, No Lead", no assemblyType) against the through-hole WE-XTAL (HC49/4H,
+// assemblyType tht), which ranked #1 at minor_review.
+namespace r26_x {
+// timing_devices.ndjson line 883: ABC2-7.3728MHZ-4-T
+const char* kABC2_7_3728MHZ_4_T = R"KREC({"timeBase":{"oscillator":{"manufacturerInfo":{"name":"Abracon","reference":"ABC2-7.3728MHZ-4-T","status":"production","series":"ABC2","datasheetInfo":{"part":{"partNumber":"ABC2-7.3728MHZ-4-T","series":"ABC2","package":"11x5 4-SMD, No Lead","case":"11x5 4-SMD, No Lead"},"electrical":{"technology":"quartzCrystal","outputType":"none","frequency":7372800.0,"frequencyTolerance":2.9999999999999997e-05,"frequencyStability":2.9999999999999997e-05,"loadCapacitance":1.8e-11,"equivalentSeriesResistance":50.0,"mode":"fundamental"},"provenance":[{"source":"manufacturerParametric","sourceName":"Abracon parametric search","sourceUrl":"https://abracon.com/Resonators/ABC2.pdf","retrievedDate":"2026-07-03","fields":["electrical.technology","electrical.outputType","electrical.frequency","electrical.frequencyTolerance","electrical.frequencyStability","electrical.loadCapacitance","electrical.equivalentSeriesResistance","electrical.mode"],"verification":"seriesConfirmed","verificationDate":"2026-10-09"}],"thermal":{"operatingTemperature":{"minimum":-10.0,"maximum":60.0}}},"datasheetUrl":"https://abracon.com/Resonators/ABC2.pdf"}}}})KREC";
+// timing_devices.ndjson line 73: 830003336
+const char* k830003336 = R"KREC({"timeBase":{"oscillator":{"manufacturerInfo":{"name":"W\u00fcrth Elektronik","reference":"830003336","series":"WE-XTAL","datasheetUrl":"https://www.we-online.com/components/products/datasheet/830003336.pdf","datasheetInfo":{"part":{"partNumber":"830003336","case":"HC49/4H"},"electrical":{"technology":"quartzCrystal","frequency":7372800.0,"frequencyTolerance":1.4999999999999999e-05,"frequencyStability":2.9999999999999997e-05,"loadCapacitance":1.8e-11,"outputType":"none","mode":"fundamental"},"provenance":[{"source":"manufacturerParametric","verification":"seriesConfirmed","verificationDate":"2026-10-09","sourceName":"W\u00fcrth Elektronik product table","sourceUrl":"https://www.we-online.com/en/components/products/WE-XTAL","retrievedDate":"2026-07-02","fields":["part.partNumber","electrical.technology","electrical.frequency","electrical.frequencyTolerance","electrical.frequencyStability","electrical.loadCapacitance"]},{"source":"manufacturerDatabase","sourceName":"W\u00fcrth Elektronik product database","sourceUrl":null,"retrievedDate":"2026-07-02","fields":["mechanical.length","mechanical.width","mechanical.height","mechanical.case","part.case","mechanical.assemblyType","manufacturerInfo.description"]}],"thermal":{"operatingTemperature":{"minimum":-10.0,"maximum":60.0}},"mechanical":{"length":{"nominal":0.011349999999999999},"width":{"nominal":0.004849999999999999},"height":{"nominal":0.004},"case":"HC49/4H","assemblyType":"tht"}},"description":"WE-XTAL Quartz Crystal, THT, HC49/4H, 7.3728 MHz, \u00b115ppm"}}}})KREC";
+}  // namespace r26_x
+
+TEST_CASE("Qarlos r26 X4: an SMD-package crystal is not offered a through-hole one",
+          "[qarlos][crossref][timing][r26-x4]") {
+    using namespace r26_x;
+    using kelvin::crossref::is_smd;
+    CHECK(is_smd("11x5 4-SMD, No Lead"));
+    CHECK(is_smd("3225 4-SMD"));
+    CHECK(is_smd("HC-49/US SMD 4.0mm Height"));
+    CHECK(is_smd("SMD"));
+    CHECK_FALSE(is_smd("Not SMD"));       // 880 capacitor case strings: a negation
+    CHECK_FALSE(is_smd("SMDIP (SDIP)"));  // not a whole word
+    const json c = dec_1113_s::timing_one(kABC2_7_3728MHZ_4_T, k830003336);
+    CHECK(c["status"] == "no_substitute");
+    CHECK(verdict_of(c, "mounting") == "fail");
+    CHECK(has_note(c, "mount type incompatible: 11x5 4-SMD, No Lead -> tht"));
+}
