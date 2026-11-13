@@ -1561,7 +1561,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     }
     // ── PARAM_SPECS verdicts (the shared Heaviside table) ────────────────────
     for (const ParamSpec& spec : params_for(cat)) {
-        const bool supply_key = spec.key == "supply_min_V" || spec.key == "supply_max_V";
+        // The supply current (current_consumption, v22) is a supply parameter like the range:
+        // a passive crystal or resonator has none, so it is skipped for them too.
+        const bool supply_key = spec.key == "supply_min_V" || spec.key == "supply_max_V" ||
+                                spec.key == "current_consumption";
         if (cat == "timeBase" && supply_key && timebase_passive) continue;
         // A programmable original or blank substitute: the frequency verdict is the range
         // check (programmable_frequency_fit), which also runs when neither record states a
@@ -1677,12 +1680,20 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 ++better;
                 // No claim about the supply current: "at a higher supply current and cost" was
                 // printed for every TCXO, including ASDAIG-48.000MHZ-X-K-T (13 mA) ->
-                // 7N48071001 (10 mA) (Qarlos r22 30000906). Neither current nor cost is on the
-                // timing row (TimingRow carries no currentConsumption), so the note asks for the
-                // check instead of asserting its outcome.
+                // 7N48071001 (10 mA) (Qarlos r22 30000906). Neither current nor cost was on the
+                // timing row then, so the note asks for the check instead of asserting its
+                // outcome. Since v22 the row carries the supply current (owner 2026-11-13, S3):
+                // when both records state it, the current_consumption row compares it and the
+                // note says no more; when either does not, the note still asks for the check.
+                const bool current_compared = num(original, "current_consumption").has_value() &&
+                                              num(cand, "current_consumption").has_value();
                 notes.push_back("technology differs: " + name(s_t) + " offered for " + name(o_t) +
-                                " — a temperature-compensated upgrade; its supply current is not "
-                                "compared here, so confirm the rail's current budget");
+                                (current_compared
+                                     ? std::string(" — a temperature-compensated upgrade; its "
+                                                   "supply current is compared on its own row")
+                                     : std::string(" — a temperature-compensated upgrade; its "
+                                                   "supply current is not compared here, so "
+                                                   "confirm the rail's current budget")));
             }
         }
         if (pin_field && verdict == UNVERIFIED) {

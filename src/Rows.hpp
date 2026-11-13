@@ -495,6 +495,11 @@ struct TimingRow : RowBase {
     // (programmable_frequency_fit). No TAS record carried it when it was added.
     double frequency_min = kNaN();
     double frequency_max = kNaN();
+    // A — electrical.supply.currentConsumption (TDAS: steady-state operating supply current, a
+    // plain number in A). The timing comparison table has carried a current_consumption spec
+    // since it was ported, but no row filled it, so it never ran (owner 2026-11-13, S3). NaN
+    // when unstated; a stated 0 is left unset like the supply voltages (set_if_pos).
+    double current_consumption = kNaN();
     bool is_production = false;
 };
 

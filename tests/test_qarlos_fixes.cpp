@@ -6722,3 +6722,58 @@ TEST_CASE("owner 2026-11-13 N2c: MOSFET die configuration is graded like the dio
         CHECK(verdict_of(c, "die_configuration") == "fail");
     }
 }
+
+// ── Owner decisions 2026-11-13, agent S ──────────────────────────────────────
+
+// S3: the timing table's current_consumption spec (lower is better, 3x warn band) had no row
+// field behind it, so it never ran. The row now carries TDAS electrical.supply.currentConsumption
+// and web/src/crossref.js passes it as current_consumption. Real pair (Qarlos r22 30000906):
+// ASDAIG-48.000MHZ-X-K-T (Abracon XO, 13 mA) -> 7N48071001 (TXC TCXO, 10 mA).
+namespace dec_1113_s {
+// timing_tech::spec plus the supply current, exactly as web/src/crossref.js builds it
+// (current_consumption: nz(r.current_consumption)).
+json timing_spec(const char* line) {
+    json s = timing_tech::spec(line);
+    auto r = kelvin::extract_timing(json::parse(line));
+    REQUIRE(r.has_value());
+    s["current_consumption"] =
+        std::isnan(r->current_consumption) || !(r->current_consumption > 0)
+            ? json(nullptr) : json(r->current_consumption);
+    return s;
+}
+json timing_one(const char* orig, const char* cand) {
+    auto r = kelvin::crossref::cross_reference("timeBase", timing_spec(orig),
+                                               json::array({timing_spec(cand)}));
+    REQUIRE(r["candidates"].size() == 1);
+    return r["candidates"][0];
+}
+}  // namespace dec_1113_s
+
+TEST_CASE("owner 2026-11-13 S3: the timing supply current reaches the row and is compared",
+          "[qarlos][crossref][timing][dec-s3]") {
+    using namespace dec_1113_s;
+    auto o = kelvin::extract_timing(json::parse(timing_tech::kASDAIG_48_000MHZ_X_K_T));
+    auto s = kelvin::extract_timing(json::parse(timing_tech::k7N48071001));
+    REQUIRE(o.has_value());
+    REQUIRE(s.has_value());
+    CHECK(o->current_consumption == Catch::Approx(0.013));
+    CHECK(s->current_consumption == Catch::Approx(0.010));
+    const json c = timing_one(timing_tech::kASDAIG_48_000MHZ_X_K_T, timing_tech::k7N48071001);
+    CHECK(verdict_of(c, "current_consumption") == "pass");  // 10 mA <= 13 mA
+    // The TCXO note no longer says the current is not compared when both records state it.
+    CHECK(has_note(c, "technology differs: a TCXO offered for a quartz crystal oscillator (XO)"));
+    CHECK_FALSE(has_note(c, "its supply current is not compared here"));
+    // The other way round the substitute draws more (13 mA vs 10 mA, inside the 3x band): WARN.
+    // (An XO for a TCXO original is refused on technology, so judge the pair as XO -> XO by
+    // reading the TCXO record's current against the XO's through the spec table directly.)
+    const json orig = timing_spec(timing_tech::k7N48071001);
+    const json cand = timing_spec(timing_tech::kASDAIG_48_000MHZ_X_K_T);
+    const auto reports = kelvin::crossref::evaluate_params("timeBase", orig, cand);
+    bool seen = false;
+    for (const auto& rp : reports)
+        if (rp.key == "current_consumption") {
+            seen = true;
+            CHECK(rp.verdict == "warn");
+        }
+    CHECK(seen);
+}

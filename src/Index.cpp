@@ -140,6 +140,8 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // for a programmable original only when its range contains the original's frequency, or
 // covers the original's range (owner 2026-11-13). A new TimingRow field changes what a shard
 // row serialises, so every v21 shard must be rebuilt and both engines redeployed together.
+// v22 (not yet deployed when added, so no bump) also carries a timing device's supply current
+// (TimingRow.current_consumption, TDAS electrical.supply.currentConsumption; owner 2026-11-13).
 constexpr uint32_t kFormatVersion = 22;
 
 // Identity of the code that produces rows, so a cached shard can be recognised as
@@ -497,6 +499,7 @@ void row_io(Ar& ar, TimingRow& r) {
     ar.dbl(r.built_in_capacitance);  // v21
     ar.dbl(r.frequency_min);  // v22
     ar.dbl(r.frequency_max);  // v22
+    ar.dbl(r.current_consumption);  // v22 (owner 2026-11-13, S3)
     ar.boolean(r.is_production);
 }
 

@@ -1601,6 +1601,7 @@ std::optional<TimingRow> extract_timing(const json& env) {
         if (supply) {
             set_if_pos(r.vsupply_min, get_num(*supply, "minimumSupplyVoltage"));
             set_if_pos(r.vsupply_max, get_num(*supply, "maximumSupplyVoltage"));
+            set_if_pos(r.current_consumption, get_num(*supply, "currentConsumption"));
         }
         r.technology = get_str(*elec, "technology").value_or("");
         r.output_type = get_str(*elec, "outputType").value_or("");

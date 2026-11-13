@@ -207,6 +207,10 @@ export const XREF = [
       // passive crystal or resonator, which has no supply). Neither was passed, so a
       // 3.3 V-only and a 1.8 V-only XO ranked minor_review / upgrade for a 2.5 V original.
       supply_min_V: nz(r.vsupply_min), supply_max_V: nz(r.vsupply_max),
+      // The steady-state supply current (TDAS supply.currentConsumption, A), compared by the
+      // ranker's current_consumption spec (lower is better). It reached no row before v22, so
+      // that comparison never ran (owner 2026-11-13, S3).
+      current_consumption: nz(r.current_consumption),
       tolerance_ppm: r.frequency_tolerance != null ? r.frequency_tolerance * 1e6 : null,
       stability_ppm: r.frequency_stability != null ? r.frequency_stability * 1e6 : null,
       // Raw, NOT through nz(): a cold limit is negative and 0 degC is a real rating. The
@@ -220,6 +224,7 @@ export const XREF = [
       { key: 'tolerance_ppm', label: 'tol', row: 'frequency_tolerance', unit: 'ppm', scale: 1e6 },
       { key: 'supply_min_V', label: 'Vdd min', row: 'vsupply_min', unit: 'V' },
       { key: 'supply_max_V', label: 'Vdd max', row: 'vsupply_max', unit: 'V' },
+      { key: 'current_consumption', label: 'Idd', row: 'current_consumption', unit: 'A' },
       { key: 'output_type', label: 'output', row: 'output_type', str: true },
       { key: 'enable_function', label: 'pin 1', row: 'enable_function', str: true },
       { key: 'stability_ppm', label: 'stab', row: 'frequency_stability', unit: 'ppm', scale: 1e6 },
