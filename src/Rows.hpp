@@ -228,6 +228,13 @@ struct DiodeRow : RowBase {
     // vendor table's whole-device figure (7.5 A per leg) — and graded if_avg 'pass'
     // (Qarlos 2026-11-08, run 4 seed 20292785). Never inferred from the MPN.
     std::string die_configuration, internal_connection;
+    // v22 (SAS bcc7a93): how many diodes the package holds, as the record states it —
+    // electrical.numberOfElements for a package of identical diodes (the electrical block
+    // then describes ONE of them), else the length of datasheetInfo.dies[] when the record
+    // describes its diodes one by one. NaN = not stated; never inferred from the pin count,
+    // the MPN or the configuration (the ranker reads a stated 'dual' / 'single' as 2 / 1,
+    // which is how SAS defines them).
+    double number_of_elements = kNaN();
     // Transient-suppression specs (tvs / esd). These, not Vrrm, are what a protection diode
     // IS: the surge it absorbs, the level it clamps to, the capacitance it loads the line
     // with. None was carried, so a 400 W SMAJ came back an 'upgrade' for a 15 kW 15KP and a

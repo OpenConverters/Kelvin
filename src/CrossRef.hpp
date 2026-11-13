@@ -3665,6 +3665,54 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             // original. Capped like an unverified footprint (minor_review).
             params.push_back({{"name", "mounting"}, {"verdict", UNVERIFIED}});
             mount_unverified = true;
+    // Diode count (owner 2026-11-13, AA1; SAS bcc7a93 electrical.numberOfElements /
+    // dies[]): how many diodes the package holds is an identity like the die configuration —
+    // an 8-line ESD array is not a 4-line one, whatever their per-line ratings. Graded only
+    // when at least one record STATES a count; a stated 'dual' without one is 2 and a stated
+    // 'single' is 1, because SAS defines them so (an absent configuration is not read as
+    // one). Same rule as above: both known and different -> rejected; one side known ->
+    // UNVERIFIED, capped as the die configuration is (no second penalty where that row, or
+    // the forward-current basis, already capped for the same silence).
+    if (cat == "diode" && (num(original, "number_of_elements") || num(cand, "number_of_elements"))) {
+        auto count_of = [](const json& p) -> std::optional<double> {
+            if (auto n = num(p, "number_of_elements")) return n;
+            const std::string dc = str(p, "die_configuration");
+            if (dc == "dual") return 2.0;
+            if (dc == "single") return 1.0;
+            return std::nullopt;
+        };
+        const auto o = count_of(original), s = count_of(cand);
+        auto n_str = [](double v) {
+            char b[32];
+            std::snprintf(b, sizeof b, "%g", v);
+            return std::string(b);
+        };
+        if (o && s) {
+            if (*o == *s) {
+                params.push_back({{"name", "number_of_elements"}, {"verdict", PASS}});
+            } else {
+                params.push_back({{"name", "number_of_elements"}, {"verdict", FAIL}});
+                notes.push_back("number of diodes differs: the original holds " + n_str(*o) +
+                                ", the substitute " + n_str(*s) +
+                                " — a different package and pinout, not a substitute");
+                return reject("a different number of diodes in the package");
+            }
+        } else {
+            params.push_back({{"name", "number_of_elements"}, {"verdict", UNVERIFIED}});
+            notes.push_back(o ? "the original's record states " + n_str(*o) +
+                                    " diodes in the package and the substitute's states no "
+                                    "count — confirm the substitute's diode count and pinout "
+                                    "from its datasheet"
+                              : "the substitute's record states " + n_str(*s) +
+                                    " diodes in the package and the original's states no "
+                                    "count — confirm the original's diode count and pinout match");
+            if (!current_basis_blind && !topology_unverified) {
+                demote();
+                penalty += opt.gate_weight * kVerdictWarnPenalty;
+            }
+            topology_unverified = true;
+        }
+    }
             // A gap toward the several-gaps cap only when the original states the board
             // mount (owner 2026-11-13, W1).
             if (!o_cls.empty()) connector_identity_gaps.push_back("board mount");

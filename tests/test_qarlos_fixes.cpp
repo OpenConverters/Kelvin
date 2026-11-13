@@ -3895,6 +3895,7 @@ json diode_spec(const json& r) {
     const std::string dc = r.value("die_configuration", ""), ic = r.value("internal_connection", "");
     s["die_configuration"] = dc.empty() ? json(nullptr) : json(dc);
     s["internal_connection"] = ic.empty() ? json(nullptr) : json(ic);
+    s["number_of_elements"] = nz_(r["number_of_elements"]);
     s["vz_min_V"] = nz_(r["vz_min"]);
     s["vz_max_V"] = nz_(r["vz_max"]);
     s["vz_tolerance_pct"] =
@@ -7990,3 +7991,137 @@ TEST_CASE("owner 2026-11-13 Z5: Isat read at the same drop on both curves",
     CHECK(verdict_of(c4, "saturation_current") == "pass");
 }
 
+// ── Owner 2026-11-13 AA1: diode arrays — dieConfiguration 'array', numberOfElements, dies[] ──
+// SAS bcc7a93 added part.dieConfiguration 'array', electrical.numberOfElements (per-diode
+// values) and datasheetInfo.dies[] (INSTEAD of electrical when the diodes differ). No TAS
+// record states them yet (ABT #2390 asks TAS to fill them), so the tests take REAL records of
+// the frozen bench data (tools/qarlos/bench/data-6bd04c7/diodes.ndjson, distributorsInfo
+// dropped) and ADD the new fields here, in the test; each addition is named where it is made.
+namespace aa1 {
+// diodes.ndjson: STPS30L60CT (dual, commonCathode, 15 A per leg).
+const char* kSTPS30L60CT = R"J({"semiconductor":{"diode":{"manufacturerInfo":{"name":"STMicroelectronics","reference":"STPS30L60CT","status":"production","datasheetUrl":"https://www.st.com/resource/en/datasheet/stps30l60c.pdf","datasheetInfo":{"part":{"partNumber":"STPS30L60CT","technology":"Si","subType":"schottky","case":"TO-220AB","dieConfiguration":"dual","internalConnection":"commonCathode"},"electrical":{"reverseVoltage":60,"forwardCurrent":15.0,"surgeCurrent":400,"forwardVoltage":0.42,"forwardVoltageAt":15,"reverseLeakageCurrent":0.0003,"junctionCapacitance":1.5e-09,"junctionCapacitanceVr":5,"powerDissipation":75},"thermal":{"thermalResistanceJunctionCase":2.0,"thermalResistanceJunctionAmbient":50,"junctionTemperatureMax":175,"junctionTemperatureMin":-65},"mechanical":{"assemblyType":"tht","case":"TO-220AB","length":{"nominal":0.0157},"width":{"nominal":0.0102},"height":{"nominal":0.0045}},"provenance":[{"source":"manufacturerDatasheet","sourceName":"STMicroelectronics datasheet","sourceUrl":"https://www.st.com/resource/en/datasheet/stps30l60c.pdf","retrievedDate":"2026-10-10","fields":["part.dieConfiguration","part.internalConnection","electrical.forwardCurrent"],"verification":"valuesReadFromSource","verificationDate":"2026-10-10"}]}}}}})J";
+// diodes.ndjson: TPD4E02B04 and TPD4E6B06 (TI 4-channel ESD arrays; the records state no
+// die configuration — the count and 'array' are added below).
+const char* kTPD4E02B04 = R"J({"semiconductor":{"diode":{"manufacturerInfo":{"name":"Texas Instruments","reference":"TPD4E02B04","status":"production","datasheetUrl":"https://www.ti.com/product/TPD4E02B04","datasheetInfo":{"part":{"partNumber":"TPD4E02B04","technology":"Si","subType":"esd","case":"USON"},"electrical":{"junctionCapacitance":2.5e-13,"reverseLeakageCurrent":1e-08,"esdVoltageContact":12000.0,"peakPulseCurrent":2.0,"standoffVoltage":3.6},"thermal":{"junctionTemperatureMin":-40.0,"junctionTemperatureMax":125.0},"mechanical":{"assemblyType":"smt","case":"USON","length":{"nominal":0.0025},"width":{"nominal":0.001}},"provenance":[{"source":"manufacturerParametric","verification":"partNamed","verificationDate":"2026-10-09","sourceName":"Texas Instruments parametric search","sourceUrl":"https://www.ti.com/product/TPD4E02B04"}]}}}}})J";
+const char* kTPD4E6B06 = R"J({"semiconductor":{"diode":{"manufacturerInfo":{"name":"Texas Instruments","reference":"TPD4E6B06","status":"production","datasheetUrl":"https://www.ti.com/product/TPD4E6B06","datasheetInfo":{"part":{"partNumber":"TPD4E6B06","technology":"Si","subType":"esd","case":"X2SON"},"electrical":{"junctionCapacitance":4.8e-12,"reverseLeakageCurrent":1e-07,"peakPulseCurrent":3.0,"standoffVoltage":5.5,"peakPulseCurrentWaveform":"8/20"},"thermal":{"junctionTemperatureMin":-40.0,"junctionTemperatureMax":125.0},"mechanical":{"assemblyType":"smt","case":"X2SON","length":{"nominal":0.0008},"width":{"nominal":0.0008}},"provenance":[{"source":"manufacturerParametric","verification":"partNamed","verificationDate":"2026-10-09","sourceName":"Texas Instruments parametric search","sourceUrl":"https://www.ti.com/product/TPD4E6B06"}]}}}}})J";
+
+json& dinfo(json& rec) { return rec["semiconductor"]["diode"]["manufacturerInfo"]["datasheetInfo"]; }
+json renamed(json rec, const std::string& mpn) {
+    rec["semiconductor"]["diode"]["manufacturerInfo"]["reference"] = mpn;
+    dinfo(rec)["part"]["partNumber"] = mpn;
+    return rec;
+}
+// The real record described per die instead of by one block (dies[] added in the test).
+json as_dies(const char* raw, const std::string& mpn, bool differ) {
+    json rec = renamed(json::parse(raw), mpn);
+    json& di = dinfo(rec);
+    const json e = di["electrical"];
+    const std::string st = di["part"]["subType"];
+    di.erase("electrical");
+    json d2 = e;
+    if (differ) d2["forwardVoltage"] = 0.55;  // a second diode with a different V_F
+    di["dies"] = json::array({{{"name", "D1"}, {"subType", st}, {"electrical", e}},
+                              {{"name", "D2"}, {"subType", st}, {"electrical", d2}}});
+    return rec;
+}
+const json& rows() {
+    static const json r = [] {
+        namespace fs = std::filesystem;
+        json stps = json::parse(kSTPS30L60CT);
+        dinfo(stps)["electrical"]["numberOfElements"] = 2;  // added: SAS 'a dual ... is then 2'
+        json tpd = json::parse(kTPD4E02B04);
+        dinfo(tpd)["part"]["dieConfiguration"] = "array";   // added: a 4-channel ESD array
+        dinfo(tpd)["electrical"]["numberOfElements"] = 4;   // added: TPD4E = 4 channels
+        const std::string path = (fs::temp_directory_path() / "kelvin_aa1_diodes.ndjson").string();
+        {
+            std::ofstream o(path);
+            o << stps.dump() << "\n"
+              << tpd.dump() << "\n"
+              << kTPD4E6B06 << "\n"
+              << as_dies(kSTPS30L60CT, "STPS30L60CT-DIES", false).dump() << "\n"
+              << as_dies(kSTPS30L60CT, "STPS30L60CT-DIFFER", true).dump() << "\n";
+        }
+        const auto sh = kelvin::build_diode_shard(path);
+        fs::remove(path);
+        return kelvin::browse::browse_rows(sh, json{{"limit", 100}})["rows"];
+    }();
+    return r;
+}
+json row(const std::string& mpn) {
+    for (const auto& r : rows())
+        if (r.value("mpn", "") == mpn) return r;
+    return json(nullptr);
+}
+}  // namespace aa1
+
+TEST_CASE("owner 2026-11-13 AA1: diode count and identical dies are read; differing dies unread",
+          "[qarlos][views][index][browse][aa1]") {
+    const json stps = aa1::row("STPS30L60CT");
+    REQUIRE(stps.is_object());
+    CHECK(stps["number_of_elements"] == 2.0);
+    CHECK(stps["die_configuration"] == "dual");
+    const json tpd = aa1::row("TPD4E02B04");
+    REQUIRE(tpd.is_object());
+    CHECK(tpd["die_configuration"] == "array");
+    CHECK(tpd["number_of_elements"] == 4.0);
+    // A record that states no count reads as before: null, not 1 and not a pin count.
+    const json plain = aa1::row("TPD4E6B06");
+    REQUIRE(plain.is_object());
+    CHECK(plain["number_of_elements"].is_null());
+    // Identical dies: that die's values are the part's, per diode, and the count is the dies'.
+    const json dies = aa1::row("STPS30L60CT-DIES");
+    REQUIRE(dies.is_object());
+    CHECK(dies["number_of_elements"] == 2.0);
+    CHECK(dies["technology"] == "schottky");
+    CHECK(dies["vrrm_rated"] == 60.0);
+    CHECK(dies["if_avg_rated"] == 15.0);
+    CHECK(dies["vf_typ"] == 0.42);
+    CHECK(dies["junction_capacitance"] == 1.5e-09);
+    // Differing dies: no single V_F for the part — left unread, not given D1's numbers.
+    CHECK(aa1::row("STPS30L60CT-DIFFER").is_null());
+}
+
+TEST_CASE("owner 2026-11-13 AA1: diode count is graded as an identity",
+          "[qarlos][crossref][aa1]") {
+    // TPD4E6B06 (it states its surge waveform, so nothing else caps a copy of it), with
+    // 'array' / 4 channels added at spec level; the same record with the count varied
+    // isolates the rule.
+    json orig = diode_spec(aa1::row("TPD4E6B06"));
+    orig["die_configuration"] = "array";
+    orig["number_of_elements"] = 4.0;
+    auto as = [&](const char* mpn, json n, json dc = "array") {
+        json s = orig;
+        s["mpn"] = mpn;
+        s["number_of_elements"] = n;
+        s["die_configuration"] = dc;
+        return s;
+    };
+    auto r = kelvin::crossref::cross_reference(
+        "diode", orig,
+        json::array({as("SAME4", 4.0), as("SIX", 6.0), as("UNCOUNTED", nullptr)}));
+    const json same = find_mpn(r, "SAME4");
+    CHECK(verdict_of(same, "number_of_elements") == "pass");
+    CHECK(same["grade"] == "drop_in");
+    const json six = find_mpn(r, "SIX");
+    CHECK(six["status"] == "no_substitute");
+    CHECK(verdict_of(six, "number_of_elements") == "fail");
+    CHECK(has_note(six, "the original holds 4, the substitute 6"));
+    const json unc = find_mpn(r, "UNCOUNTED");
+    CHECK(verdict_of(unc, "number_of_elements") == "unverified");
+    CHECK(unc["grade"] == "minor_review");
+    CHECK(has_note(unc, "states 4 diodes in the package and the substitute's states no count"));
+
+    // A stated 'dual' without a count is 2 (SAS): it matches a dual stating 2 and is told
+    // apart from a 3-count; nothing is graded when neither side states a count.
+    const json dual = diode_spec(aa1::row("STPS30L60CT-DIES"));  // dual, 2 dies
+    json dual_uncounted = dual;
+    dual_uncounted["mpn"] = "DUAL_NO_COUNT";
+    dual_uncounted["number_of_elements"] = nullptr;
+    auto r2 = kelvin::crossref::cross_reference("diode", dual_uncounted, json::array({dual}));
+    CHECK(verdict_of(find_mpn(r2, "STPS30L60CT-DIES"), "number_of_elements") == "pass");
+    json dual_uncounted2 = dual_uncounted;
+    dual_uncounted2["mpn"] = "DUAL_NO_COUNT_2";
+    auto r3 = kelvin::crossref::cross_reference("diode", dual_uncounted,
+                                                json::array({dual_uncounted2}));
+    CHECK(verdict_of(find_mpn(r3, "DUAL_NO_COUNT_2"), "number_of_elements") == "");
+}

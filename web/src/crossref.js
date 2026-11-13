@@ -362,6 +362,9 @@ export const XREF = [
       // tvs / esd protection specs, each with the impulse it is stated at: the ranker
       // compares a surge rating only against one stated at the SAME waveform
       // (ABT #2036, #2040, #2041, #2048-#2051). Empty waveform = not stated.
+      // How many diodes the package holds (SAS electrical.numberOfElements, or the count of
+      // dies[]), graded as an identity beside the die configuration. null when unstated.
+      number_of_elements: nz(r.number_of_elements),
       clamping_voltage: nz(r.clamping_voltage), clamping_current: nz(r.clamping_current),
       peak_pulse_power: nz(r.peak_pulse_power), peak_pulse_current: nz(r.peak_pulse_current),
       junction_capacitance: nz(r.junction_capacitance),

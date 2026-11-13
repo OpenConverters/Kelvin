@@ -364,6 +364,7 @@ void row_io(Ar& ar, DiodeRow& r) {
     ar.str(r.peak_pulse_current_waveform);  // v17
     ar.str(r.qualification);           // v20
     ar.dbl(r.junction_capacitance_vr); // v21
+    ar.dbl(r.number_of_elements);      // v22 (SAS bcc7a93)
     ar.boolean(r.is_production);
 }
 
