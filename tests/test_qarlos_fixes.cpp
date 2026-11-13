@@ -7080,6 +7080,7 @@ json mag_spec_r(const kelvin::MagneticRow& r) {
     s["tolerance_minus_pct"] = raw(r.inductance_tol_minus_pct);
     s["tolerance_plus_pct"] = raw(r.inductance_tol_plus_pct);
     s["turns_ratios"] = row["turns_ratios"];
+    s["turns_ratio_configs"] = row["turns_ratio_configs"];  // v22 (W4), as web/src/crossref.js
     return s;
 }
 kelvin::MagneticRow real_row(const char* text) {
@@ -7402,4 +7403,61 @@ TEST_CASE("owner 2026-11-13 W2: different case systems, the same resolved body, 
     REQUIRE(r2["candidates"].size() == 1);
     CHECK(r2["candidates"][0]["footprint"] == "different_case");
     CHECK(has_note(r2["candidates"][0], "different package/case (D -> 1510)"));
+}
+
+// ── Owner 2026-11-13 W4: transformer turns ratio rejects beyond 15 %; every configuration ──
+// (a) beyond 15 % (or a different number of ratios in every configuration pair) is a
+// rejection with the reason, not a listed FAIL: IT213TH (0.833) -> IT211TH (1.0, +20 %).
+// (b) a record may list several wiring configurations; every configuration of the original is
+// set against every configuration of the substitute and the best pair decides. iNRCORE PL10533
+// (one configuration, 8) -> Würth 750370024 ("all windings" [8, 6], "auxiliary windings open"
+// [8]): only the second configuration matches, and it is credited;
+// the same with the original listing the configurations (750310742 -> 750315126). Verbatim lines of
+// tools/qarlos/bench/data-6bd04c7/magnetics.ndjson (TAS 6bd04c7).
+namespace dec_1113_w4 {
+const char* kRecPL10533 = R"KREC({"magnetic": {"manufacturerInfo": {"name": "iNRCORE", "reference": "PL10533", "status": "production", "datasheetInfo": {"part": {"family": "planar-transformers", "description": "iNRCORE planar transformers"}, "electrical": [{"subtype": "transformer", "inductance": {"nominal": 0.00145}, "dcResistances": [{"maximum": 0.024}, {"maximum": 0.0005}], "turnsRatios": [{"nominal": 8.0}], "leakageInductance": {"nominal": 1.1e-06}}], "mechanical": {"assemblyType": "THT"}, "thermal": {"operatingTemperature": {"minimum": -55.0, "maximum": 130.0}}, "provenance": [{"source": "scrape", "sourceName": "iNRCORE product catalogue", "retrievedDate": "2026-06-22"}, {"source": "manufacturerParametric", "sourceName": "iNRCORE product page", "sourceUrl": "https://inrcore.com/products/power/planar-transformers/pl10533/", "retrievedDate": "2026-10-09", "verification": "partNamed", "verificationDate": "2026-10-09"}]}}}})KREC";
+const char* kRec750370024 = R"KREC({"magnetic":{"manufacturerInfo":{"name":"Würth Elektronik","reference":"750370024","status":"production","datasheetUrl":"https://www.we-online.com/components/products/datasheet/750370024.pdf","family":"MID-OLSTM","datasheetInfo":{"part":{"insulationGrade":"reinforced","numberOfWindings":3},"electrical":[{"subtype":"transformer","name":"all windings","inductance":{"nominal":0.0015999999999999999},"turnsRatios":[{"nominal":8.0},{"nominal":6.0}],"dcResistances":[{"nominal":6.2},{"nominal":0.1},{"nominal":1}],"leakageInductance":{"maximum":4.9999999999999996e-05},"saturationCurrentPeak":0.34,"saturationCurrents":[{"percentInductanceDrop":20.0,"current":0.34}],"insulationTestVoltageAC":4000,"ratedVoltageAC":169},{"subtype":"transformer","name":"auxiliary windings open","inductance":{"nominal":0.0015999999999999999},"turnsRatios":[{"nominal":8.0}],"dcResistances":[{"nominal":6.2},{"nominal":0.1}],"leakageInductance":{"maximum":4.9999999999999996e-05},"saturationCurrentPeak":0.34,"saturationCurrents":[{"percentInductanceDrop":20.0,"current":0.34}],"insulationTestVoltageAC":4000,"ratedVoltageAC":169}],"mechanical":{"mounting":"tht","length":{"nominal":0.013720000000000001},"width":{"nominal":0.02045},"height":{"nominal":0.0108}},"provenance":[{"source":"manufacturerDatabase","sourceName":"Würth Elektronik Midcom Smart Transformer Selector","retrievedDate":"2026-09-13","verification":"valuesReadFromSource","verificationDate":"2026-09-13","fields":["electrical.inductance","electrical.leakageInductance","electrical.dcResistances","electrical.insulationTestVoltageAC","electrical.ratedVoltageAC","part.insulationGrade","mechanical"]},{"source":"derived","retrievedDate":"2026-09-13","fields":["electrical.turnsRatios","electrical.dcResistances","electrical.name","part.numberOfWindings"],"derivation":"windings from the transformer selector winding sections"},{"source":"manufacturerDatasheet","sourceUrl":"https://www.we-online.com/components/products/datasheet/750370024.pdf","retrievedDate":"2026-09-13","verification":"valuesReadFromSource","verificationDate":"2026-09-13","verificationMethod":"ISAT at |dL/L| < 20 %","fields":["electrical.saturationCurrentPeak","electrical.saturationCurrents"]},{"source":"manufacturerDatasheet","sourceUrl":"https://www.we-online.com/components/products/datasheet/750370024.pdf","retrievedDate":"2026-09-13","verification":"valuesReadFromSource","verificationDate":"2026-09-13","fields":["electrical.inductance","electrical.leakageInductance","electrical.dcResistances"]},{"source":"manufacturerDatabase","sourceName":"Würth Elektronik database","sourceUrl":"https://www.we-online.com/components/products/datasheet/750370024.pdf","retrievedDate":"2026-08-01","retracted":true,"retractionReason":"superseded by Würth Elektronik Midcom Smart Transformer Selector"}]}}}})KREC";
+// magnetics.ndjson line 1844: 750310742 ("all windings" [2, 1.818], "auxiliary windings open" [2])
+const char* kRec750310742 = R"KREC({"magnetic":{"manufacturerInfo":{"name":"Würth Elektronik","reference":"750310742","status":"production","datasheetUrl":"https://www.we-online.com/components/products/datasheet/750310742.pdf","family":"WE-PoE-PLUS","datasheetInfo":{"part":{"insulationGrade":"functional","numberOfWindings":3},"electrical":[{"subtype":"transformer","name":"all windings","inductance":{"nominal":3.7999999999999995e-05},"turnsRatios":[{"nominal":2.0},{"nominal":1.8181818181818181}],"dcResistances":[{"nominal":0.085},{"nominal":0.025},{"nominal":0.155}],"leakageInductance":{"maximum":4.6999999999999995e-07},"saturationCurrentPeak":3.5,"saturationCurrents":[{"percentInductanceDrop":20.0,"current":3.5}],"insulationTestVoltageAC":1500},{"subtype":"transformer","name":"auxiliary windings open","inductance":{"nominal":3.7999999999999995e-05},"turnsRatios":[{"nominal":2.0}],"dcResistances":[{"nominal":0.085},{"nominal":0.025}],"leakageInductance":{"maximum":4.6999999999999995e-07},"saturationCurrentPeak":3.5,"saturationCurrents":[{"percentInductanceDrop":20.0,"current":3.5}],"insulationTestVoltageAC":1500}],"mechanical":{"mounting":"smt","length":{"nominal":0.013460000000000001},"width":{"nominal":0.017750000000000002},"height":{"nominal":0.0127}},"provenance":[{"source":"manufacturerDatabase","sourceName":"Würth Elektronik Midcom Smart Transformer Selector","retrievedDate":"2026-09-13","verification":"valuesReadFromSource","verificationDate":"2026-09-13","fields":["electrical.inductance","electrical.leakageInductance","electrical.dcResistances","electrical.insulationTestVoltageAC","electrical.ratedVoltageAC","part.insulationGrade","mechanical"]},{"source":"derived","retrievedDate":"2026-09-13","fields":["electrical.turnsRatios","electrical.dcResistances","electrical.name","part.numberOfWindings"],"derivation":"windings from the transformer selector winding sections"},{"source":"manufacturerDatasheet","sourceUrl":"https://www.we-online.com/components/products/datasheet/750310742.pdf","retrievedDate":"2026-09-13","verification":"valuesReadFromSource","verificationDate":"2026-09-13","verificationMethod":"ISAT at |dL/L| < 20 %","fields":["electrical.saturationCurrentPeak","electrical.saturationCurrents"]},{"source":"manufacturerDatasheet","sourceUrl":"https://www.we-online.com/components/products/datasheet/750310742.pdf","retrievedDate":"2026-09-13","verification":"valuesReadFromSource","verificationDate":"2026-09-13","fields":["electrical.inductance","electrical.leakageInductance","electrical.dcResistances"]},{"source":"manufacturerDatabase","sourceName":"Würth Elektronik database","sourceUrl":"https://www.we-online.com/components/products/datasheet/750310742.pdf","retrievedDate":"2026-08-01","retracted":true,"retractionReason":"superseded by Würth Elektronik Midcom Smart Transformer Selector"}]}}}})KREC";
+// magnetics.ndjson line 82514: 750315126 (one configuration, 2)
+const char* kRec750315126 = R"KREC({"magnetic":{"manufacturerInfo":{"name":"Würth Elektronik","reference":"750315126","status":"production","datasheetUrl":"https://www.we-online.com/components/products/datasheet/750315126.pdf","family":"MID-FLYLT","datasheetInfo":{"part":{"insulationGrade":"functional","numberOfWindings":2},"electrical":[{"subtype":"transformer","inductance":{"nominal":3.9999999999999996e-05},"turnsRatios":[{"nominal":2.0}],"dcResistances":[{"nominal":0.075},{"nominal":0.0309}],"leakageInductance":{"maximum":1e-06},"saturationCurrentPeak":3.8,"saturationCurrents":[{"percentInductanceDrop":20.0,"current":3.8}],"insulationTestVoltageAC":1500}],"mechanical":{"mounting":"smt","length":{"nominal":0.013460000000000001},"width":{"nominal":0.017750000000000002},"height":{"nominal":0.0127}},"provenance":[{"source":"manufacturerDatabase","sourceName":"Würth Elektronik Midcom Smart Transformer Selector","retrievedDate":"2026-09-13","verification":"valuesReadFromSource","verificationDate":"2026-09-13","fields":["electrical.inductance","electrical.leakageInductance","electrical.dcResistances","electrical.insulationTestVoltageAC","electrical.ratedVoltageAC","part.insulationGrade","mechanical"]},{"source":"derived","retrievedDate":"2026-09-13","fields":["electrical.turnsRatios","electrical.dcResistances","electrical.name","part.numberOfWindings"],"derivation":"windings from the transformer selector winding sections"},{"source":"manufacturerDatasheet","sourceUrl":"https://www.we-online.com/components/products/datasheet/750315126.pdf","retrievedDate":"2026-09-13","verification":"valuesReadFromSource","verificationDate":"2026-09-13","verificationMethod":"ISAT at |dL/L| < 20 %","fields":["electrical.saturationCurrentPeak","electrical.saturationCurrents"]},{"source":"manufacturerDatasheet","sourceUrl":"https://www.we-online.com/components/products/datasheet/750315126.pdf","retrievedDate":"2026-09-13","verification":"valuesReadFromSource","verificationDate":"2026-09-13","fields":["electrical.inductance","electrical.leakageInductance"]}]}}}})KREC";
+}  // namespace dec_1113_w4
+
+TEST_CASE("owner 2026-11-13 W4: turns ratio beyond 15 % rejects; the best configuration "
+          "pair is credited",
+          "[qarlos][views][crossref][magnetic][turns_ratio][dec-w4]") {
+    using namespace dec_1113_w4;
+    // (a)
+    auto ra = kelvin::crossref::cross_reference(
+        "magnetic", mag_spec_r(real_row(kRecIT213TH)),
+        json::array({mag_spec_r(real_row(kRecIT211TH))}));
+    const json* it211 = cand_by_mpn(ra, "IT211TH");
+    REQUIRE(it211);
+    CHECK(it211->value("status", "") == "no_substitute");
+    CHECK(it211->value("reason", "") ==
+          "transformer turns ratio more than 15 % from the original's");
+    CHECK(has_note(*it211, "turns ratio 1 vs the original's 0.8333 (+20 %)"));
+    // (b)
+    const auto pl = real_row(kRecPL10533), we = real_row(kRec750370024);
+    REQUIRE(we.turns_ratio_configs.size() == 2);
+    REQUIRE(we.turns_ratio_configs[0].size() == 2);
+    REQUIRE(we.turns_ratio_configs[1].size() == 1);
+    auto rb = kelvin::crossref::cross_reference("magnetic", mag_spec_r(pl),
+                                                json::array({mag_spec_r(we)}));
+    const json* c = cand_by_mpn(rb, "750370024");
+    REQUIRE(c);
+    CHECK(c->value("status", "") != "no_substitute");
+    CHECK(verdict_of(*c, "turns_ratio") == "pass");
+    CHECK(has_note(*c, "turns ratio 8 matches the original's 8 on the substitute's wiring "
+                       "configuration 2 of 2"));
+    // The other direction: the original's second configuration against the substitute's one.
+    // 750310742 ([2, 1.818] or [2]) -> 750315126 ([2]).
+    auto rc = kelvin::crossref::cross_reference(
+        "magnetic", mag_spec_r(real_row(kRec750310742)),
+        json::array({mag_spec_r(real_row(kRec750315126))}));
+    const json* c2 = cand_by_mpn(rc, "750315126");
+    REQUIRE(c2);
+    CHECK(c2->value("status", "") != "no_substitute");
+    CHECK(verdict_of(*c2, "turns_ratio") == "pass");
+    CHECK(has_note(*c2, "on the original's wiring configuration 2 of 2"));
 }

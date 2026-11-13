@@ -57,7 +57,10 @@ export const XREF = [
       tolerance_plus_pct: r.inductance_tol_plus_pct ?? null,
       // v22 (R2): the whole turnsRatios array (primary:secondary per secondary winding),
       // compared element-wise. null = not stated.
-      turns_ratios: Array.isArray(r.turns_ratios) && r.turns_ratios.length ? r.turns_ratios : null }),
+      turns_ratios: Array.isArray(r.turns_ratios) && r.turns_ratios.length ? r.turns_ratios : null,
+      // v22 (W4): every wiring configuration's turnsRatios; the best-matching pair is credited.
+      turns_ratio_configs: Array.isArray(r.turns_ratio_configs) && r.turns_ratio_configs.length
+        ? r.turns_ratio_configs : null }),
     params: [
       { key: 'value', label: 'L', row: 'inductance', unit: 'H' },
       { key: 'turns_ratio', label: 'N', row: 'turns_ratio', unit: '' },

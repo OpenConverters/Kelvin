@@ -428,6 +428,11 @@ struct MagneticRow : RowBase {
     // order), each resolved with PEAS::resolve_dimensional_values. Empty when the record states
     // none. The cross-reference compares it element-wise (owner 2026-11-13, R2).
     std::vector<double> turns_ratios;
+    // v22: the turnsRatios array of EVERY electrical[] wiring configuration that states one, in
+    // record order (a transformer with an auxiliary winding files "all windings" [8, 6] and
+    // "auxiliary windings open" [8]); each array all-or-nothing as turns_ratios. The
+    // cross-reference credits the best-matching configuration pair (owner 2026-11-13, W4).
+    std::vector<std::vector<double>> turns_ratio_configs;
     // v22: the inductance tolerance band the record STATES, as percent below / above the nominal:
     // electrical[0].inductance.minimum and .maximum (both required, resolved with the PEAS
     // resolver at MINIMUM / MAXIMUM) against the resolved nominal. NaN when the record states no

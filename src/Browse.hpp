@@ -352,6 +352,9 @@ inline void extra_row_json(const ResistorRow& r, json& o) {
 inline void extra_row_json(const MagneticRow& r, json& o) {
     // The whole turns-ratio array (v22), null when the record states none.
     o["turns_ratios"] = r.turns_ratios.empty() ? json(nullptr) : json(r.turns_ratios);
+    // Every wiring configuration's ratios (v22, owner 2026-11-13 W4), null when none states one.
+    o["turns_ratio_configs"] =
+        r.turns_ratio_configs.empty() ? json(nullptr) : json(r.turns_ratio_configs);
     if (r.sat_table_current.empty()) {
         o["saturation_points"] = nullptr;
         return;
