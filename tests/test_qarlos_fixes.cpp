@@ -5249,3 +5249,92 @@ TEST_CASE("timing technology: 555 timers are unchanged", "[qarlos][crossref][tim
     CHECK(c["status"] == "no_substitute");
     CHECK(verdict_of(c, "technology") == "fail");
 }
+
+// ── Qarlos r14-r16, group G (diode, MOSFET package aliases and gate rating) ──────────────
+// r14 seed 25707017: onsemi's 'SMA-2' (1SMA5940BT3G) against 'DO-214AC (SMA)' (1SMA5940H) and
+// r15 seed 26544849: onsemi's 'SOT-23 (TO-236) 2.90x1.30x1.00, 1.90P' (SZMMBZ5228BLT1G) against
+// 'SOT-23' (BZX84-A3V9) were graded different_case. The onsemi datasheets of the SMA-2 / SMB-2
+// parts print "SMA CASE 403D" / "SMB CASE 403A".
+TEST_CASE("qarlos r14-r16: onsemi SMA-2 / SMB-2 and the body-suffixed SOT-23 name their outline",
+          "[qarlos][crossref][dims][g-r14r16]") {
+    using kelvin::crossref::canonical_diode_case;
+    CHECK(canonical_diode_case("SMA-2") == canonical_diode_case("DO-214AC (SMA)"));
+    CHECK(canonical_diode_case("SMB-2") == canonical_diode_case("SMB (DO-214AA)"));
+    CHECK(canonical_diode_case("SOT-23 (TO-236) 2.90x1.30x1.00, 1.90P") ==
+          canonical_diode_case("SOT-23"));
+    CHECK(canonical_diode_case("SOT23") == canonical_diode_case("TO-236AB"));
+    // Not folded in: onsemi's SMC-2 (no datasheet read), a suffix whose body is not the
+    // registered outline's, a name outside every group, and the flat-lead SMA.
+    CHECK(canonical_diode_case("SMC-2") != canonical_diode_case("SMC"));
+    CHECK(canonical_diode_case("SOT-23 (TO-236) 2.90x1.60x1.00, 1.90P") !=
+          canonical_diode_case("SOT-23"));
+    CHECK(canonical_diode_case("SC-59-3 2.90x1.50x1.15, 1.90P") != canonical_diode_case("SOT-23"));
+    CHECK(canonical_diode_case("SMA-FL") != canonical_diode_case("SMA"));
+
+    // The two reported pairs, as their shard rows state them.
+    json sma = zener("1SMA5940H", 43.0, 40.85, 45.15, 1.5);
+    sma["case_code"] = "DO-214AC (SMA)";
+    json sma2 = zener("1SMA5940BT3G", 43.0, std::nullopt, std::nullopt, 1.5);
+    sma2["case_code"] = "SMA-2";
+    const json a =
+        kelvin::crossref::cross_reference("diode", sma, json::array({sma2}))["candidates"][0];
+    CHECK(a["footprint"] == "fits");
+    CHECK_FALSE(has_note(a, "different package/case"));
+
+    json sot = zener("SZMMBZ5228BLT1G", 3.9, std::nullopt, std::nullopt, 0.225);
+    sot["case_code"] = "SOT-23 (TO-236) 2.90x1.30x1.00, 1.90P";
+    json bzx = zener("BZX84-A3V9", 3.9, 3.86, 3.94, 0.25);
+    bzx["case_code"] = "SOT-23";
+    const json b =
+        kelvin::crossref::cross_reference("diode", sot, json::array({bzx}))["candidates"][0];
+    CHECK(b["footprint"] == "fits");
+    CHECK_FALSE(has_note(b, "different package/case"));
+}
+
+// Bench 20680025: BZV55-C5V6 (5.6 V, 5.2-6.0 V) -> 1N5233B (6.0 V, no band) was graded like the
+// 5.6 V parts with its 7 % offset unmentioned. The note names it; the verdict is unchanged.
+TEST_CASE("qarlos r14-r16: a zener inside the window but off the nominal is noted",
+          "[qarlos][crossref][g-r14r16]") {
+    json orig = zener("BZV55-C5V6", 5.6, 5.2, 6.0, 0.5);
+    auto r = kelvin::crossref::cross_reference(
+        "diode", orig,
+        json::array({zener("1N5233B", 6.0, std::nullopt, std::nullopt, 0.5),
+                     zener("1N5232B", 5.6, std::nullopt, std::nullopt, 0.5)}));
+    const json off = find_mpn(r, "1N5233B");
+    CHECK(verdict_of(off, "zener_voltage") == "unverified");
+    CHECK(has_note(off, "the substitute's Vz 6 V is +7.14 % from the original's 5.6 V"));
+    const json same = find_mpn(r, "1N5232B");
+    CHECK_FALSE(has_note(same, "the substitute's Vz"));
+    CHECK(off["grade"] == same["grade"]);
+}
+
+// Bench 20276947: SiSS60DN (Vgs max 16 V) was 'upgrade' for IRFR8314 (20 V) beside a vgs_max
+// WARN; bench 20575296: IPD60R280P7S (no Vgs max on record) had no verdict for TK290P60Y's 30 V.
+TEST_CASE("qarlos r14-r16: MOSFET Vgs(max) lower is a regression, unstated is UNVERIFIED",
+          "[qarlos][crossref][g-r14r16]") {
+    json irfr = {{"mpn", "IRFR8314"}, {"vds", 30.0}, {"id", 179.0}, {"rds_on", 0.0022},
+                 {"rds_on_vgs", 10.0}, {"qg", 3.6e-8}, {"vgs_max", 20.0},
+                 {"channel", "nChannel"}, {"technology", "Si"}};
+    json siss = {{"mpn", "SiSS60DN"}, {"vds", 30.0}, {"id", 181.8}, {"rds_on", 0.00131},
+                 {"qg", 2.59e-8}, {"coss", 1.785e-9}, {"vgs_threshold_max", 2.5},
+                 {"vgs_max", 16.0}, {"channel", "nChannel"}, {"technology", "Si"}};
+    const json c =
+        kelvin::crossref::cross_reference("mosfet", irfr, json::array({siss}))["candidates"][0];
+    CHECK(verdict_of(c, "vgs_max") == "warn");
+    CHECK(c["direction"] != "upgrade");
+    CHECK(has_note(c, "(16 V vs 20 V)"));
+
+    json tk = {{"mpn", "TK290P60Y"}, {"vds", 600.0}, {"id", 11.5}, {"rds_on", 0.29},
+               {"rds_on_vgs", 10.0}, {"qg", 2.5e-8}, {"vgs_threshold_max", 4.0},
+               {"vgs_max", 30.0}, {"channel", "nChannel"}, {"technology", "Si"},
+               {"case_code", "DPAK"}};
+    json ipd = {{"mpn", "IPD60R280P7S"}, {"vds", 600.0}, {"id", 12.0}, {"rds_on", 0.28},
+                {"rds_on_vgs", 10.0}, {"qg", 1.8e-8}, {"vgs_threshold_max", 4.0},
+                {"channel", "nChannel"}, {"technology", "Si"}, {"case_code", "DPAK"}};
+    const json u =
+        kelvin::crossref::cross_reference("mosfet", tk, json::array({ipd}))["candidates"][0];
+    CHECK(verdict_of(u, "vgs_max") == "unverified");
+    CHECK(has_note(u, "maximum gate-source voltage is 30 V; the substitute's record states none"));
+    // A secondary axis stated on one side: noted, never capped (owner, 2026-11-09).
+    CHECK(u["grade"] == "drop_in");
+}

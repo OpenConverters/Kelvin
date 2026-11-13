@@ -2449,6 +2449,18 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         } else {
             params.push_back({{"name", "zener_voltage"}, {"verdict", PASS}});
         }
+        // A substitute whose Vz lies inside the original's window but away from its nominal
+        // is a different marked voltage, and the verdicts above say nothing about it: a 6.0 V
+        // 1N5233B sat at the top edge of BZV55-C5V6's 5.2-6.0 V window, 7 % above its 5.6 V,
+        // with no word (Qarlos bench 20680025). Note only — the verdict and grade are those
+        // decided above; an offset within kZenerPointTol is the same marking.
+        if (wlo && s_center && oc && *oc > 0.0 &&
+            std::fabs(*s_center / *oc - 1.0) > kZenerPointTol)
+            notes.push_back("the substitute's Vz " + volts(*s_center) + " V is " +
+                            signed_pct(100.0 * (*s_center / *oc - 1.0)) +
+                            " from the original's " + volts(*oc) + " V, inside its " + o_window +
+                            " window but a different nominal — check the circuit tolerates "
+                            "the shift");
     }
 
     // ── forward-current basis (multi-die diode packages) ─────────────────────
@@ -3563,13 +3575,27 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         }
         // Vgs(max) is the gate's absolute rating: a lower one can be exceeded by
         // the existing driver and destroy the part.
+        // A lower rating is a measured regression and counts toward the direction: SiSS60DN
+        // (16 V) came back 'upgrade' for IRFR8314 (20 V) beside this very WARN (Qarlos
+        // bench 20276947). An original's rating the substitute's record does not state is a
+        // secondary axis stated on one side (owner, 2026-11-09): UNVERIFIED and noted, no
+        // demotion, no cap — TK290P60Y (30 V) -> IPD60R280P7S showed no Vgs(max) verdict at
+        // all (bench 20575296).
         auto o_gm = num(original, "vgs_max"), s_gm = num(cand, "vgs_max");
         if (o_gm && s_gm && *s_gm < *o_gm - 1e-9) {
             params.push_back({{"name", "vgs_max"}, {"verdict", WARN}});
             demote();
             penalty += opt.gate_weight * kVerdictWarnPenalty;
-            notes.push_back("lower maximum gate-source voltage than the original — check the "
-                            "existing gate drive cannot exceed it");
+            ++worse;
+            notes.push_back("lower maximum gate-source voltage than the original (" +
+                            volts(*s_gm) + " V vs " + volts(*o_gm) +
+                            " V) — check the existing gate drive cannot exceed it");
+        } else if (o_gm && !s_gm) {
+            params.push_back({{"name", "vgs_max"}, {"verdict", UNVERIFIED}});
+            notes.push_back("the original's maximum gate-source voltage is " + volts(*o_gm) +
+                            " V; the substitute's record states none, so it could not be "
+                            "checked against the existing gate drive — confirm it from the "
+                            "datasheet");
         }
     }
 
