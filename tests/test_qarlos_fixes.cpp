@@ -6000,8 +6000,10 @@ TEST_CASE("dec 2026-11-13 I4: a one-sided positions gap counts toward the identi
     REQUIRE(orig["polarity"].is_null());
     REQUIRE(orig["rows"].is_null());
     const json c = conn_one(orig, cand);
-    CHECK(c["grade"] == "major_review");
-    CHECK(has_note(c, "3 connector identity axes are unverified (stated on one side only: "));
+    // Owner 2026-11-13 (W1): only axes the ORIGINAL states count toward the 3+ gap cap. Every gap
+    // here is stated by the candidate alone, so the cap no longer applies.
+    CHECK(c["grade"] == "minor_review");
+    CHECK_FALSE(has_note(c, "3 connector identity axes are unverified (stated on one side only: "));
     CHECK(has_note(c, "contact positions"));
     // Boundary: with the gender stated alike on both sides only two gaps remain (positions,
     // rows) — the one-sided cap below drop_in, not major_review.
@@ -7169,13 +7171,16 @@ TEST_CASE("owner 2026-11-13 R2: the transformer turns ratio is compared",
     CHECK(warn->value("grade", "") != "drop_in");
     CHECK(verdict_of(*fail, "turns_ratio") == "fail");
     CHECK(has_note(*fail, "turns ratio 1 vs the original's 0.8333 (+20 %)"));
-    CHECK(fail->value("grade", "") == "major_review");
+    // Owner 2026-11-13 (W4a): beyond 15 % is a rejection, not a listed FAIL.
+    CHECK(fail->value("grade", "") == "no_substitute");
     CHECK(verdict_of(*none, "turns_ratio") == "unverified");
     CHECK(has_note(*none, "the substitute's turns ratio is") == false);
     CHECK(has_note(*none, "the original's turns ratio is 0.8333; the substitute's record states "
                           "none"));
     CHECK(verdict_of(*two, "turns_ratio") == "fail");
-    CHECK(has_note(*two, "winding structure differs"));
+    // Owner 2026-11-13 (W4b): every listed configuration is compared, so 750310849's one-ratio
+    // configuration [8] is paired with 0.833 and the ratio itself rejects it.
+    CHECK(has_note(*two, "turns ratio 8 vs the original's 0.8333"));
 }
 
 // ── Owner decisions 2026-11-13, agent S ──────────────────────────────────────
