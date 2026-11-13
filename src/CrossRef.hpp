@@ -259,6 +259,9 @@ inline bool is_hard_param(const std::string& cat, const std::string& key) {
     // bare crystals, and an absent parameter is simply not compared.
     // enable_function: pin 1's function (output enable / standby / none) is wired by the
     // board, so a different one is a different pinout (CrossRefParams.hpp kTimeBase).
+    // technology: an identity except the two owner-approved crossings (MEMS <-> quartz XO,
+    // TCXO for a quartz XO; timing_technology_cross), which score_candidate turns into a WARN
+    // before this gate is consulted.
     static const std::set<std::string> timebase{"subtype", "technology", "frequency", "mode",
                                                 "output_type", "enable_function"};
     if (cat == "magnetic" || cat == "chipBead") return magnetic.count(key) > 0;
@@ -1175,6 +1178,13 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // A passive resonator (quartz crystal, ceramic resonator) has no supply: it is driven
     // by the MCU's oscillator stage. The supply keys mean nothing there and are not
     // compared even if a record happened to carry one.
+    // The technology pair, for the two owner-approved crossings (timing_technology_cross):
+    // a MEMS <-> quartz XO pair is capped at major_review after the grade is computed.
+    const TimingTechCross timebase_tech_cross =
+        cat == "timeBase" ? timing_technology_cross(str(original, "technology"),
+                                                    str(cand, "technology"))
+                          : TimingTechCross::Same;
+    bool timebase_tech_major = false;
     const bool timebase_passive =
         cat == "timeBase" && (str(original, "technology") == "quartzCrystal" ||
                               str(original, "technology") == "ceramicResonator");
@@ -1417,8 +1427,45 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             : power_t.subst       ? compare_numeric(spec, power_t.orig, power_t.subst)
             : power_nominal_short ? ParamOutcome(FAIL)
                                   : ParamOutcome(UNVERIFIED);
-        const std::string verdict = outcome.verdict;
+        // A technology difference the owner allows (timing_technology_cross): an established
+        // difference, so a WARN — not the identity FAIL that would reject it below.
+        const bool timebase_tech_allowed =
+            cat == "timeBase" && spec.key == "technology" &&
+            (timebase_tech_cross == TimingTechCross::MemsQuartz ||
+             timebase_tech_cross == TimingTechCross::TcxoUpgrade);
+        const std::string verdict = timebase_tech_allowed && outcome.verdict == std::string(FAIL)
+                                        ? std::string(WARN)
+                                        : outcome.verdict;
         params.push_back({{"name", spec.key}, {"verdict", verdict}});
+        if (timebase_tech_allowed && verdict == WARN) {
+            const std::string o_t = str(original, "technology"), s_t = str(cand, "technology");
+            auto name = [](const std::string& t) {
+                return t == "mems" ? std::string("a MEMS oscillator")
+                       : t == "tcxo" ? std::string("a TCXO")
+                                     : std::string("a quartz crystal oscillator (XO)");
+            };
+            if (timebase_tech_cross == TimingTechCross::MemsQuartz) {
+                // Owner 2026-11-13: allowed, at most major_review. The WARN below costs a warn
+                // step; the rest of a FAIL's penalty is added here so a cross-technology part
+                // ranks with the regressions, below every same-technology one.
+                timebase_tech_major = true;
+                penalty += opt.gate_weight * (kVerdictFailPenalty - kVerdictWarnPenalty);
+                notes.push_back("technology differs: the original is " + name(o_t) +
+                                ", the substitute " + name(s_t) +
+                                " — jitter / phase noise, shock and vibration tolerance, aging and "
+                                "start-up behaviour differ between MEMS and quartz; verify it "
+                                "against the application");
+            } else {
+                // Owner 2026-11-13: a TCXO for a plain XO is an upgrade, at most minor_review
+                // (the WARN). The technology step itself is the improvement, so it counts toward
+                // the direction; stability keeps its own comparison and a regression there
+                // still turns the direction to 'mixed'.
+                ++better;
+                notes.push_back("technology differs: " + name(s_t) + " offered for " + name(o_t) +
+                                " — a temperature-compensated upgrade, at a higher supply current "
+                                "and cost; confirm the rail's current budget");
+            }
+        }
         if (pin_field && verdict == UNVERIFIED) {
             connector_pitch_unverified = true;
             notes.push_back(connector_pitch.note);
@@ -3980,6 +4027,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //   capacitance tolerance band                            secondary  note only
     //   capacitor dielectric codes not comparable             secondary  note only
     //   timing frequency tolerance / stability unstated       secondary  note only
+    //   timing technology MEMS <-> quartz XO (established,
+    //     owner 2026-11-13; timebase_tech_major)              crossing   WARN, cap major_review
+    //   timing technology TCXO for a quartz XO (upgrade)      crossing   WARN -> minor_review
     //   MOSFET Vgs(th) max, Coss, Qg and other secondary
     //     electricals (table verdicts)                        secondary  note only
     //   MOSFET Coss Vds basis differs / unstated (coss basis) secondary  note only
@@ -3997,7 +4047,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                     qualification_unverified || topology_unverified ||
                                     mount_unverified || timebase_pin_unverified;
     out["grade"] = grade_for(status, tier, any_warn, any_fail, primary_unverified,
-                             missing_required_data || connector_identity_gaps_major, hfit);
+                             missing_required_data || connector_identity_gaps_major ||
+                                 timebase_tech_major,
+                             hfit);
 
     // Direction: on the directional parameters we could actually compare, did
     // the substitute come out ahead or behind? Mirrors the industry's upgrade /

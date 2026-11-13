@@ -943,6 +943,32 @@ inline bool is_passive_resonator(const std::string& technology, const std::strin
     return contains(d, "crystal") || contains(d, "resonator");
 }
 
+// ── Timing technology crossings (owner decisions 2026-11-13) ─────────────────
+// A timing part's technology (TDAS utils.json#/$defs/oscillatorTechnology) is an identity,
+// with exactly two owner-approved exceptions, both between fixed-frequency complete
+// oscillators:
+//   MemsQuartz   — a MEMS oscillator ("mems") and a quartz XO ("crystalOscillator") stand in
+//                  for each other, in either direction. Graded at most major_review with a
+//                  note: jitter / phase noise, shock and vibration, aging and start-up differ.
+//   TcxoUpgrade  — a TCXO ("tcxo") offered for a quartz-XO original only: an upgrade, graded
+//                  at most minor_review, with a note on its higher supply current and cost.
+//                  An XO for a TCXO original, and a TCXO for a MEMS original, stay excluded.
+// Every other pair of different technologies (VCXO, OCXO, programmable, siliconRC, a crystal
+// or ceramic resonator against anything else) is None: a strict identity. The values are the
+// schema's enum strings, compared exactly. web/src/crossref.js timingTechnologyCross is the
+// pool pre-gate's copy of this function: keep the two in step.
+enum class TimingTechCross { Same, MemsQuartz, TcxoUpgrade, None };
+
+inline TimingTechCross timing_technology_cross(const std::string& original,
+                                               const std::string& substitute) {
+    if (original == substitute) return TimingTechCross::Same;
+    const bool o_mems = original == "mems", o_xo = original == "crystalOscillator";
+    const bool s_mems = substitute == "mems", s_xo = substitute == "crystalOscillator";
+    if ((o_mems && s_xo) || (o_xo && s_mems)) return TimingTechCross::MemsQuartz;
+    if (o_xo && substitute == "tcxo") return TimingTechCross::TcxoUpgrade;
+    return TimingTechCross::None;
+}
+
 // ── Semiconductor process technology ─────────────────────────────────────────
 // Si, SiC and GaN are not drop-in for one another even at matching Vds/Id: gate
 // drive differs (GaN needs a tightly controlled, lower Vgs and has no body

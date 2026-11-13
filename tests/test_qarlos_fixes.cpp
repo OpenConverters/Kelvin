@@ -5106,3 +5106,146 @@ TEST_CASE("footprint stated by one record only keeps its cap",
     CHECK(p["footprint"] == "unknown");
     CHECK(p["grade"] == "minor_review");
 }
+
+// ── Owner decisions 2026-11-13: timing technology crossings ──────────────────
+// Every record below is the REAL TAS timing_devices.ndjson line (TAS 9cb6cf8, distributorsInfo
+// dropped), run through the extractor, then projected to the spec web/src/crossref.js builds
+// for a timing row (base() + the timing spec).
+namespace timing_tech {
+// timing_devices.ndjson line 7619: ASDM1-10.000MHZ-LC-T
+const char* kASDM1_10_000MHZ_LC_T = R"KREC({"timeBase":{"oscillator":{"manufacturerInfo":{"name":"Abracon","reference":"ASDM1-10.000MHZ-LC-T","status":"production","series":"ASDM","datasheetInfo":{"part":{"partNumber":"ASDM1-10.000MHZ-LC-T","series":"ASDM","package":"2520 4-SMD","case":"2520 4-SMD"},"electrical":{"technology":"mems","frequency":10000000.0,"frequencyStability":4.9999999999999996e-05,"outputType":"cmos","supply":{"minimumSupplyVoltage":3.3,"maximumSupplyVoltage":3.3,"currentConsumption":0.015},"enableFunction":"standby"},"provenance":[{"source":"manufacturerParametric","sourceName":"Abracon parametric search","sourceUrl":"https://abracon.com/Oscillators/ASDM.pdf","retrievedDate":"2026-07-03","fields":["electrical.technology","electrical.frequency","electrical.frequencyStability","electrical.outputType","electrical.supply","electrical.enableFunction"],"verification":"seriesConfirmed","verificationDate":"2026-10-09"}],"thermal":{"operatingTemperature":{"minimum":-40.0,"maximum":85.0}}},"datasheetUrl":"https://abracon.com/Oscillators/ASDM.pdf"}}}})KREC";
+// timing_devices.ndjson line 10892: ISM95-3251AH-10.000MHZ
+const char* kISM95_3251AH_10_000MHZ = R"KREC({"timeBase":{"oscillator":{"manufacturerInfo":{"name":"ILSI","reference":"ISM95-3251AH-10.000MHZ","status":"production","series":"ISM95","datasheetInfo":{"part":{"partNumber":"ISM95-3251AH-10.000MHZ","series":"ISM95","package":"2520 4-SMD","case":"2520 4-SMD"},"electrical":{"technology":"crystalOscillator","frequency":10000000.0,"frequencyStability":2.4999999999999998e-05,"outputType":"cmos","supply":{"minimumSupplyVoltage":3.3,"maximumSupplyVoltage":3.3,"currentConsumption":0.02},"enableFunction":"standby"},"provenance":[{"source":"manufacturerParametric","sourceName":"Abracon parametric search","sourceUrl":"https://abracon.com/datasheets/ILSI/ISM95.pdf","retrievedDate":"2026-07-03","fields":["electrical.technology","electrical.frequency","electrical.frequencyStability","electrical.outputType","electrical.supply","electrical.enableFunction"],"verification":"seriesConfirmed","verificationDate":"2026-10-09"}],"thermal":{"operatingTemperature":{"minimum":-40.0,"maximum":85.0}}},"datasheetUrl":"https://abracon.com/datasheets/ILSI/ISM95.pdf"}}}})KREC";
+// timing_devices.ndjson line 10528: EB13E2C2H-48.000M TR
+const char* kEB13E2C2H_48_000M_TR = R"KREC({"timeBase":{"oscillator":{"manufacturerInfo":{"name":"Ecliptek","reference":"EB13E2C2H-48.000M TR","status":"production","series":"EB13E2","datasheetInfo":{"part":{"partNumber":"EB13E2C2H-48.000M TR","series":"EB13E2","package":"5032 4-SMD","case":"5032 4-SMD"},"electrical":{"technology":"crystalOscillator","frequency":48000000.0,"frequencyStability":9.999999999999999e-05,"outputType":"cmos","supply":{"minimumSupplyVoltage":3.3,"maximumSupplyVoltage":3.3,"currentConsumption":0.006},"enableFunction":"standby"},"provenance":[{"source":"manufacturerParametric","sourceName":"Abracon parametric search","sourceUrl":"https://abracon.com/datasheets/Ecliptek/EB13E2.pdf","retrievedDate":"2026-07-03","fields":["electrical.technology","electrical.frequency","electrical.frequencyStability","electrical.outputType","electrical.supply","electrical.enableFunction"],"verification":"seriesConfirmed","verificationDate":"2026-10-09"}],"thermal":{"operatingTemperature":{"minimum":-20.0,"maximum":70.0}}},"datasheetUrl":"https://abracon.com/datasheets/Ecliptek/EB13E2.pdf"}}}})KREC";
+// timing_devices.ndjson line 8692: ASFLMB-48.000MHZ-LC-T
+const char* kASFLMB_48_000MHZ_LC_T = R"KREC({"timeBase":{"oscillator":{"manufacturerInfo":{"name":"Abracon","reference":"ASFLMB-48.000MHZ-LC-T","status":"production","series":"ASFLMB","datasheetInfo":{"part":{"partNumber":"ASFLMB-48.000MHZ-LC-T","series":"ASFLMB","package":"5032 4-SMD","case":"5032 4-SMD"},"electrical":{"technology":"mems","frequency":48000000.0,"frequencyStability":4.9999999999999996e-05,"outputType":"cmos","supply":{"minimumSupplyVoltage":1.8,"maximumSupplyVoltage":3.3,"currentConsumption":0.015},"enableFunction":"standby"},"provenance":[{"source":"manufacturerParametric","sourceName":"Abracon parametric search","sourceUrl":"https://abracon.com/Oscillators/ASFLMB.pdf","retrievedDate":"2026-07-03","fields":["electrical.technology","electrical.frequency","electrical.frequencyStability","electrical.outputType","electrical.supply","electrical.enableFunction"],"verification":"seriesConfirmed","verificationDate":"2026-10-09"}],"thermal":{"operatingTemperature":{"minimum":-40.0,"maximum":85.0}}},"datasheetUrl":"https://abracon.com/Oscillators/ASFLMB.pdf"}}}})KREC";
+// timing_devices.ndjson line 10952: MSH302548AH-50.000MHZ-T3
+const char* kMSH302548AH_50_000MHZ_T3 = R"KREC({"timeBase":{"oscillator":{"manufacturerInfo":{"name":"MMD","reference":"MSH302548AH-50.000MHZ-T3","status":"production","series":"MSH","datasheetInfo":{"part":{"partNumber":"MSH302548AH-50.000MHZ-T3","series":"MSH","package":"3225 4-SMD","case":"3225 4-SMD"},"electrical":{"technology":"crystalOscillator","frequency":50000000.0,"frequencyStability":2.4999999999999998e-05,"outputType":"cmos","supply":{"minimumSupplyVoltage":3.3,"maximumSupplyVoltage":3.3,"currentConsumption":0.035},"enableFunction":"outputEnable"},"provenance":[{"source":"manufacturerParametric","sourceName":"Abracon parametric search","sourceUrl":"https://abracon.com/datasheets/MMD/MSH.pdf","retrievedDate":"2026-07-03","fields":["electrical.technology","electrical.frequency","electrical.frequencyStability","electrical.outputType","electrical.supply","electrical.enableFunction"],"verification":"seriesConfirmed","verificationDate":"2026-10-09"}],"thermal":{"operatingTemperature":{"minimum":-40.0,"maximum":85.0}}},"datasheetUrl":"https://abracon.com/datasheets/MMD/MSH.pdf"}}}})KREC";
+// timing_devices.ndjson line 9592: ATX-H11-E-50.000MHZ-F25
+const char* kATX_H11_E_50_000MHZ_F25 = R"KREC({"timeBase":{"oscillator":{"manufacturerInfo":{"name":"Abracon","reference":"ATX-H11-E-50.000MHZ-F25","status":"production","series":"ATX-H11","datasheetInfo":{"part":{"partNumber":"ATX-H11-E-50.000MHZ-F25","series":"ATX-H11","package":"3225 4-SMD","case":"3225 4-SMD"},"electrical":{"technology":"tcxo","frequency":50000000.0,"frequencyStability":2.4999999999999998e-06,"outputType":"cmos","supply":{"minimumSupplyVoltage":3.3,"maximumSupplyVoltage":3.3,"currentConsumption":0.007},"enableFunction":"outputEnable"},"provenance":[{"source":"manufacturerParametric","sourceName":"Abracon parametric search","sourceUrl":"https://abracon.com/datasheets/ATX-H11.pdf","retrievedDate":"2026-07-03","fields":["electrical.technology","electrical.frequency","electrical.frequencyStability","electrical.outputType","electrical.supply","electrical.enableFunction"],"verification":"seriesConfirmed","verificationDate":"2026-10-09"}],"thermal":{"operatingTemperature":{"minimum":-40.0,"maximum":85.0}}},"datasheetUrl":"https://abracon.com/datasheets/ATX-H11.pdf"}}}})KREC";
+// timing_devices.ndjson line 6081: ABLNO-V-155.520MHZ-T2
+const char* kABLNO_V_155_520MHZ_T2 = R"KREC({"timeBase":{"oscillator":{"manufacturerInfo":{"name":"Abracon","reference":"ABLNO-V-155.520MHZ-T2","status":"production","series":"ABLNO-V","datasheetInfo":{"part":{"partNumber":"ABLNO-V-155.520MHZ-T2","series":"ABLNO-V","package":"14x9 4-SMD","case":"14x9 4-SMD"},"electrical":{"technology":"vcxo","frequency":155520000.0,"frequencyStability":1.8e-05,"outputType":"cmos","supply":{"minimumSupplyVoltage":3.3,"maximumSupplyVoltage":3.3,"currentConsumption":0.04},"pullRange":9.999999999999999e-06,"rmsPhaseJitter":1e-13,"enableFunction":"none"},"provenance":[{"source":"manufacturerParametric","sourceName":"Abracon parametric search","sourceUrl":"https://abracon.com/Precisiontiming/ABLNO.pdf","retrievedDate":"2026-07-03","fields":["electrical.technology","electrical.frequency","electrical.frequencyStability","electrical.outputType","electrical.supply","electrical.pullRange","electrical.rmsPhaseJitter","electrical.enableFunction"],"verification":"citationOnly","verificationDate":"2026-10-09"}],"thermal":{"operatingTemperature":{"minimum":-40.0,"maximum":85.0}}},"datasheetUrl":"https://abracon.com/Precisiontiming/ABLNO.pdf"}}}})KREC";
+// timing_devices.ndjson line 6046: ABLNO-155.520MHZ
+const char* kABLNO_155_520MHZ = R"KREC({"timeBase":{"oscillator":{"manufacturerInfo":{"name":"Abracon","reference":"ABLNO-155.520MHZ","status":"production","series":"ABLNO","datasheetInfo":{"part":{"partNumber":"ABLNO-155.520MHZ","series":"ABLNO","package":"14x9 4-SMD","case":"14x9 4-SMD"},"electrical":{"technology":"crystalOscillator","frequency":155520000.0,"frequencyStability":1.8e-05,"outputType":"cmos","supply":{"minimumSupplyVoltage":3.3,"maximumSupplyVoltage":3.3,"currentConsumption":0.04},"enableFunction":"none"},"provenance":[{"source":"manufacturerParametric","sourceName":"Abracon parametric search","sourceUrl":"https://abracon.com/Precisiontiming/ABLNO.pdf","retrievedDate":"2026-07-03","fields":["electrical.technology","electrical.frequency","electrical.frequencyStability","electrical.outputType","electrical.supply","electrical.enableFunction"],"verification":"seriesConfirmed","verificationDate":"2026-10-09"}],"thermal":{"operatingTemperature":{"minimum":-40.0,"maximum":85.0}}},"datasheetUrl":"https://abracon.com/Precisiontiming/ABLNO.pdf"}}}})KREC";
+// timing_devices.ndjson line 9054: AST3TQ-10.000MHZ-1-T2
+const char* kAST3TQ_10_000MHZ_1_T2 = R"KREC({"timeBase":{"oscillator":{"manufacturerInfo":{"name":"Abracon","reference":"AST3TQ-10.000MHZ-1-T2","status":"production","series":"AST3TQ","datasheetInfo":{"part":{"partNumber":"AST3TQ-10.000MHZ-1-T2","series":"AST3TQ","package":"7050 4-SMD","case":"7050 4-SMD"},"electrical":{"technology":"tcxo","frequency":10000000.0,"frequencyStability":1e-07,"outputType":"cmos","supply":{"minimumSupplyVoltage":3.3,"maximumSupplyVoltage":3.3,"currentConsumption":0.0085},"rmsPhaseJitter":1.3000000000000001e-12,"enableFunction":"none"},"provenance":[{"source":"manufacturerParametric","sourceName":"Abracon parametric search","sourceUrl":"https://abracon.com/Oscillators/AST3TQ.pdf","retrievedDate":"2026-07-03","fields":["electrical.technology","electrical.frequency","electrical.frequencyStability","electrical.outputType","electrical.supply","electrical.rmsPhaseJitter","electrical.enableFunction"],"verification":"seriesConfirmed","verificationDate":"2026-10-09"}],"thermal":{"operatingTemperature":{"minimum":-40.0,"maximum":85.0}}},"datasheetUrl":"https://abracon.com/Oscillators/AST3TQ.pdf"}}}})KREC";
+// timing_devices.ndjson line 587: NE555
+const char* kNE555 = R"KREC({"timeBase":{"timer":{"manufacturerInfo":{"name":"Texas Instruments","reference":"NE555","status":"production","datasheetUrl":"https://www.ti.com/lit/gpn/NE555","datasheetInfo":{"part":{"partNumber":"NE555","package":"PDIP"},"electrical":{"technology":"bipolar555","numberOfChannels":1,"supply":{"minimumSupplyVoltage":4.5,"maximumSupplyVoltage":16.0,"currentConsumption":0.002}},"provenance":[{"source":"manufacturerParametric","sourceName":"Texas Instruments parametric search","sourceUrl":"https://www.ti.com/product/NE555","retrievedDate":"2026-07-03","fields":["part.partNumber","electrical.technology","electrical.numberOfChannels","electrical.supply"],"verification":"partNamed","verificationDate":"2026-10-09"}],"thermal":{"operatingTemperature":{"minimum":0.0,"maximum":70.0}}}}}}})KREC";
+// timing_devices.ndjson line 588: SA555
+const char* kSA555 = R"KREC({"timeBase":{"timer":{"manufacturerInfo":{"name":"Texas Instruments","reference":"SA555","status":"production","datasheetUrl":"https://www.ti.com/lit/gpn/SA555","datasheetInfo":{"part":{"partNumber":"SA555","package":"PDIP"},"electrical":{"technology":"bipolar555","numberOfChannels":1,"supply":{"minimumSupplyVoltage":4.5,"maximumSupplyVoltage":16.0,"currentConsumption":0.002}},"provenance":[{"source":"manufacturerParametric","sourceName":"Texas Instruments parametric search","sourceUrl":"https://www.ti.com/product/SA555","retrievedDate":"2026-07-03","fields":["part.partNumber","electrical.technology","electrical.numberOfChannels","electrical.supply"],"verification":"partNamed","verificationDate":"2026-10-09"}],"thermal":{"operatingTemperature":{"minimum":-40.0,"maximum":85.0}}}}}}})KREC";
+// timing_devices.ndjson line 590: TLC555
+const char* kTLC555 = R"KREC({"timeBase":{"timer":{"manufacturerInfo":{"name":"Texas Instruments","reference":"TLC555","status":"production","datasheetUrl":"https://www.ti.com/lit/gpn/TLC555","datasheetInfo":{"part":{"partNumber":"TLC555","package":"PDIP"},"electrical":{"technology":"cmos555","numberOfChannels":1,"supply":{"minimumSupplyVoltage":2.0,"maximumSupplyVoltage":15.0,"currentConsumption":0.00018}},"provenance":[{"source":"manufacturerParametric","sourceName":"Texas Instruments parametric search","sourceUrl":"https://www.ti.com/product/TLC555","retrievedDate":"2026-07-03","fields":["part.partNumber","electrical.technology","electrical.numberOfChannels","electrical.supply"],"verification":"partNamed","verificationDate":"2026-10-09"}],"thermal":{"operatingTemperature":{"minimum":-40.0,"maximum":125.0}}}}}}})KREC";
+
+json spec(const char* line) {
+    auto r = kelvin::extract_timing(json::parse(line));
+    REQUIRE(r.has_value());
+    auto nz = [](double v) { return std::isnan(v) || !(v > 0) ? json(nullptr) : json(v); };
+    auto raw = [](double v) { return std::isnan(v) ? json(nullptr) : json(v); };
+    auto str_or_null = [](const std::string& s) { return s.empty() ? json(nullptr) : json(s); };
+    const json cl = nz(r->load_capacitance);
+    return json{{"mpn", r->mpn},
+                {"length_m", nz(r->length_m)}, {"width_m", nz(r->width_m)},
+                {"height_m", nz(r->height_m)}, {"case_code", r->case_code}, {"mount", r->mount},
+                {"lead_pitch_m", nz(r->lead_pitch_m)}, {"is_production", r->is_production},
+                {"provenance_retracted", r->provenance_retracted},
+                {"box_axes_ambiguous", r->box_axes_ambiguous},
+                {"subtype", r->device_type}, {"technology", r->technology},
+                {"device_type", r->device_type}, {"frequency", nz(r->frequency)},
+                {"load_capacitance", cl},
+                {"load_capacitance_pF", cl.is_null() ? json(nullptr) : json(r->load_capacitance * 1e12)},
+                {"built_in_capacitance", nz(r->built_in_capacitance)}, {"esr", nz(r->esr)},
+                {"output_type", str_or_null(r->output_type)}, {"mode", str_or_null(r->mode)},
+                {"enable_function", str_or_null(r->enable_function)},
+                {"supply_min_V", nz(r->vsupply_min)}, {"supply_max_V", nz(r->vsupply_max)},
+                {"tolerance_ppm", std::isnan(r->frequency_tolerance) ? json(nullptr)
+                                                                    : json(r->frequency_tolerance * 1e6)},
+                {"stability_ppm", std::isnan(r->frequency_stability) ? json(nullptr)
+                                                                    : json(r->frequency_stability * 1e6)},
+                {"temp_min_C", raw(r->temp_min_c)}, {"temp_max_C", raw(r->temp_max_c)}};
+}
+json one(const char* orig, const char* cand) {
+    auto r = kelvin::crossref::cross_reference("timeBase", spec(orig), json::array({spec(cand)}));
+    REQUIRE(r["candidates"].size() == 1);
+    return r["candidates"][0];
+}
+}  // namespace timing_tech
+
+TEST_CASE("timing technology: MEMS and quartz XO cross at major_review, both directions",
+          "[qarlos][crossref][timing][timing-tech]") {
+    using namespace timing_tech;
+    // ASDM1-10.000MHZ-LC-T (Abracon, MEMS, 10 MHz, CMOS, standby, 2520) -> ISM95-3251AH-10.000MHZ
+    // (ILSI, quartz XO, 10 MHz, CMOS, standby, 2520). It was rejected as "an identity parameter
+    // differs"; every other axis of the pair passes.
+    const json c = one(kASDM1_10_000MHZ_LC_T, kISM95_3251AH_10_000MHZ);
+    CHECK(c["status"] != "no_substitute");
+    CHECK(verdict_of(c, "technology") == "warn");
+    CHECK(c["grade"] == "major_review");
+    CHECK(has_note(c, "technology differs: the original is a MEMS oscillator, the substitute a "
+                      "quartz crystal oscillator (XO)"));
+    CHECK(has_note(c, "jitter / phase noise, shock and vibration tolerance, aging and start-up "
+                      "behaviour differ"));
+    for (const auto& p : c["params"])
+        if (p["name"] != "technology") CHECK(p["verdict"] != "fail");
+    // The reverse direction: EB13E2C2H-48.000M TR (Ecliptek, quartz XO, 48 MHz, 5032) ->
+    // ASFLMB-48.000MHZ-LC-T (Abracon, MEMS, 48 MHz, 5032).
+    const json r = one(kEB13E2C2H_48_000M_TR, kASFLMB_48_000MHZ_LC_T);
+    CHECK(r["status"] != "no_substitute");
+    CHECK(verdict_of(r, "technology") == "warn");
+    CHECK(r["grade"] == "major_review");
+    CHECK(has_note(r, "technology differs: the original is a quartz crystal oscillator (XO), the "
+                      "substitute a MEMS oscillator"));
+}
+
+TEST_CASE("timing technology: a TCXO is a minor_review upgrade for a quartz XO, one way only",
+          "[qarlos][crossref][timing][timing-tech]") {
+    using namespace timing_tech;
+    // MSH302548AH-50.000MHZ-T3 (MMD, quartz XO, 50 MHz, +/-25 ppm, 3225) ->
+    // ATX-H11-E-50.000MHZ-F25 (Abracon, TCXO, 50 MHz, +/-2.5 ppm, 3225).
+    const json c = one(kMSH302548AH_50_000MHZ_T3, kATX_H11_E_50_000MHZ_F25);
+    CHECK(c["status"] != "no_substitute");
+    CHECK(verdict_of(c, "technology") == "warn");
+    CHECK(c["grade"] == "minor_review");
+    CHECK(c["direction"] == "upgrade");
+    CHECK(verdict_of(c, "stability_ppm") == "pass");  // stability keeps its own comparison
+    CHECK(has_note(c, "technology differs: a TCXO offered for a quartz crystal oscillator (XO)"));
+    CHECK(has_note(c, "higher supply current and cost"));
+    // The other way round stays excluded: the XO for the TCXO original.
+    const json x = one(kATX_H11_E_50_000MHZ_F25, kMSH302548AH_50_000MHZ_T3);
+    CHECK(x["status"] == "no_substitute");
+    CHECK(verdict_of(x, "technology") == "fail");
+    // A TCXO for a MEMS original is not covered by either decision: strict identity.
+    // ASDM1-10.000MHZ-LC-T (MEMS, 10 MHz) -> AST3TQ-10.000MHZ-1-T2 (Abracon, TCXO, 10 MHz).
+    const json m = one(kASDM1_10_000MHZ_LC_T, kAST3TQ_10_000MHZ_1_T2);
+    CHECK(m["status"] == "no_substitute");
+    CHECK(verdict_of(m, "technology") == "fail");
+}
+
+TEST_CASE("timing technology: every other pair stays a strict identity",
+          "[qarlos][crossref][timing][timing-tech]") {
+    using namespace timing_tech;
+    // ABLNO-V-155.520MHZ-T2 (VCXO) -> ABLNO-155.520MHZ (fixed quartz XO), both Abracon,
+    // 155.52 MHz, CMOS, 14x9: a VCXO's control voltage pin has no counterpart on a fixed XO.
+    const json v = one(kABLNO_V_155_520MHZ_T2, kABLNO_155_520MHZ);
+    CHECK(v["status"] == "no_substitute");
+    CHECK(verdict_of(v, "technology") == "fail");
+    CHECK_FALSE(has_note(v, "technology differs"));
+    const json v2 = one(kABLNO_155_520MHZ, kABLNO_V_155_520MHZ_T2);
+    CHECK(v2["status"] == "no_substitute");
+}
+
+TEST_CASE("timing technology: 555 timers are unchanged", "[qarlos][crossref][timing][timing-tech]") {
+    using namespace timing_tech;
+    // NE555 -> SA555 (both bipolar555, Texas Instruments): same technology, no frequency on
+    // either record, compared as before; NE555 -> TLC555 (cmos555) stays rejected.
+    const json n = spec(kNE555);
+    REQUIRE(n["frequency"].is_null());
+    REQUIRE(n["device_type"] == "timer");
+    const json s = one(kNE555, kSA555);
+    CHECK(s["status"] != "no_substitute");
+    CHECK(verdict_of(s, "technology") == "pass");
+    CHECK_FALSE(has_note(s, "technology differs"));
+    const json c = one(kNE555, kTLC555);
+    CHECK(c["status"] == "no_substitute");
+    CHECK(verdict_of(c, "technology") == "fail");
+}

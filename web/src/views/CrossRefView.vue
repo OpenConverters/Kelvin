@@ -260,7 +260,7 @@ function openPart(r) {
 
           <label v-if="fam.sameFacet && original[fam.sameFacet.f]" class="check">
             <input v-model="sameType" type="checkbox" />
-            <span>Same {{ fam.sameFacet.label }} only ({{ original[fam.sameFacet.f] }})</span>
+            <span>Same {{ fam.sameFacet.label }} only ({{ fam.sameFacet.values ? fam.sameFacet.values(original).join(' / ') : original[fam.sameFacet.f] }})</span>
           </label>
 
           <label class="field">

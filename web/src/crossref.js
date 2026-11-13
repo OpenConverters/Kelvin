@@ -160,7 +160,13 @@ export const XREF = [
     // matters most: a crystal is specified AT a CL, and the board's load network
     // is built for it.
     primary: null,
-    sameFacet: { f: 'technology', label: 'technology' },
+    sameFacet: { f: 'technology', label: 'technology',
+      // The pool admits the technology crossings the ranker allows (timingTechnologiesAdmitted).
+      values: (orig) => timingTechnologiesAdmitted(orig.technology) },
+    // The frequency is the primary value: an oscillator without one is refused
+    // (timingNeedsFrequency). primary stays null — the frequency is an exact identity
+    // (exactNum below), not a value ranked by proximity.
+    requiredPrimary: { key: 'frequency', label: 'frequency', applies: (orig) => timingNeedsFrequency(orig) },
     hardKeys: ['frequency', 'technology', 'load_capacitance'],
     // ... for a passive resonator only. An active oscillator (XO/TCXO/VCXO/OCXO/MEMS) carries
     // its own circuit and states no CL, and the ranker skips the CL gate for it; requiring
@@ -427,6 +433,41 @@ export function isPassiveResonator(technology, deviceType) {
   return d.includes('crystal') || d.includes('resonator')
 }
 
+// The ranker's timing_technology_cross (CrossRefClasses.hpp), on the TDAS oscillatorTechnology
+// enum strings: the technology is an identity except the two crossings the owner allowed
+// (2026-11-13). 'memsQuartz': a MEMS oscillator and a quartz XO, either direction (the ranker
+// caps it at major_review with a note). 'tcxoUpgrade': a TCXO for a quartz-XO original only
+// (at most minor_review, an upgrade). 'same' for equal strings, null for every other pair.
+// Keep the two in step.
+export function timingTechnologyCross(original, substitute) {
+  if (original === substitute) return 'same'
+  const pair = (a, b) => original === a && substitute === b
+  if (pair('mems', 'crystalOscillator') || pair('crystalOscillator', 'mems')) return 'memsQuartz'
+  if (pair('crystalOscillator', 'tcxo')) return 'tcxoUpgrade'
+  return null
+}
+
+// The technologies a timing original's candidate pool admits: its own, plus every value the
+// ranker accepts across (timingTechnologyCross). Without this the pool pre-gate filtered on the
+// original's technology alone and the ranker never saw an allowed crossing.
+export const TIMING_TECHNOLOGIES = ['quartzCrystal', 'ceramicResonator', 'crystalOscillator',
+  'tcxo', 'vcxo', 'ocxo', 'mems', 'siliconRC', 'programmable']
+export function timingTechnologiesAdmitted(technology) {
+  const out = [technology]
+  for (const t of TIMING_TECHNOLOGIES) {
+    if (t !== technology && timingTechnologyCross(technology, t) != null) out.push(t)
+  }
+  return out
+}
+
+// Frequency is a timing part's primary value (owner, 2026-11-13): an oscillator original with
+// none on record is refused, as any family refuses an original missing its primary value. Not
+// for a 555 timer (timeBase.timer), which has no frequency of its own, nor for a 'programmable'
+// blank, whose frequency is set when it is ordered (no programmable record states one).
+export function timingNeedsFrequency(orig) {
+  return orig?.device_type === 'oscillator' && orig?.technology !== 'programmable'
+}
+
 const ACTIVE_TIMEBASE_VARIANT = { hardKeys: ['frequency', 'technology'] }
 
 export function timingVariantFor(orig) {
@@ -524,6 +565,10 @@ export async function runCrossRef({ family, original, manufacturers, sameType = 
   if (f.primary && origSpec.value_si == null) {
     throw new Error(`${original.mpn} has no ${f.primary.label} value in the catalogue — cannot cross-reference without the primary value.`)
   }
+  const req = f.requiredPrimary
+  if (req && req.applies(original) && origSpec[req.key] == null) {
+    throw new Error(`${original.mpn} has no ${req.label} value in the catalogue — cannot cross-reference without the primary value.`)
+  }
 
   // Pre-gate candidates AT the ranker's own reject edges (accept window /
   // hard-gate floor against a known original) — nothing the ranker would
@@ -550,7 +595,7 @@ export async function runCrossRef({ family, original, manufacturers, sameType = 
     if (original[k]) filters[k] = [original[k]]
   }
   if (sameType && f.sameFacet && original[f.sameFacet.f]) {
-    filters[f.sameFacet.f] = [original[f.sameFacet.f]]
+    filters[f.sameFacet.f] = f.sameFacet.values ? f.sameFacet.values(original) : [original[f.sameFacet.f]]
   }
 
   const pool = await browse(f.key, { filters, sort: { field: 'lineno', dir: 'asc' }, limit: poolLimit })

@@ -498,6 +498,29 @@ TEST_CASE("oscillators are not subject to the load-capacitance gate", "[crossref
     CHECK(is_passive_resonator("quartzCrystal", "oscillator"));
 }
 
+// Owner decisions 2026-11-13. web/src/crossref.js timingTechnologyCross mirrors this table
+// (tools/qarlos/test_crossref_variants.mjs asserts the same rows).
+TEST_CASE("timing technology crossings", "[crossref][classes][timing-tech]") {
+    using kelvin::crossref::timing_technology_cross;
+    using X = kelvin::crossref::TimingTechCross;
+    CHECK(timing_technology_cross("mems", "mems") == X::Same);
+    CHECK(timing_technology_cross("mems", "crystalOscillator") == X::MemsQuartz);
+    CHECK(timing_technology_cross("crystalOscillator", "mems") == X::MemsQuartz);
+    CHECK(timing_technology_cross("crystalOscillator", "tcxo") == X::TcxoUpgrade);
+    CHECK(timing_technology_cross("tcxo", "crystalOscillator") == X::None);
+    CHECK(timing_technology_cross("mems", "tcxo") == X::None);
+    CHECK(timing_technology_cross("tcxo", "mems") == X::None);
+    CHECK(timing_technology_cross("vcxo", "crystalOscillator") == X::None);
+    CHECK(timing_technology_cross("crystalOscillator", "vcxo") == X::None);
+    CHECK(timing_technology_cross("crystalOscillator", "ocxo") == X::None);
+    CHECK(timing_technology_cross("crystalOscillator", "programmable") == X::None);
+    CHECK(timing_technology_cross("quartzCrystal", "crystalOscillator") == X::None);
+    CHECK(timing_technology_cross("ceramicResonator", "quartzCrystal") == X::None);
+    CHECK(timing_technology_cross("mems", "siliconRC") == X::None);
+    CHECK(timing_technology_cross("", "mems") == X::None);
+    CHECK(timing_technology_cross("bipolar555", "cmos555") == X::None);
+}
+
 TEST_CASE("a crystal for a different load capacitance is rejected", "[crossref][classes][rank]") {
     json original = {{"mpn", "X18"}, {"technology", "quartzCrystal"}, {"device_type", "crystal"},
                      {"subtype", "crystal"}, {"frequency", 16e6}, {"load_capacitance", 18e-12}};
