@@ -1515,7 +1515,11 @@ def recommend_parts(family: str, requirements: dict, options: dict | None = None
         margins = [(n, v) for n, v in (c.get("margins") or {}).items()
                    if isinstance(v, (int, float))]
         worst = min(margins, key=lambda kv: kv[1]) if margins else None
+        # A multi-die package is offered, labelled: its ratings are per die (owner 2026-11-13).
+        ev = c.get("evidence") or {}
+        dies = "/".join(v for v in (ev.get("dieConfiguration"), ev.get("internalConnection")) if v)
         lines.append(f"  {c.get('mpn')} — {c.get('manufacturer')}"
+                     + (f" [{dies}, ratings per die]" if dies else "")
                      + (f" | tightest margin {worst[0]} {worst[1]:.2f}x" if worst else ""))
     rejected = result.get("rejections") or {}
     return _result(

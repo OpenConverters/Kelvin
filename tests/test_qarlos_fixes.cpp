@@ -6831,6 +6831,35 @@ TEST_CASE("owner 2026-11-13 V2: MOSFET internal connection is an identity",
     CHECK(u2["grade"] == "minor_review");
 }
 
+// ── Owner decision 2026-11-13 V3: duals stay offered, labelled with their configuration ───
+TEST_CASE("owner 2026-11-13 V3: a recommended dual MOSFET carries its die configuration",
+          "[qarlos][select][mosfet][dec-1113v]") {
+    auto sh = kelvin::build_mosfet_shard(std::string(KELVIN_TEST_DIR) +
+                                         "/fixtures/qarlos_1113_n2c_mosfets.ndjson");
+    kelvin::MosfetConstraints c;
+    c.vds_min = 30; c.id_min = 1; c.rds_on_max = 1; c.qg_max = 1;
+    c.exclude_discontinued = false;
+    const json sel = kelvin::select_mosfet(sh, c, kelvin::MosfetTiebreaker::LowestRdsOn, 50);
+    auto cand = [&](const std::string& mpn) {
+        for (const auto& cd : sel["candidates"])
+            if (cd["mpn"] == mpn) return cd;
+        return json(nullptr);
+    };
+    // Offered (no exclusion), and labelled.
+    const json hb = cand("PSMN4R2-40VSH");
+    REQUIRE(hb.is_object());
+    CHECK(hb["evidence"]["dieConfiguration"] == "dual");
+    CHECK(hb["evidence"]["internalConnection"] == "halfBridge");
+    const json dual = cand("IPG20N04S4L-18A");
+    REQUIRE(dual.is_object());
+    CHECK(dual["evidence"]["dieConfiguration"] == "dual");
+    CHECK(!dual["evidence"].contains("internalConnection"));
+    // A record stating no configuration carries no label.
+    const json plain = cand("IPG16N10S4L-61A");
+    REQUIRE(plain.is_object());
+    CHECK(!plain["evidence"].contains("dieConfiguration"));
+}
+
 // ── Owner decisions 2026-11-13 (b), N1a: a numeric WARN's penalty scales with its deviation ──
 // Real records (TAS 3d2be2e, as web/src/crossref.js builds the spec from the v22 shard row).
 namespace dec1113b {

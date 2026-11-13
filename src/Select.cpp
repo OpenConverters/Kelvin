@@ -141,6 +141,13 @@ json select_mosfet(const Shard<MosfetRow>& shard, const MosfetConstraints& c, Mo
         cd["evidence"] = {{"datasheetUsable", m->datasheet_usable},
                           {"thermalPresent", !m->no_thermal()},
                           {"qgPresent", m->qg_total > 0}};
+        // A dual / complementary package stays offered, LABELLED (owner 2026-11-13, V3): its
+        // ratings are per die and its pinout is not a single die's. Only stated values are
+        // emitted; a record that states no configuration carries neither key.
+        if (!m->die_configuration.empty())
+            cd["evidence"]["dieConfiguration"] = m->die_configuration;
+        if (!m->internal_connection.empty())
+            cd["evidence"]["internalConnection"] = m->internal_connection;
         if (loss_mode) {
             double p_cond = op_d * op_i * op_i * m->rds_on;
             double p_sw = m->qg_total > 0 ? 0.5 * op_v * op_i * m->qg_total * op_f / kIg : 0.0;
