@@ -1127,6 +1127,44 @@ inline bool generic_package_names_no_land(const std::string& code) {
     return any_word;
 }
 
+// The crystal / oscillator body size a timing device's CASE STRING names, when it names one:
+// "2520 4-SMD" (Abracon) and "IQXO-951 2520" (Würth, vendor package code + size) both name the
+// 2.5 x 2.0 mm body, written two ways, and the case gate called ASDMB-25.000MHZ-XY-T ->
+// 830208483509 a different land pattern with the same penalty as a 3225 or a 2016 (Qarlos r24
+// seed 30943467). A token of the string (split on anything not alphanumeric) is a body code
+// only when it EQUALS one of the standard LLWW crystal / oscillator body codes below (L and W in
+// tenths of a millimetre); the string names a body only when exactly one such code appears.
+// When the record states its length and width they must agree with the code within
+// kTimingBodyTolMm (either orientation), otherwise nothing is read. Never read from an MPN or a
+// description: the case string is the record's own package field.
+inline std::optional<std::string> timing_case_body_code(const std::string& code,
+                                                        std::optional<double> length_m,
+                                                        std::optional<double> width_m) {
+    static const std::set<std::string> kBodies = {"1210", "1612", "2012", "2016", "2520",
+                                                  "3215", "3225", "5032", "6035", "7050"};
+    std::set<std::string> found;
+    std::string tok;
+    auto flush = [&] {
+        if (kBodies.count(tok)) found.insert(tok);
+        tok.clear();
+    };
+    for (char ch : code) {
+        if (std::isalnum(static_cast<unsigned char>(ch))) tok += ch;
+        else flush();
+    }
+    flush();
+    if (found.size() != 1) return std::nullopt;
+    const std::string body = *found.begin();
+    if (length_m && width_m) {
+        constexpr double kTimingBodyTolMm = 0.2;
+        const double l = std::stod(body.substr(0, 2)) / 10.0, w = std::stod(body.substr(2)) / 10.0;
+        const double sl = *length_m * 1e3, sw = *width_m * 1e3;
+        auto near = [](double a, double b) { return std::fabs(a - b) <= kTimingBodyTolMm; };
+        if (!((near(l, sl) && near(w, sw)) || (near(l, sw) && near(w, sl)))) return std::nullopt;
+    }
+    return body;
+}
+
 // The EIA imperial chip sizes a MAGNETIC case code can denote, or none when it is not a chip
 // size code. A magnetic's case string is often no size at all ("No Tabs", "Nonstandard",
 // "0805A") and a bare four-digit code may be either system, so only two forms decode:

@@ -7244,3 +7244,65 @@ TEST_CASE("qarlos r23r25 T4: a resistor's working voltage is compared like with 
     REQUIRE(!c2.is_null());
     CHECK(verdict_of(c2, "max_voltage_V") == "pass");
 }
+
+// T7 (r24 30943467) / T8 (r24 31048196): verbatim timing_devices.ndjson lines (TAS 6bd04c7) in
+// tests/fixtures/qarlos_r23r25_timing.ndjson.
+//   T7: ASDMB-25.000MHZ-XY-T "2520 4-SMD" against Würth 830208483509 "IQXO-951 2520"
+//       (2.5 x 2.0 mm stated) was "a different land pattern" with the same penalty as the
+//       3225 (8302091569) and 2016 (830208445309) bodies of the same series.
+//   T8: ECS-TXO-2016-33-120-TR states only the generic "4-SMD, No Lead", which names no
+//       land, yet ATX-H13-E-12.000MHZ-F25 "2016 4-SMD" was "a different land pattern".
+TEST_CASE("qarlos r23r25 T7/T8: a timing case string establishes a different land only when "
+          "it names a different body",
+          "[qarlos][crossref][timing][r23r25]") {
+    using dec_1113_s::timing_spec;
+    static const std::vector<std::string> lines = [] {
+        std::vector<std::string> v;
+        std::ifstream in(std::string(KELVIN_TEST_DIR) + "/fixtures/qarlos_r23r25_timing.ndjson");
+        for (std::string l; std::getline(in, l);) v.push_back(l);
+        return v;
+    }();
+    auto rec = [&](const std::string& mpn) -> json {
+        for (const auto& l : lines)
+            if (l.find("\"reference\": \"" + mpn + "\"") != std::string::npos ||
+                l.find("\"reference\":\"" + mpn + "\"") != std::string::npos)
+                return timing_spec(l.c_str());
+        throw std::runtime_error("fixture has no record " + mpn);
+    };
+    using kelvin::crossref::timing_case_body_code;
+    CHECK(timing_case_body_code("2520 4-SMD", std::nullopt, std::nullopt) == "2520");
+    CHECK(timing_case_body_code("IQXO-951 2520", 0.0025, 0.002) == "2520");
+    CHECK_FALSE(timing_case_body_code("IQXO-951 2520", 0.0032, 0.0025));  // disagrees with dims
+    CHECK_FALSE(timing_case_body_code("4-SMD, No Lead", std::nullopt, std::nullopt));
+    CHECK_FALSE(timing_case_body_code("2520/3225", std::nullopt, std::nullopt));  // two bodies
+
+    // T7: the same 2520 body is no longer an established land change; 3225 and 2016 still are.
+    const auto r = kelvin::crossref::cross_reference(
+        "timeBase", rec("ASDMB-25.000MHZ-XY-T"),
+        json::array({rec("830208483509"), rec("8302091569"), rec("830208445309")}));
+    auto find = [&](const std::string& mpn) {
+        for (const auto& c : r["candidates"])
+            if (c["mpn"] == mpn) return c;
+        return json(nullptr);
+    };
+    const json same = find("830208483509"), big = find("8302091569"), small = find("830208445309");
+    REQUIRE(!same.is_null());
+    REQUIRE(!big.is_null());
+    REQUIRE(!small.is_null());
+    CHECK(same.value("footprint", "") != "different_case");
+    CHECK_FALSE(has_note(same, "different package/case"));
+    CHECK(has_note(same, "both records name the 2520 body"));
+    CHECK(big.value("footprint", "") == "different_case");
+    CHECK(small.value("footprint", "") == "different_case");
+    CHECK(same["penalty"].get<double>() < big["penalty"].get<double>());
+    CHECK(same["penalty"].get<double>() < small["penalty"].get<double>());
+
+    // T8: a generic package on the original establishes no land, so no different land either.
+    const auto r8 = kelvin::crossref::cross_reference(
+        "timeBase", rec("ECS-TXO-2016-33-120-TR"), json::array({rec("ATX-H13-E-12.000MHZ-F25")}));
+    REQUIRE(r8["candidates"].size() == 1);
+    const json c8 = r8["candidates"][0];
+    CHECK(c8.value("footprint", "") != "different_case");
+    CHECK_FALSE(has_note(c8, "different package/case"));
+    CHECK(verdict_of(c8, "footprint") == "unverified");
+}

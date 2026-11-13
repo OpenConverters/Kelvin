@@ -3669,9 +3669,28 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         if (!out.contains("footprint") && !pitches_decide) {
             const std::string oc = str(original, "case_code"), sc = str(cand, "case_code");
             const bool magnetic_case = cat == "magnetic" || cat == "chipBead";
+            // A generic style string ("4-SMD, No Lead", "SMD", "Radial") names a pad count,
+            // not a land, so it can no more establish a DIFFERENT land than the same one
+            // (generic_package_names_no_land): ECS-TXO-2016-33-120-TR "4-SMD, No Lead" took
+            // ATX-H13-E-12.000MHZ-F25 "2016 4-SMD" as "a different land pattern" (Qarlos r24
+            // seed 31048196). The fit is left to the body compare / UNVERIFIED below.
+            const bool generic_side =
+                generic_package_names_no_land(oc) || generic_package_names_no_land(sc);
+            // Two timing case strings naming the same standard body in different notation
+            // (timing_case_body_code: "2520 4-SMD" / "IQXO-951 2520", r24 seed 30943467) have
+            // not been shown to differ; whether the pads match is left to the body compare /
+            // UNVERIFIED below, while a 3225 or a 2016 against a 2520 stays a different case.
+            std::optional<std::string> o_body, s_body;
+            if (cat == "timeBase") {
+                o_body = timing_case_body_code(oc, num(original, "length_m"),
+                                               num(original, "width_m"));
+                s_body = timing_case_body_code(sc, num(cand, "length_m"), num(cand, "width_m"));
+            }
+            const bool same_timing_body = o_body && s_body && *o_body == *s_body;
             if (magnetic_case ? magnetic_case_codes_differ(oc, sc)
                               : (!oc.empty() && !sc.empty() &&
-                                 case_ids.first != case_ids.second)) {
+                                 case_ids.first != case_ids.second && !generic_side &&
+                                 !same_timing_body)) {
                 out["footprint"] = "different_case";
                 params.push_back({{"name", "footprint"}, {"verdict", WARN}});
                 demote();
@@ -3687,6 +3706,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 notes.push_back("different package/case (" + oc + " -> " + sc + ")" + bodies +
                                 " — different land pattern; a substitute to re-lay-out, not a "
                                 "drop-in (verify pads/pinout)");
+            } else if (!magnetic_case && same_timing_body && case_ids.first != case_ids.second) {
+                notes.push_back("both records name the " + *o_body + " body ('" + oc + "' / '" +
+                                sc + "') in different notation — the same body size; the pad "
+                                "layout is not established by the case strings");
             }
         }
         // ── lead pitch: the land of a LEADED body ───────────────────────────
