@@ -190,10 +190,10 @@ TEST_CASE("one stated land axis refutes a fit but never confirms one — ABT #51
     CHECK(footprint_tier(orig_len_only, c_0805, /*strict*/ true) == FootprintTier::Unknown);
     // A materially shorter body cannot reach the same pads — refuted from below.
     CHECK(footprint_tier(orig_len_only, c_0603, /*strict*/ true) == FootprintTier::Smaller);
-    // ... and the established mismatch must cost more than the unverified one, which
-    // is what separated the 1206 parts from the true 0805 ones.
-    CHECK(footprint_penalty(orig_len_only, c_1206, true) >
-          footprint_penalty(orig_len_only, c_0805, true));
+    // owner 2026-11-13 (Y3): unknown = different case. The established mismatch now costs
+    // exactly what the unverified one does (it used to cost more); the other terms decide.
+    CHECK_THAT(footprint_penalty(orig_len_only, c_1206, true),
+               WithinRel(footprint_penalty(orig_len_only, c_0805, true), 1e-12));
     CHECK(footprint_penalty(orig_len_only, c_0805, true) == kUnknownDimPenalty);
 
     // The same rule the other way round (the SUBSTITUTE half-stated), and on the

@@ -7486,8 +7486,13 @@ TEST_CASE("qarlos r23r25 T7/T8: a timing case string establishes a different lan
     CHECK(has_note(same, "both records name the 2520 body"));
     CHECK(big.value("footprint", "") == "different_case");
     CHECK(small.value("footprint", "") == "different_case");
-    CHECK(same["penalty"].get<double>() < big["penalty"].get<double>());
-    CHECK(same["penalty"].get<double>() < small["penalty"].get<double>());
+    // owner 2026-11-13 (Y3): unknown = different case. The same named 2520 body is still
+    // UNVERIFIED (not an established land change, above), and an unverified footprint now costs
+    // exactly what the established 3225 / 2016 different case does: the three tie on penalty.
+    INFO("same " << same.value("footprint", "") << " " << same["penalty"] << " big "
+                 << big["penalty"] << " small " << small["penalty"]);
+    CHECK(same["penalty"].get<double>() == big["penalty"].get<double>());
+    CHECK(same["penalty"].get<double>() == small["penalty"].get<double>());
 
     // T8: a generic package on the original establishes no land, so no different land either.
     const auto r8 = kelvin::crossref::cross_reference(
