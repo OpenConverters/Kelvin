@@ -369,6 +369,45 @@ inline std::vector<Rating> critical_ratings(const std::string& cat) {
 // a severe shortfall on a magnetic's current rating, or a mismatch on an
 // IDENTITY parameter (a 6-position connector is not a 4-position one; a dual
 // op-amp is not a quad). Everything else demotes to 'partial'.
+// Primary RATINGS for the original-only rule (owner 2026-11-13, Y2): a rating the ORIGINAL's
+// record does not state while the substitute's does caps every such candidate at
+// minor_review, with a note — nothing holds the substitute to the original's requirement on
+// the axis the match turns on, so "drop_in" would be a claim about a comparison never made.
+// The axes are the primary ratings of the grade table in score_candidate; identities (connector
+// gender / positions, analog channels, timing frequency, ...) are not ratings and keep their
+// own rules, as do the current ratings (Id / If(AV) / Ic) that Y1 already caps from either side.
+inline bool is_primary_rating(const std::string& cat, const std::string& key) {
+    static const std::map<std::string, std::set<std::string>> k = {
+        {"mosfet", {"vds", "rds_on"}},
+        {"diode", {"vrrm", "power_dissipation", "peak_pulse_power", "peak_pulse_current"}},
+        {"igbt", {"vces"}},
+        {"capacitor", {"voltage", "ripple_current"}},
+        {"magnetic", {"saturation_current", "rated_current"}},
+        {"chipBead", {"impedance_100mhz", "impedance_peak", "rated_current"}},
+        {"connector", {"rated_current_A", "rated_voltage_V"}},
+        {"varistor", {"clamping_voltage", "peak_surge_current"}},
+        {"resistor", {"power_rating"}}};
+    const auto it = k.find(cat);
+    return it != k.end() && it->second.count(key);
+}
+inline std::string primary_rating_label(const std::string& key) {
+    static const std::map<std::string, std::string> k = {
+        {"vds", "drain-source voltage rating (Vds)"},
+        {"rds_on", "on-resistance (Rds(on))"},
+        {"vrrm", "reverse voltage rating"},
+        {"power_dissipation", "power dissipation rating"},
+        {"peak_pulse_power", "peak pulse power"},
+        {"peak_pulse_current", "peak pulse current"},
+        {"vces", "collector-emitter voltage rating (Vces)"},
+        {"voltage", "rated voltage"},
+        {"rated_current", "rated current"},
+        {"clamping_voltage", "clamping voltage"},
+        {"peak_surge_current", "peak surge current"},
+        {"power_rating", "power rating"}};
+    const auto it = k.find(key);
+    return it != k.end() ? it->second : param_label(key);
+}
+
 inline bool is_hard_param(const std::string& cat, const std::string& key) {
     static const std::set<std::string> magnetic{"saturation_current", "rated_current"};
     // A connector is half of a mated pair: the other gender or another interface
@@ -1086,6 +1125,15 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // A primary current rating (MOSFET Id, diode If(AV), IGBT Ic) stated by one record only
     // (owner 2026-11-13, Y1): UNVERIFIED with a note, capped at minor_review.
     bool current_rating_one_sided = false;
+    // Primary ratings the ORIGINAL does not state and the substitute does (owner 2026-11-13,
+    // Y2; is_primary_rating): each candidate is capped at minor_review with a note.
+    std::vector<std::string> orig_unstated_primary;
+    auto orig_unstated = [&](const std::string& key) {
+        const std::string l = primary_rating_label(key);
+        if (std::find(orig_unstated_primary.begin(), orig_unstated_primary.end(), l) ==
+            orig_unstated_primary.end())
+            orig_unstated_primary.push_back(l);
+    };
     // Direction bookkeeping: on each directional parameter we could compare,
     // did the substitute come out strictly ahead of the original, or behind?
     int better = 0, worse = 0;
@@ -2276,6 +2324,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             direction_blind = true;
             blind_axes.push_back(param_label(spec.key));
         }
+        if (numeric && is_primary_rating(cat, spec.key) && !detail::jnum(original, spec.key) &&
+            detail::jnum(cand, spec.key))
+            orig_unstated(spec.key);
     }
 
     // ── transformer turns ratio (owner 2026-11-13, R2; W4) ───────────────────
@@ -2809,6 +2860,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             const std::string ow = str(original, wf_key), sw = str(cand, wf_key);
             if (!o) {  // the original states nothing to hold the substitute to
                 params.push_back({{"name", key}, {"verdict", UNVERIFIED}});
+                if (is_primary_rating(cat, key)) orig_unstated(key);  // Y2
                 return;
             }
             auto unverified = [&](const std::string& why) {
@@ -3349,6 +3401,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     for (const auto& r : critical_ratings(cat)) {
         auto o = num(original, r.key), s = num(cand, r.key);
         if (!o && !s) continue;
+        if (!o && s && is_primary_rating(cat, r.key)) orig_unstated(r.key);
         if (!current_basis_note.empty() && std::string(r.key) == "if_avg") {
             params.push_back({{"name", r.key}, {"verdict", UNVERIFIED}});
             notes.push_back(current_basis_note);
@@ -5058,6 +5111,16 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                         "connector; confirm each from the datasheets");
     }
 
+    if (!orig_unstated_primary.empty()) {
+        std::string axes;
+        for (size_t i = 0; i < orig_unstated_primary.size(); ++i)
+            axes += (i ? ", " : "") + orig_unstated_primary[i];
+        demote();
+        notes.push_back("the original's record states no " + axes +
+                        "; the substitute's does, but nothing holds it to the original's "
+                        "requirement there — capped below drop_in; confirm the original's "
+                        "rating from its datasheet before this swap");
+    }
     out["status"] = status;
     out["penalty"] = penalty;
     out["params"] = params;
@@ -5149,6 +5212,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //     2026-11-13, Y1; current_rating_one_sided)           primary    note, cap minor_review
     //   chip-bead rated current, connector rated voltage,
     //     diode power dissipation                             primary    no cap*
+    //   a primary RATING stated by the substitute and NOT by
+    //     the original (owner 2026-11-13, Y2; axes listed in
+    //     is_primary_rating; orig_unstated_primary)            primary    note, cap minor_review
     //   height-only clearance (height_fit unknown)            secondary  note only
     //   operating-temperature range (resistor, magnetic)      secondary  note only
     //   resistor TCR                                          secondary  note only
@@ -5185,7 +5251,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                     ripple_basis_unverified || lead_form_unverified ||
                                     qualification_unverified || topology_unverified ||
                                     mount_unverified || timebase_pin_unverified ||
-                                    timebase_prog_order || current_rating_one_sided;
+                                    timebase_prog_order || current_rating_one_sided ||
+                                    !orig_unstated_primary.empty();
     out["grade"] = grade_for(status, tier, any_warn, any_fail, primary_unverified,
                              missing_required_data || connector_identity_gaps_major ||
                                  timebase_tech_major,

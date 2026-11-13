@@ -7779,3 +7779,34 @@ TEST_CASE("owner 2026-11-13 Y1: a current rating stated on one side only caps mi
     CHECK(r2["candidates"][0]["grade"] == "minor_review");
     CHECK(verdict_of(r2["candidates"][0], "id") == "unverified");
 }
+
+// Y2: a primary rating missing on the ORIGINAL only caps every candidate at minor_review.
+// REAL records (TAS 6bd04c7, data-6bd04c7/magnetics.ndjson), as web/src/crossref.js builds the
+// spec from the v22 shard row: Eaton ACE1V3225-110-R states only its 11 uH; Murata
+// LQH32NH120J23L states Isat (table) and a 0.27 A rated current. It came back drop_in.
+namespace dec1113y {
+const char* kACE1V3225 = R"KSPEC({"mpn":"ACE1V3225-110-R","length_m":0.0034,"width_m":0.0027,"height_m":0.0025,"case_code":"","mount":"SMT","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"retracted_fields":[],"retraction_reason":"","box_axes_ambiguous":false,"value_si":0.000011,"saturation_current":null,"saturation_points":null,"rated_current":null,"dcr":null,"srf":null,"temp_min_C":null,"temp_max_C":125,"tolerance_minus_pct":null,"tolerance_plus_pct":null,"turns_ratios":null,"turns_ratio_configs":null})KSPEC";
+const char* kLQH32NH120 = R"KSPEC({"mpn":"LQH32NH120J23L","length_m":0.0032,"width_m":0.0025,"height_m":0.0022,"case_code":"Nonstandard","mount":"smt","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"retracted_fields":[],"retraction_reason":"","box_axes_ambiguous":false,"value_si":0.000012,"saturation_current":0.7019672099867867,"saturation_points":[{"current":0.635,"percent_drop":10,"temperature":20},{"current":0.7019672099867867,"percent_drop":20,"temperature":20},{"current":0.7297123122349586,"percent_drop":30,"temperature":20}],"rated_current":0.27,"dcr":0.6,"srf":null,"temp_min_C":-40,"temp_max_C":125,"tolerance_minus_pct":19.999999999999996,"tolerance_plus_pct":19.999999999999996,"turns_ratios":null,"turns_ratio_configs":null})KSPEC";
+}  // namespace dec1113y
+
+TEST_CASE("owner 2026-11-13 Y2: a primary rating missing on the original only caps minor_review",
+          "[qarlos][crossref][magnetic][dec-1113y]") {
+    const json o = json::parse(dec1113y::kACE1V3225), c = json::parse(dec1113y::kLQH32NH120);
+    const json r = kelvin::crossref::cross_reference("magnetic", o, json::array({c}));
+    const json cand = r["candidates"][0];
+    CHECK(cand["grade"] == "minor_review");
+    CHECK(cand["direction"] == "unknown");
+    CHECK(has_note(cand, "the original's record states no saturation current, rated current; "
+                         "the substitute's does"));
+    // Reverse: the original states both, nothing caps from this rule.
+    const json rr = kelvin::crossref::cross_reference("magnetic", c, json::array({c}));
+    CHECK(!has_note(rr["candidates"][0], "nothing holds it to the original's requirement"));
+    // Across families: a 40 V MOSFET whose ORIGINAL states no Vds.
+    const json psmn = mosfet_spec(n2c::row("PSMN4R2-40VSH"));
+    json no_vds = psmn;
+    no_vds["mpn"] = "PSMN_NO_VDS";
+    no_vds["vds"] = nullptr;
+    const json m = kelvin::crossref::cross_reference("mosfet", no_vds, json::array({psmn}));
+    CHECK(m["candidates"][0]["grade"] == "minor_review");
+    CHECK(has_note(m["candidates"][0], "states no drain-source voltage rating (Vds)"));
+}
