@@ -1524,6 +1524,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // original's is rejected inside the loop, owner 2026-11-13; this flag is the one-sided
     // unstated case.)
     bool timebase_supply_unverified = false;
+    // The original states its supply current and the substitute does not (secondary axis:
+    // note only, no cap).
+    bool timebase_current_unverified = false;
     // A timing part's control-pin function stated on one side only: UNVERIFIED, noted, and
     // the grade capped below drop_in — the pin function is the part's pinout, a primary axis,
     // and drop_in asserts the same pinout (Qarlos 2026-11-09). A frequency tolerance /
@@ -1928,8 +1931,14 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                 " — it will not run correctly from the original's rail");
                 return reject("supply range does not cover the original's rail");
             }
-            if (verdict == UNVERIFIED && detail::present(original, spec.key))
-                timebase_supply_unverified = true;
+            // The supply current shares the supply_key gate but is not the range: a
+            // substitute that states its 1.8 V rail but no current was told "states no supply
+            // range" (Qarlos r26 32095486, ASDMB-50.000MHZ-C-40-T -> 831056223). Each gap
+            // gets the note for the field that is actually missing.
+            if (verdict == UNVERIFIED && detail::present(original, spec.key)) {
+                if (spec.key == "current_consumption") timebase_current_unverified = true;
+                else timebase_supply_unverified = true;
+            }
         }
         if (cat == "timeBase" && spec.key == "frequency" && verdict == FAIL) {
             // Say how far off it is: the reject reason alone ("an identity parameter
@@ -2597,6 +2606,11 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         notes.push_back("the original runs from " + supply_range(original) +
                         "; the substitute's record states no supply range, so the rail could "
                         "not be checked — confirm it from the datasheet");
+    if (timebase_current_unverified)
+        notes.push_back("the original draws " + volts(*num(original, "current_consumption") * 1000.0) + " mA" +
+                        " from its supply; the substitute's record states no supply current, so "
+                        "the rail's current budget could not be checked — confirm it from the "
+                        "datasheet");
 
     // Say WHAT the two parts guarantee, in volts. The Vrrm verdict above compares the
     // MARKED voltage, which two grades of the same zener share; the window is what the

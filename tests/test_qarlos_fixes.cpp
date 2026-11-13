@@ -7323,3 +7323,28 @@ TEST_CASE("owner 2026-11-13 S1: a comparison drawn from a retracted-only field i
     CHECK(verdict_of(r3["candidates"][0], "vrrm") == "pass");
     CHECK_FALSE(has_note(r3["candidates"][0], "retracted"));
 }
+
+// ── Qarlos r26 (agent X) ─────────────────────────────────────────────────────
+
+// X1: a substitute that states its supply range but not its supply current was told "the
+// substitute's record states no supply range": the current_consumption gap set the range
+// flag. Real pair (Qarlos r26 32095486), frozen bench data TAS 6bd04c7, distributorsInfo
+// dropped.
+namespace r26_x {
+// timing_devices.ndjson line 7740: ASDMB-50.000MHZ-C-40-T (1.8 V, 16 mA)
+const char* kASDMB_50_000MHZ_C_40_T = R"KREC({"timeBase":{"oscillator":{"manufacturerInfo":{"name":"Abracon","reference":"ASDMB-50.000MHZ-C-40-T","status":"production","series":"ASDMB","datasheetInfo":{"part":{"partNumber":"ASDMB-50.000MHZ-C-40-T","series":"ASDMB","package":"2520 4-SMD","case":"2520 4-SMD"},"electrical":{"technology":"mems","frequency":50000000.0,"frequencyStability":4.9999999999999996e-05,"outputType":"cmos","supply":{"minimumSupplyVoltage":1.8,"maximumSupplyVoltage":1.8,"currentConsumption":0.016},"enableFunction":"standby"},"provenance":[{"source":"manufacturerParametric","sourceName":"Abracon parametric search","sourceUrl":"https://abracon.com/Oscillators/ASDMB.pdf","retrievedDate":"2026-07-03","fields":["electrical.technology","electrical.frequency","electrical.frequencyStability","electrical.outputType","electrical.supply","electrical.enableFunction"],"verification":"seriesConfirmed","verificationDate":"2026-10-09"}],"thermal":{"operatingTemperature":{"minimum":0.0,"maximum":70.0}}},"datasheetUrl":"https://abracon.com/Oscillators/ASDMB.pdf"}}}})KREC";
+// timing_devices.ndjson line 434: 831056223 (1.8 V, no supply current stated)
+const char* k831056223 = R"KREC({"timeBase":{"oscillator":{"manufacturerInfo":{"name":"W\u00fcrth Elektronik","reference":"831056223","series":"WE-SPXO","datasheetUrl":"https://www.we-online.com/components/products/datasheet/831056223.pdf","datasheetInfo":{"part":{"partNumber":"831056223","case":"IQXO-542"},"electrical":{"technology":"crystalOscillator","frequency":50000000.0,"frequencyStability":4.9999999999999996e-05,"outputType":"cmos","supply":{"minimumSupplyVoltage":1.8,"maximumSupplyVoltage":1.8}},"provenance":[{"source":"manufacturerParametric","verification":"citationOnly","verificationDate":"2026-09-07","sourceName":"W\u00fcrth Elektronik product table","sourceUrl":"https://www.we-online.com/en/components/products/WE-SPXO","retrievedDate":"2026-07-02","fields":["part.partNumber","electrical.technology","electrical.frequency","electrical.frequencyStability","electrical.outputType","electrical.supply"]},{"source":"manufacturerDatabase","sourceName":"W\u00fcrth Elektronik product database","verification":"valuesReadFromSource","verificationDate":"2026-09-07","sourceUrl":null,"retrievedDate":"2026-07-02","fields":["mechanical.length","mechanical.width","mechanical.height","mechanical.case","part.case","mechanical.assemblyType","manufacturerInfo.description"]}],"thermal":{"operatingTemperature":{"minimum":-40.0,"maximum":85.0}},"mechanical":{"length":{"nominal":0.002},"width":{"nominal":0.0016},"height":{"nominal":0.0008},"case":"IQXO-542","assemblyType":"smt"}},"description":"WE-SPXO Simple Packaged Quartz Oscillator, IQXO-542, 50 MHz, 50 ppm, 1.8 V"}}}})KREC";
+}  // namespace r26_x
+
+TEST_CASE("Qarlos r26 X1: a missing supply current is not reported as a missing supply range",
+          "[qarlos][crossref][timing][r26-x1]") {
+    using namespace r26_x;
+    const json c = dec_1113_s::timing_one(kASDMB_50_000MHZ_C_40_T, k831056223);
+    CHECK(verdict_of(c, "supply_min_V") == "pass");
+    CHECK(verdict_of(c, "supply_max_V") == "pass");
+    CHECK(verdict_of(c, "current_consumption") == "unverified");
+    CHECK_FALSE(has_note(c, "states no supply range"));
+    CHECK(has_note(c, "the original draws 16 mA from its supply; the substitute's record states "
+                      "no supply current"));
+}
