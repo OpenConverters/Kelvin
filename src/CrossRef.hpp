@@ -1784,6 +1784,20 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                               "none",
                               what, *o_p);
                 notes.push_back(std::string(buf) + " — confirm it from the datasheet");
+                // Owner 2026-11-13 (S2): a TCXO exists for its frequency stability, so for a
+                // TCXO original that states it, stability is a PRIMARY axis: a TCXO substitute
+                // that does not state it is capped at major_review (missing_required_data),
+                // not note-only. AVTX-13-E-40.000MHZ-E05 (+/-0.5 ppm) took
+                // ECS-TXO-25CSMV-400-AN-TR (no stability on record) at minor_review. Only
+                // the TCXO class: the code groups no other compensated technology with it (an
+                // OCXO is its own identity, timing_technology_cross), and plain XOs keep the
+                // secondary-axis rule.
+                if (spec.key == "stability_ppm" && str(original, "technology") == "tcxo" &&
+                    str(cand, "technology") == "tcxo") {
+                    demote();
+                    penalty += opt.gate_weight * kVerdictFailPenalty;
+                    missing_required_data = true;
+                }
             }
         }
         // A crystal's ESR (its maximum motional resistance) is what the original's oscillator

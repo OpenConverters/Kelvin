@@ -5298,7 +5298,34 @@ TEST_CASE("qarlos r20: a TCXO with no stated stability is not an 'upgrade'",
     CHECK(has_note(c, "the original's frequency stability is +/-0.5 ppm; the substitute's record "
                       "states none"));
     CHECK(c["direction"] == "unknown");
-    CHECK(c["grade"] == "minor_review");  // the grade is the owner's (secondary: no cap added)
+    // Owner 2026-11-13 (S2) replaced the secondary-axis grade this line pinned (minor_review):
+    // for a TCXO original that states its stability, stability is a PRIMARY axis.
+    CHECK(c["grade"] == "major_review");
+}
+
+// Owner 2026-11-13 (S2): TCXO stability is a primary axis. The same real pair as above, read
+// for the grade: a TCXO substitute that states no stability for a TCXO original that states
+// one is capped at major_review (it was note-only, minor_review). Plain XOs are unchanged.
+namespace timing_tech {
+// timing_devices.ndjson line 7323: ASAK-32.768KHZ-LRS-T (Abracon XO, 32.768 kHz, stability stated)
+const char* kASAK_32_768KHZ_LRS_T = R"KREC({"timeBase":{"oscillator":{"manufacturerInfo":{"name":"Abracon","reference":"ASAK-32.768KHZ-LRS-T","status":"production","series":"ASAK","datasheetInfo":{"part":{"partNumber":"ASAK-32.768KHZ-LRS-T","series":"ASAK","package":"2016 4-SMD","case":"2016 4-SMD"},"electrical":{"technology":"crystalOscillator","frequency":32768.0,"frequencyStability":2.4999999999999998e-05,"outputType":"cmos","supply":{"minimumSupplyVoltage":3.3,"maximumSupplyVoltage":3.3,"currentConsumption":0.00024},"enableFunction":"standby"},"provenance":[{"source":"manufacturerParametric","sourceName":"Abracon parametric search","sourceUrl":"https://abracon.com/Oscillators/ASAK.pdf","retrievedDate":"2026-07-03","fields":["electrical.technology","electrical.frequency","electrical.frequencyStability","electrical.outputType","electrical.supply","electrical.enableFunction"],"verification":"seriesConfirmed","verificationDate":"2026-10-09"}],"thermal":{"operatingTemperature":{"minimum":-40.0,"maximum":85.0}}},"datasheetUrl":"https://abracon.com/Oscillators/ASAK.pdf"}}}})KREC";
+// timing_devices.ndjson line 8937: ASH5KW-32.768KHZ-L-T (Abracon XO, 32.768 kHz, no stability)
+const char* kASH5KW_32_768KHZ_L_T = R"KREC({"timeBase":{"oscillator":{"manufacturerInfo":{"name":"Abracon","reference":"ASH5KW-32.768KHZ-L-T","status":"production","series":"ASH5KW","datasheetInfo":{"part":{"partNumber":"ASH5KW-32.768KHZ-L-T","series":"ASH5KW","package":"1610 4-SMD","case":"1610 4-SMD"},"electrical":{"technology":"crystalOscillator","frequency":32768.0,"outputType":"cmos","supply":{"minimumSupplyVoltage":1.6,"maximumSupplyVoltage":5.5,"currentConsumption":0.0018000000000000002},"enableFunction":"standby"},"provenance":[{"source":"manufacturerParametric","sourceName":"Abracon parametric search","sourceUrl":"https://abracon.com/datasheets/ASH5KW.pdf","retrievedDate":"2026-07-03","fields":["electrical.technology","electrical.frequency","electrical.outputType","electrical.supply","electrical.enableFunction"],"verification":"seriesConfirmed","verificationDate":"2026-10-09"},{"source":"manufacturerDatasheet","sourceName":"Abracon ASH5KW datasheet","sourceUrl":"https://abracon.com/datasheets/ASH5KW.pdf","retrievedDate":"2026-11-09","fields":["electrical.supply"],"verification":"seriesConfirmed","verificationDate":"2026-11-09","verificationMethod":"Electrical characteristics table of the ASH5KW datasheet prints Supply Voltage (Vdd) 1.6 to 5.5 V as one continuous range for the series; compared with the stored zero-width supply 1.6 V = 1.6 V (the stored value equals the printed minimum)"}],"thermal":{"operatingTemperature":{"minimum":-40.0,"maximum":85.0}}},"datasheetUrl":"https://abracon.com/datasheets/ASH5KW.pdf"}}}})KREC";
+}  // namespace timing_tech
+
+TEST_CASE("owner 2026-11-13 S2: TCXO stability unstated on a TCXO substitute caps major_review",
+          "[qarlos][crossref][timing][timing-tech][dec-s2]") {
+    using namespace timing_tech;
+    const json c = one(kAVTX_13_E_40_000MHZ_E05, kECS_TXO_25CSMV_400_AN_TR);
+    CHECK(c["status"] == "partial");
+    CHECK(verdict_of(c, "stability_ppm") == "unverified");
+    CHECK(c["grade"] == "major_review");
+    // A plain XO original stating stability, an XO substitute stating none: still note-only.
+    const json x = one(kASAK_32_768KHZ_LRS_T, kASH5KW_32_768KHZ_L_T);
+    CHECK(x["status"] != "no_substitute");
+    CHECK(verdict_of(x, "stability_ppm") == "unverified");
+    CHECK(has_note(x, "the original's frequency stability is"));
+    CHECK(x["grade"] != "major_review");
 }
 
 TEST_CASE("timing technology: every other pair stays a strict identity",
