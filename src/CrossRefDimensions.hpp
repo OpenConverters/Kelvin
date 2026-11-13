@@ -925,6 +925,14 @@ inline std::string canonical_diode_case(const std::string& s) {
 //     outright; when the metric half is in the table below and maps to a DIFFERENT imperial
 //     code the string contradicts itself and is left as written (never silently resolved);
 //   - a lone "<metric>M" listed below -> its imperial equivalent;
+//   - "<imperial> (<metric> Metric)" (capacitors: 0402 (1005 Metric) 259 records, ...) -> as
+//     the "M" pair: the word marks the metric half;
+//   - an unmarked "A(B)" (Walsin resistors: 0201(0603) 11,630, 0603(1608) 10,274,
+//     1206(3216) 9,522, ...) -> the half that is imperial when exactly one reading of the pair
+//     is in the table below; WK12S182 JTLJ "1206(3216)" was called a different case from
+//     ERJUP8F1801V "1206" and WR06X5113FTR "0603(1608)" from AC0603FR-07511KL "0603"
+//     (Qarlos bench 20575296 / 20284866). Pairs the table cannot settle ("2512(6432)",
+//     "1218(3248)") stay as written;
 //   - anything else, including every UNMARKED 4-digit code, is the plain normalised code: a
 //     bare "0603" could be imperial 0603 or metric 0603 (imperial 0201), and which one it is
 //     is never guessed.
@@ -960,6 +968,9 @@ inline std::string canonical_chip_case(const std::string& s_in) {
     static const std::regex pair_im(R"(^\s*(\d{4,6})\s*/\s*(\d{4,5})M\s*$)",
                                     std::regex::icase);
     static const std::regex lone_m(R"(^\s*(\d{4,5})M\s*$)", std::regex::icase);
+    static const std::regex pair_word(R"(^\s*(\d{4,6})\s*\(\s*(\d{4,5})\s*Metric\s*\)\s*$)",
+                                      std::regex::icase);
+    static const std::regex pair_paren(R"(^\s*(\d{4,6})\s*\(\s*(\d{4,6})\s*\)\s*$)");
     std::smatch m;
     std::string metric, imperial;
     if (std::regex_match(s, m, pair_mi)) {
@@ -971,6 +982,22 @@ inline std::string canonical_chip_case(const std::string& s_in) {
     } else if (std::regex_match(s, m, lone_m)) {
         auto it = kMetricToImperial.find(m[1].str());
         return it != kMetricToImperial.end() ? it->second : normalize_case_code(s);
+    } else if (std::regex_match(s, m, pair_word)) {
+        // "<imperial> (<metric> Metric)": the metric half is marked by the word, exactly as
+        // by the "M" suffix above, so the same rule applies.
+        imperial = m[1].str();
+        metric = m[2].str();
+    } else if (std::regex_match(s, m, pair_paren)) {
+        // An UNMARKED pair "A(B)": which half is the metric code is not written, so it is
+        // read only when exactly ONE reading is a metric/imperial pair of the IEC 60062 /
+        // EIA-198 table — "1206(3216)" (3216 metric = 1206; 1206 is no metric code) or
+        // "3216 (1206)". Neither or both readings consistent: left as written.
+        const std::string a = m[1].str(), b = m[2].str();
+        auto ib = kMetricToImperial.find(b), ia = kMetricToImperial.find(a);
+        const bool a_imperial = ib != kMetricToImperial.end() && ib->second == a;
+        const bool b_imperial = ia != kMetricToImperial.end() && ia->second == b;
+        if (a_imperial == b_imperial) return normalize_case_code(s);
+        return a_imperial ? a : b;
     } else {
         return normalize_case_code(s);
     }

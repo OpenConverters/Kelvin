@@ -7168,3 +7168,54 @@ TEST_CASE("owner 2026-11-13 S1: a comparison drawn from a retracted-only field i
     CHECK(verdict_of(r3["candidates"][0], "vrrm") == "pass");
     CHECK_FALSE(has_note(r3["candidates"][0], "retracted"));
 }
+
+// ── Qarlos r23-r25 (judge-confirmed on Kelvin 8fc96ea / TAS 6bd04c7) ─────────────────────────
+// REAL TAS records: verbatim lines of the frozen bench resistors.ndjson (TAS 6bd04c7) in
+// tests/fixtures/qarlos_r23r25_resistors.ndjson.
+namespace {
+std::string r23r25_line(const char* file, const std::string& mpn) {
+    std::ifstream in(std::string(KELVIN_TEST_DIR) + "/fixtures/qarlos_r23r25_" + file);
+    std::string line;
+    while (std::getline(in, line))
+        if (line.find("\"reference\": \"" + mpn + "\"") != std::string::npos ||
+            line.find("\"reference\":\"" + mpn + "\"") != std::string::npos)
+            return line;
+    throw std::runtime_error(std::string("fixture has no record ") + mpn);
+}
+json r23r25_res(const std::string& mpn) {
+    return res_record_spec(r23r25_line("resistors.ndjson", mpn).c_str());
+}
+}  // namespace
+
+// T1 (bench 20575296) / T2 (bench 20284866): Walsin writes its chip case as an unmarked
+// "imperial(metric)" pair. WK12S182 JTLJ "1206(3216)" was called a different case, different
+// land pattern, from ERJUP8F1801V "1206"; WR06X5113FTR "0603(1608)" from AC0603FR-07511KL
+// "0603" — and the different-case penalty ranked an unknown-footprint part above them.
+TEST_CASE("qarlos r23r25 T1/T2: an imperial(metric) chip case pair is the imperial case",
+          "[qarlos][crossref][dimensions][r23r25]") {
+    using kelvin::crossref::case_identity;
+    CHECK(case_identity("resistor", "1206(3216)") == "1206");
+    CHECK(case_identity("resistor", "0603(1608)") == "0603");
+    CHECK(case_identity("resistor", "0201(0603)") == "0201");    // not metric 0603
+    CHECK(case_identity("resistor", "01005(0402)") == "01005");
+    CHECK(case_identity("capacitor", "3216 (1206)") == "1206");  // metric first
+    CHECK(case_identity("capacitor", "0402 (1005 Metric)") == "0402");
+    // Pairs the table cannot settle, and pairs that contradict it, stay as written.
+    CHECK(case_identity("resistor", "2512(6432)") == "25126432");
+    CHECK(case_identity("resistor", "0603(3216)") == "06033216");
+    CHECK(case_identity("capacitor", "0603 (3216 Metric)") == "06033216METRIC");
+
+    auto opt = res_opt();
+    opt.check_footprint = true;
+    for (const auto& [orig, cand] : std::vector<std::pair<std::string, std::string>>{
+             {"WK12S182 JTLJ", "ERJUP8F1801V"}, {"WR06X5113FTR", "AC0603FR-07511KL"}}) {
+        CAPTURE(orig, cand);
+        const auto r = kelvin::crossref::cross_reference("resistor", r23r25_res(orig),
+                                                         json::array({r23r25_res(cand)}), opt);
+        const json c = res_find(r, cand);
+        REQUIRE(!c.is_null());
+        CHECK(c.value("footprint", "") != "different_case");
+        CHECK_FALSE(has_note(c, "different package/case"));
+        CHECK(verdict_of(c, "footprint") != "warn");
+    }
+}
