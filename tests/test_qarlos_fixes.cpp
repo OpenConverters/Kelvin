@@ -7810,3 +7810,33 @@ TEST_CASE("owner 2026-11-13 Y2: a primary rating missing on the original only ca
     CHECK(m["candidates"][0]["grade"] == "minor_review");
     CHECK(has_note(m["candidates"][0], "states no drain-source voltage rating (Vds)"));
 }
+
+// Y3 / Y4: REAL records (TAS 6bd04c7, data-6bd04c7/diodes.ndjson), as web/src/crossref.js builds
+// the spec from the v22 shard row: Nexperia BAS70L (70 V / 70 mA Schottky, DFN1006-2), onsemi
+// MBRS3200T3G (200 V / 3 A, no package on record), onsemi NSR0170HT1G and BAS70LT1G (70 V
+// small-signal Schottkys in other cases).
+namespace dec1113y {
+const char* kBAS70L = R"KSPEC({"mpn":"BAS70L","length_m":null,"width_m":null,"height_m":null,"case_code":"DFN1006-2","mount":"","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"retracted_fields":[],"retraction_reason":"","box_axes_ambiguous":false,"vrrm":70,"if_avg":0.07,"vf":1,"power_dissipation":null,"qrr":null,"trr":null,"technology":"schottky","die_configuration":null,"internal_connection":null,"vz_min_V":null,"vz_max_V":null,"vz_tolerance_pct":null,"clamping_voltage":null,"clamping_current":null,"peak_pulse_power":null,"peak_pulse_current":null,"junction_capacitance":null,"junction_capacitance_vr":null,"clamping_waveform":"","peak_pulse_power_waveform":"","peak_pulse_current_waveform":"","tj_max":null,"qualification":""})KSPEC";
+const char* kMBRS3200T3G = R"KSPEC({"mpn":"MBRS3200T3G","length_m":null,"width_m":null,"height_m":null,"case_code":"","mount":"","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"retracted_fields":[],"retraction_reason":"","box_axes_ambiguous":false,"vrrm":200,"if_avg":3,"vf":0.7,"power_dissipation":null,"qrr":null,"trr":null,"technology":"schottky","die_configuration":null,"internal_connection":null,"vz_min_V":null,"vz_max_V":null,"vz_tolerance_pct":null,"clamping_voltage":null,"clamping_current":null,"peak_pulse_power":null,"peak_pulse_current":null,"junction_capacitance":null,"junction_capacitance_vr":null,"clamping_waveform":"","peak_pulse_power_waveform":"","peak_pulse_current_waveform":"","tj_max":150,"qualification":""})KSPEC";
+const char* kNSR0170HT1G = R"KSPEC({"mpn":"NSR0170HT1G","length_m":null,"width_m":null,"height_m":null,"case_code":"SOD-323","mount":"","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"retracted_fields":[],"retraction_reason":"","box_axes_ambiguous":false,"vrrm":70,"if_avg":0.07,"vf":0.64,"power_dissipation":null,"qrr":null,"trr":null,"technology":"schottky","die_configuration":null,"internal_connection":null,"vz_min_V":null,"vz_max_V":null,"vz_tolerance_pct":null,"clamping_voltage":null,"clamping_current":null,"peak_pulse_power":null,"peak_pulse_current":null,"junction_capacitance":null,"junction_capacitance_vr":null,"clamping_waveform":"","peak_pulse_power_waveform":"","peak_pulse_current_waveform":"","tj_max":null,"qualification":""})KSPEC";
+const char* kBAS70LT1G = R"KSPEC({"mpn":"BAS70LT1G","length_m":null,"width_m":null,"height_m":null,"case_code":"SOT-23 (TO-236) 2.90x1.30x1.00, 1.90P","mount":"","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"retracted_fields":[],"retraction_reason":"","box_axes_ambiguous":false,"vrrm":70,"if_avg":0.07,"vf":0.41,"power_dissipation":null,"qrr":null,"trr":null,"technology":"schottky","die_configuration":null,"internal_connection":null,"vz_min_V":null,"vz_max_V":null,"vz_tolerance_pct":null,"clamping_voltage":null,"clamping_current":null,"peak_pulse_power":null,"peak_pulse_current":null,"junction_capacitance":2e-12,"junction_capacitance_vr":null,"clamping_waveform":"","peak_pulse_power_waveform":"","peak_pulse_current_waveform":"","tj_max":null,"qualification":""})KSPEC";
+}  // namespace dec1113y
+
+TEST_CASE("owner 2026-11-13 Y3: an unknown footprint never outranks a known different case",
+          "[qarlos][crossref][diode][dec-1113y]") {
+    using namespace dec1113y;
+    STATIC_REQUIRE(kelvin::crossref::kUnknownDimPenalty >=
+                   kelvin::crossref::kEstablishedFootprintMismatchPenalty);
+    const json r = kelvin::crossref::cross_reference(
+        "diode", json::parse(kBAS70L),
+        json::array({json::parse(kMBRS3200T3G), json::parse(kNSR0170HT1G),
+                     json::parse(kBAS70LT1G)}));
+    std::vector<std::string> order;
+    for (const auto& c : r["candidates"]) order.push_back(c["mpn"]);
+    REQUIRE(order.size() == 3);
+    INFO(r["candidates"].dump());
+    CHECK(find_mpn(r, "MBRS3200T3G")["footprint"] == "unknown");
+    CHECK(find_mpn(r, "NSR0170HT1G")["footprint"] == "different_case");
+    CHECK(find_mpn(r, "BAS70LT1G")["footprint"] == "different_case");
+    CHECK(order.back() == "MBRS3200T3G");
+}

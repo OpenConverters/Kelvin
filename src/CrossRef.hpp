@@ -530,8 +530,15 @@ inline constexpr double kVzGradePrintResolutionPct = 0.01;
 // itself annotates as "a substitute to re-lay-out, not a drop-in" scored 0.5,
 // while the exact-value, exact-power 0402 thin films whose records merely omit a
 // width scored 2.0, and the re-layout parts headed the list (ABT #498).
-inline constexpr double kEstablishedFootprintMismatchPenalty =
-    kUnknownDimPenalty + kVerdictWarnPenalty;
+//
+// Owner 2026-11-13 (Y3) moved the hinge: the unverified rung now costs exactly the
+// established-mismatch rung (2.5, kUnknownDimPenalty in CrossRefDimensions.hpp), so an
+// unknown footprint never outranks a known different case on the footprint term; the ladder
+// is fits < unverified == established different case <= the continuous overhang / undersize
+// terms (floored at this value).
+inline constexpr double kEstablishedFootprintMismatchPenalty = kUnknownDimPenalty;
+static_assert(kUnknownDimPenalty >= kEstablishedFootprintMismatchPenalty,
+              "Y3: an unknown footprint must cost at least a known different case");
 
 // ── Match grade ──────────────────────────────────────────────────────────────
 // The industry cross-reference graders (SiliconExpert A / A-U / A-D / B / C / D
