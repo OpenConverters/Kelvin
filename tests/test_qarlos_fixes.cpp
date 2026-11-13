@@ -7323,3 +7323,141 @@ TEST_CASE("owner 2026-11-13 S1: a comparison drawn from a retracted-only field i
     CHECK(verdict_of(r3["candidates"][0], "vrrm") == "pass");
     CHECK_FALSE(has_note(r3["candidates"][0], "retracted"));
 }
+
+// ── Qarlos r23-r25 (judge-confirmed on Kelvin 8fc96ea / TAS 6bd04c7) ─────────────────────────
+// REAL TAS records: verbatim lines of the frozen bench resistors.ndjson (TAS 6bd04c7) in
+// tests/fixtures/qarlos_r23r25_resistors.ndjson.
+namespace {
+std::string r23r25_line(const char* file, const std::string& mpn) {
+    std::ifstream in(std::string(KELVIN_TEST_DIR) + "/fixtures/qarlos_r23r25_" + file);
+    std::string line;
+    while (std::getline(in, line))
+        if (line.find("\"reference\": \"" + mpn + "\"") != std::string::npos ||
+            line.find("\"reference\":\"" + mpn + "\"") != std::string::npos)
+            return line;
+    throw std::runtime_error(std::string("fixture has no record ") + mpn);
+}
+json r23r25_res(const std::string& mpn) {
+    return res_record_spec(r23r25_line("resistors.ndjson", mpn).c_str());
+}
+}  // namespace
+
+// T1 (bench 20575296) / T2 (bench 20284866): Walsin writes its chip case as an unmarked
+// "imperial(metric)" pair. WK12S182 JTLJ "1206(3216)" was called a different case, different
+// land pattern, from ERJUP8F1801V "1206"; WR06X5113FTR "0603(1608)" from AC0603FR-07511KL
+// "0603" — and the different-case penalty ranked an unknown-footprint part above them.
+TEST_CASE("qarlos r23r25 T1/T2: an imperial(metric) chip case pair is the imperial case",
+          "[qarlos][crossref][dimensions][r23r25]") {
+    using kelvin::crossref::case_identity;
+    CHECK(case_identity("resistor", "1206(3216)") == "1206");
+    CHECK(case_identity("resistor", "0603(1608)") == "0603");
+    CHECK(case_identity("resistor", "0201(0603)") == "0201");    // not metric 0603
+    CHECK(case_identity("resistor", "01005(0402)") == "01005");
+    CHECK(case_identity("capacitor", "3216 (1206)") == "1206");  // metric first
+    CHECK(case_identity("capacitor", "0402 (1005 Metric)") == "0402");
+    // Pairs the table cannot settle, and pairs that contradict it, stay as written.
+    CHECK(case_identity("resistor", "2512(6432)") == "25126432");
+    CHECK(case_identity("resistor", "0603(3216)") == "06033216");
+    CHECK(case_identity("capacitor", "0603 (3216 Metric)") == "06033216METRIC");
+
+    auto opt = res_opt();
+    opt.check_footprint = true;
+    for (const auto& [orig, cand] : std::vector<std::pair<std::string, std::string>>{
+             {"WK12S182 JTLJ", "ERJUP8F1801V"}, {"WR06X5113FTR", "AC0603FR-07511KL"}}) {
+        CAPTURE(orig, cand);
+        const auto r = kelvin::crossref::cross_reference("resistor", r23r25_res(orig),
+                                                         json::array({r23r25_res(cand)}), opt);
+        const json c = res_find(r, cand);
+        REQUIRE(!c.is_null());
+        CHECK(c.value("footprint", "") != "different_case");
+        CHECK_FALSE(has_note(c, "different package/case"));
+        CHECK(verdict_of(c, "footprint") != "warn");
+    }
+}
+
+// T4 (bench 20269028): RNMF14FTC12R4 states its series limiting voltage (200 V); YAGEO
+// MFR-25FBF52-12R4 states its rated continuous working voltage, min(sqrt(P x R), 250 V) =
+// 1.76 V at 12.4 ohm / 0.25 W (its provenance says so). Compared as stated, the 1.76 V was a
+// FAIL against the 200 V for two parts that carry the same voltage. Both are now compared as
+// min(maxVoltage, sqrt(P x R)) when both records state all three.
+TEST_CASE("qarlos r23r25 T4: a resistor's working voltage is compared like with like",
+          "[qarlos][crossref][r23r25]") {
+    const json o = r23r25_res("RNMF14FTC12R4"), s = r23r25_res("MFR-25FBF52-12R4");
+    REQUIRE(o["max_voltage_V"] == 200.0);
+    REQUIRE(s["max_voltage_V"].get<double>() == Catch::Approx(1.760682));
+    const auto r = kelvin::crossref::cross_reference("resistor", o, json::array({s}), res_opt());
+    const json c = res_find(r, "MFR-25FBF52-12R4");
+    REQUIRE(!c.is_null());
+    CHECK(verdict_of(c, "max_voltage_V") == "pass");
+    CHECK_FALSE(has_note(c, "lower maximum working voltage"));
+    CHECK(has_note(c, "maximum voltage stated as 1.761 V against the original's 200 V"));
+    CHECK(has_note(c, "the power rating, not the stated voltage, is the limit"));
+    // The other way round the limit is still the power rating on both sides: a pass, not a
+    // spurious "upgrade" from the 200 V figure.
+    const auto r2 = kelvin::crossref::cross_reference("resistor", s, json::array({o}), res_opt());
+    const json c2 = res_find(r2, "RNMF14FTC12R4");
+    REQUIRE(!c2.is_null());
+    CHECK(verdict_of(c2, "max_voltage_V") == "pass");
+}
+
+// T7 (r24 30943467) / T8 (r24 31048196): verbatim timing_devices.ndjson lines (TAS 6bd04c7) in
+// tests/fixtures/qarlos_r23r25_timing.ndjson.
+//   T7: ASDMB-25.000MHZ-XY-T "2520 4-SMD" against Würth 830208483509 "IQXO-951 2520"
+//       (2.5 x 2.0 mm stated) was "a different land pattern" with the same penalty as the
+//       3225 (8302091569) and 2016 (830208445309) bodies of the same series.
+//   T8: ECS-TXO-2016-33-120-TR states only the generic "4-SMD, No Lead", which names no
+//       land, yet ATX-H13-E-12.000MHZ-F25 "2016 4-SMD" was "a different land pattern".
+TEST_CASE("qarlos r23r25 T7/T8: a timing case string establishes a different land only when "
+          "it names a different body",
+          "[qarlos][crossref][timing][r23r25]") {
+    using dec_1113_s::timing_spec;
+    static const std::vector<std::string> lines = [] {
+        std::vector<std::string> v;
+        std::ifstream in(std::string(KELVIN_TEST_DIR) + "/fixtures/qarlos_r23r25_timing.ndjson");
+        for (std::string l; std::getline(in, l);) v.push_back(l);
+        return v;
+    }();
+    auto rec = [&](const std::string& mpn) -> json {
+        for (const auto& l : lines)
+            if (l.find("\"reference\": \"" + mpn + "\"") != std::string::npos ||
+                l.find("\"reference\":\"" + mpn + "\"") != std::string::npos)
+                return timing_spec(l.c_str());
+        throw std::runtime_error("fixture has no record " + mpn);
+    };
+    using kelvin::crossref::timing_case_body_code;
+    CHECK(timing_case_body_code("2520 4-SMD", std::nullopt, std::nullopt) == "2520");
+    CHECK(timing_case_body_code("IQXO-951 2520", 0.0025, 0.002) == "2520");
+    CHECK_FALSE(timing_case_body_code("IQXO-951 2520", 0.0032, 0.0025));  // disagrees with dims
+    CHECK_FALSE(timing_case_body_code("4-SMD, No Lead", std::nullopt, std::nullopt));
+    CHECK_FALSE(timing_case_body_code("2520/3225", std::nullopt, std::nullopt));  // two bodies
+
+    // T7: the same 2520 body is no longer an established land change; 3225 and 2016 still are.
+    const auto r = kelvin::crossref::cross_reference(
+        "timeBase", rec("ASDMB-25.000MHZ-XY-T"),
+        json::array({rec("830208483509"), rec("8302091569"), rec("830208445309")}));
+    auto find = [&](const std::string& mpn) {
+        for (const auto& c : r["candidates"])
+            if (c["mpn"] == mpn) return c;
+        return json(nullptr);
+    };
+    const json same = find("830208483509"), big = find("8302091569"), small = find("830208445309");
+    REQUIRE(!same.is_null());
+    REQUIRE(!big.is_null());
+    REQUIRE(!small.is_null());
+    CHECK(same.value("footprint", "") != "different_case");
+    CHECK_FALSE(has_note(same, "different package/case"));
+    CHECK(has_note(same, "both records name the 2520 body"));
+    CHECK(big.value("footprint", "") == "different_case");
+    CHECK(small.value("footprint", "") == "different_case");
+    CHECK(same["penalty"].get<double>() < big["penalty"].get<double>());
+    CHECK(same["penalty"].get<double>() < small["penalty"].get<double>());
+
+    // T8: a generic package on the original establishes no land, so no different land either.
+    const auto r8 = kelvin::crossref::cross_reference(
+        "timeBase", rec("ECS-TXO-2016-33-120-TR"), json::array({rec("ATX-H13-E-12.000MHZ-F25")}));
+    REQUIRE(r8["candidates"].size() == 1);
+    const json c8 = r8["candidates"][0];
+    CHECK(c8.value("footprint", "") != "different_case");
+    CHECK_FALSE(has_note(c8, "different package/case"));
+    CHECK(verdict_of(c8, "footprint") == "unverified");
+}
