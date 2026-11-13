@@ -788,6 +788,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // code (same PARAM_SPECS row and hard-param set) but the owner's decision names
     // magnetics, so a bead keeps the unweighed treatment.
     bool magnetic_rated_absent = false;
+    // A magnetic's saturation current stated by NEITHER record (see the PARAM_SPECS loop): the
+    // axis the match turns on was never compared, so 'upgrade' / 'equivalent' would be a claim
+    // about a comparison not made — the direction is 'unknown' (owner, 2026-11-13).
+    bool isat_unstated_both = false;
     auto note_direction = [&](Dir dir, std::optional<double> o, std::optional<double> s) {
         if (!o || !s || *o <= 0 || *s <= 0) return;
         const double ratio = *s / *o;
@@ -1426,6 +1430,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // owner's yes.
         if (!has_data && cat == "magnetic" && spec.key == "saturation_current") {
             params.push_back({{"name", spec.key}, {"verdict", UNVERIFIED}});
+            isat_unstated_both = true;
             notes.push_back("saturation current stated by neither record — Isat was not "
                             "compared, so whether the substitute saturates before the original "
                             "is unknown; confirm both from the datasheets");
@@ -4249,7 +4254,13 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     out["direction"] = (cand_retracted || ((direction_blind || isat_basis_blind || surge_blind ||
                                             current_basis_blind || !magnetic_unweighed.empty() ||
                                             magnetic_rated_absent) &&
-                                           (dir == "upgrade" || dir == "equivalent")))
+                                           (dir == "upgrade" || dir == "equivalent")) ||
+                            // Isat stated by neither record (owner, 2026-11-13): an 'upgrade'
+                            // would claim the comparison the match turns on, so it reads
+                            // 'unknown'. 'equivalent' stands: a record identical to the original
+                            // on every stated axis cannot be the worse part for an axis neither
+                            // states (the fuzz self-copy invariant).
+                            (isat_unstated_both && dir == "upgrade"))
                            ? "unknown"
                            : dir;
     // A different nominal resistance (see value_differs above): an alternative only. Its

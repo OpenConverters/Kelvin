@@ -425,14 +425,16 @@ TEST_CASE("direction is not a verdict when the deciding axis was never compared"
                                    {"device_type", "inductor"}}});
     CHECK(cross_reference("magnetic", blind, worse_dcr, Options{})["candidates"][0]["direction"] ==
           "downgrade");
-    // ...and when NEITHER side states the axis it is missing identically for every candidate,
-    // so it cannot skew one against another and the reading stands.
+    // ...and when NEITHER side states the axis it is missing identically for every candidate.
+    // Owner, 2026-11-13 (approved assertion change): when that axis is a magnetic's saturation
+    // current, an 'upgrade' would claim the comparison the match turns on, so the reading is
+    // 'unknown' (neither record here states Isat).
     json also_blind = json::array({{{"mpn", "N"},
                                     {"value_si", 1e-5},
                                     {"dcr", 0.020},
                                     {"device_type", "inductor"}}});
     CHECK(cross_reference("magnetic", blind, also_blind, Options{})["candidates"][0]["direction"] ==
-          "upgrade");
+          "unknown");
 }
 
 // ── case-code unit ambiguity ─────────────────────────────────────────────────

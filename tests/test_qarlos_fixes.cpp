@@ -3754,13 +3754,16 @@ TEST_CASE("qarlos v20: the real LQW04 / CWW0402 pair is a different case and nev
     auto r2 = kelvin::crossref::cross_reference("magnetic", mag_spec_xref(*cww),
                                                 json::array({mag_spec_xref(*lqw)}), nofp);
     CHECK(r2["candidates"][0]["direction"] == "unknown");
-    // ... and once the substitute answers both, the same rated current IS an upgrade.
+    // ... and once the substitute answers both, the DCR/SRF blindness is gone. Owner,
+    // 2026-11-13 (approved assertion change): neither record states Isat, so the higher rated
+    // current no longer reads as an 'upgrade' — the saturation axis was never compared.
     json answered = mag_spec_xref(*lqw);
     answered["dcr"] = 0.5;
     answered["srf"] = 2.5e9;
     auto r3 = kelvin::crossref::cross_reference("magnetic", mag_spec_xref(*cww),
                                                 json::array({answered}), nofp);
-    CHECK(r3["candidates"][0]["direction"] == "upgrade");
+    CHECK(r3["candidates"][0]["direction"] == "unknown");
+    CHECK(has_note(r3["candidates"][0], "saturation current stated by neither record"));
 }
 
 
