@@ -188,6 +188,12 @@ test.describe('kelvin site', () => {
     await page.locator('tbody tr .pin-btn').nth(1).click()
     await page.getByRole('button', { name: /overlay curves/ }).click()
     await expect(page.locator('.overlay-grid .curve').first()).toBeVisible({ timeout: 20_000 })
-    await expect(page.locator('.legend-item')).toHaveCount(2)
+    // Every overlay chart shows BOTH pinned parts. Counted per chart (owner-approved change,
+    // 2026-11-13): chip beads now carry |Z|, R and X curves, so the page holds three charts and
+    // a page-wide count of 2 no longer measured "both parts are overlaid".
+    const charts = page.locator('.overlay-grid > *')
+    const n = await charts.count()
+    expect(n).toBeGreaterThan(0)
+    for (let i = 0; i < n; i++) await expect(charts.nth(i).locator('.legend-item')).toHaveCount(2)
   })
 })
