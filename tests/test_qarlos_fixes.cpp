@@ -6358,3 +6358,30 @@ TEST_CASE("dec 1113b N1b: no footprint cap for any candidate when the original s
     CHECK(xfl.value("penalty", 0.0) >= kelvin::crossref::kUnknownDimPenalty);
     CHECK(srn.value("penalty", 0.0) >= kelvin::crossref::kUnknownDimPenalty);
 }
+
+// ── Owner decisions 2026-11-13 (b), N1c: Isat stated by neither record -> 'unknown' ──
+namespace dec1113b {
+// magnetics: PA4304.153NLT (Pulse, 15 uH, 12.5 x 12.5 mm) and B82477G2153M000 (TDK, 15 uH,
+// 12.3 x 12.3 mm); neither states a saturation current.
+const char* kPA4304_153NLT = R"KSPEC({"mpn":"PA4304.153NLT","length_m":0.0125,"width_m":0.0125,"height_m":0.006,"case_code":"","mount":"","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"box_axes_ambiguous":false,"value_si":0.000015,"saturation_current":null,"saturation_points":null,"rated_current":3.3,"dcr":0.03,"srf":null,"temp_min_C":-40,"temp_max_C":125})KSPEC";
+const char* kB82477G2153M000 = R"KSPEC({"mpn":"B82477G2153M000","length_m":0.0123,"width_m":0.0123,"height_m":0.006,"case_code":"","mount":"","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"box_axes_ambiguous":false,"value_si":0.000015,"saturation_current":null,"saturation_points":null,"rated_current":3.3,"dcr":0.03,"srf":null,"temp_min_C":-55,"temp_max_C":125})KSPEC";
+}  // namespace dec1113b
+
+// Every compared axis is equal (L, Ir 3.3 A, DCR 30 mOhm) and Isat is on neither record: the
+// pair read 'equivalent', which asserts nothing is behind on the axis the match turns on.
+TEST_CASE("dec 1113b N1c: Isat stated by neither record reads direction 'unknown', not "
+          "'equivalent'",
+          "[qarlos][crossref][magnetic][dec-1113b]") {
+    using namespace dec1113b;
+    const json c = rank("magnetic", kPA4304_153NLT, {kB82477G2153M000});
+    REQUIRE(c.size() == 1);
+    CHECK(verdict_of(c[0], "saturation_current") == "unverified");
+    CHECK(c[0]["direction"] == "unknown");
+    // With Isat stated on both (equal), the same pair is 'equivalent' again.
+    json o = json::parse(kPA4304_153NLT), s = json::parse(kB82477G2153M000);
+    o["saturation_current"] = 4.0;
+    s["saturation_current"] = 4.0;
+    const json e =
+        kelvin::crossref::cross_reference("magnetic", o, json::array({s}))["candidates"][0];
+    CHECK(e["direction"] == "equivalent");
+}

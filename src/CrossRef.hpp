@@ -1582,13 +1582,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // penalised (owner 2026-11-12: identical for every candidate, it cannot skew one against
         // another), but the gap is shown as an UNVERIFIED row with a note (owner, 2026-11-13;
         // test_crossref_ranking_golden ABT #545 was narrowed to "no footprint/package note"
-        // with the owner's approval). The owner also decided the direction becomes 'unknown'
-        // here; that is NOT applied yet, because three existing assertions pin the old
-        // reading ('upgrade' / 'equivalent' with Isat stated by neither record):
-        // test_crossref_classes "direction is not a verdict when the deciding axis was never
-        // compared", the magnetic self-copy invariant of test_crossref_fuzz, and
-        // test_qarlos_fixes "the real LQW04 / CWW0402 pair ..." (r3). Changing them needs the
-        // owner's yes.
+        // with the owner's approval). The direction becomes 'unknown' for 'upgrade' and
+        // 'equivalent' (owner 2026-11-13; see out["direction"] below).
         if (!has_data && cat == "magnetic" && spec.key == "saturation_current") {
             params.push_back({{"name", spec.key}, {"verdict", UNVERIFIED}});
             isat_unstated_both = true;
@@ -4513,12 +4508,12 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                             current_basis_blind || !magnetic_unweighed.empty() ||
                                             magnetic_rated_absent) &&
                                            (dir == "upgrade" || dir == "equivalent")) ||
-                            // Isat stated by neither record (owner, 2026-11-13): an 'upgrade'
-                            // would claim the comparison the match turns on, so it reads
-                            // 'unknown'. 'equivalent' stands: a record identical to the original
-                            // on every stated axis cannot be the worse part for an axis neither
-                            // states (the fuzz self-copy invariant).
-                            (isat_unstated_both && dir == "upgrade"))
+                            // Isat stated by neither record (owner, 2026-11-13): 'upgrade' and
+                            // 'equivalent' would both claim the comparison the match turns on, so
+                            // both read 'unknown' (87ab9dd did 'upgrade'; 'equivalent' followed
+                            // with the owner's yes, N1c, and the fuzz self-copy invariant accepts
+                            // 'unknown' for exactly this case).
+                            (isat_unstated_both && (dir == "upgrade" || dir == "equivalent")))
                            ? "unknown"
                            : dir;
     // A different nominal resistance (see value_differs above): an alternative only. Its
