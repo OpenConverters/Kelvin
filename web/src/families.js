@@ -68,7 +68,7 @@ export const FAMILIES = [
       { f: 'coss', label: 'Coss', unit: 'F' },
       { f: 'tj_max', label: 'Tj max', unit: '°C', plain: true },
     ],
-    facets: [{ f: 'technology', label: 'Technology' }, { f: 'channel', label: 'Channel' }],
+    facets: [{ f: 'technology', label: 'Technology' }, { f: 'channel', label: 'Channel' }, { f: 'die_configuration', label: 'Dies' }],
     recommend: {
       fields: [
         { key: 'ratedDrainSourceVoltage', label: 'Vds >=', unit: 'V', required: true, placeholder: '60' },

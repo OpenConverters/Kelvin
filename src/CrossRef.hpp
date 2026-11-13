@@ -3289,7 +3289,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             const char* label;
         };
         std::vector<Field> fields{{"die_configuration", "die configuration"}};
-        if (cat == "diode") fields.push_back({"internal_connection", "internal connection"});
+        // MOSFET internal connection (halfBridge / independent / commonDrain), owner
+        // 2026-11-13 V2: the same rule as the diode one, field for field.
+        fields.push_back({"internal_connection", "internal connection"});
         for (const Field f : fields) {
             const std::string o = str(original, f.key), s = str(cand, f.key);
             if (o.empty() && s.empty()) continue;
@@ -3303,7 +3305,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                 "', the substitute '" + s +
                                 "' — a different package topology and pinout, not a substitute");
                 return reject(cat == "diode" ? "a different diode package topology"
-                                             : "a different MOSFET die configuration");
+                              : std::string(f.key) == "internal_connection"
+                                  ? "a different MOSFET internal connection"
+                                  : "a different MOSFET die configuration");
             }
             params.push_back({{"name", f.key}, {"verdict", UNVERIFIED}});
             notes.push_back(o.empty()
@@ -4878,7 +4882,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //     orientation and the variant identities (connector_identity_gaps) primary   cap major_review
     //   connector orientation (connector_orientation_unv.)    primary    cap minor_review
     //   connector pluggable vs fixed (pluggable_unverified)   primary    cap minor_review
-    //   diode die configuration / internal connection         primary    cap minor_review
+    //   diode / MOSFET die configuration, internal connection primary  cap minor_review
     //   oscillator control-pin function (timebase_pin_unv.)   primary    cap minor_review
     //   resistor power at rating temp (power_basis_unverif.)  primary    cap minor_review
     //   capacitor ripple-current basis (ripple_basis_unv.)    primary    cap minor_review

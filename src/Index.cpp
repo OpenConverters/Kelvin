@@ -317,6 +317,7 @@ void row_io(Ar& ar, MosfetRow& r) {
     ar.dbl(r.vgs_threshold_typ);  // v20
     ar.dbl(r.coss_vds);           // v21
     ar.str(r.die_configuration);  // v22
+    ar.str(r.internal_connection);  // v22 (owner 2026-11-13, V2)
     ar.boolean(r.is_production);
     ar.boolean(r.datasheet_usable);
 }

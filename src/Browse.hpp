@@ -75,6 +75,7 @@ inline const FieldTable<MosfetRow>& fields<MosfetRow>() {
         {{"technology", &MosfetRow::technology},
          {"channel", &MosfetRow::channel},
          {"die_configuration", &MosfetRow::die_configuration},
+         {"internal_connection", &MosfetRow::internal_connection},
          {"qualification", &MosfetRow::qualification}},
         {{"is_production", &MosfetRow::is_production},
          {"datasheet_usable", &MosfetRow::datasheet_usable}},

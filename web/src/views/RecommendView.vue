@@ -346,6 +346,7 @@ const target = computed(() => result.value?.target ?? null)
               <span v-if="c.verdict" class="chip" :class="`verdict-${c.verdict}`">{{ c.verdict }}</span>
               <span v-if="c.evidence?.family" class="chip">{{ c.evidence.family }}</span>
               <span v-if="c.evidence?.positions != null" class="chip">{{ c.evidence.positions }} pos</span>
+              <span v-if="c.evidence?.dieConfiguration" class="chip" title="multi-die package: ratings are per die">{{ c.evidence.dieConfiguration }}{{ c.evidence.internalConnection ? ` · ${c.evidence.internalConnection}` : '' }}</span>
               <span v-for="b in evidenceBadges(c)" :key="b.t" class="chip warn" :title="b.title">{{ b.t }}</span>
               <button
                 class="pin"
