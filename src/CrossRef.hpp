@@ -1083,6 +1083,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     bool power_basis_unverified = false;
     // SMD vs through-hole could not be established for this pair (compare_mount Unknown).
     bool mount_unverified = false;
+    // A primary current rating (MOSFET Id, diode If(AV), IGBT Ic) stated by one record only
+    // (owner 2026-11-13, Y1): UNVERIFIED with a note, capped at minor_review.
+    bool current_rating_one_sided = false;
     // Direction bookkeeping: on each directional parameter we could compare,
     // did the substitute come out strictly ahead of the original, or behind?
     int better = 0, worse = 0;
@@ -3370,6 +3373,33 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         }
         auto v = score_directional(o, s, r.mode, r.warn_factor, r.gate_factor);
         params.push_back({{"name", r.key}, {"verdict", v.verdict}});
+        // A primary CURRENT rating stated by one record only (owner 2026-11-13, Y1). The
+        // voltage ratings are hard (a substitute missing one rejects; an original missing one
+        // is direction_blind below); the current ratings were silently UNVERIFIED, so a dual
+        // whose dies state no Id (CSD88584Q5DC) came back drop_in either way round. Now:
+        // UNVERIFIED, demoted, capped at minor_review (primary_unverified), and a note naming
+        // the side that states it. No penalty and no direction change.
+        if ((r.key == std::string("id") || r.key == std::string("if_avg") ||
+             r.key == std::string("ic")) &&
+            (o.has_value() != s.has_value())) {
+            static const std::map<std::string, const char*> kCur = {
+                {"id", "continuous drain current (Id)"},
+                {"if_avg", "average forward current (If(AV))"},
+                {"ic", "continuous collector current (Ic)"}};
+            const char* what = kCur.at(r.key);
+            char b[96];
+            std::snprintf(b, sizeof b, "%g A", o ? *o : *s);
+            current_rating_one_sided = true;
+            demote();
+            notes.push_back(o ? std::string("the original states a ") + what + " of " + b +
+                                    "; the substitute's record states none — whether it "
+                                    "carries the original's current is unknown; confirm its "
+                                    "rating from the datasheet before this swap"
+                              : std::string("the substitute states a ") + what + " of " + b +
+                                    "; the original's record states none, so it could not be "
+                                    "weighed against the original's requirement — confirm the "
+                                    "original's rating from its datasheet before this swap");
+        }
         // A shortfall that is not a rejection must say so (Qarlos r13 seed 25078643: the
         // 600 V SiHL033N60SF for the 650 V FCH023N65S3L4 carried a 'warn' Vds row and no
         // word about it, so it read as a mild review). The verdict, penalty and grade are
@@ -5115,8 +5145,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //   magnetic Isat stated by NEITHER record (owner
     //     2026-11-13)                                         both-unst. UNVERIFIED row + note,
     //                                                                    no cap, no penalty
-    //   Id / If(AV) / Ic, chip-bead rated current,
-    //     connector rated voltage, diode power dissipation    primary    no cap*
+    //   Id / If(AV) / Ic stated by one record only (owner
+    //     2026-11-13, Y1; current_rating_one_sided)           primary    note, cap minor_review
+    //   chip-bead rated current, connector rated voltage,
+    //     diode power dissipation                             primary    no cap*
     //   height-only clearance (height_fit unknown)            secondary  note only
     //   operating-temperature range (resistor, magnetic)      secondary  note only
     //   resistor TCR                                          secondary  note only
@@ -5153,7 +5185,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                     ripple_basis_unverified || lead_form_unverified ||
                                     qualification_unverified || topology_unverified ||
                                     mount_unverified || timebase_pin_unverified ||
-                                    timebase_prog_order;
+                                    timebase_prog_order || current_rating_one_sided;
     out["grade"] = grade_for(status, tier, any_warn, any_fail, primary_unverified,
                              missing_required_data || connector_identity_gaps_major ||
                                  timebase_tech_major,

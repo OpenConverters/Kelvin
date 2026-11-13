@@ -7739,3 +7739,43 @@ TEST_CASE("owner 2026-11-13 W4: turns ratio beyond 15 % rejects; the best config
     CHECK(verdict_of(*c2, "turns_ratio") == "pass");
     CHECK(has_note(*c2, "on the original's wiring configuration 2 of 2"));
 }
+
+// ── Owner decisions 2026-11-13 (dec-y) ───────────────────────────────────────────────────
+// Y1: a primary current rating (MOSFET Id, diode If(AV), IGBT Ic) stated on one side only is
+// UNVERIFIED, noted and capped at minor_review. REAL records (n2c fixture, verbatim TAS lines):
+// TI CSD88584Q5DC (dual halfBridge, 40 V, dies state no Id) against Nexperia PSMN4R2-40VSH
+// (dual halfBridge, 40 V, states Id), both directions.
+TEST_CASE("owner 2026-11-13 Y1: a current rating stated on one side only caps minor_review",
+          "[qarlos][crossref][mosfet][dec-1113y]") {
+    const json csd = mosfet_spec(n2c::row("CSD88584Q5DC"));
+    const json psmn = mosfet_spec(n2c::row("PSMN4R2-40VSH"));
+    REQUIRE(csd["id"].is_null());
+    REQUIRE(psmn["id"].is_number());
+    // Original states Id, substitute does not.
+    const json a = kelvin::crossref::cross_reference("mosfet", psmn, json::array({csd}))
+                       ["candidates"][0];
+    CHECK(verdict_of(a, "id") == "unverified");
+    CHECK(a["grade"] != "drop_in");
+    CHECK(has_note(a, "the original states a continuous drain current (Id) of"));
+    CHECK(has_note(a, "the substitute's record states none"));
+    // Original states none, substitute states Id.
+    const json b = kelvin::crossref::cross_reference("mosfet", csd, json::array({psmn}))
+                       ["candidates"][0];
+    CHECK(verdict_of(b, "id") == "unverified");
+    CHECK(b["grade"] != "drop_in");
+    CHECK(has_note(b, "the substitute states a continuous drain current (Id) of"));
+    CHECK(has_note(b, "the original's record states none"));
+    // The real pair also differs on Qg / Coss / package, so its grade is decided elsewhere.
+    // The same record with only Id removed isolates the rule, both ways round.
+    json no_id = psmn;
+    no_id["mpn"] = "PSMN_NO_ID";
+    no_id["id"] = nullptr;
+    json same = psmn;
+    same["mpn"] = "PSMN_SAME";
+    const json r1 = kelvin::crossref::cross_reference("mosfet", psmn, json::array({no_id, same}));
+    CHECK(find_mpn(r1, "PSMN_SAME")["grade"] == "drop_in");
+    CHECK(find_mpn(r1, "PSMN_NO_ID")["grade"] == "minor_review");
+    const json r2 = kelvin::crossref::cross_reference("mosfet", no_id, json::array({same}));
+    CHECK(r2["candidates"][0]["grade"] == "minor_review");
+    CHECK(verdict_of(r2["candidates"][0], "id") == "unverified");
+}
