@@ -144,7 +144,7 @@ for (const f of families) {
       process.stdout.write(JSON.stringify({
         seed: SEED, family: f.key, category: fam.category, caveat: fam.caveat ?? null,
         original, targets, poolTotal: r.poolTotal, poolScored: r.poolScored,
-        origVerified: r.origVerified, missing: r.missing,
+        origVerified: r.origVerified, missing: r.missing, originalRetracted: r.originalRetracted,
         origSpec: r.origSpec,
         originalRaw: rawRecord(f.key, original),
         ranked: r.ranked.map((c) => {

@@ -664,6 +664,21 @@ bool all_provenance_retracted(const json& env) {
     return true;
 }
 
+std::string all_provenance_retraction_reason(const json& env) {
+    if (!all_provenance_retracted(env)) return "";
+    const json* mi = find_manufacturer_info(env, 0);
+    const json* pv = obj_get(*obj_get(*mi, "datasheetInfo"), "provenance");
+    std::vector<std::string> reasons;
+    for (const json& e : *pv) {
+        const std::string r = get_str(e, "retractionReason").value_or("");
+        if (!r.empty() && std::find(reasons.begin(), reasons.end(), r) == reasons.end())
+            reasons.push_back(r);
+    }
+    std::string out;
+    for (const std::string& r : reasons) out += (out.empty() ? "" : "; ") + r;
+    return out;
+}
+
 namespace {
 // A provenance `fields` entry, in the record-relative form the walk below produces. The corpus
 // writes the same field several ways: "electrical.forwardCurrent",

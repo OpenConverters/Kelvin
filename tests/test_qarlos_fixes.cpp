@@ -7424,3 +7424,37 @@ TEST_CASE("Qarlos r26 X4: an SMD-package crystal is not offered a through-hole o
     CHECK(verdict_of(c, "mounting") == "fail");
     CHECK(has_note(c, "mount type incompatible: 11x5 4-SMD, No Lead -> tht"));
 }
+
+// X3: a wholly retracted ORIGINAL. Real records (Qarlos r26 31990757), frozen bench data TAS
+// 6bd04c7: the Vishay RGF1K's only provenance entry is retracted ("category browse page cited
+// no exact order code; ..."). The reason reached neither the row nor any candidate note; the
+// only signal was original_unverified. Specs are web/src/crossref.js's diode spec of the v22
+// shard rows built BEFORE this fix (retraction_reason ""), with the reason the row now carries
+// set where the fixed index builder puts it.
+namespace r26_x {
+// diodes.ndjson line 12645: RGF1K (Vishay), distributorsInfo dropped
+const char* kRGF1K_Vishay = R"KREC({"semiconductor":{"diode":{"manufacturerInfo":{"name":"Vishay","reference":"RGF1K","status":"production","datasheetInfo":{"part":{"partNumber":"RGF1K","subType":"rectifier","technology":"Si"},"electrical":{"reverseVoltage":800.0,"forwardCurrent":1.0,"surgeCurrent":30.0,"forwardVoltage":1.3,"reverseRecoveryTime":1.5e-07},"provenance":[{"source":"manufacturerParametric","verification":"citationOnly","verificationDate":"2026-09-07","sourceName":"Vishay parametric search","sourceUrl":"https://www.vishay.com/en/diodes/standard-recovery/","retrievedDate":"2026-07-03","retracted":true,"retractionReason":"category browse page cited no exact order code; no part-specific document found"}],"thermal":{"junctionTemperatureMax":175.0},"mechanical":{"case":"GF1 (DO-214BA)"}}}}}})KREC";
+const char* kSpecRGF1K_Vishay = R"KSPEC({"mpn":"RGF1K","length_m":null,"width_m":null,"height_m":null,"case_code":"GF1 (DO-214BA)","mount":"","lead_pitch_m":null,"is_production":true,"provenance_retracted":true,"retracted_fields":[],"retraction_reason":"","box_axes_ambiguous":false,"vrrm":800,"if_avg":1,"vf":1.3,"power_dissipation":null,"qrr":null,"trr":1.5e-07,"technology":"rectifier","die_configuration":null,"internal_connection":null,"vz_min_V":null,"vz_max_V":null,"vz_tolerance_pct":null,"clamping_voltage":null,"clamping_current":null,"peak_pulse_power":null,"peak_pulse_current":null,"junction_capacitance":null,"junction_capacitance_vr":null,"clamping_waveform":"","peak_pulse_power_waveform":"","peak_pulse_current_waveform":"","tj_max":175,"qualification":""})KSPEC";
+const char* kSpecRGF1K_onsemi = R"KSPEC({"mpn":"RGF1K","length_m":null,"width_m":null,"height_m":null,"case_code":"SMA","mount":"","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"retracted_fields":[],"retraction_reason":"","box_axes_ambiguous":false,"vrrm":800,"if_avg":1,"vf":1.3,"power_dissipation":null,"qrr":null,"trr":5.000000000000001e-7,"technology":"fastRecovery","die_configuration":null,"internal_connection":null,"vz_min_V":null,"vz_max_V":null,"vz_tolerance_pct":null,"clamping_voltage":null,"clamping_current":null,"peak_pulse_power":null,"peak_pulse_current":null,"junction_capacitance":null,"junction_capacitance_vr":null,"clamping_waveform":"","peak_pulse_power_waveform":"","peak_pulse_current_waveform":"","tj_max":null,"qualification":""})KSPEC";
+}  // namespace r26_x
+
+TEST_CASE("Qarlos r26 X3: a wholly retracted original is named, with its reason, on candidates",
+          "[qarlos][crossref][diode][r26-x3]") {
+    using namespace r26_x;
+    const std::string why =
+        "category browse page cited no exact order code; no part-specific document found";
+    const json env = json::parse(kRGF1K_Vishay);
+    CHECK(kelvin::all_provenance_retracted(env));
+    CHECK(kelvin::all_provenance_retraction_reason(env) == why);
+    json orig = json::parse(kSpecRGF1K_Vishay);
+    REQUIRE(orig["provenance_retracted"] == true);
+    orig["retraction_reason"] = why;
+    const json cand = json::parse(kSpecRGF1K_onsemi);
+    kelvin::crossref::Options opt;
+    opt.original_verified = false;  // web/src/crossref.js: origVerified is false when retracted
+    auto r = kelvin::crossref::cross_reference("diode", orig, json::array({cand}), opt);
+    REQUIRE(r["candidates"].size() == 1);
+    const json c = r["candidates"][0];
+    CHECK(c["original_unverified"] == true);
+    CHECK(has_note(c, "every source cited by the original's record is retracted (" + why + ")"));
+}

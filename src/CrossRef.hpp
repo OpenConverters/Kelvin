@@ -4760,6 +4760,17 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                         "its data is verified; confirm the part from its datasheet before "
                         "relying on any verdict here");
     }
+    // The ORIGINAL's whole-record retraction was stated only as the original_unverified flag
+    // and the site's banner: a consumer of the candidate (the MCP tool, the harness) got no
+    // caveat and no reason (Qarlos r26 31990757, Vishay RGF1K). Named here, with the reason
+    // the record gives. The grading treatment is unchanged (status capped below).
+    if (flag(original, "provenance_retracted")) {
+        const std::string why = str(original, "retraction_reason");
+        notes.push_back("every source cited by the original's record is retracted" +
+                        (why.empty() ? std::string() : " (" + why + ")") +
+                        " — the original's data is unverified, so no verdict against it can be "
+                        "relied on; confirm the original from its datasheet");
+    }
 
     // ── fields resting only on retracted sources (owner 2026-11-13, S1) ────────
     // A record can carry a retracted entry for the whole record beside live entries scoped to

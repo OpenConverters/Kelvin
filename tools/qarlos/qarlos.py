@@ -261,8 +261,18 @@ def compact(case, max_candidates=6):
         # field is populated. Labelling it "specs fully known" made the judge report a
         # contradiction on every single case: true alongside a spec block with nulls in
         # non-gate fields. That was the harness lying, not the tool.
-        "original_hard_gate_specs_known": case.get("origVerified"),
+        # origVerified is ALSO false when every source of the original's record is retracted
+        # (ABT #2035) with nothing missing, and the harness sent it under this name with only
+        # the missing list beside it: the judge read "false with an empty list" as a
+        # contradiction (Qarlos r26 31990757, Vishay RGF1K). Each fact now goes under its own
+        # name: the hard-gate specs are known exactly when none is missing, and the
+        # retraction (which the site's honesty banner states) is forwarded on its own.
+        "original_hard_gate_specs_known": (not case.get("missing")
+                                           if case.get("missing") is not None
+                                           else case.get("origVerified")),
         "original_missing_hard_gate_specs": case.get("missing"),
+        "original_provenance_retracted": case.get("originalRetracted"),
+        "original_verified_for_recommendation": case.get("origVerified"),
         "tool_caveat": case.get("caveat"),
         "candidates": [],
     }
