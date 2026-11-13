@@ -5226,7 +5226,7 @@ TEST_CASE("timing technology: a TCXO is a minor_review upgrade for a quartz XO, 
     CHECK(c["direction"] == "upgrade");
     CHECK(verdict_of(c, "stability_ppm") == "pass");  // stability keeps its own comparison
     CHECK(has_note(c, "technology differs: a TCXO offered for a quartz crystal oscillator (XO)"));
-    CHECK(has_note(c, "higher supply current and cost"));
+    CHECK(has_note(c, "its supply current is not compared here"));
     // The other way round stays excluded: the XO for the TCXO original.
     const json x = one(kATX_H11_E_50_000MHZ_F25, kMSH302548AH_50_000MHZ_T3);
     CHECK(x["status"] == "no_substitute");
@@ -5236,6 +5236,45 @@ TEST_CASE("timing technology: a TCXO is a minor_review upgrade for a quartz XO, 
     const json m = one(kASDM1_10_000MHZ_LC_T, kAST3TQ_10_000MHZ_1_T2);
     CHECK(m["status"] == "no_substitute");
     CHECK(verdict_of(m, "technology") == "fail");
+}
+
+// Qarlos r22 seed 30000906: ASDAIG-48.000MHZ-X-K-T (Abracon XO, 13 mA) -> 7N48071001 (TXC TCXO,
+// 10 mA). The TCXO note said "at a higher supply current" although the records state a LOWER
+// one; the row carries no supply current, so the note must not claim a direction at all.
+namespace timing_tech {
+const char* kASDAIG_48_000MHZ_X_K_T = R"KREC({"timeBase":{"oscillator":{"manufacturerInfo":{"name":"Abracon","reference":"ASDAIG-48.000MHZ-X-K-T","status":"production","series":"ASDAIG","datasheetInfo":{"part":{"partNumber":"ASDAIG-48.000MHZ-X-K-T","series":"ASDAIG","package":"2520 4-SMD","case":"2520 4-SMD"},"electrical":{"technology":"crystalOscillator","frequency":48000000.0,"frequencyStability":2.9999999999999997e-05,"outputType":"cmos","supply":{"minimumSupplyVoltage":3.3,"maximumSupplyVoltage":3.3,"currentConsumption":0.013000000000000001},"rmsPhaseJitter":5e-13,"enableFunction":"standby"},"provenance":[{"source":"manufacturerParametric","sourceName":"Abracon parametric search","sourceUrl":"https://abracon.com/AIGOscillators/ASDAIG.pdf","retrievedDate":"2026-07-03","fields":["electrical.technology","electrical.frequency","electrical.frequencyStability","electrical.outputType","electrical.supply","electrical.rmsPhaseJitter","electrical.enableFunction"],"verification":"seriesConfirmed","verificationDate":"2026-10-09"}],"thermal":{"operatingTemperature":{"minimum":-40.0,"maximum":105.0}}},"datasheetUrl":"https://abracon.com/AIGOscillators/ASDAIG.pdf"}}}})KREC";
+const char* k7N48071001 = R"KREC({"timeBase":{"oscillator":{"manufacturerInfo":{"name":"TXC CORPORATION","reference":"7N48071001","datasheetInfo":{"part":{"partNumber":"7N48071001","package":"10-SMD, No Lead"},"electrical":{"technology":"tcxo","frequency":48000000.0,"outputType":"cmos","supply":{"minimumSupplyVoltage":3.3,"maximumSupplyVoltage":3.3,"currentConsumption":0.01}},"provenance":[{"source":"distributor","sourceName":"Digi-Key Product Search v3","retrievedDate":"2026-07-03","verification":"partNamed","verificationDate":"2026-10-09"}],"thermal":{"operatingTemperature":{"minimum":-40.0,"maximum":105.0}}},"datasheetUrl":"https://mm.digikey.com/Volume0/opasdata/d220001/medias/docus/5064/7N48071001.pdf","series":"7N"}}}})KREC";
+}  // namespace timing_tech
+
+TEST_CASE("qarlos r22: the TCXO-for-XO note claims no supply-current direction",
+          "[qarlos][crossref][timing][timing-tech]") {
+    using namespace timing_tech;
+    const json c = one(kASDAIG_48_000MHZ_X_K_T, k7N48071001);
+    CHECK(has_note(c, "technology differs: a TCXO offered for a quartz crystal oscillator (XO)"));
+    CHECK(has_note(c, "its supply current is not compared here, so confirm the rail's current "
+                      "budget"));
+    CHECK_FALSE(has_note(c, "higher supply current"));
+}
+
+// Qarlos r20 seed 28744158: AVTX-13-E-40.000MHZ-E05 (Abracon TCXO, +/-0.5 ppm) ->
+// ECS-TXO-25CSMV-400-AN-TR (ECS TCXO, no stability on record) read 'upgrade' on its wider
+// supply and temperature ranges alone. Stability unstated stays a secondary axis (no cap), but
+// the direction is 'unknown': the accuracy the TCXO exists for was never compared.
+namespace timing_tech {
+const char* kAVTX_13_E_40_000MHZ_E05 = R"KREC({"timeBase":{"oscillator":{"manufacturerInfo":{"name":"Abracon","reference":"AVTX-13-E-40.000MHZ-E05","status":"production","series":"AVTX-13","datasheetInfo":{"part":{"partNumber":"AVTX-13-E-40.000MHZ-E05","series":"AVTX-13","package":"2016 4-SMD","case":"2016 4-SMD"},"electrical":{"technology":"tcxo","frequency":40000000.0,"frequencyStability":5e-07,"outputType":"clippedSine","supply":{"minimumSupplyVoltage":3.3,"maximumSupplyVoltage":3.3,"currentConsumption":0.0025},"enableFunction":"none"},"provenance":[{"source":"manufacturerParametric","sourceName":"Abracon parametric search","sourceUrl":"https://abracon.com/datasheets/AVTX-13.pdf","retrievedDate":"2026-07-03","fields":["electrical.technology","electrical.frequency","electrical.frequencyStability","electrical.outputType","electrical.supply","electrical.enableFunction"],"verification":"seriesConfirmed","verificationDate":"2026-10-09"}],"thermal":{"operatingTemperature":{"minimum":-30.0,"maximum":85.0}}},"datasheetUrl":"https://abracon.com/datasheets/AVTX-13.pdf"}}}})KREC";
+const char* kECS_TXO_25CSMV_400_AN_TR = R"KREC({"timeBase":{"oscillator":{"manufacturerInfo":{"name":"ECS Inc.","reference":"ECS-TXO-25CSMV-400-AN-TR","datasheetInfo":{"part":{"partNumber":"ECS-TXO-25CSMV-400-AN-TR","package":"4-SMD, No Lead"},"electrical":{"technology":"tcxo","frequency":40000000.0,"outputType":"clippedSine","supply":{"minimumSupplyVoltage":1.7,"maximumSupplyVoltage":3.465,"currentConsumption":0.0025}},"provenance":[{"source":"distributor","sourceName":"Digi-Key Product Search v3","retrievedDate":"2026-07-02","verification":"citationOnly","verificationDate":"2026-10-09"}],"thermal":{"operatingTemperature":{"minimum":-40.0,"maximum":85.0}}},"datasheetUrl":"https://ecsxtal.com/store/pdf/ECS-TXO-25CSMV.pdf","series":"ECS-TXO-25CSMV MultiVolt\u2122"}}}})KREC";
+}  // namespace timing_tech
+
+TEST_CASE("qarlos r20: a TCXO with no stated stability is not an 'upgrade'",
+          "[qarlos][crossref][timing][timing-tech]") {
+    using namespace timing_tech;
+    const json c = one(kAVTX_13_E_40_000MHZ_E05, kECS_TXO_25CSMV_400_AN_TR);
+    CHECK(c["status"] != "no_substitute");
+    CHECK(verdict_of(c, "stability_ppm") == "unverified");
+    CHECK(has_note(c, "the original's frequency stability is +/-0.5 ppm; the substitute's record "
+                      "states none"));
+    CHECK(c["direction"] == "unknown");
+    CHECK(c["grade"] == "minor_review");  // the grade is the owner's (secondary: no cap added)
 }
 
 TEST_CASE("timing technology: every other pair stays a strict identity",

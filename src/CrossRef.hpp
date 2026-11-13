@@ -914,6 +914,13 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // rule. Rule: any such axis turns 'upgrade' / 'equivalent' into
     // 'unknown', exactly as direction_blind does; a measured regression still stands.
     std::vector<std::string> magnetic_unweighed;
+    // Timing: the frequency tolerance or stability the ORIGINAL states and the substitute's
+    // record does not. The grade is untouched (owner: stability / tolerance unstated is a
+    // secondary axis, note only), but the direction follows the magnetic rule above: an
+    // 'upgrade' drawn from the supply range alone claimed the TCXO was not behind on the
+    // accuracy it exists for (AVTX-13-E-40.000MHZ-E05, +/-0.5 ppm -> ECS-TXO-25CSMV-400-AN-TR,
+    // no stability on record; Qarlos r20 28744158). 'upgrade' / 'equivalent' -> 'unknown'.
+    bool timing_accuracy_unweighed = false;
     // A magnetic's rated current stated by the original and absent from the substitute's
     // record (owner, 2026-11-13; precedent: capacitor ESR absent): the FAIL-sized penalty so
     // a part that states its rating ranks first, a note, the direction 'unknown' (as for the
@@ -1668,9 +1675,14 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 // the direction; stability keeps its own comparison and a regression there
                 // still turns the direction to 'mixed'.
                 ++better;
+                // No claim about the supply current: "at a higher supply current and cost" was
+                // printed for every TCXO, including ASDAIG-48.000MHZ-X-K-T (13 mA) ->
+                // 7N48071001 (10 mA) (Qarlos r22 30000906). Neither current nor cost is on the
+                // timing row (TimingRow carries no currentConsumption), so the note asks for the
+                // check instead of asserting its outcome.
                 notes.push_back("technology differs: " + name(s_t) + " offered for " + name(o_t) +
-                                " — a temperature-compensated upgrade, at a higher supply current "
-                                "and cost; confirm the rail's current budget");
+                                " — a temperature-compensated upgrade; its supply current is not "
+                                "compared here, so confirm the rail's current budget");
             }
         }
         if (pin_field && verdict == UNVERIFIED) {
@@ -1766,6 +1778,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 notes.push_back(std::string(buf) +
                                 " — the design's timing budget was built on the original's");
             } else if (verdict == UNVERIFIED && o_p && !s_p) {
+                timing_accuracy_unweighed = true;
                 std::snprintf(buf, sizeof buf,
                               "the original's %s is +/-%g ppm; the substitute's record states "
                               "none",
@@ -4477,7 +4490,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //   capacitor ESR basis (esr_basis_unverified)            secondary  note only
     //   capacitance tolerance band                            secondary  note only
     //   capacitor dielectric codes not comparable             secondary  note only
-    //   timing frequency tolerance / stability unstated       secondary  note only
+    //   timing frequency tolerance / stability unstated       secondary  note only,
+    //     on the substitute (original states it)                         direction 'unknown'
     //   timing technology MEMS <-> quartz XO (established,
     //     owner 2026-11-13; timebase_tech_major)              crossing   WARN, cap major_review
     //   timing technology TCXO for a quartz XO (upgrade)      crossing   WARN -> minor_review
@@ -4522,7 +4536,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // "mixed", which already carries one.
     out["direction"] = (cand_retracted || ((direction_blind || isat_basis_blind || surge_blind ||
                                             current_basis_blind || !magnetic_unweighed.empty() ||
-                                            magnetic_rated_absent) &&
+                                            magnetic_rated_absent || timing_accuracy_unweighed) &&
                                            (dir == "upgrade" || dir == "equivalent")) ||
                             // Isat stated by neither record (owner, 2026-11-13): an 'upgrade'
                             // would claim the comparison the match turns on, so it reads
