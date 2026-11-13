@@ -7939,3 +7939,54 @@ TEST_CASE("owner 2026-11-13 Z2: a wholly retracted original verifies no candidat
     CHECK(c2["direction"] == "upgrade");
     CHECK(verdict_of(c2, "vrrm") == "pass");
 }
+
+// ── Owner 2026-11-13 Z5: Isat compared on the two L(I) curves ─────────────────────────────
+// XFL3012-682MEC (Coilcraft, Isat 0.61 A bare) took VLS3010CX-6R8M-1 (TDK, 0.71 A bare) as a
+// saturation PASS. Both records state an inductancePoints curve, and the substitute reaches
+// each drop at a lower current: 10 % 0.377 vs 0.538 A, 20 % 0.581 vs 0.741 A, 30 % 0.707 vs
+// 0.906 A. Compared on the curves (the original states no structured criterion -> 10/20/30 %,
+// graded on the worst) it is no longer a PASS. Specs from v22 shard rows of
+// tools/qarlos/bench/data-6bd04c7/magnetics.ndjson through web/src/crossref.js.
+namespace dec_1113_z5 {
+const char* kSpecXFL3012_682MEC = R"KSPEC({"mpn":"XFL3012-682MEC","length_m":0.0032,"width_m":0.0032,"height_m":0.0013,"case_code":"3012","mount":"smt","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"retracted_fields":[],"retraction_reason":"","box_axes_ambiguous":false,"value_si":6.799999999999999e-06,"saturation_current":0.61,"saturation_points":[{"current":0.61,"percent_drop":null,"temperature":null}],"rated_current":1.3,"dcr":0.2,"srf":null,"temp_min_C":null,"temp_max_C":null,"tolerance_minus_pct":19.999999999999996,"tolerance_plus_pct":19.999999999999996,"bias_curve":{"current":[0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1,1.1,1.2,1.3,1.4,1.5,1.6],"ratio":[1,0.9971066227783676,0.9887932622597345,0.9731867773742717,0.9490755387197144,0.9158955767434527,0.8737499046095937,0.8233891846686001,0.7661314179871664,0.7037221378126195,0.6381535485884058,0.5714707769811466,0.5055946153809582,0.44218378888563314,0.3825489738949754,0.3276194133920477,0.2779541126583831]},"saturation_from_curve":false,"turns_ratios":null,"turns_ratio_configs":null})KSPEC";
+const char* kSpecVLS3010CX_6R8M_1 = R"KSPEC({"mpn":"VLS3010CX-6R8M-1","length_m":0.003,"width_m":0.003,"height_m":null,"case_code":"3.0x3.0","mount":"","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"retracted_fields":[],"retraction_reason":"","box_axes_ambiguous":false,"value_si":6.8e-06,"saturation_current":0.71,"saturation_points":[{"current":0.71,"percent_drop":null,"temperature":null}],"rated_current":1.69,"dcr":0.179,"srf":null,"temp_min_C":-40,"temp_max_C":105,"tolerance_minus_pct":19.999999999999996,"tolerance_plus_pct":19.999999999999996,"bias_curve":{"current":[0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9],"ratio":[1,0.9905511811023622,0.963779527559055,0.9291338582677166,0.8913385826771654,0.8472440944881889,0.7889763779527559,0.7070866141732284,0.6,0.48031496062992124]},"saturation_from_curve":false,"turns_ratios":null,"turns_ratio_configs":null})KSPEC";
+}  // namespace dec_1113_z5
+
+TEST_CASE("owner 2026-11-13 Z5: Isat read at the same drop on both curves",
+          "[qarlos][crossref][magnetic][dec-z5]") {
+    using namespace dec_1113_z5;
+    const json orig = json::parse(kSpecXFL3012_682MEC), cand = json::parse(kSpecVLS3010CX_6R8M_1);
+    REQUIRE(orig["bias_curve"].is_object());
+    REQUIRE(cand["bias_curve"].is_object());
+    const auto cc = kelvin::crossref::isat::compare_curves(orig, cand, 0.9);
+    REQUIRE(cc.applies);
+    CHECK_FALSE(cc.stated_criterion);
+    REQUIRE(cc.rows.size() == 3);
+    CHECK(*cc.rows[0].sub_at == Approx(0.377).margin(0.002));
+    CHECK(*cc.rows[0].orig_at == Approx(0.538).margin(0.002));
+    CHECK(*cc.rows[1].sub_at == Approx(0.581).margin(0.002));
+    CHECK(*cc.rows[1].orig_at == Approx(0.741).margin(0.002));
+    CHECK(*cc.rows[2].sub_at == Approx(0.707).margin(0.002));
+    CHECK(*cc.rows[2].orig_at == Approx(0.906).margin(0.002));
+    auto r = kelvin::crossref::cross_reference("magnetic", orig, json::array({cand}));
+    REQUIRE(r["candidates"].size() == 1);
+    const json c = r["candidates"][0];
+    INFO(c.dump());
+    CHECK(verdict_of(c, "saturation_current") != "pass");
+    CHECK(verdict_of(c, "saturation_current") == "fail");
+    // No extrapolation: a drop beyond the substitute's measured range is UNVERIFIED.
+    json shallow = cand;
+    shallow["bias_curve"]["current"] = json::array({0.0, 0.3, 0.5});
+    shallow["bias_curve"]["ratio"] = json::array({1.0, 0.95, 0.85});
+    const auto c3 = kelvin::crossref::isat::compare_curves(orig, shallow, 0.9);
+    REQUIRE(c3.rows[0].sub_at.has_value());  // 10 % reached at 0.4 A
+    CHECK(*c3.rows[0].sub_at == Approx(0.4));
+    CHECK_FALSE(c3.rows[1].sub_at.has_value());
+    CHECK(std::string(c3.rows[1].verdict) == "unverified");
+    // One side without a curve: the bare values are compared as before (pass).
+    json bare = cand;
+    bare["bias_curve"] = nullptr;
+    const json c4 = kelvin::crossref::cross_reference("magnetic", orig, json::array({bare}))["candidates"][0];
+    CHECK(verdict_of(c4, "saturation_current") == "pass");
+}
+

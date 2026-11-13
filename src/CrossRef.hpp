@@ -2277,7 +2277,38 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             // and the note names both bases (ABT #2042).
             std::optional<double> od = o, sd = s;
             bool basis_mismatch = false;
-            if (spec.key == "saturation_current") {
+            const auto curves = spec.key == "saturation_current"
+                                    ? isat::compare_curves(original, cand, spec.tol_factor)
+                                    : isat::CurveCompare{};
+            if (curves.applies) {
+                // Owner 2026-11-13, Z5: the two L(I) curves decided (compare_saturation_current).
+                // Direction from the worst criterion read on both; none read -> blind.
+                char buf[96];
+                std::string list;
+                for (const auto& row : curves.rows) {
+                    auto amps = [](const std::optional<double>& a) {
+                        char b[32];
+                        if (!a) return std::string("not reached");
+                        std::snprintf(b, sizeof b, "%.3g A", *a);
+                        return std::string(b);
+                    };
+                    std::snprintf(buf, sizeof buf, "%g %% drop ", row.drop_pct);
+                    list += (list.empty() ? "" : "; ") + std::string(buf) + amps(row.sub_at) +
+                            " vs " + amps(row.orig_at);
+                }
+                notes.push_back(std::string("saturation compared on both L(I) curves at ") +
+                                (curves.stated_criterion ? "the original's stated criterion"
+                                                         : "10, 20 and 30 % inductance drop") +
+                                " (substitute vs original: " + list +
+                                ") — a drop outside a curve's measured range is not "
+                                "extrapolated and reads unverified");
+                if (curves.decisive && verdict != UNVERIFIED) {
+                    od = curves.rows[*curves.decisive].orig_at;
+                    sd = curves.rows[*curves.decisive].sub_at;
+                } else {
+                    basis_mismatch = true;
+                }
+            } else if (spec.key == "saturation_current") {
                 const auto op = isat::resolve_points(original), sp = isat::resolve_points(cand);
                 if (!op.empty() && !sp.empty() && (isat::has_basis(op) || isat::has_basis(sp))) {
                     if (auto t = isat::common_percent_drop(op, sp)) {

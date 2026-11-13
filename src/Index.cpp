@@ -477,6 +477,9 @@ void row_io(Ar& ar, MagneticRow& r) {
     ar.dblvecvec(r.turns_ratio_configs);   // v22 (W4)
     ar.dbl(r.inductance_tol_minus_pct);    // v22
     ar.dbl(r.inductance_tol_plus_pct);     // v22
+    ar.dblvec(r.bias_curve_current);       // v22 (Z5)
+    ar.dblvec(r.bias_curve_ratio);         // v22 (Z5)
+    ar.boolean(r.sat_table_from_curve);    // v22 (Z5)
     ar.boolean(r.is_production);
 }
 

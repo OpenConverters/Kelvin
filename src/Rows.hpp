@@ -447,6 +447,14 @@ struct MagneticRow : RowBase {
     // 2026-11-13, R1).
     double inductance_tol_minus_pct = kNaN();
     double inductance_tol_plus_pct = kNaN();
+    // v22 (owner 2026-11-13, Z5): the record's L(I) curve (electrical[].inductancePoints) as
+    // read by magnetic_saturation_from_bias_curve (Views.cpp): currents ascending from the 0 A
+    // small-signal point, and L / L(0) at each. Empty when the record states no usable curve.
+    // Kept also when the record states a bare Isat. sat_table_from_curve: the saturation table
+    // above was READ OFF this curve (the record states no Isat), not stated.
+    std::vector<double> bias_curve_current;
+    std::vector<double> bias_curve_ratio;
+    bool sat_table_from_curve = false;
     // Winding structure: bit n set when some electrical[] wiring configuration has n windings besides
     // the primary (a single-winding inductor/chip bead sets bit 0; a transformer or coupled inductor sets
     // bit turnsRatios.size()). 0 means no configuration states its structure (e.g. a transformer entry

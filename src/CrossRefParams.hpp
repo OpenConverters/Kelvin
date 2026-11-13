@@ -417,6 +417,101 @@ inline Verdict compare(const std::vector<Point>& op, const std::vector<Point>& s
     if (ratio * kBasisUncertaintyBand < margin) return Verdict::Shortfall;
     return Verdict::Uncertain;
 }
+
+// ── Isat read on two L(I) curves (owner 2026-11-13, Z5) ──────────────────────────────────
+// When BOTH records state an inductance-vs-bias curve (spec bias_curve: {current: [A],
+// ratio: [L / L(0)]}, MagneticRow.bias_curve_*), Isat is compared on the curves, like for
+// like, instead of on the bare saturationCurrentPeak figures, which are quoted at criteria
+// that need not match: at the original's stated drop criterion(s) when its record states one
+// (a saturation table it STATES, not one read off its curve), otherwise at 10, 20 and 30 %
+// drop, and graded on the worst criterion. Each current is the FIRST point the curve falls to
+// (1 - drop) x L(0), interpolated between the two measured points that bracket it — the
+// rule magnetic_saturation_from_bias_curve uses — and never extrapolated: a drop the curve
+// does not reach inside its measured range is UNVERIFIED for that criterion. Per criterion the
+// like-for-like rule of compare(): substitute >= margin x original -> PASS, else FAIL.
+// Worst: FAIL, then UNVERIFIED, then PASS.
+struct BiasCurve {
+    std::vector<double> current, ratio;
+};
+inline std::optional<BiasCurve> bias_curve(const nlohmann::json& s) {
+    if (!s.is_object()) return std::nullopt;
+    auto it = s.find("bias_curve");
+    if (it == s.end() || !it->is_object()) return std::nullopt;
+    auto ci = it->find("current"), ri = it->find("ratio");
+    if (ci == it->end() || ri == it->end() || !ci->is_array() || !ri->is_array() ||
+        ci->size() != ri->size() || ci->size() < 2)
+        return std::nullopt;
+    BiasCurve c;
+    for (size_t k = 0; k < ci->size(); ++k) {
+        const auto& a = (*ci)[k];
+        const auto& b = (*ri)[k];
+        if (!a.is_number() || !b.is_number()) return std::nullopt;
+        c.current.push_back(a.get<double>());
+        c.ratio.push_back(b.get<double>());
+    }
+    if (c.current.front() != 0.0) return std::nullopt;  // no small-signal reference
+    return c;
+}
+inline std::optional<double> curve_current_at_drop(const BiasCurve& c, double drop_pct) {
+    const double threshold = 1.0 - drop_pct / 100.0;
+    for (size_t k = 1; k < c.current.size(); ++k) {
+        if (!(c.ratio[k] <= threshold)) continue;
+        if (!(c.ratio[k - 1] > threshold) || !(c.current[k] > c.current[k - 1]))
+            return std::nullopt;  // undecidable
+        const double frac = (c.ratio[k - 1] - threshold) / (c.ratio[k - 1] - c.ratio[k]);
+        return c.current[k - 1] + frac * (c.current[k] - c.current[k - 1]);
+    }
+    return std::nullopt;  // not reached inside the measured range
+}
+struct CurveCriterion {
+    double drop_pct;
+    std::optional<double> orig_at, sub_at;
+    const char* verdict;
+};
+struct CurveCompare {
+    bool applies = false;
+    bool stated_criterion = false;  // read at the original's stated criterion(s)
+    std::vector<CurveCriterion> rows;
+    const char* verdict = PASS;
+    std::optional<size_t> decisive;  // the worst criterion with both currents read
+};
+inline CurveCompare compare_curves(const nlohmann::json& orig, const nlohmann::json& sub,
+                                   double margin) {
+    CurveCompare out;
+    const auto oc = bias_curve(orig), sc = bias_curve(sub);
+    if (!oc || !sc) return out;
+    out.applies = true;
+    std::vector<double> drops;
+    const bool from_curve = orig.is_object() && orig.value("saturation_from_curve", false);
+    if (!from_curve)
+        for (const auto& p : coerce_points(orig.value("saturation_points", nlohmann::json())))
+            if (p.percent_drop && *p.percent_drop > 0 && *p.percent_drop < 100 &&
+                std::find(drops.begin(), drops.end(), *p.percent_drop) == drops.end())
+                drops.push_back(*p.percent_drop);
+    out.stated_criterion = !drops.empty();
+    if (drops.empty()) drops = {10.0, 20.0, 30.0};
+    std::sort(drops.begin(), drops.end());
+    auto rank = [](const char* v) {
+        return std::string(v) == FAIL ? 2 : std::string(v) == UNVERIFIED ? 1 : 0;
+    };
+    double worst_ratio = 0;
+    for (double d : drops) {
+        CurveCriterion row{d, curve_current_at_drop(*oc, d), curve_current_at_drop(*sc, d),
+                           UNVERIFIED};
+        if (row.orig_at && row.sub_at)
+            row.verdict = *row.sub_at >= margin * *row.orig_at ? PASS : FAIL;
+        if (rank(row.verdict) > rank(out.verdict)) out.verdict = row.verdict;
+        if (row.orig_at && row.sub_at) {
+            const double ratio = *row.sub_at / *row.orig_at;
+            if (!out.decisive || ratio < worst_ratio) {
+                out.decisive = out.rows.size();
+                worst_ratio = ratio;
+            }
+        }
+        out.rows.push_back(row);
+    }
+    return out;
+}
 }  // namespace isat
 
 // The original states no saturation current, only its rated (thermal) current. The two
@@ -461,6 +556,9 @@ inline bool isat_below_original_rating(const nlohmann::json& orig, const nlohman
 // basis-unknown scalars — preserves existing pass/warn/fail granularity).
 inline ParamOutcome compare_saturation_current(const ParamSpec& spec, const nlohmann::json& orig,
                                                const nlohmann::json& sub) {
+    // Both records state an L(I) curve: compared on the curves (owner 2026-11-13, Z5).
+    if (const auto cc = isat::compare_curves(orig, sub, spec.tol_factor); cc.applies)
+        return cc.verdict;
     std::vector<isat::Point> op = isat::resolve_points(orig), sp = isat::resolve_points(sub);
     bool o_has = !op.empty(), s_has = !sp.empty();
     if (!o_has && !s_has) return UNVERIFIED;
