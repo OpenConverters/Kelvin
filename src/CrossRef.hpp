@@ -312,6 +312,26 @@ inline constexpr double kUnknownTempGradePenaltyPerC = 0.002;
 // numeric terms so no single categorical miss can outweigh the primary value.
 inline constexpr double kVerdictWarnPenalty = 0.5;
 inline constexpr double kVerdictFailPenalty = 3.0;
+// A NUMERIC WARN's penalty scales with its deviation (owner, 2026-11-13). Every WARN used to
+// cost a flat kVerdictWarnPenalty, so a Qg 3 % over the original's and one 93 % over it (both
+// inside the 2x WARN band; STL13NM60N -> SiHH11N60EF / SiHF12N60E) cost the same, and so did
+// a TVS standoff +17 % and +40 % (1.5SMC100CA -> 5.0SMDJ100CA / 5.0SMDJ120CA): the ranking
+// could not tell a near-miss from a near-FAIL. The rule, linear in the compared value:
+//
+//     penalty = W + d * k * (F - W),   d = (value - pass limit) / (fail limit - pass limit)
+//
+// with W = kVerdictWarnPenalty, F = kVerdictFailPenalty, d in [0, 1] and
+// k = kWarnDepthFailFraction. So a WARN at the pass boundary costs W (0.5) as before, one at
+// the fail boundary costs W + 0.95 (F - W) = 2.875 — just under a FAIL's 3.0, so the FAIL
+// stays the worse answer — and the penalty is monotonic in between. The GRADE is untouched:
+// a WARN is still a WARN. A WARN that is not a position between two numeric limits (a class
+// difference, an unstated basis, a numeric axis with no fail limit) keeps the flat W.
+inline constexpr double kWarnDepthFailFraction = 0.95;
+inline double warn_penalty(std::optional<double> depth) {
+    if (!depth) return kVerdictWarnPenalty;
+    const double d = std::clamp(*depth, 0.0, 1.0);
+    return kVerdictWarnPenalty + d * kWarnDepthFailFraction * (kVerdictFailPenalty - kVerdictWarnPenalty);
+}
 // plain_pct prints a percentage to 0.01 %: the resolution a breakdown-grade note shows.
 inline constexpr double kVzGradePrintResolutionPct = 0.01;
 
@@ -1878,7 +1898,11 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             penalty += opt.gate_weight * kVerdictFailPenalty;
         } else if (verdict == WARN) {
             demote();
-            penalty += opt.gate_weight * kVerdictWarnPenalty;
+            // A WARN the comparison produced carries its depth; one rewritten to WARN above
+            // (an allowed timing-technology cross) or taken from the connector pitch rule has
+            // none and costs the flat warn.
+            penalty += opt.gate_weight *
+                       warn_penalty(verdict == outcome.verdict ? outcome.warn_depth : std::nullopt);
         } else if (verdict == PASS && numeric && o && s) {
             // Right-sizing tie-breaker: a rating that vastly exceeds the
             // original's costs a little, with diminishing returns.
@@ -2348,11 +2372,13 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 }
             }
             const ParamSpec spec{key, dir, tol, std::nullopt, false, false, nullptr};
-            const char* v = compare_numeric(spec, o, s).verdict;
+            const ParamOutcome cmp = compare_numeric(spec, o, s);
+            const char* v = cmp.verdict;
             params.push_back({{"name", key}, {"verdict", v}});
             if (v == FAIL || v == WARN) {
                 demote();
-                penalty += opt.gate_weight * (v == FAIL ? kVerdictFailPenalty : kVerdictWarnPenalty);
+                penalty += opt.gate_weight *
+                           (v == FAIL ? kVerdictFailPenalty : warn_penalty(cmp.warn_depth));
                 ++worse;
                 notes.push_back(std::string(label) + " " + fmt(*s, unit) + " against the original's " +
                                 fmt(*o, unit) + " " + at_wf(ow) + " (" +
@@ -2430,7 +2456,17 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             const bool far_above = (o_tech == "tvs" || o_tech == "esd") && *sv > *ov * kStandoffFailRatio;
             params.push_back({{"name", "standoff_band"}, {"verdict", far_above ? FAIL : WARN}});
             demote();
-            penalty += opt.gate_weight * (far_above ? kVerdictFailPenalty : kVerdictWarnPenalty);
+            // The WARN band runs from 1.10x to the 1.50x FAIL limit for a TVS / ESD original,
+            // so its penalty scales across it (warn_penalty). Any other original has no fail
+            // limit on this axis, so its WARN keeps the flat warn.
+            const bool has_fail_limit = o_tech == "tvs" || o_tech == "esd";
+            penalty += opt.gate_weight *
+                       (far_above ? kVerdictFailPenalty
+                                  : warn_penalty(has_fail_limit
+                                                     ? warn_depth_between(*sv / *ov,
+                                                                          kStandoffWarnRatio,
+                                                                          kStandoffFailRatio)
+                                                     : std::nullopt));
             ++worse;
             notes.push_back("standoff " + volts(*sv) + " V against the original's " + volts(*ov) +
                             " V (" + signed_pct(100.0 * (*sv / *ov - 1.0)) +
@@ -2611,10 +2647,12 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         if (cj_bound_worse) {
             const ParamSpec spec{"junction_capacitance", Dir::Lower, 2.0, std::nullopt, false,
                                  false, nullptr};
-            const char* v = compare_numeric(spec, oc, sc).verdict;
+            const ParamOutcome cmp = compare_numeric(spec, oc, sc);
+            const char* v = cmp.verdict;
             params.push_back({{"name", "junction_capacitance"}, {"verdict", v}});
             demote();
-            penalty += opt.gate_weight * (v == FAIL ? kVerdictFailPenalty : kVerdictWarnPenalty);
+            penalty += opt.gate_weight *
+                       (v == FAIL ? kVerdictFailPenalty : warn_penalty(cmp.warn_depth));
             ++worse;
             notes.push_back("junction capacitance " + pf(*sc) + at_bias(svr) +
                             " against the original's " + pf(*oc) + " at " + bias(*ovr) +
@@ -2642,11 +2680,13 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         } else if (oc && sc) {
             const ParamSpec spec{"junction_capacitance", Dir::Lower, 2.0, std::nullopt, false,
                                  false, nullptr};
-            const char* v = compare_numeric(spec, oc, sc).verdict;
+            const ParamOutcome cmp = compare_numeric(spec, oc, sc);
+            const char* v = cmp.verdict;
             params.push_back({{"name", "junction_capacitance"}, {"verdict", v}});
             if (v == FAIL || v == WARN) {
                 demote();
-                penalty += opt.gate_weight * (v == FAIL ? kVerdictFailPenalty : kVerdictWarnPenalty);
+                penalty += opt.gate_weight *
+                           (v == FAIL ? kVerdictFailPenalty : warn_penalty(cmp.warn_depth));
                 ++worse;
                 notes.push_back("junction capacitance " + pf(*sc) + " against the original's " +
                                 pf(*oc) + " — " + load);
@@ -3824,7 +3864,11 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                     const bool fail = *s_typ > *o_th * 2.0;
                     p["verdict"] = fail ? FAIL : WARN;
                     demote();
-                    penalty += opt.gate_weight * (fail ? kVerdictFailPenalty : kVerdictWarnPenalty);
+                    // WARN band: above the original's maximum up to the 2x FAIL limit.
+                    penalty += opt.gate_weight *
+                               (fail ? kVerdictFailPenalty
+                                     : warn_penalty(warn_depth_between(*s_typ, *o_th,
+                                                                       *o_th * 2.0)));
                     ++worse;
                     notes.push_back("higher gate threshold than the original: the substitute's "
                                     "TYPICAL Vgs(th) is " + volts(*s_typ) +

@@ -127,12 +127,30 @@ inline std::string jstr(const nlohmann::json& p, const std::string& k) {
 // known-vs-absent situation is reported on every other spec. The disqualifying
 // consequence (penalty, demotion, grade cap, and a note naming what must be
 // confirmed) is applied from this flag instead, in CrossRef.hpp.
+//
+// `warn_depth` is set on a NUMERIC WARN only (compare_numeric): how far the substitute sits
+// past the pass limit toward the fail limit, 0 at the pass limit and 1 at the fail limit
+// (owner, 2026-11-13: a WARN's penalty grows with its deviation, see warn_penalty in
+// CrossRef.hpp). Every other verdict, and a WARN that is not a position between two numeric
+// limits, leaves it empty.
 struct ParamOutcome {
     ParamOutcome(const char* v) : verdict(v) {}  // NOLINT(google-explicit-constructor)
     ParamOutcome(const char* v, bool missing) : verdict(v), missing_required_sub(missing) {}
     const char* verdict;
     bool missing_required_sub = false;
+    std::optional<double> warn_depth = std::nullopt;
 };
+
+// Where `value` sits between a pass limit (0) and a fail limit (1), for a value already
+// judged WARN (past the pass limit, not past the fail limit). Works for either direction:
+// the fraction is (value - pass) / (fail - pass). Clamped to [0, 1] so the representation
+// epsilon at either boundary cannot push it outside.
+inline std::optional<double> warn_depth_between(double value, double pass_limit,
+                                                double fail_limit) {
+    const double span = fail_limit - pass_limit;
+    if (span == 0.0) return std::nullopt;  // no band between the limits: nothing to scale on
+    return std::clamp((value - pass_limit) / span, 0.0, 1.0);
+}
 
 // Two catalogue numbers that differ only in their last bits are the same stated value.
 // The records carry decimal datasheet figures through binary doubles and unit scaling,
@@ -160,11 +178,18 @@ inline ParamOutcome compare_numeric(const ParamSpec& spec, std::optional<double>
     if (spec.dir == Dir::Lower) {
         if (sv <= ov) return PASS;
         double ceiling = spec.abs_tol ? ov + *spec.abs_tol : ov * spec.tol_factor;
-        return sv <= ceiling ? WARN : FAIL;
+        if (sv > ceiling) return FAIL;
+        ParamOutcome warn(WARN);
+        warn.warn_depth = warn_depth_between(sv, ov, ceiling);
+        return warn;
     }
-    if (sv >= ov * spec.pass_factor.value_or(1.0)) return PASS;  // Higher
+    const double pass_floor = ov * spec.pass_factor.value_or(1.0);
+    if (sv >= pass_floor) return PASS;  // Higher
     double floor = spec.abs_tol ? ov - *spec.abs_tol : ov * spec.tol_factor;
-    return sv >= floor ? WARN : FAIL;
+    if (sv < floor) return FAIL;
+    ParamOutcome warn(WARN);
+    warn.warn_depth = warn_depth_between(sv, pass_floor, floor);
+    return warn;
 }
 
 // Mirrors _compare_class: categorical equal-or-better via a SUBSTRING rank map.

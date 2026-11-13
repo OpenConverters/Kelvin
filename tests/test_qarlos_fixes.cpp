@@ -6251,3 +6251,68 @@ TEST_CASE("r17 M8: a candidate rejected for missing data reads direction 'unknow
     CHECK(m["reason"] == "breakdown minimum at or below the original's working voltage");
     CHECK(m["direction"] == "downgrade");
 }
+
+// ── Owner decisions 2026-11-13 (b), N1a: a numeric WARN's penalty scales with its deviation ──
+// Real records (TAS 3d2be2e, as web/src/crossref.js builds the spec from the v22 shard row).
+namespace dec1113b {
+// mosfets: STL13NM60N (ST, Qg 30 nC), SiHH11N60EF (Vishay, Qg 31 nC: +3 %),
+// SiHF12N60E (Vishay, Qg 58 nC: +93 %)
+const char* kSTL13NM60N = R"KSPEC({"mpn":"STL13NM60N","length_m":null,"width_m":null,"height_m":null,"case_code":"PowerFLAT 8x8 HV","mount":"","lead_pitch_m":null,"is_production":false,"provenance_retracted":false,"box_axes_ambiguous":false,"vds":600,"id":10,"rds_on":0.385,"qg":3e-8,"coss":null,"coss_vds":null,"vgs_threshold_max":4,"vgs_threshold_typ":3,"rds_on_vgs":10,"vgs_max":null,"technology":"Si","qualification":"","channel":"nChannel"})KSPEC";
+const char* kSiHH11N60EF = R"KSPEC({"mpn":"SiHH11N60EF","length_m":null,"width_m":null,"height_m":null,"case_code":"","mount":"","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"box_axes_ambiguous":false,"vds":600,"id":11,"rds_on":0.357,"qg":3.1e-8,"coss":5.7e-11,"coss_vds":null,"vgs_threshold_max":4,"vgs_threshold_typ":null,"rds_on_vgs":null,"vgs_max":30,"technology":"Si","qualification":"","channel":"nChannel"})KSPEC";
+const char* kSiHF12N60E = R"KSPEC({"mpn":"SiHF12N60E","length_m":null,"width_m":null,"height_m":null,"case_code":"","mount":"","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"box_axes_ambiguous":false,"vds":600,"id":12,"rds_on":0.38,"qg":5.8e-8,"coss":null,"coss_vds":null,"vgs_threshold_max":4,"vgs_threshold_typ":null,"rds_on_vgs":null,"vgs_max":30,"technology":"Si","qualification":"","channel":"nChannel"})KSPEC";
+// diodes: 1.5SMC100CA-M3/9AT (Vishay TVS, standoff 85.5 V), 5.0SMDJ100CA (Littelfuse, 100 V:
+// +17 %), 5.0SMDJ120CA (Littelfuse, 120 V: +40 %)
+const char* k1_5SMC100CA = R"KSPEC({"mpn":"1.5SMC100CA-M3/9AT","length_m":null,"width_m":null,"height_m":null,"case_code":"SMC (DO-214AB)","mount":"","lead_pitch_m":null,"is_production":false,"provenance_retracted":false,"box_axes_ambiguous":false,"vrrm":85.5,"if_avg":null,"vf":null,"power_dissipation":null,"qrr":null,"trr":null,"technology":"tvs","die_configuration":null,"internal_connection":null,"vz_min_V":95,"vz_max_V":105,"vz_tolerance_pct":5,"clamping_voltage":137,"clamping_current":10.9,"peak_pulse_power":1500,"peak_pulse_current":10.9,"junction_capacitance":null,"junction_capacitance_vr":null,"clamping_waveform":"10/1000","peak_pulse_power_waveform":"10/1000","peak_pulse_current_waveform":"10/1000","tj_max":150,"qualification":""})KSPEC";
+const char* k5_0SMDJ100CA = R"KSPEC({"mpn":"5.0SMDJ100CA","length_m":null,"width_m":null,"height_m":null,"case_code":"DO-214AB","mount":"","lead_pitch_m":null,"is_production":false,"provenance_retracted":false,"box_axes_ambiguous":false,"vrrm":100,"if_avg":null,"vf":null,"power_dissipation":null,"qrr":null,"trr":null,"technology":"tvs","die_configuration":null,"internal_connection":null,"vz_min_V":111,"vz_max_V":123,"vz_tolerance_pct":5.128205128205128,"clamping_voltage":162,"clamping_current":30.9,"peak_pulse_power":5000,"peak_pulse_current":30.9,"junction_capacitance":null,"junction_capacitance_vr":null,"clamping_waveform":"10/1000","peak_pulse_power_waveform":"10/1000","peak_pulse_current_waveform":"10/1000","tj_max":150,"qualification":""})KSPEC";
+const char* k5_0SMDJ120CA = R"KSPEC({"mpn":"5.0SMDJ120CA","length_m":null,"width_m":null,"height_m":null,"case_code":"DO-214AB","mount":"","lead_pitch_m":null,"is_production":false,"provenance_retracted":false,"box_axes_ambiguous":false,"vrrm":120,"if_avg":null,"vf":null,"power_dissipation":null,"qrr":null,"trr":null,"technology":"tvs","die_configuration":null,"internal_connection":null,"vz_min_V":133,"vz_max_V":147,"vz_tolerance_pct":5,"clamping_voltage":193,"clamping_current":26,"peak_pulse_power":5000,"peak_pulse_current":26,"junction_capacitance":null,"junction_capacitance_vr":null,"clamping_waveform":"10/1000","peak_pulse_power_waveform":"10/1000","peak_pulse_current_waveform":"10/1000","tj_max":150,"qualification":""})KSPEC";
+
+json rank(const std::string& cat, const char* orig, std::initializer_list<const char*> cands) {
+    json arr = json::array();
+    for (const char* c : cands) arr.push_back(json::parse(c));
+    return kelvin::crossref::cross_reference(cat, json::parse(orig), arr)["candidates"];
+}
+const json& by_mpn(const json& cands, const std::string& mpn) {
+    for (const auto& c : cands)
+        if (c.value("mpn", "") == mpn) return c;
+    throw std::runtime_error("candidate not ranked: " + mpn);
+}
+}  // namespace dec1113b
+
+// Both Qg values are inside the 2x WARN band; +3 % and +93 % cost the same flat 0.5 and the
+// ranking fell back on input order. The near-miss must rank first and both stay WARN.
+TEST_CASE("dec 1113b N1a: a MOSFET Qg WARN costs more the further past the pass limit",
+          "[qarlos][crossref][mosfet][dec-1113b]") {
+    using namespace dec1113b;
+    // The +93 % part is passed FIRST, so input order cannot produce the expected ranking.
+    const json c = rank("mosfet", kSTL13NM60N, {kSiHF12N60E, kSiHH11N60EF});
+    REQUIRE(c.size() == 2);
+    CHECK(c[0]["mpn"] == "SiHH11N60EF");
+    CHECK(c[1]["mpn"] == "SiHF12N60E");
+    CHECK(verdict_of(by_mpn(c, "SiHH11N60EF"), "qg") == "warn");
+    CHECK(verdict_of(by_mpn(c, "SiHF12N60E"), "qg") == "warn");
+    CHECK(by_mpn(c, "SiHH11N60EF")["grade"] == by_mpn(c, "SiHF12N60E")["grade"]);
+    // The formula: W + d * 0.95 * (F - W), d = (value - pass) / (fail - pass).
+    using kelvin::crossref::warn_penalty;
+    CHECK(warn_penalty(std::nullopt) == Approx(0.5));
+    CHECK(warn_penalty(0.0) == Approx(0.5));
+    CHECK(warn_penalty(1.0) == Approx(2.875));
+    CHECK(warn_penalty(1.0) < kelvin::crossref::kVerdictFailPenalty);
+    const auto d = kelvin::crossref::compare_numeric(
+        {"qg", kelvin::crossref::Dir::Lower, 2.0, std::nullopt, false, false, nullptr}, 30e-9, 58e-9);
+    REQUIRE(d.warn_depth);
+    CHECK(*d.warn_depth == Approx(28.0 / 30.0));
+}
+
+// A TVS standoff +17 % and +40 % over the original's: both inside the 1.10x-1.50x WARN band,
+// both cost the flat 0.5. The closer standoff must rank first; grades unchanged (WARN).
+TEST_CASE("dec 1113b N1a: a TVS standoff WARN costs more the closer it is to the FAIL limit",
+          "[qarlos][crossref][diode][dec-1113b]") {
+    using namespace dec1113b;
+    const json c = rank("diode", k1_5SMC100CA, {k5_0SMDJ120CA, k5_0SMDJ100CA});
+    REQUIRE(c.size() == 2);
+    CHECK(c[0]["mpn"] == "5.0SMDJ100CA");
+    CHECK(c[1]["mpn"] == "5.0SMDJ120CA");
+    CHECK(verdict_of(by_mpn(c, "5.0SMDJ100CA"), "standoff_band") == "warn");
+    CHECK(verdict_of(by_mpn(c, "5.0SMDJ120CA"), "standoff_band") == "warn");
+    CHECK(by_mpn(c, "5.0SMDJ100CA")["grade"] == by_mpn(c, "5.0SMDJ120CA")["grade"]);
+}
