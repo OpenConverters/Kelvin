@@ -3510,7 +3510,21 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     if (opt.check_footprint) {
         auto o_dims = dims_of(original, cat), s_dims = dims_of(cand, cat);
         // The case identities every case-kept gate below compares (series-aware for capacitors).
-        const auto case_ids = case_identities_of(cat, original, cand);
+        auto case_ids = case_identities_of(cat, original, cand);
+        // Capacitor case codes from different systems that resolve to the same body (owner
+        // 2026-11-13, W2): when both bodies resolve (drawn, or from the series' own table) and
+        // agree within kSameChipCodeBodySpread on both axes, orientation-agnostic, the case is
+        // the same and the footprint is decided on the body. CWR06FC475KC/HR ("D", the CWR06
+        // table's 3.81 x 2.54 mm) against CWR09FC475KR ("1510", drawn 3.81 x 2.54 mm) was a
+        // "different_case" WARN naming two identical bodies. Chip bodies only: a leaded body's
+        // land is its lead pitch, never its outline (capacitor_case_side letter_ok).
+        if (cat == "capacitor" && case_ids.first != case_ids.second && o_dims && s_dims &&
+            has_land(*o_dims) && has_land(*s_dims) && capacitor_case_side(original).letter_ok &&
+            capacitor_case_side(cand).letter_ok) {
+            const LandCompare lc = compare_land(*o_dims, *s_dims);
+            if (lc.overflow <= kSameChipCodeBodySpread && lc.lin >= 1.0 - kSameChipCodeBodySpread)
+                case_ids.second = case_ids.first;
+        }
         // A part with NO dimensions must not be offered as a substitute for an
         // original whose footprint we DO know: its fit can never be verified. For
         // families where the footprint is the mechanical fit and the case code is

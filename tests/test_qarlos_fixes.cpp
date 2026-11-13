@@ -7373,3 +7373,33 @@ TEST_CASE("owner 2026-11-13 W1: axes stated only by the substitute are not ident
     CHECK(grade_rank(stated["grade"]) <= grade_rank(silent["grade"]));
     CHECK(stated["penalty"].get<double>() <= silent["penalty"].get<double>());
 }
+
+// ── Owner 2026-11-13 W2: case codes from different systems that resolve to the same body ──
+// CWR06FC475KC/HR (case "D", series CWR06: the CWR06 table's 3.81 x 2.54 mm) against
+// CWR09FC475KR (case "1510", body drawn 3.81 x 2.54 mm) was a "different_case" WARN whose own
+// note named two identical bodies. Both bodies resolve and agree within kSameChipCodeBodySpread,
+// so the case is the same and the footprint passes on the body. Specs as web/src/crossref.js
+// builds them from the rows of capacitors.ndjson lines 473306 and 5505 (TAS 6bd04c7).
+namespace dec_1113_w2 {
+const char* kCWR06FC475KC_HR = R"KSPEC({"mpn":"CWR06FC475KC/HR","length_m":null,"width_m":null,"height_m":null,"case_code":"D","mount":"SMT","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"box_axes_ambiguous":false,"value_si":4.7e-06,"voltage":10,"esr":4.5,"ripple_current":null,"technology":"tantalum-mno2","dielectric_code":"","family":"CWR06","voltage_ac":null,"esr_frequency":100000,"temp_min_C":-55,"temp_max_C":125,"ripple_current_frequency":null,"safety_class":null,"capacitance_min":4.23e-06,"capacitance_max":5.17e-06,"lead_form":null,"qualified_spec":null,"qualified_grade":null,"qualified_failure_rate":null})KSPEC";
+const char* kCWR09FC475KR = R"KSPEC({"mpn":"CWR09FC475KR","length_m":0.00381,"width_m":0.00254,"height_m":0.00127,"case_code":"1510","mount":"SMT","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"box_axes_ambiguous":false,"value_si":4.7e-06,"voltage":10,"esr":4.5,"ripple_current":0.133,"technology":"tantalum-mno2","dielectric_code":"","family":"T409 CWR09","voltage_ac":null,"esr_frequency":100000,"temp_min_C":-55,"temp_max_C":125,"ripple_current_frequency":100000,"safety_class":null,"capacitance_min":4.23e-06,"capacitance_max":5.17e-06,"lead_form":null,"qualified_spec":null,"qualified_grade":null,"qualified_failure_rate":null})KSPEC";
+}  // namespace dec_1113_w2
+
+TEST_CASE("owner 2026-11-13 W2: different case systems, the same resolved body, are one case",
+          "[qarlos][crossref][capacitor][dec-w2]") {
+    using namespace dec_1113_w2;
+    const json orig = json::parse(kCWR06FC475KC_HR), cand = json::parse(kCWR09FC475KR);
+    auto r = kelvin::crossref::cross_reference("capacitor", orig, json::array({cand}));
+    REQUIRE(r["candidates"].size() == 1);
+    const json& c = r["candidates"][0];
+    CHECK(c["footprint"] == "fits");
+    CHECK(verdict_of(c, "footprint") == "pass");
+    CHECK_FALSE(has_note(c, "different package/case"));
+    // Boundary: a body more than 10 % longer is still a different case.
+    json longer = cand;
+    longer["length_m"] = 0.00381 * 1.15;
+    auto r2 = kelvin::crossref::cross_reference("capacitor", orig, json::array({longer}));
+    REQUIRE(r2["candidates"].size() == 1);
+    CHECK(r2["candidates"][0]["footprint"] == "different_case");
+    CHECK(has_note(r2["candidates"][0], "different package/case (D -> 1510)"));
+}
