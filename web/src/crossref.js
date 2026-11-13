@@ -55,6 +55,11 @@ export const XREF = [
       // 0 % side is a stated value, not absence.
       tolerance_minus_pct: r.inductance_tol_minus_pct ?? null,
       tolerance_plus_pct: r.inductance_tol_plus_pct ?? null,
+      // v22 (owner 2026-11-13, Z5): the record's L(I) curve ({current: [A], ratio: [L/L0]}) and
+      // whether the saturation table above was read off it. With a curve on both sides the
+      // ranker compares the currents at the same inductance drop instead of the bare Isat.
+      bias_curve: r.bias_curve && Array.isArray(r.bias_curve.current) ? r.bias_curve : null,
+      saturation_from_curve: r.saturation_from_curve === true,
       // v22 (R2): the whole turnsRatios array (primary:secondary per secondary winding),
       // compared element-wise. null = not stated.
       turns_ratios: Array.isArray(r.turns_ratios) && r.turns_ratios.length ? r.turns_ratios : null,

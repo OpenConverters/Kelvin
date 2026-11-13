@@ -357,6 +357,13 @@ inline void extra_row_json(const MagneticRow& r, json& o) {
     // Every wiring configuration's ratios (v22, owner 2026-11-13 W4), null when none states one.
     o["turns_ratio_configs"] =
         r.turns_ratio_configs.empty() ? json(nullptr) : json(r.turns_ratio_configs);
+    // The L(I) curve (v22, owner 2026-11-13 Z5): {current: [A...], ratio: [L/L0...]}, null
+    // when the record states none; saturation_from_curve marks a table read off it.
+    if (r.bias_curve_current.empty())
+        o["bias_curve"] = nullptr;
+    else
+        o["bias_curve"] = {{"current", r.bias_curve_current}, {"ratio", r.bias_curve_ratio}};
+    o["saturation_from_curve"] = r.sat_table_from_curve;
     if (r.sat_table_current.empty()) {
         o["saturation_points"] = nullptr;
         return;

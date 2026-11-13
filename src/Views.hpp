@@ -47,6 +47,22 @@ struct FieldRetraction {
 };
 FieldRetraction retracted_only_fields(const json& env);
 
+// A PRIMARY rating that rests only on retracted sources is NOT STATED (owner 2026-11-13, Z1):
+// the value is removed from the row (NaN, the absent convention), so every pool filter, the
+// browse view and the ranker see the record exactly as one that states no such rating — a
+// hard floor on it (web/src/crossref.js hardMin / the zener range filter) leaves the record out
+// of the pool. The ratings: diode working voltage (vrrm_rated from reverseVoltage, the TVS/ESD
+// standoffVoltage or the zener breakdownVoltage, with the zener window vz_min/vz_max), MOSFET
+// vds_rated (drainSourceVoltage), capacitor v_rated (ratedVoltage) and v_rated_ac
+// (voltageRatedAcMax). Reads row.retracted_fields (retracted_only_fields above), so it applies
+// to the per-field rule only; a wholly retracted record keeps its values (its own rule, CrossRef.hpp).
+// Returns how many ratings were removed.
+template <class Row>
+int unstate_retracted_ratings(Row&) { return 0; }
+int unstate_retracted_ratings(DiodeRow& r);
+int unstate_retracted_ratings(MosfetRow& r);
+int unstate_retracted_ratings(CapacitorRow& r);
+
 // The function a resistor record STATES for itself (ResistorRow.current_sense /
 // pulse_withstanding). Read from the RAS technology enum and the record's own class text
 // (manufacturerInfo.family, part.series, part.description) — never from the MPN.

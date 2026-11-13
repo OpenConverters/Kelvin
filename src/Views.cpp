@@ -737,6 +737,53 @@ void stated_leaves(const json& v, const std::string& path, std::vector<std::stri
 }
 }  // namespace
 
+namespace {
+bool field_retracted(const RowBase& r, const char* field) {
+    return std::find(r.retracted_fields.begin(), r.retracted_fields.end(), field) !=
+           r.retracted_fields.end();
+}
+}  // namespace
+
+int unstate_retracted_ratings(DiodeRow& r) {
+    // The field the rating was read from (extract_diode: one source per subtype, no fallback).
+    const bool protection = r.technology == "tvs" || r.technology == "esd";
+    const char* src = protection                ? "electrical.standoffVoltage"
+                      : r.technology == "zener" ? "electrical.breakdownVoltage"
+                                                : "electrical.reverseVoltage";
+    int n = 0;
+    if (field_retracted(r, src)) {
+        r.vrrm_rated = kNaN();
+        ++n;
+    }
+    // A zener's window is its rating too (the zener pool's range filter); a TVS's breakdown
+    // window is a secondary axis and stays.
+    if (r.technology == "zener" && field_retracted(r, "electrical.breakdownVoltage") &&
+        (!std::isnan(r.vz_min) || !std::isnan(r.vz_max) || !std::isnan(r.vz_tolerance))) {
+        r.vz_min = r.vz_max = r.vz_tolerance = kNaN();
+        ++n;
+    }
+    return n;
+}
+
+int unstate_retracted_ratings(MosfetRow& r) {
+    if (!field_retracted(r, "electrical.drainSourceVoltage")) return 0;
+    r.vds_rated = kNaN();
+    return 1;
+}
+
+int unstate_retracted_ratings(CapacitorRow& r) {
+    int n = 0;
+    if (!std::isnan(r.v_rated) && field_retracted(r, "electrical.ratedVoltage")) {
+        r.v_rated = kNaN();
+        ++n;
+    }
+    if (!std::isnan(r.v_rated_ac) && field_retracted(r, "electrical.voltageRatedAcMax")) {
+        r.v_rated_ac = kNaN();
+        ++n;
+    }
+    return n;
+}
+
 FieldRetraction retracted_only_fields(const json& env) {
     FieldRetraction out;
     const json* mi = find_manufacturer_info(env, 0);
@@ -1389,8 +1436,13 @@ void magnetic_saturation_table(const json& elec, MagneticRow& r) {
 //     figures are quoted at; the hotter one on a tie), never interpolated between temperatures;
 //     an untemperatured curve is read only when no temperature is stated at all.
 // Reading a stated curve is not a model: no saturation physics, no default, no typical value.
+//
+// Owner 2026-11-13, Z5: the picked curve itself is kept on the row (bias_curve_current /
+// bias_curve_ratio, L / L(0)) whether or not the record also states a bare Isat, so the
+// ranker can compare two curves like for like at the same drop. The table is derived from it
+// only when the record states no Isat (sat_table_from_curve then marks the table as derived).
 void magnetic_saturation_from_bias_curve(const json& elec, MagneticRow& r) {
-    if (!r.sat_table_current.empty()) return;  // the record states its Isat outright
+    const bool stated = !r.sat_table_current.empty();  // the record states its Isat outright
     const json* pts = obj_get(elec, "inductancePoints");
     if (!pts || !pts->is_array()) return;
     struct BiasPoint { double current, inductance; };
@@ -1427,6 +1479,12 @@ void magnetic_saturation_from_bias_curve(const json& elec, MagneticRow& r) {
                      [](const BiasPoint& a, const BiasPoint& b) { return a.current < b.current; });
     if (curve.size() < 2 || curve.front().current != 0.0) return;  // no small-signal reference
     const double L0 = curve.front().inductance;
+    for (const BiasPoint& p : curve) {
+        r.bias_curve_current.push_back(p.current);
+        r.bias_curve_ratio.push_back(p.inductance / L0);
+    }
+    if (stated) return;
+    r.sat_table_from_curve = true;
     for (const double drop : {10.0, 20.0, 30.0}) {
         const double threshold = L0 * (1.0 - drop / 100.0);
         for (size_t k = 1; k < curve.size(); ++k) {
