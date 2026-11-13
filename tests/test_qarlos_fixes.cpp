@@ -3856,6 +3856,8 @@ json mosfet_spec(const json& r) {
     s["qualification"] = r.value("qualification", "");
     const std::string ch = r.value("channel", "");
     s["channel"] = ch.empty() ? json(nullptr) : json(ch);
+    const std::string dc = r.value("die_configuration", "");
+    s["die_configuration"] = dc.empty() ? json(nullptr) : json(dc);
     return s;
 }
 // XREF diode spec (web/src/crossref.js).
@@ -6274,3 +6276,80 @@ TEST_CASE("r17 M8: a candidate rejected for missing data reads direction 'unknow
     CHECK(m["direction"] == "downgrade");
 }
 
+// ── Owner decisions 2026-11-13 (b), N2c: dual / complementary MOSFETs ────────────────────
+// SAS mosfet.json: a part declaring dieConfiguration 'dual' / 'complementary' carries `dies`
+// (one electrical block per die) INSTEAD of a package electrical block. Kelvin read neither,
+// so all 264 such records (195 dual, 69 complementary) were unreadable rows. REAL TAS records:
+// verbatim lines of tools/qarlos/bench/data-3d2be2e in tests/fixtures/qarlos_1113_n2c_mosfets.ndjson.
+namespace n2c {
+const json& rows() {
+    static const json r = [] {
+        auto sh = kelvin::build_mosfet_shard(std::string(KELVIN_TEST_DIR) +
+                                             "/fixtures/qarlos_1113_n2c_mosfets.ndjson");
+        return kelvin::browse::browse_rows(sh, json{{"limit", 100}})["rows"];
+    }();
+    return r;
+}
+json row(const std::string& mpn) {
+    for (const auto& r : rows())
+        if (r.value("mpn", "") == mpn) return r;
+    return json(nullptr);
+}
+}  // namespace n2c
+
+TEST_CASE("owner 2026-11-13 N2c: a dual MOSFET with identical dies is read per die",
+          "[qarlos][views]") {
+    const json dual = n2c::row("IPG20N04S4L-18A");
+    REQUIRE(dual.is_object());
+    CHECK(dual["die_configuration"] == "dual");
+    CHECK(dual["channel"] == "nChannel");
+    CHECK(dual["vds_rated"] == 40.0);
+    CHECK(dual["id_continuous"] == 20.0);
+    CHECK(dual["rds_on"] == 0.018);
+    CHECK(dual["qg_total"] == 1.05e-08);
+    CHECK(dual["vgs_threshold_max"] == 2.2);
+    // A record with a package electrical block and no configuration reads as before: unstated.
+    const json plain = n2c::row("IPG16N10S4L-61A");
+    REQUIRE(plain.is_object());
+    CHECK(plain["die_configuration"] == "");
+    // Dies that state different values give the part no single Vds / Id / Rds(on): the
+    // complementary AO4612 (n 56 mOhm / p 105 mOhm) and the asymmetric dual FDMC7200 stay
+    // unread rather than take one die's numbers.
+    CHECK(n2c::row("AO4612").is_null());
+    CHECK(n2c::row("FDMC7200").is_null());
+}
+
+TEST_CASE("owner 2026-11-13 N2c: MOSFET die configuration is graded like the diode one",
+          "[qarlos][crossref]") {
+    const json orig = mosfet_spec(n2c::row("IPG20N04S4L-18A"));
+    // The real single-die-shaped record: no configuration stated.
+    auto r = kelvin::crossref::cross_reference(
+        "mosfet", orig, json::array({mosfet_spec(n2c::row("IPG16N10S4L-61A"))}));
+    const json plain = r["candidates"][0];
+    CHECK(verdict_of(plain, "die_configuration") == "unverified");
+    CHECK(plain["grade"] != "drop_in");
+    CHECK(has_note(plain, "die configuration 'dual' and the substitute's states none"));
+
+    // The same electrical record with the configuration varied isolates the rule:
+    auto as = [&](const char* mpn, json dc) {
+        json s = orig;
+        s["mpn"] = mpn;
+        s["die_configuration"] = dc;
+        return s;
+    };
+    auto r2 = kelvin::crossref::cross_reference(
+        "mosfet", orig,
+        json::array({as("SAME_DUAL", "dual"), as("UNSTATED", nullptr), as("SINGLE", "single"),
+                     as("COMPLEMENTARY", "complementary")}));
+    const json same = find_mpn(r2, "SAME_DUAL");
+    CHECK(verdict_of(same, "die_configuration") == "pass");
+    CHECK(same["grade"] == "drop_in");
+    const json uns = find_mpn(r2, "UNSTATED");
+    CHECK(verdict_of(uns, "die_configuration") == "unverified");
+    CHECK(uns["grade"] == "minor_review");
+    for (const char* m : {"SINGLE", "COMPLEMENTARY"}) {
+        const json c = find_mpn(r2, m);
+        CHECK(c["status"] == "no_substitute");
+        CHECK(verdict_of(c, "die_configuration") == "fail");
+    }
+}

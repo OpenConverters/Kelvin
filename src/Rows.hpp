@@ -157,6 +157,12 @@ struct MosfetRow : RowBase {
     // The ratings above are magnitudes for both channels, so without this a P-channel part
     // is indistinguishable from an N-channel one of the same ratings.
     std::string channel;
+    // part.dieConfiguration ('dual' / 'complementary'; 'single' when stated), "" when the
+    // record states none — by the schema that is one die, but it is carried as unstated so
+    // the ranker grades it the way the diode rule does. A multi-die record has no package
+    // electrical block (SAS mosfet.json: `dies` INSTEAD of `electrical`); the row is read
+    // from its dies only when every die states the same electrical block (v22).
+    std::string die_configuration;
     bool is_production = false;
     bool datasheet_usable = false;  // !_datasheet_unusable(datasheetUrl), precomputed at index time
     // Python evidence tier: no stated (positive) Qg OR datasheet unusable. Written as

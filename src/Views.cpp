@@ -366,18 +366,41 @@ std::optional<MosfetRow> extract_mosfet(const json& env) {
     if (!mi) return std::nullopt;
     const json* di = obj_get(*mi, "datasheetInfo");
     if (!di) return std::nullopt;
-    const json* elec = obj_get(*di, "electrical");
-    if (!elec) return std::nullopt;
     const json empty = json::object();
     const json* part = obj_get(*di, "part");
     if (!part) part = &empty;
+    const json* elec = obj_get(*di, "electrical");
+    // A multi-die package (part.dieConfiguration 'dual' / 'complementary') carries `dies`, one
+    // full electrical block per die, INSTEAD of a package-level block (SAS mosfet.json). The
+    // row holds one value per field, so it is read from the dies only when they state the
+    // SAME thing: every die's electrical block and channel identical (owner 2026-11-13) —
+    // then that die's values are the part's, per die, as for a dual diode. Dies that differ
+    // (every complementary pair, asymmetric power blocks) state no single value for the
+    // part's Vds / Id / Rds(on) and are left unread rather than given one die's numbers.
+    std::optional<std::string> die_channel;
+    if (!elec) {
+        const json* dies = obj_get(*di, "dies");
+        if (!dies || !dies->is_array() || dies->size() < 2) return std::nullopt;
+        const json& first = (*dies)[0];
+        const json* e0 = obj_get(first, "electrical");
+        auto ch0 = get_str(first, "subType");
+        if (!e0 || !ch0) return std::nullopt;
+        for (const auto& d : *dies) {
+            const json* e = obj_get(d, "electrical");
+            auto ch = get_str(d, "subType");
+            if (!e || !ch || *e != *e0 || *ch != *ch0) return std::nullopt;
+        }
+        elec = e0;
+        die_channel = ch0;
+    }
 
     auto mpn = get_str(*mi, "reference");
     if (!mpn) mpn = get_str(*part, "partNumber");
     auto manuf = get_str(*mi, "name");
     if (!mpn || !manuf) return std::nullopt;
 
-    const std::string channel = get_str(*part, "subType").value_or("");
+    const std::string channel =
+        die_channel ? *die_channel : get_str(*part, "subType").value_or("");
     const bool p_channel = channel == "pChannel";
     auto vds = rating_magnitude(get_num(*elec, "drainSourceVoltage"), p_channel);
     auto id = rating_magnitude(get_num(*elec, "continuousDrainCurrent"), p_channel);
@@ -458,6 +481,7 @@ std::optional<MosfetRow> extract_mosfet(const json& env) {
     if (auto v = rating_magnitude(get_num(*elec, "gateSourceVoltageMax"), p_channel); pos(v))
         r.vgs_max = *v;
     r.channel = channel;
+    r.die_configuration = get_str(*part, "dieConfiguration").value_or("");
     r.qualification = get_str(*part, "qualification").value_or("");
     r.technology = get_str(*part, "technology").value_or("");
     auto status = get_str(*mi, "status");

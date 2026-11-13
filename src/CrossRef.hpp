@@ -2913,14 +2913,22 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //  * neither side states it: silent (the overwhelming majority of the catalogue).
     // Decision for the owner to confirm: a stated 'single' against an unstated configuration
     // is UNVERIFIED too, although the schema reads an absent dieConfiguration as one die.
+    //
+    // MOSFETs (owner 2026-11-13): die configuration (single / dual / complementary) is graded
+    // by the same rule. A dual's ratings are per die, a complementary part holds an n- and a
+    // p-channel die, and either one has a different pinout from a single die — so a
+    // single-die substitute for a dual original is not a drop_in. Single-die MOSFET records
+    // state no configuration, so that case lands in the one-sided branch: UNVERIFIED, capped
+    // at minor_review.
     bool topology_unverified = false;
-    if (cat == "diode") {
+    if (cat == "diode" || cat == "mosfet") {
         struct Field {
             const char* key;
             const char* label;
         };
-        for (const Field f : {Field{"die_configuration", "die configuration"},
-                              Field{"internal_connection", "internal connection"}}) {
+        std::vector<Field> fields{{"die_configuration", "die configuration"}};
+        if (cat == "diode") fields.push_back({"internal_connection", "internal connection"});
+        for (const Field f : fields) {
             const std::string o = str(original, f.key), s = str(cand, f.key);
             if (o.empty() && s.empty()) continue;
             if (!o.empty() && !s.empty()) {
@@ -2932,7 +2940,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 notes.push_back(std::string(f.label) + " differs: the original is '" + o +
                                 "', the substitute '" + s +
                                 "' — a different package topology and pinout, not a substitute");
-                return reject("a different diode package topology");
+                return reject(cat == "diode" ? "a different diode package topology"
+                                             : "a different MOSFET die configuration");
             }
             params.push_back({{"name", f.key}, {"verdict", UNVERIFIED}});
             notes.push_back(o.empty()

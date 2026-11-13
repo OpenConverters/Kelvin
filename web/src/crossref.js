@@ -145,7 +145,8 @@ export const XREF = [
     // uses it only to prove a substitute's maximum exceeds the original's (max >= typ).
     // coss_vds (v21): the Vds the Coss is stated at; the ranker compares two Coss values only
     // on a common basis (UNVERIFIED with a note otherwise).
-    spec: (r) => ({ ...base(r), vds: nz(r.vds_rated), id: nz(r.id_continuous), rds_on: nz(r.rds_on), qg: nz(r.qg_total), coss: nz(r.coss), coss_vds: nz(r.coss_vds), vgs_threshold_max: nz(r.vgs_threshold_max), vgs_threshold_typ: nz(r.vgs_threshold_typ), rds_on_vgs: nz(r.rds_on_vgs), vgs_max: nz(r.vgs_max), technology: r.technology ?? '', qualification: r.qualification ?? '', channel: r.channel || null }),
+    // die_configuration (v22): dual / complementary as stated; graded as an identity like the diode one.
+    spec: (r) => ({ ...base(r), vds: nz(r.vds_rated), id: nz(r.id_continuous), rds_on: nz(r.rds_on), qg: nz(r.qg_total), coss: nz(r.coss), coss_vds: nz(r.coss_vds), vgs_threshold_max: nz(r.vgs_threshold_max), vgs_threshold_typ: nz(r.vgs_threshold_typ), rds_on_vgs: nz(r.rds_on_vgs), vgs_max: nz(r.vgs_max), technology: r.technology ?? '', qualification: r.qualification ?? '', channel: r.channel || null, die_configuration: r.die_configuration || null }),
     params: [
       { key: 'vds', label: 'Vds', row: 'vds_rated', unit: 'V' },
       { key: 'id', label: 'Id', row: 'id_continuous', unit: 'A' },
