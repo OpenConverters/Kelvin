@@ -3917,6 +3917,11 @@ json mosfet_spec(const json& r) {
     s["die_configuration"] = dc.empty() ? json(nullptr) : json(dc);
     const std::string ic = r.value("internal_connection", "");
     s["internal_connection"] = ic.empty() ? json(nullptr) : json(ic);
+    // v22 (owner curve rule 2026-11-14): the measured curves and ambient ratings, as
+    // crossref.js passes them (`r.ciss_curve ?? null`, ...). Owner-approved 2026-11-14.
+    for (const char* k : {"ciss_curve", "coss_curve", "crss_curve", "rds_on_id_curve",
+                          "rds_on_tj_curve", "qg_curve", "id_ambient_curves"})
+        s[k] = r.contains(k) ? r[k] : json(nullptr);
     return s;
 }
 // XREF diode spec (web/src/crossref.js).
@@ -4912,12 +4917,15 @@ TEST_CASE("qarlos r11r13 D3: MOSFET Coss on different drain-source voltages is n
     const json r = rank("mosfet", "AOD4N60", {"IPD95R2K0P7", "AOD7N60", "XP60CM600EH"});
     const json none = find(r, "IPD95R2K0P7");
     REQUIRE(!none.is_null());
-    CHECK(verdict_of(none, "coss") == "unverified");
-    CHECK(verdict_of(none, "coss_basis") == "unverified");
-    CHECK(has_note(none, "the original's output capacitance is 53 pF at 25 V; the substitute's "
-                         "record states 5 pF at no drain-source voltage"));
-    // Secondary axis: no demotion, no cap.
-    CHECK(none["grade"] == "drop_in");
+    // Owner 2026-11-14 (curve rule): the substitute's Coss(Vds) curve settles the basis — read
+    // at the original's 25 V it gives 72.65 pF against 53 pF (1.37x: warn), no coss_basis row.
+    CHECK(verdict_of(none, "coss") == "warn");
+    CHECK(verdict_of(none, "coss_basis") == "");
+    CHECK(has_note(none, "output capacitance compared at the original's 25 V: the substitute's "
+                         "Coss(Vds) curve reads 72.65 pF there (its record states 5 pF at no "
+                         "stated Vds) against the original's 53 pF"));
+    // A Coss warn demotes, as AOD7N60's below (owner 2026-11-14).
+    CHECK(none["grade"] == "minor_review");
     const json other = find(r, "XP60CM600EH");
     REQUIRE(!other.is_null());
     CHECK(verdict_of(other, "coss") == "unverified");

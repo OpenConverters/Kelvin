@@ -28,6 +28,8 @@
 #include <cctype>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <limits>
 #include <map>
 #include <string>
@@ -356,11 +358,26 @@ inline void extra_row_json(const ResistorRow& r, json& o) {
 // measurement conditions the record states (temperature degC, dc_bias V, frequency Hz; absent
 // when not stated). null when the record carries no usable curve.
 inline json curve_json(const CurvePts& c) {
+    // A stated curve whose axes carry no units: no points, only the marker
+    // (curve_checks::view_curve reads it as "stated, not readable").
+    if (c.unit_unstated) {
+        json m{{"unit_unstated", true}};
+        if (!c.unit_note.empty()) m["unit_note"] = c.unit_note;  // why it was not read
+        return m;
+    }
     if (c.empty()) return nullptr;
     json o{{"x", *c.x}, {"y", *c.y}};
     if (!std::isnan(c.temperature)) o["temperature"] = c.temperature;
     if (!std::isnan(c.dc_bias)) o["dc_bias"] = c.dc_bias;
     if (!std::isnan(c.frequency)) o["frequency"] = c.frequency;
+    if (!c.cond_keys.empty()) {  // further named conditions (MOSFET / diode / connector)
+        json cond = json::object();
+        for (size_t i = 0; i < c.cond_keys.size(); ++i) cond[c.cond_keys[i]] = c.cond_vals.at(i);
+        o["conditions"] = std::move(cond);
+    }
+    if (!c.cond_text.empty()) o["condition_text"] = c.cond_text;
+    // Units inferred from the record's own scalar (owner 2026-11-14): the note names it.
+    if (c.unit_inferred) o["unit_inferred"] = c.unit_note;
     return o;
 }
 inline void extra_row_json(const CapacitorRow& r, json& o) {
@@ -372,6 +389,29 @@ inline void extra_row_json(const CapacitorRow& r, json& o) {
     o["esr_from_curve"] = r.esr_from_curve;  // the ESR / its 100 kHz were read off the curve
     o["ripple_f_curve"] = curve_json(r.ripple_f_curve);  // ripple tables (owner 2026-11-14)
     o["ripple_t_curve"] = curve_json(r.ripple_t_curve);
+}
+inline void extra_row_json(const MosfetRow& r, json& o) {
+    o["ciss_curve"] = curve_json(r.ciss_curve);
+    o["coss_curve"] = curve_json(r.coss_curve);
+    o["crss_curve"] = curve_json(r.crss_curve);
+    o["rds_on_id_curve"] = curve_json(r.rds_on_id_curve);
+    o["rds_on_tj_curve"] = curve_json(r.rds_on_tj_curve);
+    o["qg_curve"] = curve_json(r.qg_curve);
+    if (r.id_ambient_curves.empty()) {
+        o["id_ambient_curves"] = nullptr;
+    } else {
+        json a = json::array();
+        for (const auto& c : r.id_ambient_curves) a.push_back(curve_json(c));
+        o["id_ambient_curves"] = std::move(a);
+    }
+}
+inline void extra_row_json(const DiodeRow& r, json& o) {
+    o["vf_curve"] = curve_json(r.vf_curve);
+    o["ir_curve"] = curve_json(r.ir_curve);
+    o["cj_curve"] = curve_json(r.cj_curve);
+}
+inline void extra_row_json(const ConnectorRow& r, json& o) {
+    o["current_ambient_curve"] = curve_json(r.current_ambient_curve);
 }
 
 // A magnetic's whole saturation table (v20) as the ranker's saturation_points shape:

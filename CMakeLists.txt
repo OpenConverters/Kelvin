@@ -119,6 +119,7 @@ if (KELVIN_BUILD_TESTS AND NOT EMSCRIPTEN AND KELVIN_TOP)
         tests/test_phase5.cpp
         tests/test_crossref_score.cpp
         tests/test_crossref_curves.cpp
+        tests/test_crossref_curves_ff.cpp
         tests/test_capacitor_curves.cpp
         tests/test_crossref_rank.cpp
         tests/test_crossref_dimensions.cpp

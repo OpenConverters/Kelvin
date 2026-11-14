@@ -307,3 +307,27 @@ TEST_CASE("Ripple tables: a case-temperature table is not an ambient rating's ta
     // A temperature table the same records would keep (UPW, unlabelled, 1.0 at its 105 degC).
     CHECK_FALSE(row("UPW1V102MHD").ripple_t_curve.empty());
 }
+
+TEST_CASE("room temperature: a curve at 20 degC and one at 25 degC are the same condition",
+          "[curves][capacitor][room-temperature]") {
+    // Owner 2026-11-14: 20 and 25 degC count as the same (room) temperature in
+    // conditions_differ, for every family. Murata GRM188B31H104KA92D states its |Z| and bias
+    // curves at 20 degC, GRM188R71H104KA93D at 25 degC (both 100 nF 50 V 0603, DC bias 0 V):
+    // before, the |Z| curves were "measured under different conditions (temperature 20 vs
+    // 25 degC)" and not compared; now they are compared on the useful band.
+    REQUIRE(row("GRM188B31H104KA92D").z_curve.temperature == 20.0);
+    REQUIRE(row("GRM188R71H104KA93D").z_curve.temperature == 25.0);
+    const json c = rank_one("GRM188B31H104KA92D", "GRM188R71H104KA93D");
+    INFO(notes_of(c));
+    CHECK(verdict_of(c, "impedance_curve") == "pass");
+    CHECK(has_note(c, "|Z| compared on both curves over frequency 1e+06 to 2.32769e+07 Hz "
+                      "(72 points, log-log, bands of the ESR spec): passes everywhere"));
+    CHECK_FALSE(has_note(c, "measured under different conditions"));
+    // The other way round the substitute's |Z| sits 0.9 % above the original's at 20.35 MHz:
+    // level under the owner's 2 % rule (2026-11-14), so it passes too.
+    const json r = rank_one("GRM188R71H104KA93D", "GRM188B31H104KA92D");
+    INFO(notes_of(r));
+    CHECK(verdict_of(r, "impedance_curve") == "pass");
+    CHECK(has_note(r, "tightest at 2.03511e+07 Hz, substitute 0.02722 ohm vs original "
+                      "0.02698 ohm"));
+}

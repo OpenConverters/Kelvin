@@ -7,7 +7,8 @@
 //     measured is not on record: nullopt);
 //   * two curves are compared at the x points inside BOTH ranges (the union of both curves'
 //     own sample x within the overlap), each point judged by compare_numeric with that
-//     quantity's scalar ParamSpec (same bands, same direction);
+//     quantity's scalar ParamSpec (same bands, same direction) — except that a point within
+//     2 % of the original is level, PASS (owner 2026-11-14, within_level);
 //   * the worst point decides the verdict and is reported (x, both y, warn depth);
 //   * no overlap -> UNVERIFIED (the caller adds the note; no cap).
 //
@@ -17,6 +18,7 @@
 // curve was measured under. Program-only, no I/O.
 #pragma once
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
@@ -96,6 +98,13 @@ struct CurveVerdict {
     std::size_t points = 0;                            // sample points judged
 };
 
+// The owner's level band for every curve-vs-curve comparison (2026-11-14): a substitute
+// point within 2 % of the original's (relative to the original) counts as level, PASS.
+inline constexpr double kCurveLevelFraction = 0.02;
+inline bool within_level(double orig, double sub) {
+    return std::fabs(sub - orig) <= kCurveLevelFraction * std::fabs(orig);
+}
+
 // orig vs sub on their overlap, each point judged with `spec` (Dir::Lower or Dir::Higher;
 // anything else throws — a curve is a numeric quantity). `band`, when given, is the only x
 // range that is graded (owner 2026-11-14: impedance-type curves are judged only in their
@@ -151,7 +160,11 @@ inline CurveVerdict compare_curves(const Curve& orig, const Curve& sub, const Pa
     for (double x : xs) {
         const auto o = curve_at(orig, x, interp), s = curve_at(sub, x, interp);
         if (!o || !s) continue;  // cannot happen inside the overlap; kept total, never guessed
-        const ParamOutcome r = compare_numeric(spec, o, s);
+        // Level (owner 2026-11-14): a point within 2 % of the original is PASS whatever the
+        // direction — two curves of one quantity read off two datasheets differ by that much
+        // from digitisation alone; beyond it the spec's own WARN / FAIL bands apply.
+        const ParamOutcome r =
+            within_level(*o, *s) ? ParamOutcome(PASS) : compare_numeric(spec, o, s);
         ++out.points;
         const int rk = rank(r.verdict);
         const double bad = badness(*o, *s);
@@ -170,11 +183,16 @@ inline CurveVerdict compare_curves(const Curve& orig, const Curve& sub, const Pa
 
 // ── Curves in a ranker spec ─────────────────────────────────────────────────
 // The spec shape (crossref.js, from a row's CurvePts): {x: [...], y: [...], temperature?,
-// dc_bias?, frequency?}; null / absent = no curve. The spec is built by Kelvin's own row
-// code, so a malformed curve is a bug and throws (Curve's constructor).
+// dc_bias?, frequency?, conditions?: {name: SI value}, condition_text?}; null / absent = no
+// curve. `conditions` / `condition_text` carry what the MOSFET, diode and connector curves
+// state beyond the three named ones (gate-source voltage, duration, a mounting, ...). The spec
+// is built by Kelvin's own row code, so a malformed curve is a bug and throws (Curve's
+// constructor).
 struct SpecCurve {
     Curve curve;
     std::optional<double> temperature, dc_bias, frequency;  // stated measurement conditions
+    std::vector<std::pair<std::string, double>> conditions;  // further ones, sorted by name
+    std::string condition_text;                              // free text, "" = none
 };
 inline std::optional<SpecCurve> curve_from_spec(const nlohmann::json& s, const std::string& key) {
     auto it = s.find(key);
@@ -183,7 +201,7 @@ inline std::optional<SpecCurve> curve_from_spec(const nlohmann::json& s, const s
         throw std::invalid_argument("curve_from_spec: '" + key + "' is not {x, y}");
     SpecCurve out{Curve(it->at("x").get<std::vector<double>>(),
                         it->at("y").get<std::vector<double>>()),
-                  std::nullopt, std::nullopt, std::nullopt};
+                  std::nullopt, std::nullopt, std::nullopt, {}, {}};
     auto cond = [&](const char* k) -> std::optional<double> {
         auto c = it->find(k);
         if (c == it->end() || c->is_null()) return std::nullopt;
@@ -192,38 +210,99 @@ inline std::optional<SpecCurve> curve_from_spec(const nlohmann::json& s, const s
     out.temperature = cond("temperature");
     out.dc_bias = cond("dc_bias");
     out.frequency = cond("frequency");
+    if (auto c = it->find("conditions"); c != it->end() && !c->is_null()) {
+        if (!c->is_object())
+            throw std::invalid_argument("curve_from_spec: '" + key + "' conditions is not an object");
+        for (auto e = c->begin(); e != c->end(); ++e)
+            out.conditions.emplace_back(e.key(), e->get<double>());
+        std::sort(out.conditions.begin(), out.conditions.end());
+    }
+    if (auto t = it->find("condition_text"); t != it->end() && !t->is_null())
+        out.condition_text = t->get<std::string>();
     return out;
 }
+// Room temperature (owner 2026-11-14): 20 degC and 25 degC are the same measurement
+// condition, in every family — datasheets quote "room temperature" at either. Both values must
+// be stated; a temperature stated on one side only is still a different condition.
+inline bool is_room_temperature(double t) {
+    return same_stated_value(t, 20.0) || same_stated_value(t, 25.0);
+}
+inline bool same_room_temperature(double a, double b) {
+    return is_room_temperature(a) && is_room_temperature(b);
+}
+// A named condition that is a temperature (junctionTemperature, ambientTemperature,
+// caseTemperature ...), as opposed to a rise in K (maxTemperatureRise).
+inline bool is_temperature_key(const std::string& k) {
+    static const std::string t = "Temperature";
+    return k == "temperature" ||
+           (k.size() > t.size() && k.compare(k.size() - t.size(), t.size(), t) == 0);
+}
+
 // The measurement conditions the two curves do not share, e.g. "temperature 20 vs 25 degC" or
 // "temperature 25 degC vs unstated" (original first); empty when every condition is the same
 // on both sides or stated by neither. Owner 2026-11-14: a condition stated by ONE side only is
 // a DIFFERENT condition (Murata states its curves at 25 degC, TDK states none: nothing on
 // record says the TDK curve was taken at 25 degC), so it blocks the comparison like a stated
-// difference does.
+// difference does. The same holds for the named conditions a curve carries (`conditions`) and
+// for its free-text condition, compared case- and whitespace-insensitively. Owner 2026-11-14:
+// 20 and 25 degC are the same (room) temperature (same_room_temperature), for `temperature`
+// and every named temperature condition.
 inline std::string conditions_differ(const SpecCurve& o, const SpecCurve& s) {
     std::string out;
+    auto add = [&](const std::string& what) { out += (out.empty() ? "" : ", ") + what; };
     auto one = [&](const std::optional<double>& a, const std::optional<double>& b,
-                   const char* what, const char* unit) {
+                   const std::string& what, const char* unit, bool temperature) {
         if (!a && !b) return;
         if (a && b && same_stated_value(*a, *b)) return;
+        if (temperature && a && b && same_room_temperature(*a, *b)) return;
+        const char* sp = *unit ? " " : "";
         char buf[128];
         auto side = [&](const std::optional<double>& v) {
             char t[48];
-            if (v) std::snprintf(t, sizeof t, "%g %s", *v, unit);
+            if (v) std::snprintf(t, sizeof t, "%g%s%s", *v, sp, unit);
             else std::snprintf(t, sizeof t, "unstated");
             return std::string(t);
         };
         if (a && b)
-            std::snprintf(buf, sizeof buf, "%s%s %g vs %g %s", out.empty() ? "" : ", ", what, *a,
-                          *b, unit);
+            std::snprintf(buf, sizeof buf, "%s%s %g vs %g%s%s", out.empty() ? "" : ", ",
+                          what.c_str(), *a, *b, sp, unit);
         else
-            std::snprintf(buf, sizeof buf, "%s%s %s vs %s", out.empty() ? "" : ", ", what,
+            std::snprintf(buf, sizeof buf, "%s%s %s vs %s", out.empty() ? "" : ", ", what.c_str(),
                           side(a).c_str(), side(b).c_str());
         out += buf;
     };
-    one(o.temperature, s.temperature, "temperature", "degC");
-    one(o.dc_bias, s.dc_bias, "DC bias", "V");
-    one(o.frequency, s.frequency, "frequency", "Hz");
+    one(o.temperature, s.temperature, "temperature", "degC", true);
+    one(o.dc_bias, s.dc_bias, "DC bias", "V", false);
+    one(o.frequency, s.frequency, "frequency", "Hz", false);
+    auto find = [](const SpecCurve& c, const std::string& k) -> std::optional<double> {
+        for (const auto& [n, v] : c.conditions)
+            if (n == k) return v;
+        return std::nullopt;
+    };
+    std::vector<std::string> names;
+    for (const SpecCurve* c : {&o, &s})
+        for (const auto& [n, v] : c->conditions) names.push_back(n);
+    std::sort(names.begin(), names.end());
+    names.erase(std::unique(names.begin(), names.end()), names.end());
+    for (const auto& n : names) one(find(o, n), find(s, n), n, "", is_temperature_key(n));
+    auto norm = [](const std::string& t) {
+        std::string r;
+        bool space = false;
+        for (char ch : t) {
+            if (std::isspace(static_cast<unsigned char>(ch))) {
+                space = !r.empty();
+                continue;
+            }
+            if (space) r += ' ';
+            space = false;
+            r += static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        }
+        return r;
+    };
+    if (norm(o.condition_text) != norm(s.condition_text))
+        add("'" + (o.condition_text.empty() ? std::string("unstated") : o.condition_text) +
+            "' vs '" + (s.condition_text.empty() ? std::string("unstated") : s.condition_text) +
+            "'");
     return out;
 }
 

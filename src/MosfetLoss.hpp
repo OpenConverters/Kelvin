@@ -74,6 +74,28 @@ inline std::optional<crossref::Curve> to_curve(const CurvePts& c) {
     return crossref::Curve(std::move(xs), std::move(ys));
 }
 
+// The magnitude of a condition the record states for a curve (`key`, e.g. gateSourceVoltage),
+// NaN when it states none. A P-channel record states its gate / drain voltages negative; a
+// negative value on an N-channel record is not a magnitude of anything and is not read (the
+// rule the row applies to the scalar ratings, Views.cpp rating_magnitude).
+inline double condition_magnitude(const MosfetRow& m, const CurvePts& c, const char* key) {
+    for (std::size_t i = 0; i < c.cond_keys.size(); ++i) {
+        if (c.cond_keys[i] != key) continue;
+        const double v = c.cond_vals[i];
+        if (v < 0) return m.channel == "pChannel" ? -v : kNaN();
+        return v > 0 ? v : kNaN();
+    }
+    return kNaN();
+}
+
+// Whether every sample is positive: a curve read on log axes (Coss(Vds)) holding a 0 V or a
+// non-positive sample cannot be read log-log, and is then not read at all.
+inline bool loglog_readable(const crossref::Curve& c) {
+    for (std::size_t i = 0; i < c.x.size(); ++i)
+        if (!(c.x[i] > 0) || !(c.y[i] > 0)) return false;
+    return true;
+}
+
 // The charge at which the gate-charge curve (x = Qg [C], y = Vgs [V]) FIRST reaches `v`:
 // the charge the driver has delivered when the gate arrives at its drive voltage. Linear
 // between the bracketing samples; nullopt when the curve never reaches `v` (no extrapolation).
@@ -113,6 +135,7 @@ inline LossBreakdown buck_high_side_loss(const MosfetRow& m, const LossOperating
             present(m.rds_on_vgs) ? fmt(" at Vgs %g V", m.rds_on_vgs) : std::string(", Vgs not stated");
         const std::string stated = "stated Rds(on) " + fmt("%.4g mohm", m.rds_on * 1e3) + at_vgs +
                                    " (the record gives no Tj: datasheet headline, 25 degC)";
+        const double tj_curve_vgs = condition_magnitude(m, m.rds_on_tj_curve, "gateSourceVoltage");
         if (op.tj && !m.rds_on_tj_curve.empty()) {
             std::optional<double> r;
             if (auto c = to_curve(m.rds_on_tj_curve))
@@ -121,7 +144,7 @@ inline LossBreakdown buck_high_side_loss(const MosfetRow& m, const LossOperating
                 rds = *r;
                 basis = "Rds(on) " + fmt("%.4g mohm", rds * 1e3) + fmt(" at Tj %g degC", *op.tj) +
                         " read off the record's Rds(on)(Tj) curve (linear)" +
-                        (present(m.rds_on_tj_curve_vgs) ? fmt(", curve at Vgs %g V", m.rds_on_tj_curve_vgs)
+                        (present(tj_curve_vgs) ? fmt(", curve at Vgs %g V", tj_curve_vgs)
                                                         : std::string(", curve Vgs not stated"));
             } else {
                 basis = stated + "; Tj " + fmt("%g degC", *op.tj) + " is outside the record's " +
@@ -166,12 +189,13 @@ inline LossBreakdown buck_high_side_loss(const MosfetRow& m, const LossOperating
             std::optional<double> qg;
             std::string basis;
             std::string curve_miss;
+            const double qg_curve_vds = condition_magnitude(m, m.qg_curve, "drainSourceVoltage");
             if (!m.qg_curve.empty()) {
                 if (auto c = to_curve(m.qg_curve)) qg = charge_at_vgs(*c, *op.vdrive);
                 if (qg && *qg > 0) {
                     basis = "Qg " + fmt("%.4g nC", *qg * 1e9) + fmt(" at Vgs %g V", *op.vdrive) +
                             " read off the record's gate-charge curve" +
-                            (present(m.qg_curve_vds) ? fmt(" (curve at Vds %g V)", m.qg_curve_vds)
+                            (present(qg_curve_vds) ? fmt(" (curve at Vds %g V)", qg_curve_vds)
                                                      : std::string(" (curve Vds not stated)"));
                 } else {
                     qg.reset();
@@ -204,9 +228,13 @@ inline LossBreakdown buck_high_side_loss(const MosfetRow& m, const LossOperating
         std::string basis;
         std::string curve_miss;
         if (!m.coss_curve.empty()) {
-            if (auto c = to_curve(m.coss_curve))
-                c_at = crossref::curve_at(*c, vin, crossref::Interp::LogLog);
-            if (c_at && *c_at > 0) {
+            const auto c = to_curve(m.coss_curve);
+            const bool readable = c && loglog_readable(*c);
+            if (readable) c_at = crossref::curve_at(*c, vin, crossref::Interp::LogLog);
+            if (!readable) {
+                curve_miss = "; the record's Coss(Vds) curve holds a zero or negative sample and "
+                             "is not read on log axes";
+            } else if (c_at && *c_at > 0) {
                 basis = "Coss " + fmt("%.4g pF", *c_at * 1e12) + fmt(" at Vds %g V", vin) +
                         " read off the record's Coss(Vds) curve (log-log)";
             } else {
