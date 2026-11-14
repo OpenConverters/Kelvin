@@ -88,7 +88,23 @@ export const FAMILIES = [
         { key: 'minimumRippleCurrent', label: 'Ripple current ≥', unit: 'A', placeholder: 'optional' },
       ],
       roleToggle: { key: 'role', value: 'resonant', label: 'Resonant duty (tight ±tolerance window instead of min…oversize)' },
-      tiebreakers: ['lowest_esr', 'highest_ripple_headroom', 'highest_voltage_margin', 'highest_capacitance'],
+      tiebreakers: ['lowest_esr', 'highest_ripple_headroom', 'highest_voltage_margin', 'highest_capacitance', 'lowest_operating_point_loss'],
+      // Operating-point ranking (owner 2026-11-14): options.lossOperatingPoint at the buck output
+      // or input. Nothing is defaulted: a record lacking a value leaves its term UNVERIFIED.
+      lossPoint: {
+        position: 'buckOutput',
+        positions: ['buckOutput', 'buckInput'],
+        fields: [
+          { key: 'inputVoltage', label: 'Vin', unit: 'V', placeholder: '36' },
+          { key: 'outputVoltage', label: 'Vout (D = Vout/Vin)', unit: 'V', placeholder: '12' },
+          { key: 'outputCurrent', label: 'Iout', unit: 'A', placeholder: '2' },
+          { key: 'switchingFrequency', label: 'fs', unit: 'Hz', placeholder: '80k' },
+          { key: 'inductorRippleCurrent', label: 'Inductor ripple (p-p)', unit: 'A', placeholder: 'required at the output', requiredFor: 'buckOutput' },
+          { key: 'maxRippleVoltage', label: 'Max ripple voltage', unit: 'V', placeholder: 'optional' },
+          { key: 'ambientTemperature', label: 'Ambient', unit: '°C', placeholder: 'moves the ripple rating' },
+        ],
+      },
+      priceQuantity: true,
     },
   },
   {

@@ -442,6 +442,17 @@ struct CapacitorRow : RowBase {
     // rating to the other side's frequency / temperature basis with them.
     CurvePts ripple_f_curve;
     CurvePts ripple_t_curve;
+    // v22 (owner 2026-11-14, capacitor operating-point selector) — the record's distributor
+    // unit-cost quotes as a compact JSON array [{distributor, unitCost, currency, moq?}] ("" when
+    // none), read as MosfetRow::price_quotes is: one unit cost per distributor, no price breaks,
+    // a cost <= 0 is not a price.
+    std::string price_quotes;
+    // v22 (owner 2026-11-14, capacitor operating-point selector) — the dissipation factor
+    // tan(delta) the record states (CAS electrical.dissipationFactor, a fraction) and the
+    // frequency it is stated AT (electrical.dissipationFactorFrequency, Hz). NaN = not stated;
+    // the frequency is kept only alongside a stated factor. Never inferred from the series.
+    double dissipation_factor = kNaN();
+    double dissipation_factor_frequency = kNaN();
     bool no_thermal() const { return !present(rth); }
 };
 

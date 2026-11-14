@@ -659,7 +659,7 @@ TEST_CASE("magnetic curves: a size that cannot be determined counts one more UNV
         if (cd.at("mpn") == "MBH6045C-471MB=P3") mbh = &cd;
     REQUIRE(mbh);
     CHECK(mbh->at("sortKey").at("sizeUnverified") == true);
-    CHECK(mbh->at("sortKey").at("unverifiedChecksOrTerms") == 3);
+    CHECK(mbh->at("sortKey").at("unverifiedItems") == 3);
     CHECK(mbh->at("boardArea").at("mm2").is_null());
     CHECK(pos_in(r, "760800301") < pos_in(r, "MBH6045C-471MB=P3"));
 }

@@ -73,9 +73,9 @@ def test_gates_and_the_line_carry_every_term_and_check():
 
 def test_unverified_checks_rank_after_verified_ones():
     _, cands, _ = _run()
-    keys = [(c.get("sortKey") or c["_sortKey"])["unverifiedChecksOrTerms"] for c in cands]
+    keys = [(c.get("sortKey") or c["_sortKey"])["unverifiedItems"] for c in cands]
     assert keys == sorted(keys)
-    first = [c for c in cands if (c.get("sortKey") or c["_sortKey"])["unverifiedChecksOrTerms"] == 0]
+    first = [c for c in cands if (c.get("sortKey") or c["_sortKey"])["unverifiedItems"] == 0]
     sums = [(c.get("sortKey") or c["_sortKey"])["value"] for c in first]
     assert sums == sorted(sums)
 
