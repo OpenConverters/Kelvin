@@ -548,8 +548,9 @@ inline constexpr double kUnknownTempGradePenaltyPerC = 0.002;
 // numeric terms so no single categorical miss can outweigh the primary value.
 inline constexpr double kVerdictWarnPenalty = 0.5;
 inline constexpr double kVerdictFailPenalty = 3.0;
-// Gross over-rating (owner 2026-11-13, Y4): a substitute whose primary voltage or current
-// rating is more than kGrossOverRatingFactor times the original's costs
+// Gross over-rating (owner 2026-11-13, Y4; resistor power rating added by the owner
+// 2026-11-14): a substitute whose primary voltage, current or (resistor) power rating is
+// more than kGrossOverRatingFactor times the original's costs
 // kGrossOverRatingPenalty per such axis, plus a note naming it — a 200 V / 3 A rectifier for
 // a 70 V / 70 mA signal Schottky is "better" on paper and very likely a bigger body, more
 // cost and more capacitance. A fixed step, well below a WARN (0.5), so it only orders among
@@ -1242,17 +1243,22 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             {"saturation_current", {"saturation current", "A"}},
             {"rated_current", {"rated current", "A"}},
             {"rated_current_A", {"rated current", "A"}},
-            {"rated_voltage_V", {"rated voltage", "V"}}};
+            {"rated_voltage_V", {"rated voltage", "V"}},
+            // A resistor's power rating (owner 2026-11-14): a 35 W power resistor for a 50 mW
+            // chip is the same over-rating — a bigger body and more cost (no capacitance claim).
+            {"power_rating", {"power rating", "W"}}};
         const auto it = kWhat.find(key);
         if (it == kWhat.end()) return;
         penalty += opt.gate_weight * kGrossOverRatingPenalty;
+        const char* likely = key == "power_rating"
+                                 ? "a bigger body and higher cost are likely"
+                                 : "a bigger body, higher cost and more capacitance are likely";
         char b[320];
         std::snprintf(b, sizeof b,
                       "%s %g %s is %.3gx the original's %g %s — far above what the original is "
-                      "rated for (more than %gx): a bigger body, higher cost and more "
-                      "capacitance are likely; ranked after closer-rated parts",
+                      "rated for (more than %gx): %s; ranked after closer-rated parts",
                       it->second.first, *s, it->second.second, *s / *o, *o, it->second.second,
-                      kGrossOverRatingFactor);
+                      kGrossOverRatingFactor, likely);
         notes.push_back(b);
     };
     // Direction bookkeeping: on each directional parameter we could compare,
@@ -2592,6 +2598,11 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 (spec.key == "saturation_current" || spec.key == "rated_current" ||
                  spec.key == "rated_current_A" || spec.key == "rated_voltage_V"))
                 gross_over_rating(spec.key, o, s);
+            // Resistor power (owner 2026-11-14): the NOMINAL ratings, whatever basis (rating
+            // temperature, derating curve) the PASS was decided on.
+            if (cat == "resistor" && spec.key == "power_rating")
+                gross_over_rating(spec.key, num(original, "power_rating"),
+                                  num(cand, "power_rating"));
         }
         if (numeric) {
             // Isat is compared at a common inductance-drop criterion, so its direction is too:

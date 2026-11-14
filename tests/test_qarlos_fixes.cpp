@@ -8905,3 +8905,35 @@ TEST_CASE("qarlos r30 BB3: Walsin 2512(6432) is the 2512 chip", "[qarlos][crossr
     }
     CHECK(seen_erj);
 }
+
+// Owner decision 2026-11-14: a resistor's power rating joins the gross over-rating axes (Y4,
+// kGrossOverRatingFactor / kGrossOverRatingPenalty): a substitute rated more than 3x the
+// original's power takes the small penalty and a note; 3x or less, neither. The original is the
+// real Walsin WR06X5113FTR (0.1 W); the candidates are that record with only the power raised.
+TEST_CASE("owner 2026-11-14: a resistor power rating more than 3x the original's is a gross "
+          "over-rating",
+          "[qarlos][crossref][resistor][gross-over-rating]") {
+    const json orig = r23r25_res("WR06X5113FTR");
+    REQUIRE(orig["power_rating"] == 0.1);
+    auto with_power = [&](const char* mpn, double w) {
+        json c = orig;
+        c["mpn"] = mpn;
+        c["power_rating"] = w;
+        return c;
+    };
+    const auto r = kelvin::crossref::cross_reference(
+        "resistor", orig,
+        json::array({with_power("P_X5", 0.5), with_power("P_X2_5", 0.25), with_power("P_SAME", 0.1)}),
+        res_opt());
+    const json x5 = res_find(r, "P_X5"), x25 = res_find(r, "P_X2_5"), same = res_find(r, "P_SAME");
+    REQUIRE(!x5.is_null());
+    REQUIRE(!x25.is_null());
+    REQUIRE(!same.is_null());
+    CHECK(verdict_of(x5, "power_rating") == "pass");
+    CHECK(has_note(x5, "power rating 0.5 W is 5x the original's 0.1 W"));
+    CHECK(has_note(x5, "a bigger body and higher cost are likely"));
+    CHECK_FALSE(has_note(x25, "far above what the original is rated for"));
+    CHECK(x5["penalty"].get<double>() >
+          x25["penalty"].get<double>() + 0.9 * kelvin::crossref::kGrossOverRatingPenalty);
+    CHECK(x5["grade"] == same["grade"]);  // an ordering step, not a grade change
+}
