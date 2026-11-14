@@ -417,6 +417,33 @@ TEST_CASE("qarlos r23: 1V5KE polarity decodes; bi 1V5KE fails a unidirectional o
     CHECK(c["grade"] == "major_review");
 }
 
+// Qarlos r29 (seed 33561692): Taiwan Semiconductor's SMF26AH (record: "Unidirectional", standoff
+// 26 V) came back with its polarity unreadable. SMF decodes with the strict grade grammar
+// (A uni, CA bi); onsemi's SMF05CT1G ESD array (an 'esd' record, SC-88) is NOT read as 'C' = bi.
+TEST_CASE("qarlos r29: SMF polarity decodes strictly; Littelfuse SMF26CA fails TSC SMF26AH",
+          "[qarlos][crossref]") {
+    using kelvin::crossref::TvsPolarity;
+    using kelvin::crossref::tvs_polarity_from_mpn;
+    CHECK(tvs_polarity_from_mpn("SMF26AH") == TvsPolarity::Uni);
+    CHECK(tvs_polarity_from_mpn("SMF26A") == TvsPolarity::Uni);
+    CHECK(tvs_polarity_from_mpn("SMF26CA") == TvsPolarity::Bi);
+    CHECK(tvs_polarity_from_mpn("SMF05CT1G") == TvsPolarity::Unknown);
+    CHECK(tvs_polarity_from_mpn("SMF05T1G") == TvsPolarity::Unknown);
+    CHECK(tvs_polarity_from_mpn("SMF10VTR") == TvsPolarity::Unknown);
+    CHECK(tvs_polarity_from_mpn("SMF4L10A") == TvsPolarity::Unknown);
+    CHECK(tvs_polarity_from_mpn("SMFE100CA") == TvsPolarity::Unknown);
+    auto r = kelvin::crossref::cross_reference(
+        "diode", tvs("SMF26AH", 26.0), json::array({tvs("SMF26CA", 26.0), tvs("SMF26A", 26.0)}));
+    for (const auto& c : r["candidates"]) {
+        if (c["mpn"] == "SMF26CA") {
+            CHECK(verdict_of(c, "polarity") == "fail");
+            CHECK(c["grade"] == "major_review");
+        } else {
+            CHECK(verdict_of(c, "polarity") == "pass");
+        }
+    }
+}
+
 // #2035: a record whose every provenance entry is retracted verifies nothing.
 TEST_CASE("qarlos #2035: all-retracted provenance is flagged and verifies nothing",
           "[qarlos][views][crossref]") {
@@ -8658,4 +8685,103 @@ TEST_CASE("owner 2026-11-13 C: a not-stated primary value fails the selector fil
     kelvin::ResistorConstraints rc;
     rc.target_ohms = 1000;
     CHECK_THROWS_AS(kelvin::select_resistor(rs, rc), kelvin::NoCandidates);
+}
+
+// ── Qarlos r29-r31, group BB ─────────────────────────────────────────────────────────────
+// REAL TAS records: every line of tests/fixtures/qarlos_r29_*.ndjson is a verbatim line of
+// tools/qarlos/bench/data-524a699 (TAS 524a699), run through the real extractor and browse row.
+namespace r29_bb {
+json mos_row(const std::string& mpn) {
+    static const json rows = [] {
+        auto sh = kelvin::build_mosfet_shard(std::string(KELVIN_TEST_DIR) +
+                                             "/fixtures/qarlos_r29_mosfets.ndjson");
+        return kelvin::browse::browse_rows(sh, json{{"limit", 100}})["rows"];
+    }();
+    for (const auto& r : rows)
+        if (r.value("mpn", "") == mpn) return r;
+    throw std::runtime_error("fixture has no mosfet record " + mpn);
+}
+json mos_spec(const std::string& mpn) {
+    const json r = mos_row(mpn);
+    json s = mosfet_spec(r);
+    s["coss_vds"] = nz_(r["coss_vds"]);
+    return s;
+}
+}  // namespace r29_bb
+
+// BB2 (r29 seed 33666421): ROHM's SCT3060AL 'TO-247N' (record body 21 x 16 x 5 mm) against
+// Infineon's IMW65R060M2H 'TO247' / PG-TO247-3 was graded different_case and ranked below a TOLL
+// part. TO-247N is ROHM's name for the 3-lead TO-247.
+TEST_CASE("qarlos r29 BB2: ROHM TO-247N is the 3-lead TO-247", "[qarlos][crossref][r29-bb]") {
+    using kelvin::crossref::case_identity;
+    CHECK(case_identity("mosfet", "TO-247N") == case_identity("mosfet", "TO247"));
+    CHECK(case_identity("mosfet", "TO-247N") == case_identity("mosfet", "PG-TO247-3"));
+    CHECK(case_identity("mosfet", "TO-247N") != case_identity("mosfet", "TO-247-4L"));
+    kelvin::crossref::Options opt;
+    opt.max_results = 5;
+    const json r = kelvin::crossref::cross_reference(
+        "mosfet", r29_bb::mos_spec("SCT3060AL"),
+        json::array({r29_bb::mos_spec("IMW65R060M2H")}), opt);
+    REQUIRE(r["candidates"].size() == 1);
+    const json& c = r["candidates"][0];
+    CHECK(c["footprint"] == "fits");
+    CHECK(verdict_of(c, "footprint") == "pass");
+}
+
+// BB4 (r31): ASEM1-14.31818MHZ-LC-T "3225 4-SMD" against IQD's 831025493 "CFPS-39" (a vendor
+// package code naming no body; the record states 3.2 x 2.5 mm) was graded different_case with
+// the note "3.2 x 2.5 mm against 3.2 x 2.5 mm — different land pattern". A record stating the
+// body the other side's case names is the same body: not an established land change (pads
+// still unverified). The 7 x 5 mm CFPS-73 (831018538) stays a different case.
+TEST_CASE("qarlos r31 BB4: a timing record stating the body the other case names is that body",
+          "[qarlos][crossref][timing][r29-bb]") {
+    using dec_1113_s::timing_spec;
+    auto rec = [](const std::string& mpn) -> json {
+        std::ifstream in(std::string(KELVIN_TEST_DIR) + "/fixtures/qarlos_r29_timing.ndjson");
+        for (std::string l; std::getline(in, l);)
+            if (l.find("\"reference\": \"" + mpn + "\"") != std::string::npos ||
+                l.find("\"reference\":\"" + mpn + "\"") != std::string::npos)
+                return timing_spec(l.c_str());
+        throw std::runtime_error("fixture has no record " + mpn);
+    };
+    using kelvin::crossref::timing_body_agrees;
+    CHECK(timing_body_agrees("3225", 0.0032, 0.0025));
+    CHECK_FALSE(timing_body_agrees("3225", 0.007, 0.005));
+    CHECK_FALSE(timing_body_agrees("3225", 0.0032, std::nullopt));
+    const auto r = kelvin::crossref::cross_reference(
+        "timeBase", rec("ASEM1-14.31818MHZ-LC-T"),
+        json::array({rec("831025493"), rec("831018538")}));
+    json same, big;
+    for (const auto& c : r["candidates"]) {
+        if (c["mpn"] == "831025493") same = c;
+        if (c["mpn"] == "831018538") big = c;
+    }
+    REQUIRE(!same.is_null());
+    REQUIRE(!big.is_null());
+    CHECK(same.value("footprint", "") != "different_case");
+    CHECK_FALSE(has_note(same, "different land pattern"));
+    CHECK(has_note(same, "names the 3225 body and the substitute's record states that body"));
+    CHECK(big.value("footprint", "") == "different_case");
+}
+
+// BB5 (bench 20680025): CWR06FH335KCB's case-gate note gave "5.08 x 1.27 mm", a size its record
+// (case "C", series CWR06) states nowhere. It is CWR06's case C from the series' case table
+// (Vishay doc 40009, owner 2026-11-13) — correct, but the note now says where it comes from.
+// Specs: web/src/crossref.js specs of the data-524a699 rows.
+namespace r29_bb {
+const char* kCWR06FH335KCB = R"KSPEC({"mpn":"CWR06FH335KCB","length_m":null,"width_m":null,"height_m":null,"case_code":"C","mount":"SMT","lead_pitch_m":null,"is_production":false,"provenance_retracted":false,"retracted_fields":[],"retraction_reason":"","box_axes_ambiguous":false,"value_si":0.0000033,"voltage":10,"esr":5.5,"ripple_current":null,"technology":"tantalum-mno2","dielectric_code":"","family":"CWR06","voltage_ac":null,"esr_frequency":100000,"temp_min_C":-55,"temp_max_C":125,"ripple_current_frequency":null,"ripple_current_temperature":null,"safety_class":null,"capacitance_min":0.00000297,"capacitance_max":0.00000363,"lead_form":null,"qualified_spec":null,"qualified_grade":null,"qualified_failure_rate":null})KSPEC";
+const char* kCWR11HH335KB = R"KSPEC({"mpn":"CWR11HH335KB","length_m":0.0035,"width_m":0.0028,"height_m":0.0019,"case_code":"1411","mount":"SMT","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"retracted_fields":[],"retraction_reason":"","box_axes_ambiguous":false,"value_si":0.0000032999999999999997,"voltage":15,"esr":5,"ripple_current":0.13,"technology":"tantalum-mno2","dielectric_code":"","family":"T492 CWR11","voltage_ac":null,"esr_frequency":100000,"temp_min_C":-55,"temp_max_C":125,"ripple_current_frequency":100000,"ripple_current_temperature":25,"safety_class":null,"capacitance_min":0.00000297,"capacitance_max":0.00000363,"lead_form":null,"qualified_spec":null,"qualified_grade":null,"qualified_failure_rate":null})KSPEC";
+}  // namespace r29_bb
+TEST_CASE("qarlos bench BB5: a table land in the case-gate note names its table",
+          "[qarlos][crossref][r29-bb]") {
+    const json r = kelvin::crossref::cross_reference(
+        "capacitor", json::parse(r29_bb::kCWR06FH335KCB),
+        json::array({json::parse(r29_bb::kCWR11HH335KB)}));
+    REQUIRE(r["candidates"].size() == 1);
+    const json& c = r["candidates"][0];
+    CHECK(c["footprint"] == "different_case");
+    CHECK(has_note(c, "different package/case (C -> 1411) — 5.08 x 1.27 mm against 3.5 x 2.8 mm"));
+    CHECK(has_note(c, "the original's from the CWR06 series' case C in its case table"));
+    // The substitute's 3.5 x 2.8 mm is its record's own drawing: no source is claimed for it.
+    CHECK_FALSE(has_note(c, "the substitute's from"));
 }

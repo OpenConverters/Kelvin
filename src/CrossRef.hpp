@@ -4224,6 +4224,25 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                                num(original, "width_m"));
                 s_body = timing_case_body_code(sc, num(cand, "length_m"), num(cand, "width_m"));
             }
+            // A record whose case string is a vendor package code naming no body ("CFPS-39")
+            // but which STATES a length and width agreeing with the body the other side's
+            // case names is the same body too (Qarlos r31: ASEM1-14.31818MHZ-LC-T "3225 4-SMD"
+            // against IQD 831025493 "CFPS-39", stated 3.2 x 2.5 mm, was called a different land
+            // pattern with "3.2 x 2.5 mm against 3.2 x 2.5 mm" in the same note).
+            std::string dims_named_side;  // which side's body comes from its stated dims
+            auto dims_name_body = [&](const std::string& body, const std::string& case_str,
+                                      const json& p) {
+                return timing_case_body_tokens(case_str).empty() &&
+                       timing_body_agrees(body, num(p, "length_m"), num(p, "width_m"));
+            };
+            if (cat == "timeBase" && o_body && !s_body && dims_name_body(*o_body, sc, cand)) {
+                s_body = o_body;
+                dims_named_side = "substitute";
+            } else if (cat == "timeBase" && s_body && !o_body &&
+                       dims_name_body(*s_body, oc, original)) {
+                o_body = s_body;
+                dims_named_side = "original";
+            }
             const bool same_timing_body = o_body && s_body && *o_body == *s_body;
             if (magnetic_case ? magnetic_case_codes_differ(oc, sc)
                               : (!oc.empty() && !sc.empty() &&
@@ -4239,15 +4258,36 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 // not just two strings: CWR06DC155JCA's case "A" is CWR06's 2.54 x 1.27 mm,
                 // not the EIA 3216 (owner 2026-11-13, r16 26859036).
                 std::string bodies;
-                if (o_dims && s_dims && has_land(*o_dims) && has_land(*s_dims))
+                if (o_dims && s_dims && has_land(*o_dims) && has_land(*s_dims)) {
                     bodies = " — " + land_mm(*o_dims) + " against " + land_mm(*s_dims);
+                    // Say where a size the record does not state comes from (Qarlos bench
+                    // 20680025: CWR06FH335KCB's 5.08 x 1.27 mm is its series' case C).
+                    std::vector<std::string> src;
+                    if (o_dims->land_from_table && !o_dims->land_source.empty())
+                        src.push_back("the original's from " + o_dims->land_source);
+                    if (s_dims->land_from_table && !s_dims->land_source.empty())
+                        src.push_back("the substitute's from " + s_dims->land_source);
+                    if (!src.empty())
+                        bodies += " (" + src[0] + (src.size() > 1 ? "; " + src[1] : "") +
+                                  " — a table size, not one the record states)";
+                }
                 notes.push_back("different package/case (" + oc + " -> " + sc + ")" + bodies +
                                 " — different land pattern; a substitute to re-lay-out, not a "
                                 "drop-in (verify pads/pinout)");
             } else if (!magnetic_case && same_timing_body && case_ids.first != case_ids.second) {
-                notes.push_back("both records name the " + *o_body + " body ('" + oc + "' / '" +
-                                sc + "') in different notation — the same body size; the pad "
-                                "layout is not established by the case strings");
+                if (dims_named_side.empty())
+                    notes.push_back("both records name the " + *o_body + " body ('" + oc +
+                                    "' / '" + sc + "') in different notation — the same body "
+                                    "size; the pad layout is not established by the case "
+                                    "strings");
+                else
+                    notes.push_back(
+                        "the " + std::string(dims_named_side == "substitute" ? "original" : "substitute") +
+                        "'s case '" + (dims_named_side == "substitute" ? oc : sc) + "' names the " +
+                        *o_body + " body and the " + dims_named_side + "'s record states that body (" +
+                        (dims_named_side == "substitute" ? sc : oc) +
+                        ") — the same body size; the pad layout is not established by the case "
+                        "strings");
             }
         }
         // ── lead pitch: the land of a LEADED body ───────────────────────────

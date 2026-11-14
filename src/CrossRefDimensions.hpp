@@ -51,6 +51,10 @@ struct Dims {
     // weighed against a record's drawn body as if it were that part's body (Qarlos
     // 2026-11-09, seed 22041502). See CrossRef.hpp, the same-case rule.
     bool land_from_table = false;
+    // Where a table land came from, for the notes that print it (Qarlos bench 20680025:
+    // CWR06FH335KCB's case-gate note gave "5.08 x 1.27 mm", which its record states nowhere —
+    // it is the CWR06 series' case C). Empty when the land is the record's own drawing.
+    std::string land_source;
 };
 
 namespace dims_detail {
@@ -327,6 +331,8 @@ inline std::optional<Dims> resolve_tantalum_letter(const std::string& case_code,
     Dims d = to_metres(it->second);
     d.height_from_table = d.height.has_value();
     d.land_from_table = true;
+    d.land_source = "the " + upper(trim(series)) + " series' case " + upper(trim(case_code)) +
+                    " in its case table";
     return d;
 }
 
@@ -348,10 +354,11 @@ inline std::optional<Dims> resolve_dimensions(const std::string& case_code,
     std::string cat = category;
     for (auto& c : cat) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 
-    auto from_table = [](const LWH& v) {
+    auto from_table = [&raw](const LWH& v) {
         Dims d = to_metres(v);
         d.height_from_table = d.height.has_value();
         d.land_from_table = true;
+        d.land_source = "the case table's outline for '" + raw + "'";
         return d;
     };
 
@@ -862,6 +869,11 @@ inline std::string canonical_case_in(const std::vector<std::vector<std::string>>
 //            Kelvin-source TO-247; Qarlos r13 seed 25078643: onsemi FCH023N65S3L4 'TO-247-4'
 //            against Infineon IPZ65R019C7 'TO247 4-pin' / PG-TO247-4 was called a different
 //            package). It is NOT the 3-lead TO-247: the groups stay apart.
+//   TO-247 also = ROHM's TO-247N (Qarlos r29 seed 33666421: SCT3060AL 'TO-247N' against
+//            Infineon IMW65R060M2H 'TO247' / PG-TO247-3 was graded a different case). All 14
+//            catalogue records naming TO-247N are ROHM's; the 4 that state a body give
+//            21 x 16 x 5 mm, the 3-lead TO-247 body (table: 20 x 15.9 x 5.3 mm). ROHM's
+//            four-lead part is 'TO-247-4L' and stays in the TO-247-4 group.
 // Different outlines stay different: Q-DPAK, D2PAK-7 / D2PAK 7-pin / TO-263-7, the
 // asymmetric-lead 'TO247 4-pin (asymmetric leads)', 'TO-247-4 HC 8.8mm', Toshiba's
 // TO-247-4L(X), ST's HiP247-4, sTOLL, DPAK+, ThinDPAK, TO-220SIS each normalise to
@@ -874,7 +886,7 @@ inline std::string canonical_mosfet_case(const std::string& s) {
         {"I2PAK", "TO262", "TO2623"},
         {"TO220", "TO2203", "TO220AB", "PGTO2203"},
         {"TO220FP", "TO220FULLPAK", "TO220F", "TO2203FULLPAK", "TO220FP3"},
-        {"TO247", "TO2473", "TO247AC", "TO247AD", "PGTO2473"},
+        {"TO247", "TO2473", "TO247AC", "TO247AD", "PGTO2473", "TO247N"},
         {"TO2474", "TO2474L", "TO2474PIN", "PGTO2474"},
         {"SOT23", "TO236", "TO236AB", "SOT233"},
         {"SOT223", "TO261", "TO261AA", "SOT2234", "TO2614"},
@@ -1161,9 +1173,9 @@ inline bool generic_package_names_no_land(const std::string& code) {
 // When the record states its length and width they must agree with the code within
 // kTimingBodyTolMm (either orientation), otherwise nothing is read. Never read from an MPN or a
 // description: the case string is the record's own package field.
-inline std::optional<std::string> timing_case_body_code(const std::string& code,
-                                                        std::optional<double> length_m,
-                                                        std::optional<double> width_m) {
+// The standard crystal / oscillator body codes a timing case string's tokens name (see
+// timing_case_body_code below), as found; empty when it names none.
+inline std::set<std::string> timing_case_body_tokens(const std::string& code) {
     static const std::set<std::string> kBodies = {"1210", "1612", "2012", "2016", "2520",
                                                   "3215", "3225", "5032", "6035", "7050"};
     std::set<std::string> found;
@@ -1177,15 +1189,28 @@ inline std::optional<std::string> timing_case_body_code(const std::string& code,
         else flush();
     }
     flush();
+    return found;
+}
+
+// Whether a stated length and width (metres, both required) are the LLWW body code's within
+// kTimingBodyTolMm, either orientation.
+inline bool timing_body_agrees(const std::string& body, std::optional<double> length_m,
+                               std::optional<double> width_m) {
+    if (!length_m || !width_m) return false;
+    constexpr double kTimingBodyTolMm = 0.2;
+    const double l = std::stod(body.substr(0, 2)) / 10.0, w = std::stod(body.substr(2)) / 10.0;
+    const double sl = *length_m * 1e3, sw = *width_m * 1e3;
+    auto near = [](double a, double b) { return std::fabs(a - b) <= kTimingBodyTolMm; };
+    return (near(l, sl) && near(w, sw)) || (near(l, sw) && near(w, sl));
+}
+
+inline std::optional<std::string> timing_case_body_code(const std::string& code,
+                                                        std::optional<double> length_m,
+                                                        std::optional<double> width_m) {
+    const std::set<std::string> found = timing_case_body_tokens(code);
     if (found.size() != 1) return std::nullopt;
     const std::string body = *found.begin();
-    if (length_m && width_m) {
-        constexpr double kTimingBodyTolMm = 0.2;
-        const double l = std::stod(body.substr(0, 2)) / 10.0, w = std::stod(body.substr(2)) / 10.0;
-        const double sl = *length_m * 1e3, sw = *width_m * 1e3;
-        auto near = [](double a, double b) { return std::fabs(a - b) <= kTimingBodyTolMm; };
-        if (!((near(l, sl) && near(w, sw)) || (near(l, sw) && near(w, sl)))) return std::nullopt;
-    }
+    if (length_m && width_m && !timing_body_agrees(body, length_m, width_m)) return std::nullopt;
     return body;
 }
 
