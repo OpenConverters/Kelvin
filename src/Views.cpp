@@ -849,6 +849,15 @@ int unstate_retracted_ratings(MagneticRow& r) {
         r.impedance_100mhz = r.impedance_peak = r.impedance_peak_freq = kNaN();
         ++n;
     }
+    // A CMC's DM readings come from differentialModeImpedancePoints, or from the
+    // impedancePoints tagged "differential" when that field is absent: either retraction
+    // unstates them.
+    if ((present(r.dm_impedance_100mhz) || present(r.dm_impedance_peak)) &&
+        (field_retracted(r, "electrical.impedancePoints") ||
+         field_retracted(r, "electrical.differentialModeImpedancePoints"))) {
+        r.dm_impedance_100mhz = r.dm_impedance_peak = r.dm_impedance_peak_freq = kNaN();
+        ++n;
+    }
     return n;
 }
 
@@ -1626,6 +1635,85 @@ void magnetic_saturation_from_bias_curve(const json& elec, MagneticRow& r) {
             r.saturation_percent_drop = r.sat_table_percent_drop[i];
         }
 }
+// Which points of an impedancePoints array make one curve. MAS tags a point with `winding`
+// only where one array holds several curves: a common-mode choke's impedancePoints carry the
+// common-mode AND the differential-mode curve in one array ("common" / "differential", 616
+// records, survey of data-524a699), and the extractor used to read them as one curve — in 185
+// records the largest sample, taken as the CM "peak", was a DM point (744290130: its DM
+// resonance outranked its CM curve). Untagged points of a CMC are common-mode (MAS: CMC
+// impedancePoints are "Common-mode impedance vs. frequency").
+//   Untagged     — every point (a part with one curve); a record that tags its points with
+//                  more than one winding states several curves and yields none here.
+//   Common       — the CMC's "common" or untagged points.
+//   Differential — the CMC's "differential" points.
+enum class ImpedanceMode { Untagged, Common, Differential };
+std::vector<std::pair<double, double>> impedance_curve_points(const json& pts,
+                                                              ImpedanceMode mode) {
+    std::vector<std::pair<double, double>> curve;  // (frequency, |Z|), sorted by frequency
+    std::string first_tag;
+    bool several_tags = false;
+    for (const auto& pt : pts) {
+        if (!pt.is_object()) continue;
+        const auto w = get_str(pt, "winding");
+        if (mode == ImpedanceMode::Untagged && w) {
+            if (first_tag.empty()) first_tag = *w;
+            else if (*w != first_tag) several_tags = true;
+        }
+        if (mode == ImpedanceMode::Common && w && *w != "common") continue;
+        if (mode == ImpedanceMode::Differential && (!w || *w != "differential")) continue;
+        auto f = get_num(pt, "frequency");
+        const json* z = obj_get(pt, "impedance");
+        if (!f || !z) continue;
+        auto mag = get_num(*z, "magnitude");
+        if (!mag || *mag <= 0 || *f <= 0) continue;
+        curve.emplace_back(*f, *mag);
+    }
+    if (several_tags) return {};
+    std::sort(curve.begin(), curve.end());
+    return curve;
+}
+
+// The readings Kelvin ranks a |Z|(f) curve on: |Z| at the conventional 100 MHz test point
+// and the bracketed peak with its frequency. A bead's published spec is |Z| at 100 MHz, and
+// TDK's own engineer calls that spot value "irrelevant and misleading" on its own: parts with
+// identical Z@100MHz routinely peak at very different heights and frequencies, which is what
+// actually decides whether the bead suppresses the noise you have. Where the catalogue
+// carries the measured curve we derive the peak and its frequency — neither is a field in any
+// vendor's datasheet table. Outputs stay NaN when the curve does not state them.
+void impedance_readings(const std::vector<std::pair<double, double>>& curve, double& at_100m_out,
+                        double& peak_out, double& peak_freq_out) {
+    // `closest` tracks a DISTANCE, and its best possible value is zero — so zero cannot also
+    // mean "nothing seen yet". It did, and the collision cost exactly the parts this field
+    // exists for: a bead sampled AT 100 MHz set closest = 0, which still read as unset, so the
+    // next point overwrote it and the 5 MHz proximity test then failed.
+    double at_100m = 0.0, closest = 0.0;
+    bool have_closest = false;
+    for (const auto& [f, mag] : curve) {
+        const double d = std::fabs(f - 1e8);
+        if (!have_closest || d < closest) {
+            closest = d;
+            at_100m = mag;
+            have_closest = true;
+        }
+    }
+    // A peak is only a peak when the curve is seen to fall on BOTH sides of it. The largest
+    // sample of a curve that ends while still rising (or starts while falling) is just where
+    // the measurement stopped: unbracketed maximum -> no peak (UNVERIFIED).
+    if (!curve.empty()) {
+        std::size_t first = 0, last = 0;
+        for (std::size_t k = 1; k < curve.size(); ++k) {
+            if (curve[k].second > curve[first].second) first = last = k;
+            else if (curve[k].second == curve[first].second) last = k;
+        }
+        if (first > 0 && last + 1 < curve.size()) {
+            peak_out = curve[first].second;
+            peak_freq_out = curve[first].first;
+        }
+    }
+    // Only claim a 100 MHz value when a sample is actually near it — extrapolating from a
+    // distant point would invent a datum.
+    if (have_closest && at_100m > 0 && closest <= 5e6) at_100m_out = at_100m;
+}
 }  // namespace
 
 std::optional<MagneticRow> extract_magnetic(const json& env) {
@@ -1733,62 +1821,28 @@ std::optional<MagneticRow> extract_magnetic(const json& env) {
         if (dcr && *dcr > 0) r.dcr = *dcr;
         auto srf = get_num(elec, "selfResonantFrequency");
         if (srf && *srf > 0) r.srf = *srf;
-        // Chip-bead impedance curve. A bead's published spec is |Z| at 100 MHz,
-        // and TDK's own engineer calls that spot value "irrelevant and
-        // misleading" on its own: parts with identical Z@100MHz routinely peak
-        // at very different heights and frequencies, which is what actually
-        // decides whether the bead suppresses the noise you have. Where the
-        // catalogue carries the measured curve we derive the peak and its
-        // frequency — neither is a field in any vendor's datasheet table.
+        // Impedance curve(s): |Z|(f) per mode (impedance_curve_points / impedance_readings,
+        // above). A common-mode choke's impedancePoints carry BOTH modes in one array, each
+        // point tagged by `winding` (616 records); the common-mode curve is its headline, the
+        // differential-mode one is read separately, and the two are never merged.
         if (const json* pts = obj_get(elec, "impedancePoints");
             pts && pts->is_array() && !pts->empty()) {
-            // `closest` tracks a DISTANCE, and its best possible value is
-            // zero — so zero cannot also mean "nothing seen yet". It did, and
-            // the collision cost exactly the parts this field exists for: a
-            // bead sampled AT 100 MHz set closest = 0, which still read as
-            // unset, so the next point overwrote it and the 5 MHz proximity
-            // test then failed. Every bead measured at the conventional test
-            // point — which is most of them — lost its headline figure.
-            double at_100m = 0.0, closest = 0.0;
-            bool have_closest = false;
-            std::vector<std::pair<double, double>> curve;  // (frequency, |Z|)
-            for (const auto& pt : *pts) {
-                if (!pt.is_object()) continue;
-                auto f = get_num(pt, "frequency");
-                const json* z = obj_get(pt, "impedance");
-                if (!f || !z) continue;
-                auto mag = get_num(*z, "magnitude");
-                if (!mag || *mag <= 0 || *f <= 0) continue;
-                curve.emplace_back(*f, *mag);
-                // nearest sample to the conventional 100 MHz test point
-                const double d = std::fabs(*f - 1e8);
-                if (!have_closest || d < closest) {
-                    closest = d; at_100m = *mag; have_closest = true;
-                }
+            const bool cmc = get_str(elec, "subtype").value_or("") == "commonModeChoke";
+            const auto cm = impedance_curve_points(*pts, cmc ? ImpedanceMode::Common
+                                                             : ImpedanceMode::Untagged);
+            impedance_readings(cm, r.impedance_100mhz, r.impedance_peak, r.impedance_peak_freq);
+            if (cmc) {
+                // differentialModeImpedancePoints is the schema's own DM field; the tagged
+                // points are read only when it is absent (every record that states both states
+                // the same points, survey of data-524a699).
+                const json* dmp = obj_get(elec, "differentialModeImpedancePoints");
+                const auto dm =
+                    dmp && dmp->is_array() && !dmp->empty()
+                        ? impedance_curve_points(*dmp, ImpedanceMode::Untagged)
+                        : impedance_curve_points(*pts, ImpedanceMode::Differential);
+                impedance_readings(dm, r.dm_impedance_100mhz, r.dm_impedance_peak,
+                                   r.dm_impedance_peak_freq);
             }
-            // A peak is only a peak when the curve is seen to fall on BOTH
-            // sides of it. The largest sample of a curve that ends while still
-            // rising (or starts while falling) is just where the measurement
-            // stopped: a bead catalogued with a single 100 MHz point carried
-            // that point as its "peak" and its "peak frequency", and the exact
-            // match on peak frequency then failed every substitute whose real
-            // peak was known. Unbracketed maximum -> no peak (UNVERIFIED).
-            std::sort(curve.begin(), curve.end());
-            if (!curve.empty()) {
-                std::size_t first = 0, last = 0;
-                for (std::size_t k = 1; k < curve.size(); ++k) {
-                    if (curve[k].second > curve[first].second) first = last = k;
-                    else if (curve[k].second == curve[first].second) last = k;
-                }
-                if (first > 0 && last + 1 < curve.size()) {
-                    r.impedance_peak = curve[first].second;
-                    r.impedance_peak_freq = curve[first].first;
-                }
-            }
-            // Only claim a 100 MHz value when a sample is actually near it —
-            // extrapolating from a distant point would invent a datum.
-            if (have_closest && at_100m > 0 && closest <= 5e6)
-                r.impedance_100mhz = at_100m;
         }
         // Transformer turns ratio (primary:secondary): electrical[0].turnsRatios[0] (a dimWithTol). Lets
         // select_magnetic rank a catalog transformer by how close its ratio is to the design's required

@@ -489,6 +489,12 @@ struct MagneticRow : RowBase {
     double impedance_100mhz = kNaN();     // ohm
     double impedance_peak = kNaN();       // ohm
     double impedance_peak_freq = kNaN();  // Hz
+    // A common-mode choke's differential-mode readings (v22, owner 2026-11-14): the same three
+    // readings off its DM |Z|(f) curve (differentialModeImpedancePoints, or the impedancePoints
+    // tagged winding "differential"); the three above are then its common-mode readings.
+    double dm_impedance_100mhz = kNaN();     // ohm
+    double dm_impedance_peak = kNaN();       // ohm
+    double dm_impedance_peak_freq = kNaN();  // Hz
     std::string device_type;              // electrical[0].subtype (inductor/transformer/…): annotated, never gated
     std::string family;                   // manufacturerInfo.family or part.family (series, for context)
     // v20: the operating-temperature range (PEAS thermal.operatingTemperature, degC), which the
