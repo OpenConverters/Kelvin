@@ -239,22 +239,26 @@ TEST_CASE("curves ff 2: MOSFET Rds(on)(Id) and Rds(on)(Tj) curves compared",
     CHECK(verdict_of(better, "rds_on_vs_tj") == "pass");
 }
 
-// 3. MOSFET gate-charge curve, read as the charge to reach each Vgs. BSC066N06NS (17.6 nC to
-// ~10 V) against BSC034N06NS (33.9 nC): ~1.9x more charge below and above the Miller plateau,
-// but BSC034N06NS's plateau sits at 4.71 V and BSC066N06NS's at 5.17 V, so at 4.737 V the
-// substitute must first pass its whole plateau (17.95 nC) where the original is still on its
-// rise (6.08 nC): 2.95x, beyond the Qg spec's 2x -> fail (the worst point decides). BSC012N06NS's curve starts at 21.7 nC / 2.6 V (~6x the charge
-// BSC066N06NS needs there -> fail): the charges are compared only at the gate voltages both
-// curves reach.
+// 3. MOSFET gate-charge curve, read as the charge to reach each Vgs and graded only ABOVE the
+// higher of the two Miller plateaus (owner 2026-11-14: the region that sets the charge at the
+// drive voltage; the plateaus are named in the note, not graded). BSC066N06NS (plateau 5.168 V,
+// 7.22 to 9.597 nC; 17.6 nC to ~10 V) against BSC034N06NS (plateau 4.714 V, 12.26 to 16.8 nC;
+// 33.9 nC): above 5.168 V the substitute needs up to 1.94x the charge (31.64 against 16.35 nC
+// at 9.408 V) -> warn (the Qg spec's 2x). Before the plateau rule the worst point was ON the
+// plateau (4.737 V: 17.95 against 6.084 nC, 2.95x -> fail). BSC012N06NS (116 nC) is ~6.7x
+// above the plateau -> fail; the reverse of the first pair passes.
 TEST_CASE("curves ff 3: MOSFET gate-charge curves compared as charge to reach Vgs",
           "[crossref][curves][curves-ff]") {
     const json r = rank("mosfet", "BSC066N06NS", {"BSC034N06NS", "BSC012N06NS"});
     const json more = find(r, "BSC034N06NS");
     REQUIRE(!more.is_null());
-    CHECK(verdict_of(more, "qg_vs_vgs") == "fail");
+    CHECK(verdict_of(more, "qg_vs_vgs") == "warn");
     CHECK(has_note(more, "gate charge to reach Vgs (Qg(Vgs), from the gate-charge curve): "
-                         "compared on both curves over 0.06103 V to 9.988 V"));
-    CHECK(has_note(more, "worst at 4.737 V: substitute 17.95 nC against the original's 6.084 nC"));
+                         "compared on both curves over 5.533 V to 9.988 V"));
+    CHECK(has_note(more, "worst at 9.408 V: substitute 31.64 nC against the original's 16.35 nC"));
+    CHECK(has_note(more, "(graded above 5.168 V only; Miller plateaus: original's at 5.168 V "
+                         "(5.15 to 5.168 V) from 7.22 to 9.597 nC, substitute's at 4.714 V "
+                         "(4.696 to 4.714 V) from 12.26 to 16.8 nC, not graded)"));
     const json big = find(r, "BSC012N06NS");
     REQUIRE(!big.is_null());
     CHECK(verdict_of(big, "qg_vs_vgs") == "fail");
@@ -263,15 +267,6 @@ TEST_CASE("curves ff 3: MOSFET gate-charge curves compared as charge to reach Vg
     CHECK(verdict_of(less, "qg_vs_vgs") == "pass");
 }
 
-// 4. MOSFET drain-current ratings against ambient temperature (electrical.ambientRatings), one
-// curve per mounting / time base / Vgs, compared only under the same conditions and judged with
-// the Id rating's bands (higher is better, WARN down to 0.7x). Nexperia NX7002BKS (0.24 A at
-// 25 degC, 0.15 A at 100 degC) and NX138BKS (0.21 A / 0.135 A), both 0.33 A as scalar Id and
-// both stated on "...Printed-Circuit Board (PCB), single-sided copper, tin-plated and mounting
-// pad for drain 1 cm2": NX138BKS for NX7002BKS is 0.875x at 25 degC -> warn, the reverse passes.
-// NX138BK states its rating on "...FR4 PCB, ..." — a different free-text condition ->
-// UNVERIFIED. The AOS duals (ABT #2388) state their per-die Id only as ambient ratings: AO4832
-// (10 A / 8 A) against AO4822 (8 A / 6.5 A) -> warn; the curve never stands in for the scalar Id.
 TEST_CASE("curves ff 4: MOSFET Id against ambient temperature compared under common conditions",
           "[crossref][curves][curves-ff]") {
     const json r = rank("mosfet", "NX7002BKS", {"NX138BKS", "NX138BK"});
@@ -305,7 +300,9 @@ TEST_CASE("curves ff 4: MOSFET Id against ambient temperature compared under com
 //  * -> V40DM60C-M3/I (0.65 V at 20 A, its curve at 125 degC): the curves are UNVERIFIED
 //    (different temperature); the basis is settled on the ORIGINAL's 25 degC curve, 0.5791 V at
 //    20 A, against 0.65 V (1.12x) -> warn.
-//  * -> STPS30L60CT: its curves carry no axis labels, so their scale is not on record: not read.
+//  * -> STPS30L60CT: its curve carries no axis labels; its own Vf (0.42 V at 15 A) lies on it,
+//    so it is read as SI (owner 2026-11-14) — but it states no temperature where the
+//    original's states 25 degC: different conditions -> UNVERIFIED.
 TEST_CASE("curves ff 5: diode Vf(If) curves compared; a 25 degC curve resolves the Vf basis",
           "[crossref][curves][curves-ff]") {
     const json up = find(rank("diode", "VT30L60C-M3/4W", {"V30D60CLHM3_A/I"}), "V30D60CLHM3_A/I");
@@ -334,8 +331,9 @@ TEST_CASE("curves ff 5: diode Vf(If) curves compared; a 25 degC curve resolves t
     const json st = find(r, "STPS30L60CT");
     REQUIRE(!st.is_null());
     CHECK(verdict_of(st, "vf_vs_if") == "unverified");
-    CHECK(has_note(st, "forward voltage against forward current (Vf(If)): the substitute's curve "
-                       "states no axis units"));
+    CHECK(has_note(st, "forward voltage against forward current (Vf(If)): measured under "
+                       "different conditions (original: T 25 degC; substitute: none stated)"));
+    CHECK(has_note(st, "read as SI because its record's own Vf of 0.42 V at 15 A lies on it"));
 }
 
 // 6. Diode Ir(Vr) curves (judged with the quiescent-current spec, borrowed: lower is better, 3x)
@@ -344,7 +342,7 @@ TEST_CASE("curves ff 5: diode Vf(If) curves compared; a 25 degC curve resolves t
 //    5.5x at 30 V -> fail; -> SS6P4CHM3_A/H (its curve at 125 degC) -> UNVERIFIED.
 //  * VS-3C40CP07L-M3 -> VS-3C20ET07T-M3: the same Cj(Vr) curve digitised twice, never above the
 //    original's -> pass. The other way round the substitute is 1001 pF against 1000 pF at
-//    0.31 V: above the original's, inside 2x -> warn (the rule has no digitisation tolerance).
+//    0.31 V: within 2 % of the original's, level -> pass (owner 2026-11-14; it was a warn).
 //  * Cj basis: STPS30L60CT (1.5 nF at 5 V) -> VS-3C20ET07T-M3 (240 pF at no stated bias): its
 //    Cj(Vr) curve reads 537.9 pF at 5 V -> pass. C3D10065A (280 pF at 0 V) -> VS-3C20ET07T-M3:
 //    its curve starts at 0.1 V, so 0 V is outside it -> never extrapolated, the basis stays
@@ -371,8 +369,9 @@ TEST_CASE("curves ff 6: diode Ir(Vr) and Cj(Vr) curves compared; a Cj curve reso
     CHECK(verdict_of(cj, "cj_vs_vr") == "pass");
     const json cj2 = find(rank("diode", "VS-3C20ET07T-M3", {"VS-3C40CP07L-M3"}), "VS-3C40CP07L-M3");
     REQUIRE(!cj2.is_null());
-    CHECK(verdict_of(cj2, "cj_vs_vr") == "warn");
-    CHECK(has_note(cj2, "worst at 0.3093 V: substitute 1001 pF against the original's 1000 pF"));
+    CHECK(verdict_of(cj2, "cj_vs_vr") == "pass");
+    CHECK(has_note(cj2, "closest to the original's limit at 0.3093 V: substitute 1001 pF against "
+                        "the original's 1000 pF (pass"));
     const json bias = find(rank("diode", "STPS30L60CT", {"VS-3C20ET07T-M3"}), "VS-3C20ET07T-M3");
     REQUIRE(!bias.is_null());
     CHECK(verdict_of(bias, "junction_capacitance") == "pass");
@@ -403,4 +402,50 @@ TEST_CASE("curves ff 7: connector current derating curves compared in amperes",
     const json p = find(rank("connector", "1744418-4", {"1744439-4"}), "1744439-4");
     REQUIRE(!p.is_null());
     CHECK(verdict_of(p, "current_vs_ambient") == "pass");
+}
+
+// 8. Curves without axis units (no xLabel / yLabel; owner 2026-11-14): read as SI when the
+// record's own scalar lies on the curve within 2 % at the scalar's stated condition, with a note;
+// otherwise not read (UNVERIFIED + note). Real records (data 524a699):
+//  * STPS30L60CT (Vf 0.42 V at 15 A, Cj 1.5 nF at 5 V) and C3D10065A (Vf 1.5 V at 10 A, Cj
+//    280 pF at 0 V): both scalars lie on their curves -> read. Vf(If) 0.5 to 20 A: C3D10065A
+//    1.65 V at 15 A against 0.42 V -> fail; and the Cj basis (5 V against 0 V) is settled on
+//    C3D10065A's curve: 215 pF at 5 V against 1.5 nF -> pass.
+//  * C3D10065A -> C4D10120A (Cj 500 pF at 0 V, on its curve): Cj(Vr) 500 against 280 pF at
+//    0 V -> warn.
+//  * IPB017N10N5: Coss 1810 pF at 50 V, its unlabelled Coss(Vds) curve reads 1500 pF there
+//    (17 % off) -> not confirmed, not read; its unlabelled Rds(on)(Tj) has no scalar to check
+//    (the scalar Rds(on) states no junction temperature) -> not read.
+TEST_CASE("curves ff 8: unlabelled curves read as SI when the record's own scalar lies on them",
+          "[crossref][curves][curves-ff]") {
+    const json c3 = find(rank("diode", "STPS30L60CT", {"C3D10065A"}), "C3D10065A");
+    REQUIRE(!c3.is_null());
+    CHECK(verdict_of(c3, "vf_vs_if") == "fail");
+    CHECK(has_note(c3, "forward voltage against forward current (Vf(If)): compared on both curves "
+                       "over 0.5 A to 20 A (7 points, log-log interpolation, conditions none "
+                       "stated); worst at 15 A: substitute 1.65 V against the original's 0.42 V"));
+    CHECK(has_note(c3, "the original's curve: its axes state no units; read as SI because its "
+                       "record's own Vf of 0.42 V at 15 A lies on it (0.42 V read there) (units "
+                       "inferred from the record's scalar)"));
+    CHECK(verdict_of(c3, "junction_capacitance") == "pass");
+    CHECK(verdict_of(c3, "junction_capacitance_basis") == "");
+    CHECK(has_note(c3, "junction capacitance compared at the original's 5 V: the substitute's "
+                       "Cj(Vr) curve reads 215 pF there"));
+    CHECK(has_note(c3, "read as SI because its record's own junction capacitance of 280 pF at "
+                       "0 V lies on it"));
+    const json c4 = find(rank("diode", "C3D10065A", {"C4D10120A"}), "C4D10120A");
+    REQUIRE(!c4.is_null());
+    CHECK(verdict_of(c4, "cj_vs_vr") == "warn");
+    CHECK(has_note(c4, "worst at 0 V: substitute 500 pF against the original's 280 pF"));
+
+    const json& ipb = row("mosfet", "IPB017N10N5");
+    CHECK(ipb["coss_curve"].value("unit_unstated", false));
+    CHECK(ipb["rds_on_tj_curve"].value("unit_unstated", false));
+    CHECK(ipb["rds_on_tj_curve"].value("unit_note", "").find("no scalar of its record") !=
+          std::string::npos);
+    const json m = find(rank("mosfet", "IPD052N10NF2S", {"IPB017N10N5"}), "IPB017N10N5");
+    REQUIRE(!m.is_null());
+    CHECK(verdict_of(m, "coss_vs_vds") == "unverified");
+    CHECK(has_note(m, "the substitute's curve: its record's Coss of 1810 pF at 50 V does not lie "
+                      "on it read as SI (1500 pF there), so the units are not confirmed"));
 }

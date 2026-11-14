@@ -2444,7 +2444,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                               "substitute's Coss(Vds) curve reads %.4g pF there (its record "
                               "states %g pF at %s) against the original's %g pF",
                               *ov, *s_at * 1e12, *sc * 1e12, sv_txt, *oc * 1e12);
-                notes.push_back(rb);
+                notes.push_back(rb + curve_checks::inferred_units(cand, "coss_curve", "substitute's"));
             } else if (o_at) {
                 curve_override["coss"] = {compare_numeric(spec_for("coss"), o_at, sc), o_at, sc};
                 std::snprintf(rb, sizeof rb,
@@ -2452,7 +2452,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                               "original's Coss(Vds) curve reads %.4g pF there (its record "
                               "states %g pF at %g V) against the substitute's %g pF",
                               *sv, *o_at * 1e12, *oc * 1e12, *ov, *sc * 1e12);
-                notes.push_back(rb);
+                notes.push_back(rb + curve_checks::inferred_units(original, "coss_curve", "original's"));
             }
         }
         if (oc && sc && ov && !curve_override.count("coss") &&
@@ -2489,7 +2489,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // A stated Vf(If) curve resolves the mismatch (owner curve rule 2026-11-14): the substitute's
     // curve read at the original's test current, else the original's curve read at the
     // substitute's stated current — inside the curve's measured range only, never extrapolated,
-    // log-log in If (curve_checks). Only a curve stated at 25 degC is read: a scalar Vf states
+    // log-log in If (curve_checks). Only a curve stated at room temperature (25 degC, or 20 degC:
+    // the same condition, owner 2026-11-14, is_room_temperature) is read: a scalar Vf states
     // no temperature on record, and the owner's decision (2026-11-14) takes it as 25 degC; a
     // curve at another temperature, or at none stated, is not on the scalar's basis. The scalar
     // comparison is then made on that common basis (the Vf spec, through curve_override["vf"])
@@ -2505,7 +2506,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             using curve_checks::read_at;
             auto at_25 = [](const json& v) -> std::optional<SpecCurve> {
                 auto c = curve_checks::view_curve(v, "vf_curve");
-                if (!c || !c->temperature || !same_stated_value(*c->temperature, 25.0))
+                if (!c || !c->temperature || !is_room_temperature(*c->temperature))
                     return std::nullopt;
                 return c;
             };
@@ -2513,26 +2514,28 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             const auto s_at = s_curve ? read_at(*s_curve, *oi, Interp::LogLog) : std::nullopt;
             const auto o_at =
                 !s_at && si && o_curve ? read_at(*o_curve, *si, Interp::LogLog) : std::nullopt;
-            char rb[480], si_txt[48] = "no stated current";
+            char rb[560], si_txt[48] = "no stated current";
             if (si) std::snprintf(si_txt, sizeof si_txt, "%g A", *si);
             if (s_at) {
                 curve_override["vf"] = {compare_numeric(spec_for("vf"), ov, s_at), ov, s_at};
                 std::snprintf(rb, sizeof rb,
                               "forward voltage compared at the original's %g A: the "
-                              "substitute's 25 degC Vf(If) curve reads %.4g V there (its record "
+                              "substitute's %g degC Vf(If) curve reads %.4g V there (its record "
                               "states %g V at %s) against the original's %g V (the scalar Vf "
-                              "states no temperature and is taken as 25 degC)",
-                              *oi, *s_at, *sv, si_txt, *ov);
-                notes.push_back(rb);
+                              "states no temperature and is taken as 25 degC; 20 and 25 degC "
+                              "are both room temperature)",
+                              *oi, *s_curve->temperature, *s_at, *sv, si_txt, *ov);
+                notes.push_back(rb + curve_checks::inferred_units(cand, "vf_curve", "substitute's"));
             } else if (o_at) {
                 curve_override["vf"] = {compare_numeric(spec_for("vf"), o_at, sv), o_at, sv};
                 std::snprintf(rb, sizeof rb,
                               "forward voltage compared at the substitute's %g A: the "
-                              "original's 25 degC Vf(If) curve reads %.4g V there (its record "
+                              "original's %g degC Vf(If) curve reads %.4g V there (its record "
                               "states %g V at %g A) against the substitute's %g V (the scalar "
-                              "Vf states no temperature and is taken as 25 degC)",
-                              *si, *o_at, *ov, *oi, *sv);
-                notes.push_back(rb);
+                              "Vf states no temperature and is taken as 25 degC; 20 and 25 degC "
+                              "are both room temperature)",
+                              *si, *o_curve->temperature, *o_at, *ov, *oi, *sv);
+                notes.push_back(rb + curve_checks::inferred_units(original, "vf_curve", "original's"));
             }
         }
         if (vf_basis_differs && !curve_override.count("vf")) {
@@ -4134,7 +4137,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                               "%s at %s) against the substitute's %s",
                               bias(*svr).c_str(), *cj_o_at * 1e12, pf(*oc).c_str(),
                               bias(*ovr).c_str(), pf(*sc).c_str());
-            notes.push_back(rb);
+            notes.push_back(rb + (cj_s_at ? curve_checks::inferred_units(cand, "cj_curve", "substitute's")
+                                          : curve_checks::inferred_units(original, "cj_curve",
+                                                                         "original's")));
             if (v == FAIL || v == WARN) {
                 demote();
                 penalty += opt.gate_weight *

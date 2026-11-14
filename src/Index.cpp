@@ -251,6 +251,8 @@ struct WriteAr {
         dblvec(c.cond_vals);
         str(c.cond_text);
         boolean(c.unit_unstated);
+        boolean(c.unit_inferred);
+        str(c.unit_note);
     }
 };
 
@@ -340,6 +342,8 @@ struct ReadAr {
         dblvec(c.cond_vals);
         str(c.cond_text);
         boolean(c.unit_unstated);
+        boolean(c.unit_inferred);
+        str(c.unit_note);
     }
 };
 

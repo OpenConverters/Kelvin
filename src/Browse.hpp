@@ -360,7 +360,11 @@ inline void extra_row_json(const ResistorRow& r, json& o) {
 inline json curve_json(const CurvePts& c) {
     // A stated curve whose axes carry no units: no points, only the marker
     // (curve_checks::view_curve reads it as "stated, not readable").
-    if (c.unit_unstated) return json{{"unit_unstated", true}};
+    if (c.unit_unstated) {
+        json m{{"unit_unstated", true}};
+        if (!c.unit_note.empty()) m["unit_note"] = c.unit_note;  // why it was not read
+        return m;
+    }
     if (c.empty()) return nullptr;
     json o{{"x", *c.x}, {"y", *c.y}};
     if (!std::isnan(c.temperature)) o["temperature"] = c.temperature;
@@ -372,6 +376,8 @@ inline json curve_json(const CurvePts& c) {
         o["conditions"] = std::move(cond);
     }
     if (!c.cond_text.empty()) o["condition_text"] = c.cond_text;
+    // Units inferred from the record's own scalar (owner 2026-11-14): the note names it.
+    if (c.unit_inferred) o["unit_inferred"] = c.unit_note;
     return o;
 }
 inline void extra_row_json(const CapacitorRow& r, json& o) {

@@ -44,6 +44,26 @@ inline bool unit_unstated(const json& view, const char* key) {
     const auto it = view.find(key);
     return it != view.end() && it->is_object() && it->value("unit_unstated", false);
 }
+// The note on a curve whose units were inferred from its record's own scalar (owner
+// 2026-11-14, Browse curve_json "unit_inferred"), as a clause naming the side: "" when the
+// curve's axes state their units.
+inline std::string inferred_units(const json& view, const char* key, const char* side) {
+    const auto it = view.find(key);
+    if (it == view.end() || !it->is_object()) return "";
+    const auto n = it->find("unit_inferred");
+    if (n == it->end() || !n->is_string()) return "";
+    return std::string("; the ") + side + " curve: " + n->get<std::string>() +
+           " (units inferred from the record's scalar)";
+}
+// Why a curve stated without axis units was not read (Browse curve_json "unit_note"), as a
+// clause naming the side: "" when none is recorded.
+inline std::string unread_units(const json& view, const char* key, const char* side) {
+    const auto it = view.find(key);
+    if (it == view.end() || !it->is_object()) return "";
+    const auto n = it->find("unit_note");
+    if (n == it->end() || !n->is_string() || n->get<std::string>().empty()) return "";
+    return std::string("; the ") + side + " curve: " + n->get<std::string>();
+}
 // view[key] as one curve (the shared spec shape, curve_from_spec); nullopt when absent / null
 // or stated without units (unit_unstated).
 inline std::optional<SpecCurve> view_curve(const json& view, const char* key) {
@@ -82,6 +102,52 @@ inline std::optional<SpecCurve> charge_to_reach_vgs(const SpecCurve& vgs_of_qg) 
     }
     if (x.size() < 2) return std::nullopt;
     SpecCurve out = vgs_of_qg;
+    out.curve = Curve(std::move(x), std::move(y));
+    return out;
+}
+
+// The Miller plateau of a gate-charge curve (Vgs against Qg), from its stated samples only:
+// in Qg order, a sample that does not raise Vgs above every earlier one is ON a plateau (the
+// gate voltage stalls while the charge goes on); consecutive such samples, with the sample that
+// set the voltage they stall at, form one stall. The Miller plateau is the stall spanning the
+// most charge. `top` is the voltage it stalls at (the highest Vgs on it), `bottom` the lowest
+// sample on it, `q_from` / `q_to` its charge span. nullopt when Vgs rises at every sample (no
+// plateau on record).
+struct Plateau {
+    double top, bottom, q_from, q_to;
+};
+inline std::optional<Plateau> miller_plateau(const SpecCurve& vgs_of_qg) {
+    const auto& q = vgs_of_qg.curve.x;
+    const auto& v = vgs_of_qg.curve.y;
+    std::optional<Plateau> best;
+    size_t max_i = 0;
+    for (size_t i = 1; i < q.size();) {
+        if (v[i] > v[max_i]) {
+            max_i = i++;
+            continue;
+        }
+        Plateau p{v[max_i], v[max_i], q[max_i], q[i]};
+        while (i < q.size() && !(v[i] > v[max_i])) {
+            p.bottom = std::min(p.bottom, v[i]);
+            p.q_to = q[i];
+            ++i;
+        }
+        if (!best || p.q_to - p.q_from > best->q_to - best->q_from) best = p;
+    }
+    return best;
+}
+// The charge-to-reach-Vgs curve (charge_to_reach_vgs) restricted to gate voltages strictly
+// above `above`: the region that sets the charge at the drive voltage (owner 2026-11-14). Only
+// stated samples; nullopt when fewer than two remain.
+inline std::optional<SpecCurve> charge_above(const SpecCurve& charge_of_vgs, double above) {
+    std::vector<double> x, y;
+    for (size_t i = 0; i < charge_of_vgs.curve.x.size(); ++i)
+        if (charge_of_vgs.curve.x[i] > above) {
+            x.push_back(charge_of_vgs.curve.x[i]);
+            y.push_back(charge_of_vgs.curve.y[i]);
+        }
+    if (x.size() < 2) return std::nullopt;
+    SpecCurve out = charge_of_vgs;
     out.curve = Curve(std::move(x), std::move(y));
     return out;
 }
@@ -287,7 +353,9 @@ inline const std::vector<std::pair<const char*, Quantity>>& mosfet_quantities() 
 }
 
 // The gate-charge curve, read as the charge to reach each Vgs (charge_to_reach_vgs) and judged
-// with the Qg spec's bands at the gate voltages both curves reach.
+// with the Qg spec's bands at the gate voltages both curves reach ABOVE the higher of the two
+// Miller plateaus (owner 2026-11-14: the region that sets the charge at the drive voltage; the
+// plateaus are named in the note and not graded).
 inline const Quantity& gate_charge_quantity() {
     static const Quantity q{"qg_vs_vgs",
                             "gate charge to reach Vgs (Qg(Vgs), from the gate-charge curve)",
@@ -349,8 +417,11 @@ inline std::optional<Result> unscaled(const json& orig, const json& cand, const 
     r.note = std::string(q.what) + ": the " +
              (o && s ? "original's and the substitute's curves state"
                      : o ? "original's curve states" : "substitute's curve states") +
-             " no axis units (no xLabel / yLabel on record), so the scale is not known — not "
-             "compared; confirm from the datasheet";
+             " no axis units (no xLabel / yLabel on record) and its record's own scalar does "
+             "not confirm SI, so the scale is not known — not compared; confirm from the "
+             "datasheet" +
+             (o ? unread_units(orig, key, "original's") : std::string()) +
+             (s ? unread_units(cand, key, "substitute's") : std::string());
     return r;
 }
 inline bool states(const json& view, const char* key) {
@@ -372,7 +443,9 @@ inline std::vector<CurveRow> run(const std::string& cat, const json& orig, const
             out.push_back({q.row, *u});
             return;
         }
-        out.push_back({q.row, compare_pair(*view_curve(orig, key), *view_curve(cand, key), q)});
+        Result r = compare_pair(*view_curve(orig, key), *view_curve(cand, key), q);
+        r.note += inferred_units(orig, key, "original's") + inferred_units(cand, key, "substitute's");
+        out.push_back({q.row, r});
     };
     if (cat == "mosfet") {
         for (const auto& [key, q] : mosfet_quantities()) one(key, q);
@@ -381,10 +454,49 @@ inline std::vector<CurveRow> run(const std::string& cat, const json& orig, const
             if (auto u = unscaled(orig, cand, "qg_curve", qg)) {
                 out.push_back({qg.row, *u});
             } else {
-                const auto o = charge_to_reach_vgs(*view_curve(orig, "qg_curve"));
-                const auto s = charge_to_reach_vgs(*view_curve(cand, "qg_curve"));
-                if (o && s) {
-                    out.push_back({qg.row, compare_pair(*o, *s, qg)});
+                const SpecCurve oc = *view_curve(orig, "qg_curve"), sc = *view_curve(cand, "qg_curve");
+                const auto o = charge_to_reach_vgs(oc);
+                const auto s = charge_to_reach_vgs(sc);
+                // Owner 2026-11-14: graded only above the higher of the two Miller plateaus —
+                // the region that sets the charge at the drive voltage; the plateaus are named
+                // and not graded.
+                const auto op = miller_plateau(oc), sp = miller_plateau(sc);
+                char pb[320];
+                auto plateau_txt = [&](const std::optional<Plateau>& p, const char* side) {
+                    if (!p) return std::string(side) + " none (Vgs rises at every sample)";
+                    std::snprintf(pb, sizeof pb, "%s at %.4g V (%.4g to %.4g V) from %.4g to %.4g nC",
+                                  side, p->top, p->bottom, p->top, p->q_from * 1e9, p->q_to * 1e9);
+                    return std::string(pb);
+                };
+                const std::string plateaus = "Miller plateaus: " + plateau_txt(op, "original's") +
+                                             ", " + plateau_txt(sp, "substitute's") +
+                                             ", not graded";
+                if (o && s && (!op || !sp)) {
+                    Result r;
+                    r.note = std::string(qg.what) + ": " + plateaus +
+                             "; the region above the plateau cannot be located on a curve "
+                             "without one — not compared; confirm from the datasheet";
+                    out.push_back({qg.row, r});
+                } else if (o && s) {
+                    const double above = std::max(op->top, sp->top);
+                    const auto oa = charge_above(*o, above), sa = charge_above(*s, above);
+                    Result r;
+                    if (oa && sa) {
+                        r = compare_pair(*oa, *sa, qg);
+                        std::snprintf(pb, sizeof pb, " (graded above %.4g V only; ", above);
+                        r.note += pb + plateaus + ")";
+                    } else {
+                        std::snprintf(pb, sizeof pb,
+                                      "%s: the %s fewer than two stated samples above %.4g V, "
+                                      "the higher of the two Miller plateaus (",
+                                      qg.what,
+                                      !oa && !sa ? "original's and the substitute's curves state"
+                                      : !oa      ? "original's curve states"
+                                                 : "substitute's curve states",
+                                      above);
+                        r.note = pb + plateaus + ") — not compared; confirm from the datasheet";
+                    }
+                    out.push_back({qg.row, r});
                 } else {
                     Result r;
                     r.note = std::string(qg.what) + ": the " +

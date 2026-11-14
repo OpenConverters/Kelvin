@@ -98,10 +98,16 @@ struct CurvePts {
     std::vector<double> cond_vals;
     std::string cond_text;
     // A datasheetInfo.curves entry stating no axis label (xLabel / yLabel, which carry the
-    // units): its scale is not on record, so its points are NOT read (x / y stay empty) and this
-    // marks that the record states the curve all the same — the comparison reports it
-    // UNVERIFIED with a note instead of taking the numbers as SI on trust.
+    // units) and whose units its record's own scalar could not confirm: its points are NOT
+    // read (x / y stay empty) and this marks that the record states the curve all the same —
+    // the comparison reports it UNVERIFIED with a note instead of taking the numbers as SI.
     bool unit_unstated = false;
+    // Owner 2026-11-14: an unlabelled curve IS read as SI when its record's own scalar lies on
+    // it within 2 % at the scalar's stated condition (Views.cpp settle_unit_unstated):
+    // unit_inferred, and unit_note names the scalar that confirmed it. On a curve left
+    // unit_unstated, unit_note says why it was not read ("" = no reason recorded).
+    bool unit_inferred = false;
+    std::string unit_note;
     bool empty() const { return !x || x->empty(); }
 };
 

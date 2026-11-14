@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <unordered_map>
 
+#include "CrossRefCurves.hpp"      // crossref::curve_at (unit check of unlabelled curves)
 #include "CrossRefDimensions.hpp"  // crossref::normalize_mount (smd / leaded)
 #include "DimensionJson.hpp"       // PEAS::resolve_dimensional_values (json overload)
 
@@ -139,12 +140,80 @@ CurvePts read_named_curve(const json& di, const char* name, const std::string& m
     // on record: not read, never assumed SI — marked, so the comparison says why it is
     // UNVERIFIED (6 records in data 524a699: IPB017N10N5 cossVsVds / rdsOnVsTj, STPS30L60CT,
     // C3D10065A and C4D10120A forwardVoltageVsCurrent / capacitanceVsVoltage).
+    // Owner 2026-11-14: such a curve is read as SI when its record's own scalar lies on it
+    // (settle_unit_unstated below, which every unlabelled curve goes through). Until then the
+    // points are read as SI and the curve is marked.
     if (!get_str(*c, "xLabel") || !get_str(*c, "yLabel")) {
-        CurvePts out;
+        CurvePts out = read_xy_curve(*c, mpn + ": curves." + name);
         out.unit_unstated = true;
         return out;
     }
     return read_xy_curve(*c, mpn + ": curves." + name);
+}
+
+// The record's own scalar a curve without axis units is checked against (owner 2026-11-14):
+// `scalar` (SI, in the curve's y quantity) stated at `at` (SI, on the curve's x axis). Both
+// must be stated; the curve is read at `at` with the comparison's own interpolation.
+struct UnitCheck {
+    std::optional<double> scalar, at;
+    bool loglog = false;
+    const char* what = "";    // "Coss"
+    const char* y_unit = "";  // printed unit of the scalar, after y_scale
+    double y_scale = 1.0;
+    const char* x_unit = "";  // printed unit of `at`
+};
+// An unlabelled curve (read_named_curve) is kept, read as SI, only when the record's own scalar
+// lies on it within 2 % at the scalar's stated condition; it is then marked unit_inferred and
+// its unit_note says which scalar confirmed it. Otherwise its points are dropped (stated, not
+// readable: unit_unstated) and unit_note says why — no scalar to check, the scalar's condition
+// outside the curve, or the scalar not on it. A labelled curve is left as it is.
+void settle_unit_unstated(CurvePts& c, const UnitCheck* check) {
+    if (!c.unit_unstated) return;
+    auto drop = [&](std::string why) {
+        CurvePts out;
+        out.unit_unstated = true;
+        out.unit_note = std::move(why);
+        c = std::move(out);
+    };
+    if (c.empty()) return drop("");
+    if (!check || !check->scalar || !check->at)
+        return drop("no scalar of its record states a value on it to check the units against");
+    char b[320];
+    const double sc = *check->scalar, at = *check->at;
+    std::optional<double> read;
+    {
+        std::vector<double> xs(c.x->begin(), c.x->end()), ys(c.y->begin(), c.y->end());
+        const crossref::Curve cv(std::move(xs), std::move(ys));
+        bool ok = true;
+        if (check->loglog)
+            for (size_t i = 0; i < cv.x.size(); ++i)
+                if (!(cv.x[i] > 0) || !(cv.y[i] > 0)) ok = false;
+        if (ok) read = crossref::curve_at(cv, at, check->loglog ? crossref::Interp::LogLog
+                                                                : crossref::Interp::Linear);
+    }
+    if (!read) {
+        std::snprintf(b, sizeof b,
+                      "its record's %s of %.4g %s is stated at %g %s, which the curve does not "
+                      "reach as SI, so the units cannot be checked",
+                      check->what, sc * check->y_scale, check->y_unit, at, check->x_unit);
+        return drop(b);
+    }
+    if (!(std::fabs(*read - sc) <= crossref::kCurveLevelFraction * std::fabs(sc))) {
+        std::snprintf(b, sizeof b,
+                      "its record's %s of %.4g %s at %g %s does not lie on it read as SI "
+                      "(%.4g %s there), so the units are not confirmed",
+                      check->what, sc * check->y_scale, check->y_unit, at, check->x_unit,
+                      *read * check->y_scale, check->y_unit);
+        return drop(b);
+    }
+    std::snprintf(b, sizeof b,
+                  "its axes state no units; read as SI because its record's own %s of %.4g %s "
+                  "at %g %s lies on it (%.4g %s read there)",
+                  check->what, sc * check->y_scale, check->y_unit, at, check->x_unit,
+                  *read * check->y_scale, check->y_unit);
+    c.unit_unstated = false;
+    c.unit_inferred = true;
+    c.unit_note = b;
 }
 
 // A dimensionWithTolerance-or-scalar field, collapsed to a scalar with the CANONICAL resolver
@@ -844,6 +913,30 @@ std::optional<MosfetRow> extract_mosfet(const json& env) {
     r.rds_on_id_curve = read_named_curve(*di, "rdsOnVsId", *mpn);
     r.rds_on_tj_curve = read_named_curve(*di, "rdsOnVsTj", *mpn);
     r.qg_curve = read_named_curve(*di, "gateCharge", *mpn);
+    {
+        // Unlabelled curves: checked against the record's own scalar at its stated condition.
+        auto opt = [](double v) { return present(v) ? std::optional<double>(v) : std::nullopt; };
+        auto elec_pos = [&](const char* k) -> std::optional<double> {
+            auto v = get_num(*elec, k);
+            return pos(v) ? v : std::nullopt;
+        };
+        const std::optional<double> cvds = opt(r.coss_vds);
+        const UnitCheck ciss{elec_pos("inputCapacitance"), cvds, false, "Ciss", "pF", 1e12, "V"};
+        const UnitCheck coss{opt(r.coss), cvds, false, "Coss", "pF", 1e12, "V"};
+        const UnitCheck crss{elec_pos("reverseTransferCapacitance"), cvds, false, "Crss", "pF",
+                             1e12, "V"};
+        const UnitCheck rid{opt(r.rds_on), elec_pos("onResistanceId"), false, "Rds(on)", "mohm",
+                            1e3, "A"};
+        settle_unit_unstated(r.ciss_curve, &ciss);
+        settle_unit_unstated(r.coss_curve, &coss);
+        settle_unit_unstated(r.crss_curve, &crss);
+        settle_unit_unstated(r.rds_on_id_curve, &rid);
+        // Rds(on)(Tj): the scalar Rds(on) states no junction temperature, so it has no x on this
+        // curve; the gate-charge curve's x is the charge, no scalar states a Vgs-to-charge point
+        // checked here. Neither is checked.
+        settle_unit_unstated(r.rds_on_tj_curve, nullptr);
+        settle_unit_unstated(r.qg_curve, nullptr);
+    }
     // Ambient ratings (the package's, or the identical dies' this row is read from — the 43
     // AOS duals state their per-die Id only here, ABT #2388): one curve per rating and per
     // gate-source voltage its points state, x = ambient degC, y = |Id| (a P-channel record
@@ -1055,6 +1148,17 @@ std::optional<DiodeRow> extract_diode(const json& env) {
     r.vf_curve = read_named_curve(*di, "forwardVoltageVsCurrent", *mpn);
     r.ir_curve = read_named_curve(*di, "reverseCurrentVsVoltage", *mpn);
     r.cj_curve = read_named_curve(*di, "capacitanceVsVoltage", *mpn);
+    {
+        // Unlabelled curves: checked against the record's own scalar at its stated condition.
+        auto opt = [](double v) { return present(v) ? std::optional<double>(v) : std::nullopt; };
+        const UnitCheck vf{opt(r.vf_typ), opt(r.vf_test_current), true, "Vf", "V", 1.0, "A"};
+        const UnitCheck cj{opt(r.junction_capacitance), opt(r.junction_capacitance_vr), false,
+                           "junction capacitance", "pF", 1e12, "V"};
+        settle_unit_unstated(r.vf_curve, &vf);
+        // Ir(Vr): the record's reverse leakage states no reverse voltage on record — not checked.
+        settle_unit_unstated(r.ir_curve, nullptr);
+        settle_unit_unstated(r.cj_curve, &cj);
+    }
     r.clamping_waveform = get_str(*elec, "clampingWaveform").value_or("");
     r.peak_pulse_power_waveform = get_str(*elec, "peakPulsePowerWaveform").value_or("");
     r.peak_pulse_current_waveform = get_str(*elec, "peakPulseCurrentWaveform").value_or("");
