@@ -1,5 +1,6 @@
 #include "CrossRef.hpp"  // kGrossOverRatingFactor (one rule with the cross-reference)
 #include "MfrPolicy.hpp"
+#include "DiodeLoss.hpp"
 #include "MosfetLoss.hpp"
 #include "Select.hpp"
 
@@ -322,6 +323,73 @@ json select_mosfet(const Shard<MosfetRow>& shard, const MosfetConstraints& c, Mo
     return result;
 }
 
+namespace {
+
+// Board area of a diode (owner 2026-11-14), resolved exactly as board_area_json(MosfetRow):
+// the record's drawn L x W, else the case table's outline for its case code.
+json board_area_json(const DiodeRow& d) {
+    json p = json::object();
+    if (present(d.length_m)) p["length_m"] = d.length_m;
+    if (present(d.width_m)) p["width_m"] = d.width_m;
+    if (present(d.height_m)) p["height_m"] = d.height_m;
+    if (!d.case_code.empty()) p["case_code"] = d.case_code;
+    if (!d.mount.empty()) p["mount"] = d.mount;
+    const auto dm = crossref::dims_of(p, "diode");
+    if (!dm || !crossref::has_land(*dm))
+        return {{"mm2", nullptr},
+                {"basis", "not stated: no drawn L x W and no resolvable case code" +
+                              (d.case_code.empty() ? std::string() : " ('" + d.case_code + "')")}};
+    return {{"mm2", *dm->length * *dm->width * 1e6},
+            {"basis", dm->land_from_table ? dm->land_source
+                                          : std::string("the record's drawn length x width")}};
+}
+
+// Price of a diode (owner 2026-11-14), as price_json(MosfetRow).
+json price_json(const DiodeRow& d, std::optional<double> quantity) {
+    json p;
+    p["quantity"] = quantity ? json(*quantity) : json(nullptr);
+    p["atQuantity"] = nullptr;
+    p["quotes"] = d.price_quotes.empty() ? json::array() : json::parse(d.price_quotes);
+    p["basis"] = d.price_quotes.empty()
+                     ? "not stated: the record carries no distributor cost"
+                     : "unit cost as the distributor states it; the record carries no price "
+                       "breaks, so the price at a given quantity is not stated";
+    return p;
+}
+
+// The curves a diode row carries for the loss terms (datasheetInfo.curves, SI).
+DiodeCurves diode_curves_of(const DiodeRow& d) { return {&d.vf_curve, &d.cj_curve, &d.ir_curve}; }
+
+json diode_loss_json(const DiodeLossBreakdown& lb, const DiodeLossOperatingPoint& op) {
+    json loss;
+    loss["position"] = to_string(op.position);
+    loss["dutyCycle"] = lb.duty;
+    loss["dutyBasis"] = lb.duty_basis;
+    loss["forwardCurrent"] = lb.i_on;
+    loss["averageForwardCurrent"] = lb.i_avg;
+    loss["terms"] = {{"conduction", loss_term_json(lb.conduction)},
+                     {"switching", loss_term_json(lb.switching)},
+                     {"leakage", loss_term_json(lb.leakage)}};
+    const auto tot = lb.total();
+    loss["total"] = tot ? json(*tot) : json(nullptr);
+    loss["computedSum"] = lb.computed_sum();
+    loss["unverified"] = lb.unverified();
+    loss["notes"] = lb.notes;
+    return loss;
+}
+
+json diode_loss_op_json(const DiodeLossOperatingPoint& op) {
+    json o = {{"position", to_string(op.position)}, {"inputVoltage", op.vin},
+              {"outputCurrent", op.iout}, {"switchingFrequency", op.fsw},
+              {"dutyCycle", op.duty_value()}};
+    if (op.vout) o["outputVoltage"] = *op.vout;
+    if (op.ripple_pp) o["inductorRippleCurrent"] = *op.ripple_pp;
+    if (op.tj) o["junctionTemperature"] = *op.tj;
+    return o;
+}
+
+}  // namespace
+
 json select_diode(const Shard<DiodeRow>& shard, const DiodeConstraints& c, DiodeTiebreaker tb,
                   size_t max_candidates, RecordFetcher* fetcher, const MfrPolicy& mfr) {
     c.validate();
@@ -343,6 +411,19 @@ json select_diode(const Shard<DiodeRow>& shard, const DiodeConstraints& c, Diode
     if (passing.empty())
         throw NoCandidates("DiodeConstraints", emit_rejections(rej), shard.meta.source_line_count);
 
+    // LOWEST_OPERATING_POINT_LOSS (owner 2026-11-14): the caller's operating point, required.
+    const bool op_loss_mode = tb == DiodeTiebreaker::LowestOperatingPointLoss;
+    std::map<const DiodeRow*, DiodeLossBreakdown> op_loss;
+    if (op_loss_mode) {
+        if (!c.loss_op)
+            throw InvalidOptions("lowest_operating_point_loss requires a lossOperatingPoint "
+                                 "(position, inputVoltage, outputCurrent, switchingFrequency, "
+                                 "dutyCycle or outputVoltage)");
+        c.loss_op->validate();
+        for (const DiodeRow* d : passing)
+            op_loss.emplace(d, diode_loss(*d, *c.loss_op, diode_curves_of(*d)));
+    }
+
     // A NaN metric would make this comparator violate strict weak ordering, which is UB
     // in std::sort — not merely a wrong order. vf_typ is NaN on subtypes that publish no
     // forward voltage (a zener may pass both gates and still have none), so an unknown
@@ -355,17 +436,49 @@ json select_diode(const Shard<DiodeRow>& shard, const DiodeConstraints& c, Diode
             case DiodeTiebreaker::LowestQrr: m = d->qrr; break;
             case DiodeTiebreaker::HighestVrrmMargin: m = -d->vrrm_rated / c.vrrm_min; break;
             case DiodeTiebreaker::HighestIfMargin: m = -d->if_avg_rated / c.if_avg_min; break;
+            case DiodeTiebreaker::LowestOperatingPointLoss: m = op_loss.at(d).computed_sum(); break;
         }
         return std::isnan(m) ? worst : m;
     };
+    // Operating-point loss: a candidate with an UNVERIFIED term ranks after every fully
+    // computed one (owner 2026-11-14) — first key; among the incomplete ones, fewer
+    // unverified terms first, then the sum of the terms that were computed.
+    auto unverified_terms = [&](const DiodeRow* d) -> size_t {
+        return op_loss_mode ? op_loss.at(d).unverified().size() : 0;
+    };
+    // Gross over-rating (owner 2026-11-14): Vrrm or If(avg) more than kGrossOverRatingFactor
+    // (3x) the requirement. A tier just above the metric under lowest_vf / lowest_qrr; a flag
+    // and a note only under the operating-point loss (the loss decides) and the margin
+    // rankings (a higher rating is what they ask for). Never excluded.
+    auto over_rated_axes = [&](const DiodeRow* d) {
+        std::vector<std::string> axes;
+        if (d->vrrm_rated > crossref::kGrossOverRatingFactor * c.vrrm_min) axes.push_back("vrrm");
+        if (present(d->if_avg_rated) && d->if_avg_rated > crossref::kGrossOverRatingFactor * c.if_avg_min)
+            axes.push_back("if_avg");
+        return axes;
+    };
+    const bool over_rating_ranks = c.over_rating_tier && !op_loss_mode &&
+                                   tb != DiodeTiebreaker::HighestVrrmMargin &&
+                                   tb != DiodeTiebreaker::HighestIfMargin;
+    auto over_rated = [&](const DiodeRow* d) -> size_t {
+        return over_rating_ranks ? over_rated_axes(d).size() : 0;
+    };
+    // Under the operating-point loss, total loss alone sets the order after the UNVERIFIED key
+    // (owner 2026-11-14): the thermal tier does not reorder it.
+    auto thermal_tier = [&](const DiodeRow* d) -> int {
+        return !op_loss_mode && d->no_thermal() ? 1 : 0;
+    };
     std::sort(passing.begin(), passing.end(), [&](const DiodeRow* a, const DiodeRow* b) {
-        return std::make_tuple(a->no_thermal() ? 1 : 0, metric(a), a->lineno) <
-               std::make_tuple(b->no_thermal() ? 1 : 0, metric(b), b->lineno);
+        return std::make_tuple(unverified_terms(a), thermal_tier(a), over_rated(a), metric(a),
+                               a->lineno) <
+               std::make_tuple(unverified_terms(b), thermal_tier(b), over_rated(b), metric(b),
+                               b->lineno);
     });
 
     json result;
     result["category"] = "diode";
     result["tiebreaker"] = to_string(tb);
+    if (op_loss_mode) result["lossOperatingPoint"] = diode_loss_op_json(*c.loss_op);
     result["totalRowsConsidered"] = shard.meta.source_line_count;
     result["alternativesConsidered"] = passing.size();
     result["rejections"] = emit_rejections(rej);
@@ -383,7 +496,44 @@ json select_diode(const Shard<DiodeRow>& shard, const DiodeConstraints& c, Diode
              (qrr_active && d->qrr > 0) ? num_or_null(*c.qrr_max / d->qrr) : json(nullptr)},
         };
         cd["evidence"] = {{"thermalPresent", !d->no_thermal()}};
-        cd["sortKey"] = {{"metric", to_string(tb)}, {"value", metric(d)}};
+        cd["boardArea"] = board_area_json(*d);
+        cd["price"] = price_json(*d, c.price_quantity);
+        cd["ratings"] = {{"vrrm", d->vrrm_rated},
+                         {"ifAvg", num_or_null(d->if_avg_rated)},
+                         {"vf", num_or_null(d->vf_typ)}};
+        if (!d->technology.empty()) cd["ratings"]["subType"] = d->technology;
+        if (c.over_rating_tier) {
+            json orj = {{"axes", json::array()}, {"notes", json::array()}};
+            for (const std::string& ax : over_rated_axes(d)) {
+                const bool v = ax == "vrrm";
+                const double have = v ? d->vrrm_rated : d->if_avg_rated;
+                const double need = v ? c.vrrm_min : c.if_avg_min;
+                char b[400];
+                std::snprintf(b, sizeof b,
+                              "%s %g %s is %.3gx the requirement's %g %s — more than %gx: a "
+                              "bigger body, higher cost and more capacitance are likely; %s",
+                              v ? "repetitive reverse voltage rating" : "average forward current rating",
+                              have, v ? "V" : "A", have / need, need, v ? "V" : "A",
+                              crossref::kGrossOverRatingFactor,
+                              over_rating_ranks
+                                  ? "ranked after closer-rated parts"
+                                  : (op_loss_mode ? "flagged only: the operating-point loss "
+                                                    "alone sets the order"
+                                                  : "flagged only: this ranking does not "
+                                                    "demote it"));
+                orj["axes"].push_back(ax);
+                orj["notes"].push_back(b);
+            }
+            cd["overRating"] = std::move(orj);
+        }
+        if (op_loss_mode) {
+            const DiodeLossBreakdown& lb = op_loss.at(d);
+            cd["loss"] = diode_loss_json(lb, *c.loss_op);
+            cd["sortKey"] = {{"metric", to_string(tb)}, {"value", lb.computed_sum()},
+                             {"unverifiedTerms", lb.unverified().size()}};
+        } else {
+            cd["sortKey"] = {{"metric", to_string(tb)}, {"value", metric(d)}};
+        }
         cands.push_back(std::move(cd));
     }
     result["candidates"] = std::move(cands);
