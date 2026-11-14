@@ -168,29 +168,6 @@ inline CurveVerdict compare_curves(const Curve& orig, const Curve& sub, const Pa
     return out;
 }
 
-// A curve restricted to the x band [lo, hi] (owner 2026-11-14: impedance-type curves are judged
-// only in their useful band): the samples strictly inside plus the curve READ at each band
-// edge that falls inside its measured range (interpolated with `interp`, never extrapolated).
-// nullopt when fewer than two samples remain.
-inline std::optional<Curve> clip_to_band(const Curve& c, double lo, double hi, Interp interp) {
-    std::vector<double> x, y;
-    auto add = [&](double xi) {
-        if (const auto v = curve_at(c, xi, interp)) {
-            x.push_back(xi);
-            y.push_back(*v);
-        }
-    };
-    add(lo);
-    for (std::size_t i = 0; i < c.x.size(); ++i)
-        if (c.x[i] > lo && c.x[i] < hi) {
-            x.push_back(c.x[i]);
-            y.push_back(c.y[i]);
-        }
-    if (hi > lo) add(hi);
-    if (x.size() < 2) return std::nullopt;
-    return Curve(std::move(x), std::move(y));
-}
-
 // ── Curves in a ranker spec ─────────────────────────────────────────────────
 // The spec shape (crossref.js, from a row's CurvePts): {x: [...], y: [...], temperature?,
 // dc_bias?, frequency?}; null / absent = no curve. The spec is built by Kelvin's own row

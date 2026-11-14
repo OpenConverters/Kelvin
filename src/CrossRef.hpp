@@ -2203,6 +2203,18 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             compare_numeric(spec_for("ripple_current"), ripple_conv->o, ripple_conv->s),
             ripple_conv->o, ripple_conv->s};
     }
+    // A magnetic's rated current at a common temperature rise (owner 2026-11-14,
+    // magcurve::rated_at_common_rise): with rated-current points on both records it replaces
+    // the largest-current scalar comparison, the currents at the deciding rise carrying the
+    // direction; different ambients or no common rise -> UNVERIFIED + note (no cap).
+    if (cat == "magnetic" || cat == "chipBead") {
+        const auto rb =
+            magcurve::rated_at_common_rise(original, cand, spec_for("rated_current"));
+        if (rb.applies) {
+            if (!rb.note.empty()) notes.push_back(rb.note);
+            curve_override["rated_current"] = {rb.outcome, rb.orig_at, rb.sub_at};
+        }
+    }
     auto hz = [](double f) {
         char b[32];
         std::snprintf(b, sizeof b, "%g Hz", f);

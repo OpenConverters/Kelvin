@@ -1833,6 +1833,53 @@ void magnetic_saturation_table(const json& elec, MagneticRow& r) {
 // ranker can compare two curves like for like at the same drop. The table is derived from it
 // only when the record states no Isat (sat_table_from_curve then marks the table as derived).
 void store_curve(const std::vector<std::pair<double, double>>& c, CurvePts& out);  // below
+// MAS ratedCurrentPoints as the shared curve storage (owner 2026-11-14, item 7): x = the
+// temperature rise (K) each current is rated at, y = the current (A), temperature = the
+// ambient (degC) when stated. A single rating is kept as a one-point set (11,202 of the 12,909
+// records state one; the ranker reads it at its own rise only). Not carried — the scalar
+// rated_current stands alone, as before — when the points cannot be read as one rating per
+// rise under one ambient: a point without a positive current and rise, ambients that differ
+// or are stated on some points only, two different currents at one rise (14 Panasonic
+// ETQP3W / ETQP1W records, e.g. ETQP3W1R5WFN 6.6 A and 11 A both at 40 K), or a current that
+// FALLS as the allowed rise grows (4 Coilcraft records, e.g. ME3215-333KLC 35 A at 20 K and
+// 0.48 A at 40 K) — a self-heating rating cannot do that, so the record is wrong, and no
+// guess is made at which point is.
+void magnetic_rated_points(const json& elec, MagneticRow& r) {
+    const json* rcp = obj_get(elec, "ratedCurrentPoints");
+    if (!rcp || !rcp->is_array() || rcp->empty()) return;
+    std::vector<std::pair<double, double>> pts;  // (rise, current)
+    std::optional<double> ambient;
+    bool any_ambient = false, any_unstated = false;
+    for (const auto& p : *rcp) {
+        if (!p.is_object()) return;
+        const auto cur = get_num(p, "current"), rise = get_num(p, "temperatureRise");
+        if (!cur || !rise || !(*cur > 0) || !(*rise > 0)) return;
+        if (const auto t = get_num(p, "temperature")) {
+            if (ambient && *ambient != *t) return;
+            ambient = *t;
+            any_ambient = true;
+        } else {
+            any_unstated = true;
+        }
+        pts.emplace_back(*rise, *cur);
+    }
+    if (any_ambient && any_unstated) return;
+    std::sort(pts.begin(), pts.end());
+    std::vector<float> x, y;
+    for (const auto& [rise, cur] : pts) {
+        const float fx = static_cast<float>(rise), fy = static_cast<float>(cur);
+        if (!x.empty() && fx == x.back()) {
+            if (fy != y.back()) return;  // two currents at one rise
+            continue;
+        }
+        if (!y.empty() && fy < y.back()) return;  // falls as the rise grows
+        x.push_back(fx);
+        y.push_back(fy);
+    }
+    r.rated_points.x = std::make_shared<const std::vector<float>>(std::move(x));
+    r.rated_points.y = std::make_shared<const std::vector<float>>(std::move(y));
+    if (ambient) r.rated_points.temperature = *ambient;
+}
 void magnetic_saturation_from_bias_curve(const json& elec, MagneticRow& r) {
     const bool stated = !r.sat_table_current.empty();  // the record states its Isat outright
     const json* pts = obj_get(elec, "inductancePoints");
@@ -2138,6 +2185,7 @@ std::optional<MagneticRow> extract_magnetic(const json& env) {
                 }
                 r.rated_current = best;
             }
+        magnetic_rated_points(elec, r);
         // DCR: prefer the worst-case (maximum) bound; fall back to the plural dcResistances[0].
         auto dcr = resolve_field(elec, "dcResistance", PEAS::DimensionalValues::MAXIMUM);
         if (!dcr) {

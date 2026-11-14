@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstdio>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -39,6 +40,10 @@ struct ParamSpec {
     // is a +/-25 % figure, measured differently on each side), a few percent
     // short is bookkeeping, not a regression.
     std::optional<double> pass_factor = std::nullopt;
+    // abs_tol specs only: the substitute still PASSES within this additive margin the wrong way
+    // (an insertion-loss curve within 1 dB of the original's, owner 2026-11-14), the abs_tol
+    // band beyond it is the WARN band. Either direction.
+    std::optional<double> pass_abs = std::nullopt;
 };
 
 // ── Class-rank maps (mirror param_check.py) ──────────────────────────────────
@@ -166,6 +171,17 @@ inline bool same_stated_value(double a, double b) {
     if (a == b) return true;
     return std::abs(a - b) <= kRepresentationEpsilon * std::max(std::abs(a), std::abs(b));
 }
+// Two stated temperatures (degC) that name the same condition. Owner 2026-11-14: 20 degC and
+// 25 degC are both room temperature, the same condition — for a magnetic's ambient ratings
+// (rated current) and for its L(I) / Isat curve temperatures (Würth states 20 degC where
+// Coilcraft states 25 degC for the same bench measurement). Otherwise only the same stated
+// value matches. Case vs ambient, and a temperature stated by one side only, are the caller's
+// to tell apart (they are different conditions).
+inline bool same_room_temperature(double a, double b) {
+    if (same_stated_value(a, b)) return true;
+    auto room = [](double t) { return same_stated_value(t, 20.0) || same_stated_value(t, 25.0); };
+    return room(a) && room(b);
+}
 
 // Mirrors _compare_numeric: LOWER/HIGHER with abs_tol (additive) or tol_factor.
 // Equal (within the representation epsilon above) always passes, in either direction.
@@ -176,15 +192,20 @@ inline ParamOutcome compare_numeric(const ParamSpec& spec, std::optional<double>
     if (!o) return UNVERIFIED;
     double ov = *o, sv = *s;
     if (same_stated_value(sv, ov)) return PASS;
+    if (spec.pass_abs && !spec.abs_tol)
+        throw std::logic_error("compare_numeric: spec '" + spec.key +
+                               "' has an additive pass margin but no additive band");
     if (spec.dir == Dir::Lower) {
-        if (sv <= ov) return PASS;
+        const double pass_ceiling = spec.pass_abs ? ov + *spec.pass_abs : ov;
+        if (sv <= pass_ceiling) return PASS;
         double ceiling = spec.abs_tol ? ov + *spec.abs_tol : ov * spec.tol_factor;
         if (sv > ceiling) return FAIL;
         ParamOutcome warn(WARN);
-        warn.warn_depth = warn_depth_between(sv, ov, ceiling);
+        warn.warn_depth = warn_depth_between(sv, pass_ceiling, ceiling);
         return warn;
     }
-    const double pass_floor = ov * spec.pass_factor.value_or(1.0);
+    const double pass_floor =
+        spec.pass_abs ? ov - *spec.pass_abs : ov * spec.pass_factor.value_or(1.0);
     if (sv >= pass_floor) return PASS;  // Higher
     double floor = spec.abs_tol ? ov - *spec.abs_tol : ov * spec.tol_factor;
     if (sv < floor) return FAIL;
@@ -489,7 +510,7 @@ inline CurveCompare compare_curves(const nlohmann::json& orig, const nlohmann::j
     const auto oc = bias_curve(orig), sc = bias_curve(sub);
     if (!oc || !sc) return out;
     if (oc->temperature.has_value() != sc->temperature.has_value() ||
-        (oc->temperature && *oc->temperature != *sc->temperature)) {
+        (oc->temperature && !same_room_temperature(*oc->temperature, *sc->temperature))) {
         auto t = [](const std::optional<double>& v) {
             if (!v) return std::string("no stated temperature");
             char b[32];

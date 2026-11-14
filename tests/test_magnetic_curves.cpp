@@ -7,6 +7,7 @@
 #include <fstream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -53,7 +54,9 @@ json spec_of(const kelvin::MagneticRow& r, bool bead = false) {
            {"lead_pitch_m", nz(r.lead_pitch_m)}, {"is_production", r.is_production},
            {"provenance_retracted", r.provenance_retracted},
            {"rated_current", nz(r.rated_current)}, {"dcr", nz(r.dcr)}, {"srf", nz(r.srf)},
-           {"temp_min_C", raw(r.temp_min_c)}, {"temp_max_C", raw(r.temp_max_c)}};
+           {"temp_min_C", raw(r.temp_min_c)}, {"temp_max_C", raw(r.temp_max_c)},
+           {"device_type", r.device_type},
+           {"rated_current_points", row["rated_current_points"]}};
     if (bead) {
         s["impedance_100mhz"] = nz(r.impedance_100mhz);
         s["impedance_peak"] = nz(r.impedance_peak);
@@ -179,8 +182,11 @@ TEST_CASE("curves: |Z|(f) is graded only up to the original's impedance peak",
 // records) and CM / DM insertion loss (310 / 264 records) were never compared. CM: higher is
 // better. DM: LOWER is better (signal-line selection practice; the note says so and names the
 // power-line exception). Each is graded only in the original's useful band, closed by its
-// |Z| peak of the same mode. Two Würth 47 uH THT power-line CMCs: the 2 A WE-CMB NiZn
-// 744841247 (CM |Z| peaking near 29 MHz) and the 15 A WE-ExB 744844470.
+// |Z| peak of the same mode; for a common-mode choke the band opens at 150 kHz (owner
+// 2026-11-14, the bottom of the CISPR conducted range). Insertion loss PASSES within 1 dB of
+// the original's (owner 2026-11-14), the CMRR spec's 6 dB band beyond it is the WARN band.
+// Two Würth 47 uH THT power-line CMCs: the 2 A WE-CMB NiZn 744841247 (CM |Z| peaking near
+// 29 MHz) and the 15 A WE-ExB 744844470.
 TEST_CASE("curves: a CMC's DM impedance and CM / DM insertion loss are compared",
           "[magcurves][crossref][cmc]") {
     const auto o = row_of("744841247"), s = row_of("744844470");
@@ -194,17 +200,167 @@ TEST_CASE("curves: a CMC's DM impedance and CM / DM insertion loss are compared"
     CHECK(verdict_of(c, "impedance_curve") == "fail");
     CHECK(verdict_of(c, "cm_insertion_loss_curve") == "fail");
     const std::string cm = note_with(c, "CM insertion loss(f) compared on both curves");
-    CHECK(cm.find("useful band 1 MHz-29 MHz") != std::string::npos);
+    CHECK(cm.find("useful band 150 kHz-29 MHz") != std::string::npos);
     CHECK(cm.find("worst at 29 MHz, substitute 13.7 dB vs original 36.6 dB") !=
           std::string::npos);
-    // DM |Z|: the substitute's is lower everywhere in band (6.21 vs 20.8 ohm at 1 MHz): PASS.
+    // DM |Z|: the substitute's is lower everywhere in band (1.81 vs 3.32 ohm at 150 kHz): PASS.
     CHECK(verdict_of(c, "dm_impedance_curve") == "pass");
     const std::string dz = note_with(c, "DM |Z|(f) compared on both curves");
     CHECK(dz.find("to the original's differential-mode |Z| peak") != std::string::npos);
     CHECK(dz.find("lower DM impedance / insertion loss is ranked better") != std::string::npos);
-    // DM insertion loss: the substitute's is higher at 1 MHz (0.13 vs 0.118 dB): WARN.
-    CHECK(verdict_of(c, "dm_insertion_loss_curve") == "warn");
+    // DM insertion loss: the substitute's is higher, at most 0.18 dB (0.251 vs 0.0685 dB at
+    // 238 kHz) — within the 1 dB PASS margin. (Before the owner's 1 dB margin this pair was a
+    // WARN at 1 MHz, 0.13 vs 0.118 dB.)
+    CHECK(verdict_of(c, "dm_insertion_loss_curve") == "pass");
     CHECK(note_with(c, "DM insertion loss(f) compared on both curves")
-              .find("worst at 1 MHz, substitute 0.13 dB vs original 0.118 dB") !=
+              .find("worst at 238 kHz, substitute 0.251 dB vs original 0.0685 dB") !=
           std::string::npos);
 }
+
+// 6. Owner 2026-11-14: a common-mode choke's useful band opens at 150 kHz, not 1 MHz. Würth
+// WE-TFC 744862100 (10 mH, 0.45 A) peaks in common mode at 537 kHz: with the 1 MHz opening its
+// band closed below its own start and no curve was graded at all. Against the real power-line
+// CMC WE-CMB 744821110 (10 mH, 0.7 A, CM peak 331 kHz) the CM |Z| is now graded over
+// 150-537 kHz, where the substitute holds 22.2 kohm against 61 kohm at the original's peak
+// (0.36x): FAIL. The DM insertion loss shows the band beyond the 1 dB margin: 24.9 vs 20.6 dB
+// at 3.32 MHz, 4.3 dB the wrong way, inside the 6 dB WARN band.
+TEST_CASE("curves: a CMC's curves are graded from 150 kHz", "[magcurves][crossref][cmc][band]") {
+    const auto o = row_of("744862100"), s = row_of("744821110");
+    REQUIRE(o.device_type == "commonModeChoke");
+    REQUIRE(o.impedance_peak_freq == Approx(537e3));
+    const json c = rank("magnetic", spec_of(o), spec_of(s));
+    INFO(c.dump());
+    CHECK(verdict_of(c, "impedance_curve") == "fail");
+    const std::string z = note_with(c, "|Z|(f) compared on both curves");
+    CHECK(z.find("useful band 150 kHz-537 kHz, from 150 kHz (a common-mode choke") !=
+          std::string::npos);
+    CHECK(z.find("worst at 537 kHz, substitute 22.2 kohm vs original 61 kohm") !=
+          std::string::npos);
+    CHECK(verdict_of(c, "dm_insertion_loss_curve") == "warn");
+    CHECK(note_with(c, "DM insertion loss(f) compared on both curves")
+              .find("worst at 3.32 MHz, substitute 24.9 dB vs original 20.6 dB") !=
+          std::string::npos);
+}
+
+// 7. L(I) curves (owner 2026-11-14: "compare ALL existing graphs"): every curve a record states,
+// per temperature, compared with the other's at each temperature BOTH state, the worst
+// deciding. Murata MDH6045C-1R5NA states -55 / 20 / 125 / 150 degC, TDK CLF7045NIT-1R5N-D ten
+// temperatures from -40 to 150 degC: compared at 20, 125 and 150 degC only (-55 and -40 are
+// not read against each other). The substitute holds more inductance at every common point.
+TEST_CASE("curves: L(I) curves are compared at each temperature both records state",
+          "[magcurves][crossref][lcurve]") {
+    const auto o = row_of("MDH6045C-1R5NA"), s = row_of("CLF7045NIT-1R5N-D");
+    REQUIRE(o.l_curves.size() == 4);
+    REQUIRE(s.l_curves.size() == 10);
+    const json c = rank("magnetic", spec_of(o), spec_of(s));
+    INFO(c.dump());
+    CHECK(verdict_of(c, "inductance_curve") == "pass");
+    const std::string n = note_with(c, "L(I) compared on both curves");
+    CHECK(n.find("at 20 degC, 125 degC, 150 degC (linear") != std::string::npos);
+    CHECK(n.find("-40") == std::string::npos);
+    CHECK(n.find("-55") == std::string::npos);
+}
+
+// 8. Owner 2026-11-14: 20 degC and 25 degC are the same (room) temperature for L(I) and Isat
+// curves. Würth 74438366010 states its L(I) at 20 degC, Coilcraft XAL6030-102MEC at 25 degC:
+// both the L(I) curves and the Isat read off them (at the original's stated criterion) are now
+// compared, and the note says the two temperatures were taken as one.
+TEST_CASE("curves: 20 and 25 degC L(I) curves are compared as room temperature",
+          "[magcurves][crossref][lcurve][room]") {
+    const auto o = row_of("74438366010"), s = row_of("XAL6030-102MEC");
+    const json c = rank("magnetic", spec_of(o), spec_of(s));
+    INFO(c.dump());
+    CHECK(verdict_of(c, "inductance_curve") == "pass");
+    CHECK(note_with(c, "L(I) compared on both curves")
+              .find("at 20 degC against 25 degC (both room temperature)") != std::string::npos);
+    CHECK(note_with(c, "saturation compared on both L(I) curves at the original's stated "
+                       "criterion") != "");
+    CHECK(note_with(c, "L(I) curves stated at different temperatures") == "");
+}
+
+// 9. A temperature stated by one side only is a different condition (owner 2026-11-14):
+// Taiyo Yuden LAXHG6060YEL1R0NMR states its L(I) with no temperature, Coilcraft
+// XAL6030-102MEC at 25 degC. Neither the L(I) curves nor the Isat on them are compared:
+// UNVERIFIED with a note, the stated Isat figures compared instead.
+TEST_CASE("curves: an L(I) temperature stated on one side only blocks the comparison",
+          "[magcurves][crossref][lcurve]") {
+    const auto o = row_of("LAXHG6060YEL1R0NMR"), s = row_of("XAL6030-102MEC");
+    const json c = rank("magnetic", spec_of(o), spec_of(s));
+    INFO(c.dump());
+    CHECK(verdict_of(c, "inductance_curve") == "unverified");
+    CHECK(note_with(c, "L(I) curves not compared: stated at different temperatures (original no "
+                       "stated temperature; substitute 25 degC)") != "");
+    CHECK(note_with(c, "L(I) curves stated at different temperatures (original no stated "
+                       "temperature, substitute 25 degC) — Isat not read off the two curves") !=
+          "");
+}
+
+// 10. Rated current per temperature rise (MAS ratedCurrentPoints, owner 2026-11-14): kept on
+// the row as the shared curve storage (x = rise K, y = current A, temperature = ambient),
+// one point or more; not kept when the record cannot be read as one rating per rise —
+// Panasonic ETQP3W1R5WFN states 6.6 A AND 11 A at 40 K, Coilcraft ME3215-333KLC 35 A at 20 K
+// and 0.48 A at 40 K (a rating that falls as the allowed rise grows). The scalar stands.
+TEST_CASE("curves: rated-current points are extracted per temperature rise",
+          "[magcurves][views][rated]") {
+    const auto x = row_of("XFL7015-102MEC");
+    REQUIRE_FALSE(x.rated_points.empty());
+    CHECK(*x.rated_points.x == std::vector<float>{20.f, 40.f});
+    CHECK(*x.rated_points.y == std::vector<float>{7.5f, 10.5f});
+    CHECK(std::isnan(x.rated_points.temperature));
+    const auto one = row_of("CDMC60D28L150NP-1R0MC");
+    REQUIRE(one.rated_points.x->size() == 1);
+    CHECK(one.rated_points.temperature == 20.0);
+    for (const char* bad : {"ETQP3W1R5WFN", "ME3215-333KLC"}) {
+        const auto r = row_of(bad);
+        INFO(bad);
+        CHECK(r.rated_points.empty());
+        CHECK(r.rated_current > 0);
+    }
+}
+
+// 11. With rated-current points on both records the rating is compared at a COMMON rise, read
+// between a record's two stated rises when needed (never extrapolated). TDK CLF6045T-1R0N is
+// rated 4.5 A at 30 K; Coilcraft XFL7015-102MEC 7.5 A at 20 K and 10.5 A at 40 K, so at 30 K it
+// carries 9 A (the largest-current scalar compared 10.5 A at 40 K instead).
+TEST_CASE("curves: rated current is compared at a common temperature rise",
+          "[magcurves][crossref][rated]") {
+    const json c = rank("magnetic", spec_of(row_of("CLF6045T-1R0N")),
+                        spec_of(row_of("XFL7015-102MEC")));
+    INFO(c.dump());
+    CHECK(verdict_of(c, "rated_current") == "pass");
+    CHECK(note_with(c, "rated current compared at a common temperature rise: at 30 K the "
+                       "substitute carries 9 A against the original's 4.5 A") != "");
+}
+
+// 12. No common rise: Coilcraft 1008CS-102XFLC is rated 0.37 A at 15 K, 1008PS-102KLB 1.4 A at
+// 20 K and 2 A at 40 K. 15 K lies outside the substitute's stated rises, so nothing is
+// comparable: UNVERIFIED + note (the largest-current scalar had passed it, 2 A vs 0.37 A).
+TEST_CASE("curves: rated currents at different rises are not compared",
+          "[magcurves][crossref][rated]") {
+    const json c = rank("magnetic", spec_of(row_of("1008CS-102XFLC")),
+                        spec_of(row_of("1008PS-102KLB")));
+    INFO(c.dump());
+    CHECK(verdict_of(c, "rated_current") == "unverified");
+    CHECK(note_with(c, "rated current not compared: rated at different temperature rises "
+                       "(original 370 mA at 15 K; substitute 1.4 A at 20 K, 2 A at 40 K)") != "");
+}
+
+// 13. Ambient (owner 2026-11-14): 20 and 25 degC are the same room temperature; an ambient
+// stated by one side only is a different condition. Sumida CDMC60D28L150NP-1R0MC is rated
+// 12.8 A at 40 K, 20 degC ambient: against Sumida CY0630AT150DS-1R0MC (13.5 A at 40 K, 25 degC)
+// it is compared, against Coilcraft DO3316H-102MLD (10 A at 40 K, no stated ambient) it is not.
+TEST_CASE("curves: rated current ambient — room temperature matches, one-sided does not",
+          "[magcurves][crossref][rated][room]") {
+    const auto o = spec_of(row_of("CDMC60D28L150NP-1R0MC"));
+    const json room = rank("magnetic", o, spec_of(row_of("CY0630AT150DS-1R0MC")));
+    INFO(room.dump());
+    CHECK(verdict_of(room, "rated_current") == "pass");
+    CHECK(note_with(room, "20 degC ambient against 25 degC ambient, both room temperature") !=
+          "");
+    const json one = rank("magnetic", o, spec_of(row_of("DO3316H-102MLD")));
+    INFO(one.dump());
+    CHECK(verdict_of(one, "rated_current") == "unverified");
+    CHECK(note_with(one, "rated current not compared: rated under different ambient conditions "
+                         "(original 20 degC ambient, substitute no stated ambient)") != "");
+}
+

@@ -529,6 +529,11 @@ struct MagneticRow : RowBase {
     // in henries vs amperes, with or without a 0 A point, in the shared curve storage (the
     // CurvePts temperature is the curve's). Ascending temperature, the unstated one last.
     std::vector<CurvePts> l_curves;
+    // v22 (owner 2026-11-14): the rated currents qualified by their temperature rise
+    // (ratedCurrentPoints): x = rise (K), y = current (A), temperature = ambient (degC, NaN =
+    // not stated). May hold ONE point (a single rating at its rise). Empty when not stated or
+    // not readable as one rating per rise (Views.cpp magnetic_rated_points).
+    CurvePts rated_points;
     // Winding structure: bit n set when some electrical[] wiring configuration has n windings besides
     // the primary (a single-winding inductor/chip bead sets bit 0; a transformer or coupled inductor sets
     // bit turnsRatios.size()). 0 means no configuration states its structure (e.g. a transformer entry

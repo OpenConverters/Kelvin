@@ -548,6 +548,7 @@ void row_io(Ar& ar, MagneticRow& r) {
     ar.dblvec(r.bias_curve_ratio);         // v22 (Z5)
     ar.dbl(r.bias_curve_temperature);      // v22 (curves)
     curve_list(ar, r.l_curves);            // v22 (curves)
+    ar.curve(r.rated_points);              // v22 (curves, rated current per rise)
     ar.boolean(r.sat_table_from_curve);    // v22 (Z5)
     ar.dbl(r.dm_impedance_100mhz);         // v22 (curves, CMC DM mode)
     ar.dbl(r.dm_impedance_peak);           // v22

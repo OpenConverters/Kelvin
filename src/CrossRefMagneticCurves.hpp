@@ -110,15 +110,20 @@ inline ParamSpec dm_impedance_spec() {
     p.exclude_missing_sub = false;
     return p;
 }
+// Owner 2026-11-14: an insertion-loss curve PASSES within 1 dB of the original's (the wrong
+// way), then the CMRR spec's 6 dB band is the WARN band, then FAIL.
+inline constexpr double kInsertionLossPassDb = 1.0;
 inline ParamSpec dm_insertion_loss_spec() {
     ParamSpec p = scalar_spec("analog", "cmrr_db");
     p.key = "dm_insertion_loss_curve";
     p.dir = Dir::Lower;
+    p.pass_abs = kInsertionLossPassDb;
     return p;
 }
 inline ParamSpec cm_insertion_loss_spec() {
     ParamSpec p = scalar_spec("analog", "cmrr_db");
     p.key = "cm_insertion_loss_curve";
+    p.pass_abs = kInsertionLossPassDb;
     return p;
 }
 // Said with every DM curve verdict (owner 2026-11-14).
@@ -162,10 +167,14 @@ inline const std::vector<Def>& defs() {
         // Insertion loss in dB (50 ohm), linear dB over log frequency; each mode's band closed
         // by the original's |Z| peak of that mode.
         {"cm_insertion_loss_curve", "cm_insertion_loss_curve", "CM insertion loss(f)",
-         cm_insertion_loss_spec(), "the CMRR spec (higher is better: WARN within 6 dB)",
+         cm_insertion_loss_spec(),
+         "PASS within 1 dB (owner 2026-11-14), then the CMRR spec's 6 dB band as WARN, higher is "
+         "better",
          Axis::SemiLogX, "Hz", "dB", false, "impedance_curve"},
         {"dm_insertion_loss_curve", "dm_insertion_loss_curve", "DM insertion loss(f)",
-         dm_insertion_loss_spec(), "the CMRR spec's 6 dB band, lower is better",
+         dm_insertion_loss_spec(),
+         "PASS within 1 dB (owner 2026-11-14), then the CMRR spec's 6 dB band as WARN, lower is "
+         "better",
          Axis::SemiLogX, "Hz", "dB", false, "dm_impedance_curve"},
     };
     return d;
@@ -205,7 +214,7 @@ inline Curve log_x(const Curve& c) {
 // rating frequency (or 1 MHz if none) up to the original's self-resonance / impedance peak;
 // points outside are shown in the note range but not graded". No magnetic record states a
 // rating frequency (data-524a699 carries none: the only frequency fields are the curve samples,
-// selfResonantFrequency and cutOffFrequency), so the band opens at 1 MHz. It closes at:
+// selfResonantFrequency and cutOffFrequency), so the band opens at 1 MHz (150 kHz for a common-mode choke, owner 2026-11-14). It closes at:
 //   1. the original's stated SRF (the spec's srf; not for a CMC's differential-mode curves,
 //      whose resonance the CMC's one SRF does not describe), else
 //   2. the original's impedance peak, read off its |Z|(f) of the same mode — or, for a bead
@@ -222,6 +231,14 @@ struct Band {
     std::string lo_why = "1 MHz (no rating frequency stated)";
     std::string hi_why;
 };
+// Owner 2026-11-14: a common-mode choke's band opens at 150 kHz, the bottom of the CISPR
+// conducted-emission range it is there to filter; beads and inductors keep 1 MHz.
+inline constexpr double kCmcBandLo = 150e3;
+inline bool is_cmc(const nlohmann::json& s) {
+    if (!s.is_object()) return false;
+    const auto t = s.find("device_type");
+    return t != s.end() && t->is_string() && t->get<std::string>() == "commonModeChoke";
+}
 inline std::optional<Curve> impedance_magnitude(const nlohmann::json& s, const char* peak_key) {
     if (const auto z = curve_from_spec(s, peak_key)) return z->curve;
     if (std::string(peak_key) != "impedance_curve") return std::nullopt;
@@ -241,6 +258,10 @@ inline std::optional<Curve> impedance_magnitude(const nlohmann::json& s, const c
 inline std::optional<Band> useful_band(const nlohmann::json& orig, const Def& d,
                                        std::string& why_none) {
     Band b;
+    if (is_cmc(orig)) {
+        b.lo = kCmcBandLo;
+        b.lo_why = "150 kHz (a common-mode choke: the bottom of the CISPR conducted range)";
+    }
     const bool dm = std::string(d.peak_key) != "impedance_curve";
     if (!dm && orig.is_object()) {
         const auto it = orig.find("srf");
@@ -310,8 +331,11 @@ inline Result compare_pair(const Def& d, const Curve& orig, const Curve& sub,
     }
     const bool semilog = d.axis == Axis::SemiLogX;
     const Interp interp = d.axis == Axis::LogLog ? Interp::LogLog : Interp::Linear;
-    std::optional<Curve> oc = semilog ? log_x(*o) : *o, sc = semilog ? log_x(*s) : *s;
+    const Curve oc0 = semilog ? log_x(*o) : *o, sc0 = semilog ? log_x(*s) : *s;
+    const Curve* oc = &oc0;
+    const Curve* sc = &sc0;
     std::string band_txt;
+    std::optional<std::pair<double, double>> graded;  // the band, on the helper's x axis
     if (band) {
         band_txt = "; graded only in the useful band " + fmt(band->lo, d.xunit) + "-" +
                    fmt(band->hi, d.xunit) + ", from " + band->lo_why + " to " + band->hi_why +
@@ -319,14 +343,10 @@ inline Result compare_pair(const Def& d, const Curve& orig, const Curve& sub,
                    fmt(ov->second, d.xunit);
         const double lo = semilog ? std::log(band->lo) : band->lo;
         const double hi = semilog ? std::log(band->hi) : band->hi;
-        if (band->hi > band->lo) {
-            oc = clip_to_band(*oc, lo, hi, interp);
-            sc = clip_to_band(*sc, lo, hi, interp);
-        } else {
-            oc.reset();
-        }
-        if (!oc || !sc || !overlap(*oc, *sc) ||
-            overlap(*oc, *sc)->first == overlap(*oc, *sc)->second) {
+        const auto ovc = overlap(*oc, *sc);
+        // Graded only when the band and the measured overlap share a stretch (two points at
+        // least); a band closed below its own opening (resonance under 1 MHz) holds nothing.
+        if (!(hi > lo) || !ovc || !(std::min(ovc->second, hi) > std::max(ovc->first, lo))) {
             r.note = std::string(d.label) + " not graded: the measured overlap " +
                      fmt(ov->first, d.xunit) + "-" + fmt(ov->second, d.xunit) +
                      " holds no two points inside the useful band " + fmt(band->lo, d.xunit) +
@@ -334,8 +354,9 @@ inline Result compare_pair(const Def& d, const Curve& orig, const Curve& sub,
                      band->hi_why + ")";
             return r;
         }
+        graded = std::make_pair(lo, hi);
     }
-    const CurveVerdict v = compare_curves(*oc, *sc, d.spec, interp);
+    const CurveVerdict v = compare_curves(*oc, *sc, d.spec, interp, graded);
     if (v.verdict == std::string(UNVERIFIED)) {
         r.note = std::string(d.label) + " not compared: the two curves do not overlap (original " +
                  range(*o) + ", substitute " + range(*s) + ") — nothing is extrapolated";
@@ -348,7 +369,7 @@ inline Result compare_pair(const Def& d, const Curve& orig, const Curve& sub,
     r.warn_depth = v.warn_depth;
     r.orig_y = v.orig_y;
     r.sub_y = v.sub_y;
-    const std::string what = v.verdict == std::string(PASS)   ? "level or ahead everywhere"
+    const std::string what = v.verdict == std::string(PASS)   ? "inside the PASS band everywhere"
                              : v.verdict == std::string(WARN) ? "behind"
                                                               : "well behind";
     char pts[32];
@@ -366,8 +387,10 @@ inline Result compare_pair(const Def& d, const Curve& orig, const Curve& sub,
 // MAS inductancePoints state L(I) optionally per temperature; the spec block carries every
 // curve the record states as "inductance_curves" (the shared curve shape, a list: x = A,
 // y = H, temperature when stated). Two records' curves are compared at each temperature BOTH
-// state; an unstated temperature matches only an unstated one (owner 2026-11-14: a condition
-// stated by one side only is a different condition). Read directly in henries on the current
+// state — 20 and 25 degC count as the same room temperature (owner 2026-11-14,
+// same_room_temperature) when a record has no curve at the other's exact temperature; an
+// unstated temperature matches only an unstated one (owner 2026-11-14: a condition stated by
+// one side only is a different condition). Read directly in henries on the current
 // range both measured, linear axes, never extrapolated; a curve with no 0 A point is compared
 // like any other (no L(0) is needed to compare two L(I) curves). Bands: the inductance spec's
 // lower side (primary_value_spec "magnetic", Higher — more inductance held under bias is
@@ -414,27 +437,47 @@ inline std::optional<Result> compare_inductance_curves(const nlohmann::json& ori
     };
     int best = 0;
     double best_ratio = HUGE_VAL;
-    std::optional<double> best_temp;
     CurveVerdict best_v;
     std::string compared;
     std::size_t pairs = 0;
-    for (const auto& o : oc)
+    // The substitute curves an original curve is read against: those at the SAME stated
+    // temperature, or — only when there is none — those at the other room temperature
+    // (20 / 25 degC, owner 2026-11-14), so a record stating both 20 and 25 degC curves is
+    // never read across them.
+    auto exact = [](const SpecCurve& o, const SpecCurve& s) {
+        if (o.temperature.has_value() != s.temperature.has_value()) return false;
+        return !o.temperature || same_stated_value(*o.temperature, *s.temperature);
+    };
+    auto room = [](const SpecCurve& o, const SpecCurve& s) {
+        return o.temperature && s.temperature &&
+               same_room_temperature(*o.temperature, *s.temperature);
+    };
+    auto pair_word = [](const SpecCurve& o, const SpecCurve& s) {
+        if (!o.temperature || same_stated_value(*o.temperature, *s.temperature))
+            return temp_word(o.temperature);
+        return temp_word(o.temperature) + " against " + temp_word(s.temperature) +
+               " (both room temperature)";
+    };
+    std::string best_word;
+    for (const auto& o : oc) {
+        bool any_exact = false;
+        for (const auto& s : sc) any_exact = any_exact || exact(o, s);
         for (const auto& s : sc) {
-            if (o.temperature.has_value() != s.temperature.has_value()) continue;
-            if (o.temperature && !same_stated_value(*o.temperature, *s.temperature)) continue;
+            if (!(any_exact ? exact(o, s) : room(o, s))) continue;
             ++pairs;
             const CurveVerdict v = compare_curves(o.curve, s.curve, spec, Interp::Linear);
             if (v.verdict == std::string(UNVERIFIED)) continue;
-            compared += (compared.empty() ? "" : ", ") + temp_word(o.temperature);
+            compared += (compared.empty() ? "" : ", ") + pair_word(o, s);
             const double ratio = v.orig_y > 0 ? v.sub_y / v.orig_y : HUGE_VAL;
             const int rk = rank(v.verdict);
             if (rk > best || (rk == best && ratio < best_ratio)) {
                 best = rk;
                 best_ratio = ratio;
-                best_temp = o.temperature;
+                best_word = pair_word(o, s);
                 best_v = v;
             }
         }
+    }
     if (pairs == 0) {
         r.note = "L(I) curves not compared: stated at different temperatures (original " +
                  temps(oc) + "; substitute " + temps(sc) + ") — a curve is not read across "
@@ -453,16 +496,138 @@ inline std::optional<Result> compare_inductance_curves(const nlohmann::json& ori
     char band[96];
     std::snprintf(band, sizeof band, "PASS >= %.3gx, WARN >= %.3gx", *spec.pass_factor,
                   spec.tol_factor);
-    const std::string what = r.verdict == std::string(PASS)   ? "level or ahead everywhere"
+    const std::string what = r.verdict == std::string(PASS)   ? "inside the PASS band everywhere"
                              : r.verdict == std::string(WARN) ? "holds less inductance"
                                                               : "holds far less inductance";
     r.note = "L(I) compared on both curves at " + compared + " (linear, " +
              fmt(best_v.range->first, "A") + "-" + fmt(best_v.range->second, "A") +
              " at the deciding temperature, the inductance spec's lower side: " + band + "): " +
-             what + " — worst at " + fmt(best_v.worst_x, "A") + ", " + temp_word(best_temp) +
+             what + " — worst at " + fmt(best_v.worst_x, "A") + ", " + best_word +
              ", substitute " + fmt(best_v.sub_y, "H") + " vs original " +
              fmt(best_v.orig_y, "H");
     return r;
+}
+
+// ── rated current at a common temperature rise (owner 2026-11-14, item 7) ────────────────
+// MAS ratedCurrentPoints qualify each rated current by the self-heating criterion it was rated
+// at (temperatureRise, K) and optionally the ambient (temperature, degC); the spec block
+// carries them as "rated_current_points" in the shared curve shape {x: [K], y: [A],
+// temperature?} — possibly ONE point (a single rating at its rise). The scalar rated_current
+// is the LARGEST stated current, so a 20 K and a 40 K rating were compared as equals. With
+// points on both sides the rating is compared at a COMMON rise instead: every rise either
+// record states that lies inside both records' stated rises, each side read there exactly or
+// linearly between its two bracketing rises (never extrapolated), judged with the
+// rated_current spec; the worst rise decides. Ambient: 20 and 25 degC are the same room
+// temperature (owner 2026-11-14, same_room_temperature); an ambient stated by one side only,
+// or two different ones, is a different condition -> UNVERIFIED + note, no cap; so is a pair
+// with no common rise.
+struct RatedPoints {
+    std::vector<double> rise, current;
+    std::optional<double> ambient;
+};
+inline std::optional<RatedPoints> read_rated_points(const nlohmann::json& s) {
+    if (!s.is_object()) return std::nullopt;
+    const auto it = s.find("rated_current_points");
+    if (it == s.end() || it->is_null()) return std::nullopt;
+    if (!it->is_object() || !it->contains("x") || !it->contains("y"))
+        throw std::invalid_argument("rated_current_points: not {x, y}");
+    RatedPoints p;
+    p.rise = it->at("x").get<std::vector<double>>();
+    p.current = it->at("y").get<std::vector<double>>();
+    if (p.rise.empty() || p.rise.size() != p.current.size())
+        throw std::invalid_argument("rated_current_points: x and y empty or of different length");
+    for (std::size_t i = 1; i < p.rise.size(); ++i)
+        if (!(p.rise[i] > p.rise[i - 1]))
+            throw std::invalid_argument("rated_current_points: rises not strictly increasing");
+    if (const auto t = it->find("temperature"); t != it->end() && !t->is_null())
+        p.ambient = t->get<double>();
+    return p;
+}
+// The current at `rise`: the stated one, or linear between the two bracketing rises; nullopt
+// outside the stated rises (never extrapolated).
+inline std::optional<double> rated_at(const RatedPoints& p, double rise) {
+    for (std::size_t i = 0; i < p.rise.size(); ++i) {
+        if (same_stated_value(p.rise[i], rise)) return p.current[i];
+        if (i > 0 && p.rise[i - 1] < rise && rise < p.rise[i])
+            return p.current[i - 1] + (rise - p.rise[i - 1]) / (p.rise[i] - p.rise[i - 1]) *
+                                          (p.current[i] - p.current[i - 1]);
+    }
+    return std::nullopt;
+}
+struct RatedBasis {
+    bool applies = false;  // both records state rated-current points
+    std::optional<double> orig_at, sub_at;  // at the deciding common rise
+    ParamOutcome outcome{UNVERIFIED};
+    std::string note;  // empty when the comparison needs no explanation
+};
+inline RatedBasis rated_at_common_rise(const nlohmann::json& orig, const nlohmann::json& sub,
+                                       const ParamSpec& spec) {
+    RatedBasis b;
+    const auto o = read_rated_points(orig), s = read_rated_points(sub);
+    if (!o || !s) return b;
+    b.applies = true;
+    auto rises = [](const RatedPoints& p) {
+        std::string out;
+        for (std::size_t i = 0; i < p.rise.size(); ++i)
+            out += (out.empty() ? "" : ", ") + fmt(p.current[i], "A") + " at " +
+                   fmt(p.rise[i], "K");
+        return out;
+    };
+    auto amb = [](const std::optional<double>& t) {
+        return t ? fmt(*t, "degC") + " ambient" : std::string("no stated ambient");
+    };
+    if (o->ambient.has_value() != s->ambient.has_value() ||
+        (o->ambient && !same_room_temperature(*o->ambient, *s->ambient))) {
+        b.note = "rated current not compared: rated under different ambient conditions "
+                 "(original " + amb(o->ambient) + ", substitute " + amb(s->ambient) +
+                 ") — confirm the substitute's rating at the original's ambient from its "
+                 "datasheet";
+        return b;
+    }
+    std::vector<double> common;
+    for (const RatedPoints* p : {&*o, &*s})
+        for (double r : p->rise)
+            if (rated_at(*o, r) && rated_at(*s, r)) common.push_back(r);
+    if (common.empty()) {
+        b.note = "rated current not compared: rated at different temperature rises (original " +
+                 rises(*o) + "; substitute " + rises(*s) +
+                 ") — a self-heating rating is only comparable at the same rise, and nothing is "
+                 "extrapolated";
+        return b;
+    }
+    auto rank = [](const char* v) {
+        const std::string x = v;
+        return x == FAIL ? 2 : x == WARN ? 1 : 0;
+    };
+    int best = -1;
+    double best_ratio = HUGE_VAL, best_rise = 0;
+    for (double r : common) {
+        const double oa = *rated_at(*o, r), sa = *rated_at(*s, r);
+        const ParamOutcome out = compare_numeric(spec, oa, sa);
+        const double ratio = oa > 0 ? sa / oa : HUGE_VAL;
+        if (rank(out.verdict) > best || (rank(out.verdict) == best && ratio < best_ratio)) {
+            best = rank(out.verdict);
+            best_ratio = ratio;
+            best_rise = r;
+            b.outcome = out;
+            b.orig_at = oa;
+            b.sub_at = sa;
+        }
+    }
+    // Said only when it changes what is compared: several rises, different ones, or a
+    // room-temperature pair (20 against 25 degC).
+    const bool room_pair = o->ambient && !same_stated_value(*o->ambient, *s->ambient);
+    if (o->rise.size() > 1 || s->rise.size() > 1 ||
+        !same_stated_value(o->rise.front(), s->rise.front()) || room_pair)
+        b.note = "rated current compared at a common temperature rise: at " +
+                 fmt(best_rise, "K") + " the substitute carries " + fmt(*b.sub_at, "A") +
+                 " against the original's " + fmt(*b.orig_at, "A") + " (original " +
+                 rises(*o) + "; substitute " + rises(*s) +
+                 (room_pair ? "; " + amb(o->ambient) + " against " + amb(s->ambient) +
+                                  ", both room temperature"
+                            : std::string()) +
+                 ")";
+    return b;
 }
 
 // Every curve both records carry, compared (see the header comment).

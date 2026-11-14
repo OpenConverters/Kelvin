@@ -402,6 +402,9 @@ inline void extra_row_json(const MagneticRow& r, json& o) {
         for (const CurvePts& c : r.l_curves) o["inductance_curves"].push_back(curve_json(c));
     }
     o["saturation_from_curve"] = r.sat_table_from_curve;
+    // The rated currents per temperature rise (v22, owner 2026-11-14): {x: [K], y: [A],
+    // temperature?: ambient degC}, possibly ONE point; null when not stated / not readable.
+    o["rated_current_points"] = curve_json(r.rated_points);
     // Measured curves (v22, owner 2026-11-14) in the spec block's shape {x: [...], y: [...]},
     // null when the record states none. A CMC's |Z|(f) is its common-mode curve ("mode").
     o["impedance_curve"] = curve_json(r.z_curve);

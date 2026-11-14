@@ -66,6 +66,10 @@ export const XREF = [
       // v22 (owner 2026-11-14): every L(I) curve the record states, per temperature
       // ([{x: [A], y: [H], temperature?}]), compared at each temperature both state.
       inductance_curves: r.inductance_curves ?? null,
+      // v22 (owner 2026-11-14): the rated currents per temperature rise ({x: [K], y: [A],
+      // temperature?: ambient degC}, one point or more); with both sides stating them the
+      // rated current is compared at a common rise.
+      rated_current_points: r.rated_current_points ?? null,
       // v22 (R2): the whole turnsRatios array (primary:secondary per secondary winding),
       // compared element-wise. null = not stated.
       turns_ratios: Array.isArray(r.turns_ratios) && r.turns_ratios.length ? r.turns_ratios : null,
@@ -464,6 +468,11 @@ const BEAD_VARIANT = {
     // because the bead spec never passed it (Qarlos r9 seed 23088792). Raw, NOT through
     // nz(): a cold limit is negative and 0 degC is a real rating.
     temp_min_C: r.temp_min_c ?? null, temp_max_C: r.temp_max_c ?? null,
+    // v22 (owner 2026-11-14): the device type (a signal CMC ranked by this model opens its
+    // curves' useful band at 150 kHz, not 1 MHz) and the rated currents per temperature rise,
+    // as on the inductor model.
+    device_type: r.device_type ?? '',
+    rated_current_points: r.rated_current_points ?? null,
     ...magneticCurves(r) }),
   params: [
     { key: 'impedance_100mhz', label: 'Z@100M', row: 'impedance_100mhz', unit: 'Ω' },
@@ -488,10 +497,23 @@ const BEAD_VARIANT = {
 // A CMC with neither stays on the inductor model and is refused for the missing L, honestly.
 const CMC_IMPEDANCE_VARIANT = { ...BEAD_VARIANT }
 
+// A cable core (MAS subtype 'cableCore': a clamp-on / sleeve ferrite on a cable, 597 records)
+// states no inductance — its datasheet IS its |Z|(f) curve — so the inductor model refused
+// every one for "no L value" and its impedance was never compared (graph inventory item 11,
+// owner 2026-11-14). It takes the impedance model, within its own device type (sameFacet), so
+// a cable core is only ever ranked against cable cores: the 100 MHz |Z| when the record
+// samples near 100 MHz, and its |Z|(f) curve against the other's in the useful band. A cable
+// core with no |Z| on record at all (no 100 MHz value, no curve of two samples) stays on the
+// inductor model and is refused for the missing L, as a bare CMC is.
+const CABLE_CORE_VARIANT = { ...BEAD_VARIANT }
+
 export function magneticVariantFor(orig) {
   if (orig?.device_type === 'chipBead') return BEAD_VARIANT
   if (orig?.device_type === 'commonModeChoke' && nz(orig.inductance) == null &&
       nz(orig.impedance_100mhz) != null) return CMC_IMPEDANCE_VARIANT
+  if (orig?.device_type === 'cableCore' && nz(orig.inductance) == null &&
+      (nz(orig.impedance_100mhz) != null || Array.isArray(orig.impedance_curve?.x)))
+    return CABLE_CORE_VARIANT
   return null
 }
 
