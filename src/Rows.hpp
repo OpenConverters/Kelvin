@@ -192,6 +192,20 @@ struct MosfetRow : RowBase {
     // indistinguishable, which is a documented substitution hazard.
     double rds_on_vgs = kNaN();
     double vgs_max = kNaN();       // absolute gate-source rating
+    // v22 (owner 2026-11-14, operating-point loss ranking) — the datasheet values the buck
+    // switch loss terms are computed from, NaN / empty when the record does not state them
+    // (the term is then UNVERIFIED, never estimated). Qgs / Qgd: electrical.gateSourceCharge /
+    // gateDrainCharge (C; the schema carries the whole Qgs, no Qgs2). qg_vgs: the Vgs the
+    // stated Qg is specified at (electrical.totalGateChargeVgs).
+    double qgs = kNaN(), qgd = kNaN(), qg_vgs = kNaN();
+    // The loss terms read the Coss(Vds), Rds(on)(Tj) and gate-charge curves below
+    // (coss_curve, rds_on_tj_curve, qg_curve: one set of curve fields, with the conditions
+    // each record states — MosfetLoss.hpp reads the Vgs / Vds a curve was taken at from them).
+    // v22 (owner 2026-11-14) — the record's distributor unit-cost quotes, as a compact JSON
+    // array [{distributor, unitCost, currency, moq?}] ("" when none). PEAS distributorInfo
+    // carries ONE unit `cost` per distributor and no price breaks, so a price AT a quantity
+    // is never on record; a cost <= 0 is not a price and is not kept.
+    std::string price_quotes;
     std::string qualification;     // AEC-Q101 etc., when the datasheet states it
     double rth_ja = kNaN(), rth_jc = kNaN(), tj_max = kNaN();
     std::string technology;   // Si / SiC / GaN (part.technology)

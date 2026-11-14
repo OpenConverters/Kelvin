@@ -396,12 +396,16 @@ void row_io(Ar& ar, MosfetRow& r) {
     ar.str(r.die_configuration);  // v22
     ar.str(r.internal_connection);  // v22 (owner 2026-11-13, V2)
     ar.curve(r.ciss_curve);       // v22 (owner curve rule 2026-11-14)
-    ar.curve(r.coss_curve);       // v22
+    ar.curve(r.coss_curve);       // v22 (also read by the operating-point loss, MosfetLoss.hpp)
     ar.curve(r.crss_curve);       // v22
     ar.curve(r.rds_on_id_curve);  // v22
-    ar.curve(r.rds_on_tj_curve);  // v22
-    ar.curve(r.qg_curve);         // v22
+    ar.curve(r.rds_on_tj_curve);  // v22 (also read by the operating-point loss)
+    ar.curve(r.qg_curve);         // v22 (also read by the operating-point loss)
     curves(ar, r.id_ambient_curves);  // v22
+    ar.dbl(r.qgs);                  // v22 (owner 2026-11-14, operating-point loss)
+    ar.dbl(r.qgd);
+    ar.dbl(r.qg_vgs);
+    ar.str(r.price_quotes);       // v22 (owner 2026-11-14, price)
     ar.boolean(r.is_production);
     ar.boolean(r.datasheet_usable);
 }

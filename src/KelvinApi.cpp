@@ -370,6 +370,9 @@ json Engine::select(const std::string& category, const json& req, const json& op
                 if (t.is_string()) c.technology_allowed.insert(t.get<std::string>());
         }
         c.exclude_discontinued = opt_bool(options, "excludeDiscontinued", true);
+        // Gross over-rating: flagged on every recommendation served, ranked as a tier except
+        // under the operating-point loss and the Vds / Id margin rankings (owner 2026-11-14).
+        c.over_rating_tier = true;
         // Optional real operating-point override (KH-mode loss ranking on measured stresses).
         if (options.contains("operatingPoint")) {
             const json& op = options.at("operatingPoint");
@@ -377,8 +380,50 @@ json Engine::select(const std::string& category, const json& req, const json& op
                  fq = opt_num(op, "fsw");
             if (i && v && d && fq) { c.op_i_rms = i; c.op_vds = v; c.op_duty = d; c.op_fsw = fq; }
         }
+        // The converter operating point for lowest_operating_point_loss (owner 2026-11-14).
+        // Every value is the caller's: nothing is defaulted — an absent gate drive leaves the
+        // switching / gate terms UNVERIFIED, an absent Tj leaves Rds(on) at its stated basis.
+        if (options.contains("lossOperatingPoint")) {
+            const json& op = options.at("lossOperatingPoint");
+            if (!op.is_object()) throw InvalidOptions("lossOperatingPoint must be an object");
+            LossOperatingPoint lo;
+            auto pos = opt_str(op, "position");
+            if (!pos) throw InvalidOptions("lossOperatingPoint.position is required (buckHighSide)");
+            lo.position = switch_position_from_string(*pos);
+            // A key that is present must be a number (null = not given): a string "10" is
+            // refused, not silently read as absent.
+            auto num = [&](const char* k) -> std::optional<double> {
+                if (!op.contains(k) || op.at(k).is_null()) return std::nullopt;
+                if (!op.at(k).is_number())
+                    throw InvalidOptions(std::string("lossOperatingPoint.") + k + " must be a number");
+                return op.at(k).get<double>();
+            };
+            auto need = [&](const char* k) {
+                auto v = num(k);
+                if (!v) throw InvalidOptions(std::string("lossOperatingPoint.") + k + " is required");
+                return *v;
+            };
+            lo.vin = need("inputVoltage");
+            lo.iout = need("outputCurrent");
+            lo.fsw = need("switchingFrequency");
+            lo.duty = num("dutyCycle");
+            lo.vout = num("outputVoltage");
+            lo.ripple_pp = num("inductorRippleCurrent");
+            lo.vdrive = num("gateDriveVoltage");
+            lo.idrive = num("gateDriveCurrent");
+            lo.tj = num("junctionTemperature");
+            lo.validate();
+            c.loss_op = lo;
+        }
+        if (options.contains("priceQuantity") && !options.at("priceQuantity").is_null()) {
+            const json& q = options.at("priceQuantity");
+            if (!q.is_number() || !(q.get<double>() > 0))
+                throw InvalidOptions("priceQuantity must be a positive number");
+            c.price_quantity = q.get<double>();
+        }
         MosfetTiebreaker tb;
         if (auto s = opt_str(options, "tiebreaker")) tb = mosfet_tiebreaker_from_string(*s);
+        else if (c.loss_op) tb = MosfetTiebreaker::LowestOperatingPointLoss;
         else tb = c.op_fsw.has_value() ? MosfetTiebreaker::LowestTotalLoss
                                        : MosfetTiebreaker::LowestRdsOn;
         const Shard<MosfetRow>& sh = mosfet_shard();

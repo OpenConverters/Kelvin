@@ -79,7 +79,25 @@ export const FAMILIES = [
         { key: 'switchingFrequency', label: 'Switching frequency', unit: 'Hz', placeholder: 'enables total-loss ranking' },
       ],
       technologyOption: ['Si', 'SiC', 'GaN'],
-      tiebreakers: ['lowest_rds_on', 'lowest_qg', 'highest_vds_margin', 'highest_id_margin', 'lowest_total_loss'],
+      tiebreakers: ['lowest_rds_on', 'lowest_qg', 'highest_vds_margin', 'highest_id_margin', 'lowest_total_loss', 'lowest_operating_point_loss'],
+      // Operating-point loss (owner 2026-11-14): options.lossOperatingPoint. Input voltage,
+      // output current and switching frequency enable it; nothing here is defaulted — a gate
+      // drive left blank makes the switching / gate terms UNVERIFIED in the result.
+      lossPoint: {
+        position: 'buckHighSide',
+        fields: [
+          { key: 'inputVoltage', label: 'Vin', unit: 'V', placeholder: '36' },
+          { key: 'outputVoltage', label: 'Vout (duty = Vout/Vin)', unit: 'V', placeholder: '12' },
+          { key: 'dutyCycle', label: 'or duty cycle', unit: '', placeholder: '0.33' },
+          { key: 'outputCurrent', label: 'Iout', unit: 'A', placeholder: '2' },
+          { key: 'switchingFrequency', label: 'fs', unit: 'Hz', placeholder: '80k' },
+          { key: 'inductorRippleCurrent', label: 'Inductor ripple (p-p)', unit: 'A', placeholder: 'optional' },
+          { key: 'gateDriveVoltage', label: 'Gate drive voltage', unit: 'V', placeholder: 'needed for the gate term' },
+          { key: 'gateDriveCurrent', label: 'Gate drive current', unit: 'A', placeholder: 'needed for the switching term' },
+          { key: 'junctionTemperature', label: 'Tj', unit: '°C', placeholder: 'reads Rds(on)(Tj) when on record' },
+        ],
+      },
+      priceQuantity: true,
     },
   },
   {

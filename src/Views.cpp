@@ -223,7 +223,7 @@ std::optional<double> curve_at(const json* c, double x, const char* x_unit, cons
 // the capacitor curves are frequencies or voltages from 0: `nonneg_x` admits x = 0).
 // `conditions` {temperature, dcBias, frequency} are kept when numeric.
 CurvePts read_curve_xy(const json* c, const char* x_unit, std::initializer_list<const char*> y_units,
-                       bool positive_y, bool nonneg_x = false) {
+                       bool positive_y, bool nonneg_x = false, bool signed_x = false) {
     CurvePts out;
     if (!c || !c->is_object()) return out;
     if (auto xl = get_str(*c, "xLabel"); xl && xl->find(x_unit) == std::string::npos) return out;
@@ -246,7 +246,8 @@ CurvePts read_curve_xy(const json* c, const char* x_unit, std::initializer_list<
         if (!xv.is_number() || !yv.is_number()) return out;
         const double xi = xv.get<double>(), yi = yv.get<double>();
         if (!std::isfinite(xi) || !std::isfinite(yi)) return out;
-        if (nonneg_x ? xi < 0 : !(xi > 0)) return out;
+        // `signed_x`: an axis that legitimately crosses 0 (junction temperature, degC).
+        if (!signed_x && (nonneg_x ? xi < 0 : !(xi > 0))) return out;
         if (positive_y && !(yi > 0)) return out;
         pts.emplace_back(xi, yi);
     }
@@ -800,6 +801,31 @@ std::optional<MosfetRow> extract_mosfet(const json& env) {
     if (pos(qg)) r.qg_total = *qg;
     if (pos(coss_o)) r.coss = *coss_o;
     if (auto v = get_num(*elec, "capacitanceMeasurementVds"); pos(v)) r.coss_vds = *v;
+    // Distributor unit costs (owner 2026-11-14): only a stated positive value with a currency.
+    if (const json* dis = obj_get(*m, "distributorsInfo"); dis && dis->is_array()) {
+        json quotes = json::array();
+        for (const json& d : *dis) {
+            if (!d.is_object()) continue;
+            const json* cost = obj_get(d, "cost");
+            if (!cost || !cost->is_object()) continue;
+            auto v = get_num(*cost, "value");
+            auto cur = get_str(*cost, "currency");
+            if (!pos(v) || !cur || cur->empty()) continue;
+            json q = {{"distributor", get_str(d, "name").value_or("")},
+                      {"unitCost", *v},
+                      {"currency", *cur}};
+            if (auto moq = get_num(d, "moq"); pos(moq)) q["moq"] = *moq;
+            quotes.push_back(std::move(q));
+        }
+        if (!quotes.empty()) r.price_quotes = quotes.dump();
+    }
+    // Operating-point loss inputs (owner 2026-11-14): stated values only, absent stays NaN.
+    if (auto v = get_num(*elec, "gateSourceCharge"); pos(v)) r.qgs = *v;
+    if (auto v = get_num(*elec, "gateDrainCharge"); pos(v)) r.qgd = *v;
+    if (auto v = rating_magnitude(get_num(*elec, "totalGateChargeVgs"), p_channel); pos(v))
+        r.qg_vgs = *v;
+    // The Coss(Vds), Rds(on)(Tj) and gate-charge curves the loss terms read are the row's
+    // measured curves below (read_named_curve: one set, with the conditions each states).
     if (vgs) r.vgs_threshold_max = *vgs;
     if (vgs_typ) r.vgs_threshold_typ = *vgs_typ;
     if (auto v = rating_magnitude(get_num(*elec, "onResistanceVgs"), p_channel); pos(v))

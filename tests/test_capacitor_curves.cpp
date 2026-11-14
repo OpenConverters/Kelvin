@@ -79,21 +79,27 @@ bool has_note(const json& c, const std::string& needle) {
 std::string notes_of(const json& c) { return c.contains("notes") ? c["notes"].dump(1) : ""; }
 }  // namespace
 
-TEST_CASE("ESR curves: an original with no |Z| curve has no useful band -> not graded",
+TEST_CASE("ESR curves: an original with no |Z| curve is graded from its rating frequency up",
           "[curves][capacitor][esr-curve]") {
     // Samsung CL05A225KP5NSNC (0.0346 ohm at 100 kHz, curve 100 Hz-6 GHz) vs TDK
     // C1005X5R1A225K050BC (no scalar, curve 1 kHz-3 GHz). Owner 2026-11-14: impedance-type
     // curves (ESR included) are judged only in the useful band, from the original's rating
-    // frequency up to ITS self-resonance; the Samsung record carries no |Z| curve, so its
-    // self-resonance is not on record and the curves are not graded.
+    // frequency up to ITS self-resonance. The Samsung record carries no |Z| curve, so its
+    // self-resonance is unknown: owner decision 2026-11-14 (1), the ESR curve is then graded
+    // from the band start (100 kHz, stated) up to the end of the common range (3 GHz), with a
+    // note saying the self-resonance is unknown.
     const auto o = row("CL05A225KP5NSNC");
     const auto s = row("C1005X5R1A225K050BC");
     REQUIRE_FALSE(o.esr_curve.empty());
     REQUIRE_FALSE(s.esr_curve.empty());
     const json c = rank_one("CL05A225KP5NSNC", "C1005X5R1A225K050BC");
     INFO(notes_of(c));
-    CHECK(has_note(c, "ESR curves not compared: the original carries no |Z| curve, so its "
-                      "self-resonance (the top of the useful band) is not on record"));
+    CHECK(verdict_of(c, "esr_curve") == "pass");
+    CHECK(has_note(c, "ESR compared on both curves from 100000 to 3e+09 Hz (269 points, "
+                      "log-log): passes everywhere"));
+    CHECK(has_note(c, "useful band from the original's rating (ESR test) frequency 100000 Hz "
+                      "up to the end of the common range; the original carries no |Z| curve, "
+                      "so its self-resonance is unknown"));
     // The scalars are then compared as stated: 0.0346 ohm at 100 kHz against the TDK curve's
     // own 100 kHz reading (a common basis) -> pass.
     CHECK(verdict_of(c, "esr") == "pass");
@@ -169,22 +175,28 @@ TEST_CASE("Frequency curves: |Z|, C(f) and ESL compared on the common band",
     CHECK(has_note(c, "capacitance vs frequency compared on both curves over frequency 100 to "
                       "2.18776e+07 Hz (55 points, log-log, bands of the capacitance spec): "
                       "passes everywhere, tightest at 125.893 Hz"));
-    // ESL: the original's ESL curve starts at 33.1 MHz, above its 31.6 MHz self-resonance, so
-    // no ESL point lies in the useful band -> UNVERIFIED, not graded.
-    CHECK(verdict_of(c, "esl_curve") == "unverified");
-    CHECK(has_note(c, "ESL curves do not meet inside the useful band (original 3.31131e+07 to "
-                      "1e+09 Hz, substitute 2.29087e+07 to 1e+09 Hz; useful band from the "
-                      "original's rating (ESR test) frequency 100000 Hz to the original's "
-                      "self-resonance (|Z| minimum) at 3.16228e+07 Hz; points outside it are "
-                      "not graded) — not compared"));
+    // ESL: owner decision 2026-11-14 (2), ESL is extracted from the inductive region, so its
+    // band runs from the original's self-resonance (31.6 MHz) up to the end of the common
+    // range (1 GHz). The original's ESL curve starts at 33.1 MHz, inside that band; there the
+    // substitute's 0.264 nH is x16.7 the original's 0.0158 nH -> FAIL.
+    CHECK(verdict_of(c, "esl_curve") == "fail");
+    CHECK(has_note(c, "ESL compared on both curves over frequency 3.31131e+07 to 1e+09 Hz (31 "
+                      "points, log-log, bands of the ESR spec): worst at 3.31131e+07 Hz, "
+                      "substitute 2.637e-10 H vs original 1.575e-11 H (ESL band from the "
+                      "original's self-resonance (|Z| minimum) at 3.16228e+07 Hz up to the end "
+                      "of the common range (ESL is extracted from the inductive region); "
+                      "points below it are not graded)"));
     // (The 16 V substitute is rejected for the 25 V original's voltage anyway; the reverse
     // direction is the one a designer could take.) The other way round: |Z| still fails where
     // the two curves cross near the 16 V part's resonance (0.0616 vs 0.0265 ohm at 20 MHz);
-    // ESL is not graded (its 25.1 MHz self-resonance lies below both ESL curves' start).
+    // ESL is graded from its 25.1 MHz self-resonance up (both ESL curves start above it): the
+    // substitute is lower or equal everywhere -> pass.
     const json r = rank_one("C0603C104M4RAC", "C0603C104K3RECTU");
     INFO(notes_of(r));
     CHECK(verdict_of(r, "impedance_curve") == "fail");
-    CHECK(verdict_of(r, "esl_curve") == "unverified");
+    CHECK(verdict_of(r, "esl_curve") == "pass");
+    CHECK(has_note(r, "ESL compared on both curves over frequency 3.31131e+07 to 1e+09 Hz (31 "
+                      "points, log-log, bands of the ESR spec): passes everywhere"));
     // ESR (owner 2026-11-14): the curve verdict is its own row and does not replace the scalar
     // ESR row; both are booked. Here the substitute's ESR curve is x1.7 the original's at
     // 100 kHz -> esr_curve FAIL, beside the scalar esr row.
@@ -218,6 +230,31 @@ TEST_CASE("|Z| useful band: an ESR Kelvin read off the curve is no rating freque
     INFO(notes_of(c));
     CHECK(has_note(c, "useful band from 1 MHz (the original states no rating frequency) to "));
     CHECK(has_note(c, "|Z| compared on both curves over frequency 1e+06 to "));
+}
+
+TEST_CASE("ESL band: self-resonance above the original's |Z| curve -> ESL not graded",
+          "[curves][capacitor][freq-curves][useful-band]") {
+    // KEMET C0402C360G5GACTU vs C0402C360J5GACTU (36 pF C0G 0402, G vs J tolerance): the
+    // original's |Z| curve (100 Hz - 1 GHz) is lowest at its last sample, 1 GHz, so |Z| is
+    // still falling where the measurement stops and its self-resonance lies above the measured
+    // range. Owner decision 2026-11-14 (2): ESL is graded only from the original's
+    // self-resonance upward; with the resonance unknown, ESL is UNVERIFIED + note.
+    const auto o = row("C0402C360G5GACTU");
+    const auto s = row("C0402C360J5GACTU");
+    REQUIRE_FALSE(o.z_curve.empty());
+    REQUIRE_FALSE(o.esl_curve.empty());
+    REQUIRE_FALSE(s.esl_curve.empty());
+    const json c = rank_one("C0402C360G5GACTU", "C0402C360J5GACTU");
+    INFO(notes_of(c));
+    CHECK(verdict_of(c, "esl_curve") == "unverified");
+    CHECK(has_note(c, "ESL curves not compared: the original's |Z| is still falling at the end "
+                      "of its curve at 1e+09 Hz, so its self-resonance (where the inductive "
+                      "region the ESL is extracted from begins) lies above the measured range "
+                      "and is unknown"));
+    // |Z| keeps the band below resonance, up to the end of the original's |Z| curve.
+    CHECK(verdict_of(c, "impedance_curve") != "unverified");
+    CHECK(has_note(c, "to the end of the original's |Z| curve at 1e+09 Hz (|Z| still falling "
+                      "there; its self-resonance lies above)"));
 }
 
 TEST_CASE("Ripple basis: frequency resolved on the substitute's own multiplier table",

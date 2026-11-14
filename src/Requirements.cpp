@@ -240,6 +240,22 @@ ConnectorTiebreaker connector_tiebreaker_from_string(const std::string& s) {
     throw InvalidOptions("unknown connector tiebreaker: " + s);
 }
 
+// ---- switch position <-> string -------------------------------------------
+SwitchPosition switch_position_from_string(const std::string& s) {
+    if (s == "buckHighSide") return SwitchPosition::BuckHighSide;
+    if (s == "buckLowSide" || s == "synchronousRectifier")
+        throw InvalidOptions("lossOperatingPoint.position '" + s +
+                             "' is not modelled yet (only buckHighSide): its conduction over 1-D, "
+                             "dead-time body-diode and Qrr terms are not implemented");
+    throw InvalidOptions("unknown lossOperatingPoint.position: " + s);
+}
+const char* to_string(SwitchPosition p) {
+    switch (p) {
+        case SwitchPosition::BuckHighSide: return "buckHighSide";
+    }
+    return "";
+}
+
 // ---- original tiebreaker <-> string ----------------------------------------
 const char* to_string(MosfetTiebreaker t) {
     switch (t) {
@@ -248,6 +264,7 @@ const char* to_string(MosfetTiebreaker t) {
         case MosfetTiebreaker::HighestVdsMargin: return "highest_vds_margin";
         case MosfetTiebreaker::HighestIdMargin: return "highest_id_margin";
         case MosfetTiebreaker::LowestTotalLoss: return "lowest_total_loss";
+        case MosfetTiebreaker::LowestOperatingPointLoss: return "lowest_operating_point_loss";
     }
     return "";
 }
@@ -275,6 +292,7 @@ MosfetTiebreaker mosfet_tiebreaker_from_string(const std::string& s) {
     if (s == "highest_vds_margin") return MosfetTiebreaker::HighestVdsMargin;
     if (s == "highest_id_margin") return MosfetTiebreaker::HighestIdMargin;
     if (s == "lowest_total_loss") return MosfetTiebreaker::LowestTotalLoss;
+    if (s == "lowest_operating_point_loss") return MosfetTiebreaker::LowestOperatingPointLoss;
     throw InvalidOptions("unknown mosfet tiebreaker: " + s);
 }
 DiodeTiebreaker diode_tiebreaker_from_string(const std::string& s) {
