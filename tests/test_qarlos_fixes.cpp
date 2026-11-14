@@ -8727,3 +8727,39 @@ TEST_CASE("qarlos r29 BB2: ROHM TO-247N is the 3-lead TO-247", "[qarlos][crossre
     CHECK(c["footprint"] == "fits");
     CHECK(verdict_of(c, "footprint") == "pass");
 }
+
+// BB4 (r31): ASEM1-14.31818MHZ-LC-T "3225 4-SMD" against IQD's 831025493 "CFPS-39" (a vendor
+// package code naming no body; the record states 3.2 x 2.5 mm) was graded different_case with
+// the note "3.2 x 2.5 mm against 3.2 x 2.5 mm — different land pattern". A record stating the
+// body the other side's case names is the same body: not an established land change (pads
+// still unverified). The 7 x 5 mm CFPS-73 (831018538) stays a different case.
+TEST_CASE("qarlos r31 BB4: a timing record stating the body the other case names is that body",
+          "[qarlos][crossref][timing][r29-bb]") {
+    using dec_1113_s::timing_spec;
+    auto rec = [](const std::string& mpn) -> json {
+        std::ifstream in(std::string(KELVIN_TEST_DIR) + "/fixtures/qarlos_r29_timing.ndjson");
+        for (std::string l; std::getline(in, l);)
+            if (l.find("\"reference\": \"" + mpn + "\"") != std::string::npos ||
+                l.find("\"reference\":\"" + mpn + "\"") != std::string::npos)
+                return timing_spec(l.c_str());
+        throw std::runtime_error("fixture has no record " + mpn);
+    };
+    using kelvin::crossref::timing_body_agrees;
+    CHECK(timing_body_agrees("3225", 0.0032, 0.0025));
+    CHECK_FALSE(timing_body_agrees("3225", 0.007, 0.005));
+    CHECK_FALSE(timing_body_agrees("3225", 0.0032, std::nullopt));
+    const auto r = kelvin::crossref::cross_reference(
+        "timeBase", rec("ASEM1-14.31818MHZ-LC-T"),
+        json::array({rec("831025493"), rec("831018538")}));
+    json same, big;
+    for (const auto& c : r["candidates"]) {
+        if (c["mpn"] == "831025493") same = c;
+        if (c["mpn"] == "831018538") big = c;
+    }
+    REQUIRE(!same.is_null());
+    REQUIRE(!big.is_null());
+    CHECK(same.value("footprint", "") != "different_case");
+    CHECK_FALSE(has_note(same, "different land pattern"));
+    CHECK(has_note(same, "names the 3225 body and the substitute's record states that body"));
+    CHECK(big.value("footprint", "") == "different_case");
+}

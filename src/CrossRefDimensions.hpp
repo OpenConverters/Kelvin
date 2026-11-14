@@ -1166,9 +1166,9 @@ inline bool generic_package_names_no_land(const std::string& code) {
 // When the record states its length and width they must agree with the code within
 // kTimingBodyTolMm (either orientation), otherwise nothing is read. Never read from an MPN or a
 // description: the case string is the record's own package field.
-inline std::optional<std::string> timing_case_body_code(const std::string& code,
-                                                        std::optional<double> length_m,
-                                                        std::optional<double> width_m) {
+// The standard crystal / oscillator body codes a timing case string's tokens name (see
+// timing_case_body_code below), as found; empty when it names none.
+inline std::set<std::string> timing_case_body_tokens(const std::string& code) {
     static const std::set<std::string> kBodies = {"1210", "1612", "2012", "2016", "2520",
                                                   "3215", "3225", "5032", "6035", "7050"};
     std::set<std::string> found;
@@ -1182,15 +1182,28 @@ inline std::optional<std::string> timing_case_body_code(const std::string& code,
         else flush();
     }
     flush();
+    return found;
+}
+
+// Whether a stated length and width (metres, both required) are the LLWW body code's within
+// kTimingBodyTolMm, either orientation.
+inline bool timing_body_agrees(const std::string& body, std::optional<double> length_m,
+                               std::optional<double> width_m) {
+    if (!length_m || !width_m) return false;
+    constexpr double kTimingBodyTolMm = 0.2;
+    const double l = std::stod(body.substr(0, 2)) / 10.0, w = std::stod(body.substr(2)) / 10.0;
+    const double sl = *length_m * 1e3, sw = *width_m * 1e3;
+    auto near = [](double a, double b) { return std::fabs(a - b) <= kTimingBodyTolMm; };
+    return (near(l, sl) && near(w, sw)) || (near(l, sw) && near(w, sl));
+}
+
+inline std::optional<std::string> timing_case_body_code(const std::string& code,
+                                                        std::optional<double> length_m,
+                                                        std::optional<double> width_m) {
+    const std::set<std::string> found = timing_case_body_tokens(code);
     if (found.size() != 1) return std::nullopt;
     const std::string body = *found.begin();
-    if (length_m && width_m) {
-        constexpr double kTimingBodyTolMm = 0.2;
-        const double l = std::stod(body.substr(0, 2)) / 10.0, w = std::stod(body.substr(2)) / 10.0;
-        const double sl = *length_m * 1e3, sw = *width_m * 1e3;
-        auto near = [](double a, double b) { return std::fabs(a - b) <= kTimingBodyTolMm; };
-        if (!((near(l, sl) && near(w, sw)) || (near(l, sw) && near(w, sl)))) return std::nullopt;
-    }
+    if (length_m && width_m && !timing_body_agrees(body, length_m, width_m)) return std::nullopt;
     return body;
 }
 
