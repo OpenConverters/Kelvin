@@ -1,3 +1,4 @@
+#include "CapacitorLoss.hpp"
 #include "CrossRef.hpp"  // kGrossOverRatingFactor (one rule with the cross-reference)
 #include "MfrPolicy.hpp"
 #include "MosfetLoss.hpp"
@@ -390,6 +391,109 @@ json select_diode(const Shard<DiodeRow>& shard, const DiodeConstraints& c, Diode
     return result;
 }
 
+namespace {
+
+// Board area and volume of a capacitor (owner 2026-11-14): the land the cross-reference resolves
+// (crossref::dims_of — the record's drawn L x W, else the case table's outline for its code), and
+// L x W x H with the height the record draws or its code spells out (a table's typical height is
+// not the part's: dims_of drops it). Capacitor height matters, so the volume is reported beside
+// the area; either is null with "not stated" when it cannot be resolved.
+std::pair<json, json> capacitor_size_json(const CapacitorRow& x) {
+    json p = json::object();
+    if (present(x.length_m)) p["length_m"] = x.length_m;
+    if (present(x.width_m)) p["width_m"] = x.width_m;
+    if (present(x.height_m)) p["height_m"] = x.height_m;
+    if (!x.case_code.empty()) p["case_code"] = x.case_code;
+    if (!x.mount.empty()) p["mount"] = x.mount;
+    if (!x.lead_form.empty()) p["lead_form"] = x.lead_form;
+    if (!x.family.empty()) p["family"] = x.family;
+    if (!x.technology.empty()) p["technology"] = x.technology;
+    const auto d = crossref::dims_of(p, "capacitor");
+    if (!d || !crossref::has_land(*d)) {
+        const std::string why = "not stated: no drawn L x W and no resolvable case code" +
+                                (x.case_code.empty() ? std::string() : " ('" + x.case_code + "')");
+        return {json{{"mm2", nullptr}, {"basis", why}}, json{{"mm3", nullptr}, {"basis", why}}};
+    }
+    const std::string land = d->land_from_table ? d->land_source
+                                                : std::string("the record's drawn length x width");
+    json area = {{"mm2", *d->length * *d->width * 1e6}, {"basis", land}};
+    json vol;
+    if (d->height && *d->height > 0 && !d->height_from_table)
+    {
+        char h[64];
+        std::snprintf(h, sizeof h, " x the stated height %.4g mm", *d->height * 1e3);
+        vol = {{"mm3", *d->length * *d->width * *d->height * 1e9}, {"basis", land + h}};
+    }
+    else
+        vol = {{"mm3", nullptr}, {"basis", "not stated: the record states no height"}};
+    return {area, vol};
+}
+
+json capacitor_price_json(const CapacitorRow& x, std::optional<double> quantity) {
+    json p;
+    p["quantity"] = quantity ? json(*quantity) : json(nullptr);
+    p["atQuantity"] = nullptr;
+    p["quotes"] = x.price_quotes.empty() ? json::array() : json::parse(x.price_quotes);
+    p["basis"] = x.price_quotes.empty()
+                     ? "not stated: the record carries no distributor cost"
+                     : "unit cost as the distributor states it; the record carries no price "
+                       "breaks, so the price at a given quantity is not stated";
+    return p;
+}
+
+json capacitor_check_json(const CapacitorCheck& t, const char* unit_key) {
+    json j;
+    j[unit_key] = t.value ? json(*t.value) : json(nullptr);
+    if (t.value) j["basis"] = t.basis;
+    else j["missing"] = t.missing;
+    return j;
+}
+
+json capacitor_loss_json(const CapacitorLossBreakdown& lb) {
+    json loss;
+    loss["position"] = to_string(lb.position);
+    loss["dutyCycle"] = lb.duty;
+    loss["dutyBasis"] = lb.duty_basis;
+    loss["rippleCurrent"] = lb.i_ripple;
+    loss["rippleCurrentBasis"] = lb.i_ripple_basis;
+    loss["dcVoltage"] = lb.v_dc;
+    json term = loss_term_json(lb.esr_loss);
+    if (lb.esr_upper_bound) term["upperBound"] = true;  // ESR from tan(delta) (owner 2026-11-14)
+    loss["terms"] = {{"esrLoss", term}};
+    const auto tot = lb.total();
+    loss["total"] = tot ? json(*tot) : json(nullptr);
+    loss["computedSum"] = lb.computed_sum();
+    loss["unverified"] = lb.unverified();
+    json checks;
+    checks["effectiveCapacitance"] = capacitor_check_json(lb.c_eff, "farads");
+    if (lb.has_ripple_voltage()) {
+        json rv = capacitor_check_json(lb.ripple_voltage, "volts");
+        rv["limit"] = lb.max_ripple_v ? json(*lb.max_ripple_v) : json(nullptr);
+        rv["overLimit"] = lb.over_ripple_voltage();
+        checks["rippleVoltage"] = std::move(rv);
+    }
+    json rr = capacitor_check_json(lb.ripple_rating, "amperes");
+    rr["needed"] = lb.i_ripple;
+    const auto ok = lb.ripple_rating_ok();
+    rr["meets"] = ok ? json(*ok) : json(nullptr);
+    checks["rippleCurrentRating"] = std::move(rr);
+    loss["checks"] = std::move(checks);
+    loss["notes"] = lb.notes;
+    return loss;
+}
+
+json capacitor_loss_op_json(const CapacitorOperatingPoint& op) {
+    json o = {{"position", to_string(op.position)}, {"inputVoltage", op.vin},
+              {"outputVoltage", op.vout}, {"outputCurrent", op.iout},
+              {"switchingFrequency", op.fsw}, {"dutyCycle", op.duty()}};
+    if (op.ripple_pp) o["inductorRippleCurrent"] = *op.ripple_pp;
+    if (op.max_ripple_v) o["maxRippleVoltage"] = *op.max_ripple_v;
+    if (op.ambient) o["ambientTemperature"] = *op.ambient;
+    return o;
+}
+
+}  // namespace
+
 json select_capacitor(const Shard<CapacitorRow>& shard, const CapacitorConstraints& c,
                       CapacitorTiebreaker tb, size_t max_candidates, RecordFetcher* fetcher, const MfrPolicy& mfr) {
     c.validate();
@@ -426,6 +530,18 @@ json select_capacitor(const Shard<CapacitorRow>& shard, const CapacitorConstrain
         throw NoCandidates("CapacitorConstraints", emit_rejections(rej),
                            shard.meta.source_line_count);
 
+    // LOWEST_OPERATING_POINT_LOSS (owner 2026-11-14): the caller's operating point, required.
+    const bool op_loss_mode = tb == CapacitorTiebreaker::LowestOperatingPointLoss;
+    std::map<const CapacitorRow*, CapacitorLossBreakdown> op_loss;
+    if (op_loss_mode) {
+        if (!c.loss_op)
+            throw InvalidOptions("lowest_operating_point_loss requires a lossOperatingPoint "
+                                 "(position, inputVoltage, outputVoltage, outputCurrent, "
+                                 "switchingFrequency; inductorRippleCurrent for buckOutput)");
+        c.loss_op->validate();
+        for (const CapacitorRow* x : passing) op_loss.emplace(x, capacitor_loss(*x, *c.loss_op));
+    }
+
     double ripple_min_denom =
         (c.ripple_current_min && *c.ripple_current_min != 0.0) ? *c.ripple_current_min : 1.0;
     auto metric = [&](const CapacitorRow* x) -> double {
@@ -435,6 +551,7 @@ json select_capacitor(const Shard<CapacitorRow>& shard, const CapacitorConstrain
                 return -x->ripple_current_rms / ripple_min_denom;
             case CapacitorTiebreaker::HighestVoltageMargin: return -x->v_rated / c.v_rated_min;
             case CapacitorTiebreaker::HighestCapacitance: return -x->capacitance;
+            case CapacitorTiebreaker::LowestOperatingPointLoss: return op_loss.at(x).computed_sum();
         }
         return 0;
     };
@@ -444,14 +561,73 @@ json select_capacitor(const Shard<CapacitorRow>& shard, const CapacitorConstrain
     // Rank unknown LAST behind a flag, exactly as no_thermal already does — and never by
     // substituting a number for the absent one, which is the defect being fixed.
     auto unknown_metric = [&](const CapacitorRow* x) { return std::isnan(metric(x)) ? 1 : 0; };
+    // Operating-point loss (owner 2026-11-14): a candidate with an UNVERIFIED term ranks after
+    // every fully computed one; then one over the caller's ripple-voltage limit OR under the
+    // ripple-current rating after the ones that pass both; then the loss alone (the thermal
+    // tier does not reorder it).
+    auto unverified_terms = [&](const CapacitorRow* x) -> size_t {
+        return op_loss_mode ? op_loss.at(x).unverified().size() : 0;
+    };
+    auto fails_ripple = [&](const CapacitorRow* x) -> int {
+        return op_loss_mode && op_loss.at(x).fails_ripple_checks() ? 1 : 0;
+    };
+    auto thermal_tier = [&](const CapacitorRow* x) -> int {
+        return !op_loss_mode && x->no_thermal() ? 1 : 0;
+    };
+    // Gross over-rating (owner 2026-11-14): rated voltage more than kGrossOverRatingFactor (3x)
+    // the requirement; ripple-current rating more than 3x the need (the operating point's
+    // ripple current — the rating at fs / the ambient when it could be moved there, else the
+    // stated one, said so — or, without an operating point, the requirement's minimum).
+    struct OverAxis {
+        std::string axis;
+        double have, need;
+        std::string basis;
+    };
+    auto over_rated_axes = [&](const CapacitorRow* x) {
+        std::vector<OverAxis> axes;
+        const double k = crossref::kGrossOverRatingFactor;
+        if (x->v_rated > k * c.v_rated_min)
+            axes.push_back({"voltage", x->v_rated, c.v_rated_min, ""});
+        std::optional<double> need, have;
+        std::string basis;
+        if (op_loss_mode) {
+            const CapacitorLossBreakdown& lb = op_loss.at(x);
+            need = lb.i_ripple;
+            if (lb.ripple_rating.value) {
+                have = *lb.ripple_rating.value;
+                basis = " (the rating moved to the operating point)";
+            } else if (present(x->ripple_current_rms)) {
+                have = x->ripple_current_rms;
+                basis = " (the stated rating: it could not be moved to the operating point)";
+            }
+        } else if (c.ripple_current_min && *c.ripple_current_min > 0 &&
+                   present(x->ripple_current_rms)) {
+            need = *c.ripple_current_min;
+            have = x->ripple_current_rms;
+        }
+        if (need && have && *have > k * *need) axes.push_back({"rippleCurrent", *have, *need, basis});
+        return axes;
+    };
+    // The tier ranks only where the ranking does not already weigh the rating (owner
+    // 2026-11-14, as for MOSFETs): under the operating-point loss the loss decides, and under
+    // highest_voltage_margin / highest_ripple_headroom a higher rating is what was asked for.
+    const bool over_rating_ranks = c.over_rating_tier && !op_loss_mode &&
+                                   tb != CapacitorTiebreaker::HighestVoltageMargin &&
+                                   tb != CapacitorTiebreaker::HighestRippleHeadroom;
+    auto over_rated = [&](const CapacitorRow* x) -> size_t {
+        return over_rating_ranks ? over_rated_axes(x).size() : 0;
+    };
     std::sort(passing.begin(), passing.end(), [&](const CapacitorRow* a, const CapacitorRow* b) {
-        return std::make_tuple(a->no_thermal() ? 1 : 0, unknown_metric(a), metric(a), a->lineno) <
-               std::make_tuple(b->no_thermal() ? 1 : 0, unknown_metric(b), metric(b), b->lineno);
+        return std::make_tuple(unverified_terms(a), fails_ripple(a), thermal_tier(a),
+                               unknown_metric(a), over_rated(a), metric(a), a->lineno) <
+               std::make_tuple(unverified_terms(b), fails_ripple(b), thermal_tier(b),
+                               unknown_metric(b), over_rated(b), metric(b), b->lineno);
     });
 
     json result;
     result["category"] = "capacitor";
     result["tiebreaker"] = to_string(tb);
+    if (op_loss_mode) result["lossOperatingPoint"] = capacitor_loss_op_json(*c.loss_op);
     result["totalRowsConsidered"] = shard.meta.source_line_count;
     result["alternativesConsidered"] = passing.size();
     result["rejections"] = emit_rejections(rej);
@@ -470,7 +646,52 @@ json select_capacitor(const Shard<CapacitorRow>& shard, const CapacitorConstrain
                            : json(nullptr)},
         };
         cd["evidence"] = {{"thermalPresent", !x->no_thermal()}};
-        cd["sortKey"] = {{"metric", to_string(tb)}, {"value", metric(x)}};
+        auto [area, vol] = capacitor_size_json(*x);
+        cd["boardArea"] = std::move(area);
+        cd["volume"] = std::move(vol);
+        cd["price"] = capacitor_price_json(*x, c.price_quantity);
+        cd["ratings"] = {{"voltage", x->v_rated},
+                         {"capacitance", x->capacitance},
+                         {"technology", x->technology},
+                         {"dielectric", x->dielectric_code},
+                         {"esr", num_or_null(x->esr)},
+                         {"esrFrequency", num_or_null(x->esr_frequency)},
+                         {"rippleCurrent", num_or_null(x->ripple_current_rms)},
+                         {"rippleCurrentFrequency", num_or_null(x->ripple_current_frequency)},
+                         {"rippleCurrentTemperature", num_or_null(x->ripple_current_temperature)}};
+        if (c.over_rating_tier) {
+            json orj = {{"axes", json::array()}, {"notes", json::array()}};
+            for (const OverAxis& ax : over_rated_axes(x)) {
+                const bool v = ax.axis == "voltage";
+                char b[512];
+                std::snprintf(b, sizeof b,
+                              "%s %g %s%s is %.3gx the %s %.4g %s — more than %gx: a bigger body "
+                              "and higher cost are likely; %s",
+                              v ? "rated voltage" : "ripple-current rating", ax.have, v ? "V" : "A",
+                              ax.basis.c_str(), ax.have / ax.need,
+                              v ? "requirement's" : (op_loss_mode ? "operating point's" : "requirement's"),
+                              ax.need, v ? "V" : "A", crossref::kGrossOverRatingFactor,
+                              over_rating_ranks
+                                  ? "ranked after closer-rated parts"
+                                  : (op_loss_mode ? "flagged only: the operating-point loss "
+                                                    "alone sets the order"
+                                                  : "flagged only: this ranking does not "
+                                                    "demote it"));
+                orj["axes"].push_back(ax.axis);
+                orj["notes"].push_back(b);
+            }
+            cd["overRating"] = std::move(orj);
+        }
+        if (op_loss_mode) {
+            const CapacitorLossBreakdown& lb = op_loss.at(x);
+            cd["loss"] = capacitor_loss_json(lb);
+            cd["sortKey"] = {{"metric", to_string(tb)}, {"value", lb.computed_sum()},
+                             {"unverifiedTerms", lb.unverified().size()},
+                             {"overRippleVoltage", lb.over_ripple_voltage()},
+                             {"underRippleCurrentRating", lb.under_ripple_rating()}};
+        } else {
+            cd["sortKey"] = {{"metric", to_string(tb)}, {"value", metric(x)}};
+        }
         cands.push_back(std::move(cd));
     }
     result["candidates"] = std::move(cands);

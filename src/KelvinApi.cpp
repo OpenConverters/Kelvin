@@ -453,7 +453,50 @@ json Engine::select(const std::string& category, const json& req, const json& op
             for (const auto& t : options.at("technologyAllowed"))
                 if (t.is_string()) c.technology_allowed.insert(t.get<std::string>());
         }
-        CapacitorTiebreaker tb = CapacitorTiebreaker::LowestEsr;
+        // Gross over-rating: flagged on every recommendation served, ranked as a tier except
+        // under the operating-point loss and the voltage / ripple margin rankings (owner
+        // 2026-11-14, as for MOSFETs).
+        c.over_rating_tier = true;
+        // The converter operating point for lowest_operating_point_loss (owner 2026-11-14).
+        // Every value is the caller's: nothing is defaulted.
+        if (options.contains("lossOperatingPoint")) {
+            const json& op = options.at("lossOperatingPoint");
+            if (!op.is_object()) throw InvalidOptions("lossOperatingPoint must be an object");
+            CapacitorOperatingPoint lo;
+            auto pos = opt_str(op, "position");
+            if (!pos)
+                throw InvalidOptions("lossOperatingPoint.position is required (buckOutput or buckInput)");
+            lo.position = capacitor_position_from_string(*pos);
+            // A key that is present must be a number (null = not given).
+            auto num = [&](const char* k) -> std::optional<double> {
+                if (!op.contains(k) || op.at(k).is_null()) return std::nullopt;
+                if (!op.at(k).is_number())
+                    throw InvalidOptions(std::string("lossOperatingPoint.") + k + " must be a number");
+                return op.at(k).get<double>();
+            };
+            auto need = [&](const char* k) {
+                auto v = num(k);
+                if (!v) throw InvalidOptions(std::string("lossOperatingPoint.") + k + " is required");
+                return *v;
+            };
+            lo.vin = need("inputVoltage");
+            lo.vout = need("outputVoltage");
+            lo.iout = need("outputCurrent");
+            lo.fsw = need("switchingFrequency");
+            lo.ripple_pp = num("inductorRippleCurrent");
+            lo.max_ripple_v = num("maxRippleVoltage");
+            lo.ambient = num("ambientTemperature");
+            lo.validate();
+            c.loss_op = lo;
+        }
+        if (options.contains("priceQuantity") && !options.at("priceQuantity").is_null()) {
+            const json& q = options.at("priceQuantity");
+            if (!q.is_number() || !(q.get<double>() > 0))
+                throw InvalidOptions("priceQuantity must be a positive number");
+            c.price_quantity = q.get<double>();
+        }
+        CapacitorTiebreaker tb = c.loss_op ? CapacitorTiebreaker::LowestOperatingPointLoss
+                                           : CapacitorTiebreaker::LowestEsr;
         if (auto s = opt_str(options, "tiebreaker")) tb = capacitor_tiebreaker_from_string(*s);
         const Shard<CapacitorRow>& sh = capacitor_shard();
         std::optional<FileRecordFetcher> fetch;

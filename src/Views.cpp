@@ -1541,6 +1541,13 @@ std::optional<CapacitorRow> extract_capacitor(const json& env) {
     if (present(r.ripple_current_rms))
         if (auto v = get_num(*elec, "rippleCurrentTemperature"); v && std::isfinite(*v))
             r.ripple_current_temperature = *v;
+    // The dissipation factor tan(delta) and the frequency it is stated AT (v22, owner
+    // 2026-11-14): the frequency only alongside a stated factor, never a "typical" 120 Hz.
+    if (auto v = get_num(*elec, "dissipationFactor"); pos(v)) {
+        r.dissipation_factor = *v;
+        if (auto f = get_num(*elec, "dissipationFactorFrequency"); pos(f))
+            r.dissipation_factor_frequency = *f;
+    }
     // The IEC 60384-14 safety class the record states (v20), verbatim. Absent or null stays
     // "" (not stated); the explicit token "none" is a stated fact and is kept as such.
     if (const json* sc = obj_get(*part, "safetyClass"); sc && sc->is_object())
@@ -1613,6 +1620,25 @@ std::optional<CapacitorRow> extract_capacitor(const json& env) {
                                              "emperature", r.ripple_current_temperature,
                                              r.ripple_current_rms, "frequency",
                                              r.ripple_current_frequency, /*log_x=*/false);
+    }
+    // Distributor unit costs (owner 2026-11-14, capacitor selector): only a stated positive
+    // value with a currency, as for MOSFETs.
+    if (const json* dis = obj_get(*cap, "distributorsInfo"); dis && dis->is_array()) {
+        json quotes = json::array();
+        for (const json& d : *dis) {
+            if (!d.is_object()) continue;
+            const json* cost = obj_get(d, "cost");
+            if (!cost || !cost->is_object()) continue;
+            auto v = get_num(*cost, "value");
+            auto cur = get_str(*cost, "currency");
+            if (!pos(v) || !cur || cur->empty()) continue;
+            json q = {{"distributor", get_str(d, "name").value_or("")},
+                      {"unitCost", *v},
+                      {"currency", *cur}};
+            if (auto moq = get_num(d, "moq"); pos(moq)) q["moq"] = *moq;
+            quotes.push_back(std::move(q));
+        }
+        if (!quotes.empty()) r.price_quotes = quotes.dump();
     }
     if (!present(r.esr)) {
         if (auto v = curve_at(obj_get(*elec, "esrPoints"), 1e5, "[Hz]", "Ohm"); v) {

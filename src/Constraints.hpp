@@ -2,6 +2,7 @@
 // Built either from a schema designRequirements block (Requirements.cpp, the port of
 // kirchhoff_fill._*_constraints) or directly (the parity harness feeds these verbatim).
 #pragma once
+#include <cmath>
 #include <optional>
 #include <set>
 #include <stdexcept>
@@ -39,6 +40,11 @@ enum class CapacitorTiebreaker {
     HighestRippleHeadroom,
     HighestVoltageMargin,
     HighestCapacitance,
+    // Owner 2026-11-14: the capacitor's ESR loss at a stated buck operating point
+    // (CapacitorConstraints::loss_op, src/CapacitorLoss.hpp), with the effective capacitance,
+    // the output ripple voltage and the ripple-current rating checked there. Every input is the
+    // caller's and every datasheet value the record's; a missing one is UNVERIFIED.
+    LowestOperatingPointLoss,
 };
 
 const char* to_string(MosfetTiebreaker t);
@@ -139,11 +145,61 @@ struct DiodeConstraints {
     }
 };
 
+// Where the capacitor sits in the buck (owner 2026-11-14): the output capacitor carries the
+// inductor ripple, the input capacitor the chopped input current.
+enum class CapacitorPosition { BuckOutput, BuckInput };
+CapacitorPosition capacitor_position_from_string(const std::string& s);
+const char* to_string(CapacitorPosition p);
+
+// The converter operating point a capacitor is ranked at (owner 2026-11-14). SI units.
+// Required: position, vin, vout (0 < vout < vin: D = Vout/Vin, the ideal CCM buck), iout, fsw;
+// ripple_pp (inductor peak-to-peak ripple) for the output position. Optional: max_ripple_v
+// (ripple-voltage limit at either position — the input one by the standard buck input model,
+// owner 2026-11-14; a candidate over it is flagged and ranks after those that meet it) and
+// ambient (degC; the ripple-current rating is moved to it on the record's own table).
+struct CapacitorOperatingPoint {
+    CapacitorPosition position = CapacitorPosition::BuckOutput;
+    double vin = 0, vout = 0, iout = 0, fsw = 0;
+    std::optional<double> ripple_pp, max_ripple_v, ambient;
+    void validate() const {
+        auto pos = [](double v, const char* n) {
+            if (!(v > 0)) throw InvalidOptions(std::string("lossOperatingPoint.") + n +
+                                               " must be a positive number");
+        };
+        pos(vin, "inputVoltage");
+        pos(vout, "outputVoltage");
+        pos(iout, "outputCurrent");
+        pos(fsw, "switchingFrequency");
+        if (!(vout < vin))
+            throw InvalidOptions("lossOperatingPoint.outputVoltage must be below inputVoltage "
+                                 "for a buck");
+        if (position == CapacitorPosition::BuckOutput && !ripple_pp)
+            throw InvalidOptions("lossOperatingPoint.inductorRippleCurrent is required for "
+                                 "position buckOutput");
+        if (ripple_pp && !(*ripple_pp > 0))
+            throw InvalidOptions("lossOperatingPoint.inductorRippleCurrent must be positive");
+        if (max_ripple_v && !(*max_ripple_v > 0))
+            throw InvalidOptions("lossOperatingPoint.maxRippleVoltage must be positive");
+        if (ambient && !std::isfinite(*ambient))
+            throw InvalidOptions("lossOperatingPoint.ambientTemperature must be a number");
+    }
+    double duty() const { return vout / vin; }
+};
+
 struct CapacitorConstraints {
     double capacitance_min = 0, capacitance_max = 0, v_rated_min = 0;
     std::optional<double> ripple_current_min;  // absent = skip filter (MLCC)
     std::set<std::string> technology_allowed;  // empty = any
     bool exclude_discontinued = true;
+    std::optional<CapacitorOperatingPoint> loss_op;  // LowestOperatingPointLoss's operating point
+    // Price at this quantity (options.priceQuantity), echoed per candidate; nullopt = none asked.
+    std::optional<double> price_quantity;
+    // Gross over-rating (owner 2026-11-14, as for MOSFETs): rated voltage, or ripple-current
+    // rating, more than 3x the requirement. On for every recommendation the Engine serves; the
+    // Python-parity harness runs the core with it off. A tier under lowest_esr and
+    // highest_capacitance; a flag and a note only under lowest_operating_point_loss,
+    // highest_voltage_margin and highest_ripple_headroom.
+    bool over_rating_tier = false;
     void validate() const {
         if (!(capacitance_min > 0))
             throw InvalidOptions("CapacitorConstraints.capacitance_min must be positive");

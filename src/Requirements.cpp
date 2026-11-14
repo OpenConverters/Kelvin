@@ -283,6 +283,7 @@ const char* to_string(CapacitorTiebreaker t) {
         case CapacitorTiebreaker::HighestRippleHeadroom: return "highest_ripple_headroom";
         case CapacitorTiebreaker::HighestVoltageMargin: return "highest_voltage_margin";
         case CapacitorTiebreaker::HighestCapacitance: return "highest_capacitance";
+        case CapacitorTiebreaker::LowestOperatingPointLoss: return "lowest_operating_point_loss";
     }
     return "";
 }
@@ -307,7 +308,23 @@ CapacitorTiebreaker capacitor_tiebreaker_from_string(const std::string& s) {
     if (s == "highest_ripple_headroom") return CapacitorTiebreaker::HighestRippleHeadroom;
     if (s == "highest_voltage_margin") return CapacitorTiebreaker::HighestVoltageMargin;
     if (s == "highest_capacitance") return CapacitorTiebreaker::HighestCapacitance;
+    if (s == "lowest_operating_point_loss") return CapacitorTiebreaker::LowestOperatingPointLoss;
     throw InvalidOptions("unknown capacitor tiebreaker: " + s);
+}
+
+// ---- capacitor position <-> string (owner 2026-11-14) ------------------------
+CapacitorPosition capacitor_position_from_string(const std::string& s) {
+    if (s == "buckOutput") return CapacitorPosition::BuckOutput;
+    if (s == "buckInput") return CapacitorPosition::BuckInput;
+    throw InvalidOptions("unknown capacitor lossOperatingPoint.position: " + s +
+                         " (buckOutput or buckInput)");
+}
+const char* to_string(CapacitorPosition p) {
+    switch (p) {
+        case CapacitorPosition::BuckOutput: return "buckOutput";
+        case CapacitorPosition::BuckInput: return "buckInput";
+    }
+    return "";
 }
 
 }  // namespace kelvin
