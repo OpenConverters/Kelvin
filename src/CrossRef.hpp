@@ -1216,6 +1216,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     bool power_basis_unverified = false;
     // SMD vs through-hole could not be established for this pair (compare_mount Unknown).
     bool mount_unverified = false;
+    // An original's AC rating the substitute does not state (owner 2026-11-14): capped
+    // minor_review like a missing primary rating.
+    bool ac_rating_unverified = false;
     // A primary current rating (MOSFET Id, diode If(AV), IGBT Ic) stated by one record only
     // (owner 2026-11-13, Y1): UNVERIFIED with a note, capped at minor_review.
     bool current_rating_one_sided = false;
@@ -1640,12 +1643,15 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             // or note. Rule (owner 2026-11-14):
             //   * both stated -> compared like the rated voltage (the capacitor "voltage"
             //     critical rating: HigherBetter, WARN below 0.95x, FAIL below 0.9x rejects);
-            //   * the substitute states none -> UNVERIFIED with a note (no cap, no penalty);
+            //   * the substitute states none -> UNVERIFIED with a note, demoted and capped at
+            //     minor_review like a missing primary rating (owner 2026-11-14), no penalty;
             //   * the original states none -> nothing is compared.
             const auto s_ac = num(cand, "voltage_ac");
             char buf[160];
             if (!s_ac) {
                 params.push_back({{"name", "voltage_ac"}, {"verdict", UNVERIFIED}});
+                ac_rating_unverified = true;
+                demote();
                 std::snprintf(buf, sizeof buf, "%g V AC", *o_ac);
                 notes.push_back(std::string("the original is rated ") + buf +
                                 "; the substitute's record states no AC rating, so its AC "
@@ -6188,7 +6194,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                     mount_unverified || timebase_pin_unverified ||
                                     timebase_prog_order || current_rating_one_sided ||
                                     !orig_unstated_primary.empty() ||
-                                    !both_unstated_primary.empty() || cand_no_physical_data;
+                                    !both_unstated_primary.empty() || cand_no_physical_data ||
+                                    ac_rating_unverified;
     out["grade"] = grade_for(status, tier, any_warn, any_fail, primary_unverified,
                              missing_required_data || connector_identity_gaps_major ||
                                  timebase_tech_major,
