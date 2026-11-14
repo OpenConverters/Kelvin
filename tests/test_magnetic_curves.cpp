@@ -126,17 +126,30 @@ TEST_CASE("curves: an inductor's |Z|(f) curve is compared with the other's",
     CHECK(c["status"] == "partial");
 }
 
-// 3. A bead's resistancePoints / reactancePoints (2,630 / 2,637 bead records) were never
+// 3. A bead's resistancePoints / reactancePoints (2,691 records carry both) were never
 // compared. R(f) — the dissipative part that suppresses the noise — and X(f) on the band both
 // curves are inductive are now compared with the bead impedance spec's bands, linear ohms over
 // log frequency.
 TEST_CASE("curves: a bead's R(f) and X(f) are compared with the other's",
           "[magcurves][crossref][bead]") {
-    const auto o = row_of("742792653"), s = row_of("74279265");
+    const auto o = row_of("KMZ1608YHR301BTD25"), s = row_of("MMZ1608B301CTAH0");
     REQUIRE(o.r_curve.x->size() >= 2);
     REQUIRE(s.x_curve.x->size() >= 2);
     const json c = rank("chipBead", spec_of(o, true), spec_of(s, true));
     INFO(c.dump());
-    CHECK(verdict_of(c, "resistance_curve") == "XX");
-    CHECK(verdict_of(c, "reactance_curve") == "XX");
+    // Two TDK 0603 300 ohm @ 100 MHz beads, both swept 1 MHz-3 GHz with a SIGNED reactance
+    // (X < 0 above resonance). The original KMZ1608YHR301B is a sharp high-speed bead (R
+    // peaking near 477 ohm around 300 MHz); the broadband MMZ1608B301C is resistive early and
+    // flat, so at 345 MHz it dissipates 321 ohm against 477 ohm (0.67x): R(f) FAIL.
+    CHECK(verdict_of(c, "resistance_curve") == "fail");
+    const std::string rn = note_with(c, "R(f) compared on both curves");
+    CHECK(rn.find("worst at 345 MHz, substitute 321 ohm vs original 477 ohm") !=
+          std::string::npos);
+    // X(f) is judged on the band both are inductive (the substitute turns capacitive first,
+    // at ~222 MHz), where its reactance has fallen to 1.26 ohm against the original's 97.5.
+    CHECK(verdict_of(c, "reactance_curve") == "fail");
+    const std::string xn = note_with(c, "X(f) compared on both curves");
+    CHECK(xn.find("over 1 MHz-222 MHz") != std::string::npos);
+    CHECK(xn.find("inductive band X > 0 only") != std::string::npos);
+    CHECK(c["status"] == "partial");
 }
