@@ -8937,3 +8937,36 @@ TEST_CASE("owner 2026-11-14: a resistor power rating more than 3x the original's
           x25["penalty"].get<double>() + 0.9 * kelvin::crossref::kGrossOverRatingPenalty);
     CHECK(x5["grade"] == same["grade"]);  // an ordering step, not a grade change
 }
+
+// Owner decision 2026-11-14 (Qarlos r31 seed 34608982, data-524a699): Vishay D2TO020C1R910FTE3,
+// whose record states no physical data at all (case "", no dimensions, no mount), was offered for
+// the Bourns 0201 chip CR0201-F/-1R91GLF. A candidate stating nothing physical against an original
+// that states something is capped at minor_review, takes kNoPhysicalDataPenalty and a note, so a
+// part of known size ranks first. Its twin stating the original's case is the known-size control.
+TEST_CASE("owner 2026-11-14: a candidate stating no physical data ranks after known-size parts",
+          "[qarlos][crossref][resistor][no-physical-data]") {
+    const json orig = r29_bb::res("CR0201-F/-1R91GLF");
+    const json bare = r29_bb::res("D2TO020C1R910FTE3");
+    REQUIRE(orig["case_code"] == "0201");
+    // The premise: nothing physical on the candidate's record.
+    REQUIRE(bare.value("case_code", "") == "");
+    REQUIRE(bare.value("mount", "") == "");
+    REQUIRE(bare["length_m"].is_null());
+    REQUIRE(bare["width_m"].is_null());
+    json sized = bare;
+    sized["mpn"] = "D2TO020_WITH_CASE";
+    sized["case_code"] = "0201";
+    auto opt = res_opt();
+    opt.check_footprint = true;
+    const auto r =
+        kelvin::crossref::cross_reference("resistor", orig, json::array({bare, sized}), opt);
+    const json b = res_find(r, "D2TO020C1R910FTE3"), s = res_find(r, "D2TO020_WITH_CASE");
+    REQUIRE(!b.is_null());
+    REQUIRE(!s.is_null());
+    CHECK(has_note(b, "states no physical data at all"));
+    CHECK(b["grade"] != "drop_in");
+    CHECK_FALSE(has_note(s, "states no physical data at all"));
+    CHECK(b["penalty"].get<double>() >
+          s["penalty"].get<double>() + 0.9 * kelvin::crossref::kNoPhysicalDataPenalty);
+    CHECK(r["candidates"][0]["mpn"] == "D2TO020_WITH_CASE");
+}
