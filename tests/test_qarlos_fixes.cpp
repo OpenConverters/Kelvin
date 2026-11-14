@@ -9006,6 +9006,19 @@ TEST_CASE("qarlos r28: an original's AC rating is compared without a safety clas
     const json c = r["candidates"][0];
     CHECK(verdict_of(c, "voltage_ac") == "unverified");
     CHECK(has_note(c, "the original is rated 250 V AC"));
+    // owner 2026-11-14: capped at minor_review like a missing primary rating.
+    CHECK(c["grade"] != "drop_in");
+    CHECK(c["grade"] != "upgrade");
+    CHECK(c["status"] != "recommended");
+    // The cap in isolation: the original's own record with only its AC rating removed would be
+    // a drop-in; without the AC rating it is capped at minor_review.
+    json no_ac = orig;
+    no_ac["mpn"] = "SAME_NO_AC";
+    no_ac["voltage_ac"] = nullptr;
+    auto r1 = kelvin::crossref::cross_reference("capacitor", orig, json::array({no_ac}), opt);
+    REQUIRE(r1["candidates"].size() == 1);
+    CHECK(r1["candidates"][0]["grade"] == "minor_review");
+    CHECK(r1["candidates"][0]["status"] != "recommended");
     // Both stated: compared like the rated voltage (the original's own record against an AC
     // rating 5 % and 20 % lower).
     json warm = orig, low = orig;
@@ -9066,3 +9079,4 @@ TEST_CASE("qarlos r28: a DSN0603 package is not the imperial 0603 chip",
     CHECK_FALSE(has_note(c, "1.6"));
     CHECK_FALSE(has_note(c, "0603 chip"));
 }
+
