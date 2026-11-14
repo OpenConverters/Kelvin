@@ -162,6 +162,9 @@ struct UnitCheck {
     const char* y_unit = "";  // printed unit of the scalar, after y_scale
     double y_scale = 1.0;
     const char* x_unit = "";  // printed unit of `at`
+    // How `at` was obtained when the record does not state it (owner 2026-11-14: a scalar
+    // Rds(on) with no stated junction temperature is taken at 25 degC, as Vf is); "" = stated.
+    const char* at_basis = "";
 };
 // An unlabelled curve (read_named_curve) is kept, read as SI, only when the record's own scalar
 // lies on it within 2 % at the scalar's stated condition; it is then marked unit_inferred and
@@ -179,7 +182,7 @@ void settle_unit_unstated(CurvePts& c, const UnitCheck* check) {
     if (c.empty()) return drop("");
     if (!check || !check->scalar || !check->at)
         return drop("no scalar of its record states a value on it to check the units against");
-    char b[320];
+    char b[512];
     const double sc = *check->scalar, at = *check->at;
     std::optional<double> read;
     {
@@ -194,24 +197,25 @@ void settle_unit_unstated(CurvePts& c, const UnitCheck* check) {
     }
     if (!read) {
         std::snprintf(b, sizeof b,
-                      "its record's %s of %.4g %s is stated at %g %s, which the curve does not "
+                      "its record's %s of %.4g %s is stated at %g %s%s, which the curve does not "
                       "reach as SI, so the units cannot be checked",
-                      check->what, sc * check->y_scale, check->y_unit, at, check->x_unit);
+                      check->what, sc * check->y_scale, check->y_unit, at, check->x_unit,
+                      check->at_basis);
         return drop(b);
     }
     if (!(std::fabs(*read - sc) <= crossref::kCurveLevelFraction * std::fabs(sc))) {
         std::snprintf(b, sizeof b,
-                      "its record's %s of %.4g %s at %g %s does not lie on it read as SI "
+                      "its record's %s of %.4g %s at %g %s%s does not lie on it read as SI "
                       "(%.4g %s there), so the units are not confirmed",
                       check->what, sc * check->y_scale, check->y_unit, at, check->x_unit,
-                      *read * check->y_scale, check->y_unit);
+                      check->at_basis, *read * check->y_scale, check->y_unit);
         return drop(b);
     }
     std::snprintf(b, sizeof b,
                   "its axes state no units; read as SI because its record's own %s of %.4g %s "
-                  "at %g %s lies on it (%.4g %s read there)",
+                  "at %g %s%s lies on it (%.4g %s read there)",
                   check->what, sc * check->y_scale, check->y_unit, at, check->x_unit,
-                  *read * check->y_scale, check->y_unit);
+                  check->at_basis, *read * check->y_scale, check->y_unit);
     c.unit_unstated = false;
     c.unit_inferred = true;
     c.unit_note = b;
@@ -932,10 +936,15 @@ std::optional<MosfetRow> extract_mosfet(const json& env) {
         settle_unit_unstated(r.coss_curve, &coss);
         settle_unit_unstated(r.crss_curve, &crss);
         settle_unit_unstated(r.rds_on_id_curve, &rid);
-        // Rds(on)(Tj): the scalar Rds(on) states no junction temperature, so it has no x on this
-        // curve; the gate-charge curve's x is the charge, no scalar states a Vgs-to-charge point
-        // checked here. Neither is checked.
-        settle_unit_unstated(r.rds_on_tj_curve, nullptr);
+        // Rds(on)(Tj): the scalar Rds(on) states no junction temperature (SAS has no field for
+        // it); owner 2026-11-14: it is taken as 25 degC for this unit check, the convention Vf
+        // follows, and the note says so. The gate-charge curve's x is the charge, no scalar
+        // states a Vgs-to-charge point checked here: not checked.
+        UnitCheck rtj{opt(r.rds_on), std::optional<double>(25.0), false, "Rds(on)", "mohm",
+                      1e3, "degC"};
+        rtj.at_basis = " (the record states no junction temperature for it: taken as 25 degC, "
+                       "as for Vf)";
+        settle_unit_unstated(r.rds_on_tj_curve, &rtj);
         settle_unit_unstated(r.qg_curve, nullptr);
     }
     // Ambient ratings (the package's, or the identical dies' this row is read from — the 43

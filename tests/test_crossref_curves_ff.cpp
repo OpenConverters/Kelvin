@@ -414,8 +414,7 @@ TEST_CASE("curves ff 7: connector current derating curves compared in amperes",
 //  * C3D10065A -> C4D10120A (Cj 500 pF at 0 V, on its curve): Cj(Vr) 500 against 280 pF at
 //    0 V -> warn.
 //  * IPB017N10N5: Coss 1810 pF at 50 V, its unlabelled Coss(Vds) curve reads 1500 pF there
-//    (17 % off) -> not confirmed, not read; its unlabelled Rds(on)(Tj) has no scalar to check
-//    (the scalar Rds(on) states no junction temperature) -> not read.
+//    (17 % off) -> not confirmed, not read. (Its unlabelled Rds(on)(Tj): curves ff 9.)
 TEST_CASE("curves ff 8: unlabelled curves read as SI when the record's own scalar lies on them",
           "[crossref][curves][curves-ff]") {
     const json c3 = find(rank("diode", "STPS30L60CT", {"C3D10065A"}), "C3D10065A");
@@ -440,12 +439,29 @@ TEST_CASE("curves ff 8: unlabelled curves read as SI when the record's own scala
 
     const json& ipb = row("mosfet", "IPB017N10N5");
     CHECK(ipb["coss_curve"].value("unit_unstated", false));
-    CHECK(ipb["rds_on_tj_curve"].value("unit_unstated", false));
-    CHECK(ipb["rds_on_tj_curve"].value("unit_note", "").find("no scalar of its record") !=
-          std::string::npos);
+    // Its Rds(on)(Tj) is read since owner 2026-11-14 (curves ff 9).
+    CHECK_FALSE(ipb["rds_on_tj_curve"].value("unit_unstated", false));
     const json m = find(rank("mosfet", "IPD052N10NF2S", {"IPB017N10N5"}), "IPB017N10N5");
     REQUIRE(!m.is_null());
     CHECK(verdict_of(m, "coss_vs_vds") == "unverified");
     CHECK(has_note(m, "the substitute's curve: its record's Coss of 1810 pF at 50 V does not lie "
                       "on it read as SI (1500 pF there), so the units are not confirmed"));
+}
+
+// 9. Owner 2026-11-14: a scalar Rds(on) with no stated junction temperature (SAS has no field for
+// it) is taken as 25 degC for the check that confirms a unit-less Rds(on)(Tj) curve, the
+// convention Vf follows. Infineon IPB017N10N5 (data 524a699): Rds(on) 1.7 mohm; its unlabelled
+// Rds(on)(Tj) curve (-40..175 degC) reads 1.7 mohm at 25 degC -> read as SI, with the note.
+TEST_CASE("curves ff 9: Rds(on)(Tj) without units confirmed by the 25 degC Rds(on)",
+          "[crossref][curves][curves-ff][rdson-tj-units]") {
+    const json& ipb = row("mosfet", "IPB017N10N5");
+    const json& c = ipb["rds_on_tj_curve"];
+    REQUIRE(c.is_object());
+    CHECK_FALSE(c.value("unit_unstated", false));
+    REQUIRE(c.contains("x"));
+    CHECK(c["x"].size() == 6);
+    CHECK(c.value("unit_inferred", "") ==
+          "its axes state no units; read as SI because its record's own Rds(on) of 1.7 mohm at "
+          "25 degC (the record states no junction temperature for it: taken as 25 degC, as for "
+          "Vf) lies on it (1.7 mohm read there)");
 }
