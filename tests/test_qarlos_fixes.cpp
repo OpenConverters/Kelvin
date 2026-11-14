@@ -3647,6 +3647,7 @@ json mag_spec_xref(const kelvin::MagneticRow& r) {
                 {"saturation_current", nz(r.saturation_current)},
                 {"saturation_points", row["saturation_points"]},
                 {"rated_current", nz(r.rated_current)}, {"dcr", nz(r.dcr)}, {"srf", nz(r.srf)},
+                {"device_type", r.device_type},
                 {"temp_min_C", raw(r.temp_min_c)}, {"temp_max_C", raw(r.temp_max_c)}};
 }
 const char* kRec1812PS = R"KREC({"magnetic":{"manufacturerInfo":{"name":"Coilcraft","reference":"1812PS-153KRC","status":"production","datasheetUrl":"https://www.coilcraft.com/en-us/files/datasheet/1812PS","datasheetInfo":{"part":{"description":"RF Inductors - SMD Power inductor"},"electrical":[{"subtype":"inductor","inductance":{"nominal":1.5e-05,"minimum":1.2e-05,"maximum":1.8e-05},"dcResistance":{"nominal":0.26},"inductancePoints":[{"current":0.0,"inductance":1.4999999999999999e-05,"temperature":25.0},{"current":0.005,"inductance":1.4984853584651633e-05,"temperature":25.0},{"current":0.009,"inductance":1.4984853584651633e-05,"temperature":25.0},{"current":0.018,"inductance":1.4989902389767756e-05,"temperature":25.0},{"current":0.026,"inductance":1.4984853584651633e-05,"temperature":25.0},{"current":0.036,"inductance":1.4984853584651633e-05,"temperature":25.0},{"current":0.046,"inductance":1.4984853584651633e-05,"temperature":25.0},{"current":0.054,"inductance":1.497980477953551e-05,"temperature":25.0},{"current":0.064,"inductance":1.497980477953551e-05,"temperature":25.0},{"current":0.074,"inductance":1.497980477953551e-05,"temperature":25.0},{"current":0.082,"inductance":1.4974755974419387e-05,"temperature":25.0},{"current":0.092,"inductance":1.4969707169303264e-05,"temperature":25.0},{"current":0.1,"inductance":1.4959609559071018e-05,"temperature":25.0},{"current":0.125,"inductance":1.4964658364187143e-05,"temperature":25.0},{"current":0.15,"inductance":1.4929316728374285e-05,"temperature":25.0},{"current":0.17,"inductance":1.4909121507909795e-05,"temperature":25.0},{"current":0.195,"inductance":1.4878828677213059e-05,"temperature":25.0},{"current":0.22,"inductance":1.4828340626051834e-05,"temperature":25.0},{"current":0.24,"inductance":1.4782901380006732e-05,"temperature":25.0},{"current":0.28,"inductance":1.476270615954224e-05,"temperature":25.0},{"current":0.32,"inductance":1.4767754964658363e-05,"temperature":25.0},{"current":0.37,"inductance":1.46415348367553e-05,"temperature":25.0},{"current":0.42,"inductance":1.450016829350387e-05,"temperature":25.0},{"current":0.46,"inductance":1.4363850555368563e-05,"temperature":25.0},{"current":0.52,"inductance":1.4111410299562435e-05,"temperature":25.0},{"current":0.62,"inductance":1.3530797711208349e-05,"temperature":25.0},{"current":0.7,"inductance":1.2909794681925279e-05,"temperature":25.0},{"current":0.8,"inductance":1.1874789633120162e-05,"temperature":25.0},{"current":0.88,"inductance":1.0804442948502186e-05,"temperature":25.0},{"current":0.98,"inductance":9.27364523729384e-06,"temperature":25.0}]}],"provenance":[{"source":"scrape","sourceName":"Coilcraft parametric search","sourceUrl":"https://www.coilcraft.com/en-us/files/datasheet/1812PS","retrievedDate":"2026-06-22"},{"source":"manufacturerParametric","sourceName":"Coilcraft parametric search","retrievedDate":"2026-07-21","fields":["mechanical.height","mechanical.length","mechanical.width"]},{"source":"manufacturerParametric","sourceName":"Coilcraft Power Inductor Finder (L vs DC bias)","sourceUrl":"https://www.coilcraft.com/en-us/tools/power-inductor-finder/","retrievedDate":"2026-11-03","fields":["electrical.inductancePoints"],"verification":"valuesReadFromSource","verificationDate":"2026-11-03","verificationMethod":"Typical inductance normalised to nominal vs DC bias current, 25 degC ambient; series data for the tool part 1812PS-153"}],"mechanical":{"length":{"nominal":0.00587},"width":{"nominal":0.00498},"height":{"nominal":0.00381}}}}}})KREC";
@@ -5558,14 +5559,18 @@ int rows_named(const json& c, const std::string& name) {
 // Qarlos bench 20269028 (IHSM5832ER151L -> B82477G2154M000) and r16 26859036
 // (LSQCA201616T680M -> LQH2MCN680K02): neither record states a saturation current, and the
 // verdict table carried no Isat row at all, so the candidate read drop_in / 'upgrade' with
-// nothing showing that Isat was never compared. Both-missing is not capped (owner 2026-11-12),
-// but the axis is reported UNVERIFIED.
-TEST_CASE("qarlos r14-r16 H2: Isat stated on neither record is an UNVERIFIED row, uncapped",
+// nothing showing that Isat was never compared. The axis is reported UNVERIFIED; since the
+// owner's 2026-11-14 decision an inductor's Isat stated by neither record also caps the grade
+// at minor_review (both_unknown_cap_applies; before that both-missing was uncapped, owner
+// 2026-11-12).
+TEST_CASE("qarlos r14-r16 H2: Isat stated on neither record is an UNVERIFIED row",
           "[qarlos][crossref][isat][isat-both-unstated]") {
     using namespace isat_both_unstated;
     struct Pair { const char* o; const char* s; const char* grade; };
+    // owner 2026-11-14 (both-unknown primary cap): LSQCA201616T680M -> LQH2MCN680K02 was
+    // "drop_in".
     for (const Pair& p : {Pair{kIHSM5832ER151L, kB82477G2154M000, "minor_review"},
-                          Pair{kLSQCA201616T680M, kLQH2MCN680K02, "drop_in"}}) {
+                          Pair{kLSQCA201616T680M, kLQH2MCN680K02, "minor_review"}}) {
         const json o = spec(p.o), s = spec(p.s);
         // The premise: no Isat in any form on either side.
         REQUIRE(o["saturation_current"].is_null());
@@ -5575,8 +5580,8 @@ TEST_CASE("qarlos r14-r16 H2: Isat stated on neither record is an UNVERIFIED row
         const json c = one(o, s);
         CHECK(verdict_of(c, "saturation_current") == "unverified");
         CHECK(rows_named(c, "saturation_current") == 1);
-        // Not capped: the grade is what the other axes give (B82477G2154M000's footprint is
-        // unverified against an original with no land, hence minor_review).
+        // Capped at minor_review by the unstated Isat (owner 2026-11-14); B82477G2154M000's
+        // footprint, unverified against an original with no land, caps it too.
         CHECK(c["grade"] == p.grade);
     }
     // Boundary: Isat stated on one side goes through the normal compare, one row only.
@@ -7429,7 +7434,9 @@ TEST_CASE("qarlos r23r25 T1/T2: an imperial(metric) chip case pair is the imperi
     CHECK(case_identity("capacitor", "3216 (1206)") == "1206");  // metric first
     CHECK(case_identity("capacitor", "0402 (1005 Metric)") == "0402");
     // Pairs the table cannot settle, and pairs that contradict it, stay as written.
-    CHECK(case_identity("resistor", "2512(6432)") == "25126432");
+    // owner 2026-11-14: was "25126432"; 6432 is Walsin's metric spelling of 2512
+    // (chip_vendor_metric_to_imperial), verified against the catalogue's stated 2512 bodies.
+    CHECK(case_identity("resistor", "2512(6432)") == "2512");
     CHECK(case_identity("resistor", "0603(3216)") == "06033216");
     CHECK(case_identity("capacitor", "0603 (3216 Metric)") == "06033216METRIC");
 
@@ -8344,7 +8351,10 @@ TEST_CASE("owner 2026-11-13 AA1: diode count is graded as an identity",
         json::array({as("SAME4", 4.0), as("SIX", 6.0), as("UNCOUNTED", nullptr)}));
     const json same = find_mpn(r, "SAME4");
     CHECK(verdict_of(same, "number_of_elements") == "pass");
-    CHECK(same["grade"] == "drop_in");
+    // owner 2026-11-14 (both-unknown primary cap): was drop_in; neither record states the
+    // ESD array's power dissipation, a primary rating for an ESD part.
+    CHECK(same["grade"] == "minor_review");
+    CHECK(has_note(same, "neither record states the power dissipation rating"));
     const json six = find_mpn(r, "SIX");
     CHECK(six["status"] == "no_substitute");
     CHECK(verdict_of(six, "number_of_elements") == "fail");
@@ -8784,4 +8794,146 @@ TEST_CASE("qarlos bench BB5: a table land in the case-gate note names its table"
     CHECK(has_note(c, "the original's from the CWR06 series' case C in its case table"));
     // The substitute's 3.5 x 2.8 mm is its record's own drawing: no source is claimed for it.
     CHECK_FALSE(has_note(c, "the substitute's from"));
+}
+
+// Owner decision 2026-11-14 (both-unknown primary cap): a primary axis stated by NEITHER record
+// caps the grade at minor_review with a note, but only where the axis is a real datasheet
+// rating for the original's technology (both_unknown_cap_applies). Real records: the Vishay
+// inductor IHSM5832ER151L against TDK B82477G2154M000 (neither states an Isat) is capped and
+// says so; two Würth MLCCs (neither states a ripple current, which no MLCC datasheet rates)
+// stay drop_in.
+namespace both_unknown_cap {
+json cap_fixture(const std::string& mpn) {
+    std::ifstream in(std::string(KELVIN_TEST_DIR) + "/fixtures/capacitors.ndjson");
+    std::string line;
+    while (std::getline(in, line))
+        if (line.find("\"reference\": \"" + mpn + "\"") != std::string::npos)
+            return cap_spec(cap_row(json::parse(line)));
+    throw std::runtime_error("fixture has no capacitor record " + mpn);
+}
+}  // namespace both_unknown_cap
+
+TEST_CASE("owner 2026-11-14: a primary rating stated by neither record caps only where the "
+          "technology rates it",
+          "[qarlos][crossref][both-unknown-cap]") {
+    using kelvin::crossref::both_unknown_cap_applies;
+    // The table itself.
+    CHECK(both_unknown_cap_applies("capacitor", "ripple_current", "aluminum-electrolytic-wet"));
+    CHECK(both_unknown_cap_applies("capacitor", "ripple_current", "aluminum-electrolytic-polymer"));
+    CHECK(both_unknown_cap_applies("capacitor", "ripple_current", "tantalum-polymer"));
+    CHECK_FALSE(both_unknown_cap_applies("capacitor", "ripple_current", "ceramic-class-2"));
+    CHECK_FALSE(both_unknown_cap_applies("capacitor", "ripple_current", "film-polypropylene"));
+    CHECK_FALSE(both_unknown_cap_applies("capacitor", "ripple_current", "tantalum-mno2"));
+    CHECK_FALSE(both_unknown_cap_applies("capacitor", "voltage", "aluminum-electrolytic-wet"));
+    CHECK(both_unknown_cap_applies("diode", "if_avg", "schottky"));
+    CHECK_FALSE(both_unknown_cap_applies("diode", "if_avg", "tvs"));
+    CHECK_FALSE(both_unknown_cap_applies("diode", "if_avg", "zener"));
+    CHECK(both_unknown_cap_applies("diode", "peak_pulse_power", "esd"));
+    CHECK_FALSE(both_unknown_cap_applies("diode", "peak_pulse_power", "rectifier"));
+    CHECK(both_unknown_cap_applies("diode", "power_dissipation", "zener"));
+    CHECK_FALSE(both_unknown_cap_applies("diode", "power_dissipation", "schottky"));
+    CHECK_FALSE(both_unknown_cap_applies("diode", "power_dissipation", ""));
+    CHECK(both_unknown_cap_applies("magnetic", "saturation_current", "inductor"));
+    CHECK_FALSE(both_unknown_cap_applies("magnetic", "saturation_current", "transformer"));
+    CHECK(both_unknown_cap_applies("mosfet", "rds_on", ""));
+    CHECK(both_unknown_cap_applies("connector", "rated_current_A", ""));
+    CHECK_FALSE(both_unknown_cap_applies("connector", "rated_voltage_V", ""));
+    CHECK_FALSE(both_unknown_cap_applies("resistor", "power_rating", ""));
+
+    // Positive, real records: an inductor pair with no Isat on either side.
+    {
+        using namespace isat_both_unstated;
+        const json o = spec(kIHSM5832ER151L), s = spec(kB82477G2154M000);
+        REQUIRE(o["device_type"] == "inductor");
+        REQUIRE(o["saturation_current"].is_null());
+        REQUIRE(s["saturation_current"].is_null());
+        const json c = one(o, s);
+        CHECK(c["grade"] == "minor_review");
+        CHECK(has_note(c, "neither record states the saturation current"));
+    }
+    // Negative, real records: two MLCCs, neither stating a ripple current.
+    {
+        const json o = both_unknown_cap::cap_fixture("885012206095");
+        const json s = both_unknown_cap::cap_fixture("885012206095R");
+        REQUIRE(o["technology"] == "ceramic-class-2");
+        REQUIRE(o["ripple_current"].is_null());
+        REQUIRE(s["ripple_current"].is_null());
+        auto r = kelvin::crossref::cross_reference("capacitor", o, json::array({s}));
+        REQUIRE(r["candidates"].size() == 1);
+        const json c = r["candidates"][0];
+        CHECK_FALSE(has_note(c, "neither record states"));
+        CHECK(c["grade"] == "drop_in");
+    }
+}
+
+namespace r29_bb {
+json res(const std::string& mpn) {
+    std::ifstream in(std::string(KELVIN_TEST_DIR) + "/fixtures/qarlos_r29_resistors.ndjson");
+    std::string line;
+    while (std::getline(in, line))
+        if (line.find("\"reference\": \"" + mpn + "\"") != std::string::npos ||
+            line.find("\"reference\":\"" + mpn + "\"") != std::string::npos)
+            return res_record_spec(line.c_str());
+    throw std::runtime_error("fixture has no resistor record " + mpn);
+}
+}  // namespace r29_bb
+
+// BB3 (r30 seed 34190066): Walsin's WR25X3650FTR "2512(6432)" against Panasonic's ERJS1TF3650U
+// (a 2512 stated 6.4 x 3.2 mm) was graded different_case. 6432 is Walsin's metric spelling of
+// 2512, verified against the bodies the catalogue's 2512 records state; 1218(3248) is not.
+TEST_CASE("qarlos r30 BB3: Walsin 2512(6432) is the 2512 chip", "[qarlos][crossref][r29-bb]") {
+    using kelvin::crossref::canonical_chip_case;
+    CHECK(canonical_chip_case("2512(6432)") == "2512");
+    CHECK(canonical_chip_case("6432(2512)") == "2512");
+    CHECK(canonical_chip_case("1218(3248)") != "1218");
+    CHECK(canonical_chip_case("6432M") != "2512");  // a vendor spelling is read only in a pair
+    CHECK(canonical_chip_case("2010(6432)") != "2010");
+    kelvin::crossref::Options opt;
+    opt.max_results = 5;
+    const json r = kelvin::crossref::cross_reference(
+        "resistor", r29_bb::res("WR25X3650FTR"),
+        json::array({r29_bb::res("ERJS1TF3650U"), r29_bb::res("RC1218FK-07365RL")}), opt);
+    bool seen_erj = false;
+    for (const auto& c : r["candidates"]) {
+        if (c["mpn"] == "ERJS1TF3650U") {
+            seen_erj = true;
+            CHECK(c["footprint"] != "different_case");
+            CHECK(verdict_of(c, "footprint") != "warn");
+        } else {
+            CHECK(c["footprint"] == "different_case");  // a 1218 is not a 2512
+        }
+    }
+    CHECK(seen_erj);
+}
+
+// Owner decision 2026-11-14: a resistor's power rating joins the gross over-rating axes (Y4,
+// kGrossOverRatingFactor / kGrossOverRatingPenalty): a substitute rated more than 3x the
+// original's power takes the small penalty and a note; 3x or less, neither. The original is the
+// real Walsin WR06X5113FTR (0.1 W); the candidates are that record with only the power raised.
+TEST_CASE("owner 2026-11-14: a resistor power rating more than 3x the original's is a gross "
+          "over-rating",
+          "[qarlos][crossref][resistor][gross-over-rating]") {
+    const json orig = r23r25_res("WR06X5113FTR");
+    REQUIRE(orig["power_rating"] == 0.1);
+    auto with_power = [&](const char* mpn, double w) {
+        json c = orig;
+        c["mpn"] = mpn;
+        c["power_rating"] = w;
+        return c;
+    };
+    const auto r = kelvin::crossref::cross_reference(
+        "resistor", orig,
+        json::array({with_power("P_X5", 0.5), with_power("P_X2_5", 0.25), with_power("P_SAME", 0.1)}),
+        res_opt());
+    const json x5 = res_find(r, "P_X5"), x25 = res_find(r, "P_X2_5"), same = res_find(r, "P_SAME");
+    REQUIRE(!x5.is_null());
+    REQUIRE(!x25.is_null());
+    REQUIRE(!same.is_null());
+    CHECK(verdict_of(x5, "power_rating") == "pass");
+    CHECK(has_note(x5, "power rating 0.5 W is 5x the original's 0.1 W"));
+    CHECK(has_note(x5, "a bigger body and higher cost are likely"));
+    CHECK_FALSE(has_note(x25, "far above what the original is rated for"));
+    CHECK(x5["penalty"].get<double>() >
+          x25["penalty"].get<double>() + 0.9 * kelvin::crossref::kGrossOverRatingPenalty);
+    CHECK(x5["grade"] == same["grade"]);  // an ordering step, not a grade change
 }

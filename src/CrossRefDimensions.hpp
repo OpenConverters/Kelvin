@@ -967,8 +967,9 @@ inline std::string canonical_diode_case(const std::string& s) {
 //     1206(3216) 9,522, ...) -> the half that is imperial when exactly one reading of the pair
 //     is in the table below; WK12S182 JTLJ "1206(3216)" was called a different case from
 //     ERJUP8F1801V "1206" and WR06X5113FTR "0603(1608)" from AC0603FR-07511KL "0603"
-//     (Qarlos bench 20575296 / 20284866). Pairs the table cannot settle ("2512(6432)",
-//     "1218(3248)") stay as written;
+//     (Qarlos bench 20575296 / 20284866). Walsin's "2512(6432)" settles through the vendor
+//     spelling table below (chip_vendor_metric_to_imperial); pairs nothing settles
+//     ("1218(3248)") stay as written;
 //   - anything else, including every UNMARKED 4-digit code, is the plain normalised code: a
 //     bare "0603" could be imperial 0603 or metric 0603 (imperial 0201), and which one it is
 //     is never guessed.
@@ -981,6 +982,22 @@ inline const std::map<std::string, std::string>& chip_metric_to_imperial() {
         {"4516", "1806"},   {"4520", "1808"},  {"4532", "1812"}, {"5025", "2010"},
         {"5750", "2220"},   {"6332", "2512"},  {"2828", "1111"}, {"5728", "2211"},
         {"3212", "1205"},   {"0510", "0204"}};
+    return t;
+}
+
+// Vendor metric spellings of an imperial chip code that are NOT the IEC 60062 pair, read ONLY in
+// an unmarked "A(B)" pair whose other half is that imperial code (canonical_chip_case). Each
+// entry is checked against the catalogue's own stated bodies (data 524a699, resistors):
+//   6432 -> 2512: Walsin writes "2512(6432)" (6,207 records, none stating a body); 6.4 x 3.2 mm
+//     is what 131 records whose case is '2512' state as their length x width (and the 2512-class
+//     bodies stated across the catalogue run 6.3-6.4 x 3.1-3.2 mm), so 6432 is 2512's body in
+//     0.1 mm units (Qarlos r30 seed 34190066: WR25X3650FTR "2512(6432)" against Panasonic
+//     ERJS1TF3650U, a 2512 stated 6.4 x 3.2 mm, was graded different_case).
+// NOT listed: Walsin's "1218(3248)" (2,904 records): every record stating a 1218-class body gives
+// 3.05-3.2 x 4.6 mm (2,483 records), none 4.8 mm, so 3248 is not verified as 1218's body and the
+// string stays as written. 1218 is not in the IEC table either.
+inline const std::map<std::string, std::string>& chip_vendor_metric_to_imperial() {
+    static const std::map<std::string, std::string> t = {{"6432", "2512"}};
     return t;
 }
 
@@ -1028,10 +1045,18 @@ inline std::string canonical_chip_case(const std::string& s_in) {
         // read only when exactly ONE reading is a metric/imperial pair of the IEC 60062 /
         // EIA-198 table — "1206(3216)" (3216 metric = 1206; 1206 is no metric code) or
         // "3216 (1206)". Neither or both readings consistent: left as written.
+        // A vendor metric spelling (chip_vendor_metric_to_imperial, e.g. Walsin's 2512(6432))
+        // counts too, only as the metric half of its own imperial code.
         const std::string a = m[1].str(), b = m[2].str();
-        auto ib = kMetricToImperial.find(b), ia = kMetricToImperial.find(a);
-        const bool a_imperial = ib != kMetricToImperial.end() && ib->second == a;
-        const bool b_imperial = ia != kMetricToImperial.end() && ia->second == b;
+        const auto& vendor = chip_vendor_metric_to_imperial();
+        auto metric_of = [&](const std::string& metric, const std::string& imperial) {
+            auto it = kMetricToImperial.find(metric);
+            if (it != kMetricToImperial.end() && it->second == imperial) return true;
+            auto iv = vendor.find(metric);
+            return iv != vendor.end() && iv->second == imperial;
+        };
+        const bool a_imperial = metric_of(b, a);
+        const bool b_imperial = metric_of(a, b);
         if (a_imperial == b_imperial) return normalize_case_code(s);
         return a_imperial ? a : b;
     } else {
