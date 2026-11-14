@@ -140,3 +140,23 @@ TEST_CASE("curves ff 1: MOSFET Ciss/Coss/Crss(Vds) curves compared; a Coss curve
                         "Coss(Vds) curve reads 72.65 pF there (its record states 5 pF at no "
                         "stated Vds) against the original's 53 pF"));
 }
+
+// 2. MOSFET Rds(on) curves. BSC034N06NS (3.4 mohm class) and BSC066N06NS (6.6 mohm class),
+// Infineon 60 V, both stating Rds(on)(Id) at Vgs 10 V / Tj 25 degC and Rds(on)(Tj) at Id 50 A /
+// Vgs 10 V. The larger-Rds part as the substitute is ~1.9x over the whole range: beyond the
+// Rds(on) spec's 1.5x -> fail on both curves; the other way round it passes.
+TEST_CASE("curves ff 2: MOSFET Rds(on)(Id) and Rds(on)(Tj) curves compared",
+          "[crossref][curves][curves-ff]") {
+    const json worse = find(rank("mosfet", "BSC034N06NS", {"BSC066N06NS"}), "BSC066N06NS");
+    REQUIRE(!worse.is_null());
+    CHECK(verdict_of(worse, "rds_on_vs_id") == "fail");
+    CHECK(verdict_of(worse, "rds_on_vs_tj") == "fail");
+    CHECK(has_note(worse, "on-resistance against drain current (Rds(on)(Id)): compared on both "
+                          "curves over 14 A to 250 A"));
+    CHECK(has_note(worse, "on-resistance against junction temperature (Rds(on)(Tj)): compared on "
+                          "both curves over -55 degC to 141.1 degC"));
+    const json better = find(rank("mosfet", "BSC066N06NS", {"BSC034N06NS"}), "BSC034N06NS");
+    REQUIRE(!better.is_null());
+    CHECK(verdict_of(better, "rds_on_vs_id") == "pass");
+    CHECK(verdict_of(better, "rds_on_vs_tj") == "pass");
+}

@@ -261,6 +261,8 @@ inline std::vector<std::string> comparison_source_fields(const std::string& cat,
         if (name == "ciss_vs_vds") return {"curves.cissVsVds"};
         if (name == "coss_vs_vds") return {"curves.cossVsVds"};
         if (name == "crss_vs_vds") return {"curves.crssVsVds"};
+        if (name == "rds_on_vs_id") return {"curves.rdsOnVsId"};
+        if (name == "rds_on_vs_tj") return {"curves.rdsOnVsTj"};
         if (name == "rds_on_basis") return {"electrical.onResistance", "electrical.onResistanceVgs"};
         if (name == "qg") return {"electrical.totalGateCharge"};
         if (name == "coss") return {"electrical.outputCapacitance"};

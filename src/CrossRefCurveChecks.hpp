@@ -264,6 +264,14 @@ inline const std::vector<std::pair<const char*, Quantity>>& mosfet_quantities() 
          {"crss_vs_vds", "reverse transfer capacitance against Vds (Crss(Vds))", "V", 1.0, "pF",
           1e12, {"crss", Dir::Lower, 2.0, std::nullopt, false, false, nullptr}, "the Coss spec",
           Interp::Linear}},
+        {"rds_on_id_curve",
+         {"rds_on_vs_id", "on-resistance against drain current (Rds(on)(Id))", "A", 1.0,
+          "mohm", 1e3, {"rds_on", Dir::Lower, 1.5, std::nullopt, false, false, nullptr},
+          "the Rds(on) spec", Interp::Linear}},
+        {"rds_on_tj_curve",
+         {"rds_on_vs_tj", "on-resistance against junction temperature (Rds(on)(Tj))", "degC",
+          1.0, "mohm", 1e3, {"rds_on", Dir::Lower, 1.5, std::nullopt, false, false, nullptr},
+          "the Rds(on) spec", Interp::Linear}},
     };
     return q;
 }
