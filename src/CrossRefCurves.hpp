@@ -97,20 +97,42 @@ struct CurveVerdict {
 };
 
 // orig vs sub on their overlap, each point judged with `spec` (Dir::Lower or Dir::Higher;
-// anything else throws — a curve is a numeric quantity).
+// anything else throws — a curve is a numeric quantity). `band`, when given, is the only x
+// range that is graded (owner 2026-11-14: impedance-type curves are judged only in their
+// useful band): the points judged are those inside the overlap AND the band, `range` is that
+// intersection, and an empty intersection is UNVERIFIED like no overlap (the caller tells the
+// two apart with overlap()). A band with lo > hi throws (the caller built it wrong).
 inline CurveVerdict compare_curves(const Curve& orig, const Curve& sub, const ParamSpec& spec,
-                                   Interp interp) {
+                                   Interp interp,
+                                   std::optional<std::pair<double, double>> band = std::nullopt) {
     if (spec.dir != Dir::Lower && spec.dir != Dir::Higher)
         throw std::invalid_argument("compare_curves: spec '" + spec.key +
                                     "' is not a numeric (Lower/Higher) spec");
+    if (band && !(band->first <= band->second))
+        throw std::invalid_argument("compare_curves: band lower end above its upper end");
     CurveVerdict out;
     out.range = overlap(orig, sub);
     if (!out.range) return out;
+    if (band) {
+        const double blo = std::max(out.range->first, band->first);
+        const double bhi = std::min(out.range->second, band->second);
+        if (blo > bhi) {
+            out.range.reset();
+            return out;
+        }
+        out.range = std::make_pair(blo, bhi);
+    }
     const auto [lo, hi] = *out.range;
     std::vector<double> xs;
     for (const Curve* c : {&orig, &sub})
         for (double x : c->x)
             if (x >= lo && x <= hi) xs.push_back(x);
+    // A band's edges (the rating frequency, the self-resonance) are judged too, read off both
+    // curves (they lie inside both measured ranges); without a band lo / hi are sample x already.
+    if (band) {
+        xs.push_back(lo);
+        xs.push_back(hi);
+    }
     std::sort(xs.begin(), xs.end());
     xs.erase(std::unique(xs.begin(), xs.end()), xs.end());
     auto rank = [](const char* v) {

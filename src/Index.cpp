@@ -443,6 +443,7 @@ void row_io(Ar& ar, CapacitorRow& r) {
     ar.curve(r.cf_curve);
     ar.curve(r.esl_curve);
     ar.curve(r.bias_curve);
+    ar.boolean(r.esr_from_curve);          // v22 (owner 2026-11-14, useful band)
 }
 
 template <class Ar>

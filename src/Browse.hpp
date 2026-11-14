@@ -369,6 +369,7 @@ inline void extra_row_json(const CapacitorRow& r, json& o) {
     o["capacitance_frequency_curve"] = curve_json(r.cf_curve);
     o["esl_curve"] = curve_json(r.esl_curve);
     o["capacitance_bias_curve"] = curve_json(r.bias_curve);
+    o["esr_from_curve"] = r.esr_from_curve;  // the ESR / its 100 kHz were read off the curve
 }
 
 // A magnetic's whole saturation table (v20) as the ranker's saturation_points shape:

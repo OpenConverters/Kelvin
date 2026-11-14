@@ -1207,6 +1207,7 @@ std::optional<CapacitorRow> extract_capacitor(const json& env) {
         if (auto v = curve_at(obj_get(*elec, "esrPoints"), 1e5, "[Hz]", "Ohm"); v) {
             r.esr = *v;
             r.esr_frequency = 1e5;
+            r.esr_from_curve = true;
         }
     }
     // Operating temperature range: a substitute must cover the original's, at
