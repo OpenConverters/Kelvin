@@ -2,6 +2,7 @@
 #include "CrossRef.hpp"  // kGrossOverRatingFactor (one rule with the cross-reference)
 #include "MfrPolicy.hpp"
 #include "DiodeLoss.hpp"
+#include "MagneticLoss.hpp"
 #include "MosfetLoss.hpp"
 #include "OpRanking.hpp"  // the operating-point ranking's UNVERIFIED key (all families)
 #include "Select.hpp"
@@ -1474,6 +1475,253 @@ json select_magnetic(const Shard<MagneticRow>& shard, const MagneticConstraints&
                           {"dcr", num_or_null(m->dcr)},
                           {"selfResonantFrequency", num_or_null(m->srf)}};
         cd["sortKey"] = {{"metric", "best_fit"}, {"penalty", penalty(m)}};
+        cands.push_back(std::move(cd));
+    }
+    result["candidates"] = std::move(cands);
+    return result;
+}
+
+// ---- Magnetic: lowest_operating_point_loss (owner 2026-11-14) ------------------------------
+namespace {
+
+json mag_check_json(const MagneticCheck& k) {
+    json j = {{"status", k.str()}};
+    if (k.unverified()) j["missing"] = k.missing;
+    else j["basis"] = k.basis;
+    return j;
+}
+
+json mag_loss_json(const MagneticLossBreakdown& lb, const InductorOperatingPoint& op) {
+    json loss;
+    loss["position"] = to_string(op.position);
+    loss["conductionMode"] = to_string(op.mode);
+    loss["dutyCycle"] = lb.duty;
+    loss["dutyBasis"] = lb.duty_basis;
+    loss["inductanceAtPeak"] = lb.inductance;
+    loss["inductanceBasis"] = lb.inductance_basis;
+    loss["ripplePeakToPeak"] = lb.ripple_pp;
+    loss["peakCurrent"] = lb.ipk;
+    loss["peakCurrentBasis"] = lb.ipk_basis;
+    loss["rmsCurrent"] = lb.irms;
+    loss["rmsCurrentBasis"] = lb.irms_basis;
+    if (lb.frequency) {
+        loss["switchingFrequency"] = *lb.frequency;
+        loss["switchingFrequencyBasis"] = lb.frequency_basis;
+    }
+    loss["terms"] = {{"dcr", loss_term_json(lb.dcr)}, {"coreLoss", loss_term_json(lb.core)}};
+    loss["checks"] = {{"inductance", mag_check_json(lb.inductance_gate)},
+                      {"saturation", mag_check_json(lb.saturation)},
+                      {"thermal", mag_check_json(lb.thermal)}};
+    const auto tot = lb.total();
+    loss["total"] = tot ? json(*tot) : json(nullptr);
+    loss["computedSum"] = lb.computed_sum();
+    loss["unverified"] = lb.unverified();
+    loss["notes"] = lb.notes;
+    return loss;
+}
+
+json mag_loss_op_json(const InductorOperatingPoint& op) {
+    json o = {{"position", to_string(op.position)}, {"conductionMode", to_string(op.mode)},
+              {"inputVoltage", op.vin}, {"outputVoltage", op.vout}, {"outputCurrent", op.iout}};
+    if (op.fsw) o["switchingFrequency"] = *op.fsw;
+    if (op.vin_min) o["minimumInputVoltage"] = *op.vin_min;
+    if (op.window_min_l) o["minimumInductance"] = *op.window_min_l;
+    if (op.window_max_l) o["maximumInductance"] = *op.window_max_l;
+    if (op.mode == ConductionMode::Dcm) {
+        const DcmBoundary d = dcm_maximum_inductance(op);
+        o["dcmMaximumInductance"] = d.l_max;
+        o["dcmMaximumInductanceBasis"] = d.basis;
+    }
+    if (op.ambient) o["ambientTemperature"] = *op.ambient;
+    return o;
+}
+
+// Board area of a magnetic: its record's DRAWN length x width only (dims_of never sizes a
+// magnetic from a case code), mm^2.
+json mag_board_area_json(const MagneticRow& m) {
+    json p = json::object();
+    if (present(m.length_m)) p["length_m"] = m.length_m;
+    if (present(m.width_m)) p["width_m"] = m.width_m;
+    if (present(m.height_m)) p["height_m"] = m.height_m;
+    if (!m.case_code.empty()) p["case_code"] = m.case_code;
+    if (!m.mount.empty()) p["mount"] = m.mount;
+    const auto d = crossref::dims_of(p, "magnetic");
+    if (!d || !crossref::has_land(*d))
+        return {{"mm2", nullptr},
+                {"basis", "not stated: the record draws no length x width (a magnetic is never "
+                          "sized from its case code)"}};
+    return {{"mm2", *d->length * *d->width * 1e6},
+            {"basis", "the record's drawn length x width"}};
+}
+
+// Volume of a magnetic (owner 2026-11-14: equal billing with the board area): its record's
+// DRAWN length x width x height, the bounding box, mm^3.
+json mag_volume_json(const MagneticRow& m) {
+    std::vector<std::string> miss;
+    if (!present(m.length_m)) miss.push_back("length");
+    if (!present(m.width_m)) miss.push_back("width");
+    if (!present(m.height_m)) miss.push_back("height");
+    if (!miss.empty()) {
+        std::string w;
+        for (const auto& x : miss) w += (w.empty() ? "" : ", ") + x;
+        return {{"mm3", nullptr},
+                {"basis", "not stated: the record draws no " + w +
+                              " (a magnetic is never sized from its case code)"}};
+    }
+    return {{"mm3", m.length_m * m.width_m * m.height_m * 1e9},
+            {"basis", "the record's drawn length x width x height (bounding box)"}};
+}
+
+json mag_price_json(const MagneticRow& m, std::optional<double> quantity) {
+    json p;
+    p["quantity"] = quantity ? json(*quantity) : json(nullptr);
+    p["atQuantity"] = nullptr;
+    p["quotes"] = m.price_quotes.empty() ? json::array() : json::parse(m.price_quotes);
+    p["basis"] = m.price_quotes.empty()
+                     ? "not stated: the record carries no distributor cost"
+                     : "unit cost as the distributor states it; the record carries no price "
+                       "breaks, so the price at a given quantity is not stated";
+    return p;
+}
+
+}  // namespace
+
+json select_magnetic_op_loss(const Shard<MagneticRow>& shard, const MagneticConstraints& c,
+                             size_t max_candidates, RecordFetcher* fetcher, const MfrPolicy& mfr) {
+    if (!c.loss_op)
+        throw InvalidOptions("lowest_operating_point_loss requires a lossOperatingPoint "
+                             "(position, inputVoltage, outputVoltage, outputCurrent, "
+                             "switchingFrequency)");
+    c.loss_op->validate();
+    const InductorOperatingPoint& op = *c.loss_op;
+    // ccm gates on the required (minimum) inductance; dcm and crm gate on the operating
+    // point's own limits and do not read it.
+    std::optional<double> L_req;
+    if (op.mode == ConductionMode::Ccm) {
+        if (!c.target_inductance || !(*c.target_inductance > 0))
+            throw InvalidOptions("lowest_operating_point_loss in conductionMode ccm requires the "
+                                 "required inductance (designRequirements.magnetizingInductance)");
+        L_req = c.target_inductance;
+    }
+    // The rejection count of each mode's inductance gate.
+    const char* gate_rej = op.mode == ConductionMode::Ccm   ? "inductance_below_required"
+                           : op.mode == ConductionMode::Dcm ? "inductance_above_dcm_maximum"
+                                                            : "inductance_outside_crm_window";
+
+    std::map<std::string, uint64_t> rej;
+    rej["unreadable_row"] = shard.meta.unreadable_row_count;
+    std::vector<const MagneticRow*> passing;
+    std::map<const MagneticRow*, MagneticLossBreakdown> loss;
+    for (const auto& m : shard.rows) {
+        if (c.exclude_discontinued && !m.is_production) { rej["discontinued"]++; continue; }
+        // Power inductors only: a transformer, coupled inductor, common-mode choke, bead or
+        // cable core is not a buck inductor, whatever its inductance.
+        if (m.device_type != "inductor") {
+            rej["subtype_" + (m.device_type.empty() ? std::string("unstated") : m.device_type)]++;
+            continue;
+        }
+        // A part whose every stated wiring configuration has secondaries is not a
+        // single-winding inductor (0 = the record states no structure: not a mismatch).
+        if (m.secondary_counts != 0 && !(m.secondary_counts & 1u)) {
+            rej["no_single_winding_configuration"]++;
+            continue;
+        }
+        if (!present(m.inductance) || !(m.inductance > 0)) { rej["inductance_unstated"]++; continue; }
+        // ccm gates on the required L; dcm / crm only note the distance from it.
+        MagneticLossBreakdown lb = magnetic_loss(m, op, L_req ? L_req : c.target_inductance);
+        if (lb.inductance_gate.failed()) { rej[gate_rej]++; continue; }
+        if (lb.saturation.failed()) { rej["saturation_current_below_peak"]++; continue; }
+        if (lb.thermal.failed()) { rej["rated_current_below_rms"]++; continue; }
+        loss.emplace(&m, std::move(lb));
+        passing.push_back(&m);
+    }
+    if (passing.empty())
+        throw NoCandidates("MagneticConstraints", emit_rejections(rej),
+                           shard.meta.source_line_count);
+
+    // Total loss alone orders, after the UNVERIFIED key (owner 2026-11-14). The core-loss term
+    // is UNVERIFIED for every record and is left out of both keys (interim owner rule). A
+    // candidate whose board area or volume cannot be determined counts one more UNVERIFIED
+    // item (owner 2026-11-14, every family: op_ranking, read from the JSON the candidate shows).
+    std::map<const MagneticRow*, op_ranking::SizeEvidence> op_size;
+    std::map<const MagneticRow*, std::size_t> unv;
+    for (const MagneticRow* m : passing) {
+        const json area = mag_board_area_json(*m), vol = mag_volume_json(*m);
+        op_size.emplace(m, op_ranking::size_of(area, &vol));
+        unv[m] = op_ranking::unverified_items(loss.at(m).rank_unverified(), op_size.at(m));
+    }
+    std::sort(passing.begin(), passing.end(), [&](const MagneticRow* a, const MagneticRow* b) {
+        return std::make_tuple(unv.at(a), loss.at(a).computed_sum(), a->lineno) <
+               std::make_tuple(unv.at(b), loss.at(b).computed_sum(), b->lineno);
+    });
+
+    json result;
+    result["category"] = "magnetic";
+    result["tiebreaker"] = to_string(MagneticTiebreaker::LowestOperatingPointLoss);
+    result["lossOperatingPoint"] = mag_loss_op_json(op);
+    result["target"] = {{"inductance", L_req ? json(*L_req) : json(nullptr)}};
+    if (op.mode != ConductionMode::Ccm && c.target_inductance)
+        result["notes"] = json::array(
+            {std::string("the required inductance stated in the requirements is not a gate in "
+                         "conductionMode ") +
+             to_string(op.mode) + ": the operating point's own limits are"});
+    result["totalRowsConsidered"] = shard.meta.source_line_count;
+    result["alternativesConsidered"] = passing.size();
+    result["rejections"] = emit_rejections(rej);
+    result["manufacturers"] = manufacturer_facet(passing);
+    json cands = json::array();
+    const auto chosen = apply_mfr_policy(passing, max_candidates, mfr);
+    for (const MagneticRow* m : chosen) {
+        const MagneticLossBreakdown& lb = loss.at(m);
+        json cd = base_candidate(m, fetcher);
+        cd["loss"] = mag_loss_json(lb, op);
+        const op_ranking::SizeEvidence& sz = op_size.at(m);
+        if (sz.undetermined) cd["loss"]["notes"].push_back(sz.note);
+        cd["ratings"] = {{"inductance", m->inductance},
+                         {"inductanceTolerance",
+                          present(m->inductance_tol_minus_pct)
+                              ? json{{"minusPercent", m->inductance_tol_minus_pct},
+                                     {"plusPercent", m->inductance_tol_plus_pct}}
+                              : json(nullptr)},
+                         {"saturationCurrent", num_or_null(m->saturation_current)},
+                         {"saturationPercentDrop", num_or_null(m->saturation_percent_drop)},
+                         {"ratedCurrent", num_or_null(m->rated_current)},
+                         {"dcr", num_or_null(m->dcr)},
+                         {"dcrIsMaximum", present(m->dcr) ? json(m->dcr_is_maximum) : json(nullptr)}};
+        // Over-rating (flag + note only under this ranking, owner 2026-11-14): Isat against
+        // Ipk, the rated current against Irms.
+        json orj = {{"axes", json::array()}, {"notes", json::array()}};
+        auto flag = [&](const char* axis, const char* what, double have, double need,
+                        const char* need_name) {
+            if (!(present(have) && have > crossref::kGrossOverRatingFactor * need)) return;
+            char b[400];
+            std::snprintf(b, sizeof b,
+                          "%s %.4g A is %.3gx the operating point's %s %.4g A — more than %gx: "
+                          "a bigger body and higher cost are likely; flagged only: the "
+                          "operating-point loss alone sets the order",
+                          what, have, have / need, need_name, need,
+                          crossref::kGrossOverRatingFactor);
+            orj["axes"].push_back(axis);
+            orj["notes"].push_back(b);
+        };
+        flag("isat", "saturation current", m->saturation_current, lb.ipk, "Ipk");
+        flag("ratedCurrent", "rated current", m->rated_current, lb.irms, "Irms");
+        if (lb.over_sized) {
+            orj["axes"].push_back("inductance");
+            orj["notes"].push_back(lb.over_sized_note);
+        }
+        cd["overRating"] = std::move(orj);
+        cd["boardArea"] = mag_board_area_json(*m);
+        cd["volume"] = mag_volume_json(*m);
+        cd["price"] = mag_price_json(*m, c.price_quantity);
+        cd["evidence"] = {{"deviceType", m->device_type},
+                          {"family", m->family},
+                          {"isProduction", m->is_production},
+                          {"hasBiasCurve", !m->bias_curve_current.empty()}};
+        // unverifiedTerms counts the UNVERIFIED checks and loss terms the ranking reads
+        // (rank_unverified: core loss left out); unverifiedItems adds the size item.
+        cd["sortKey"] = {{"metric", "lowest_operating_point_loss"}, {"value", lb.computed_sum()}};
+        cd["sortKey"].update(op_ranking::sort_key_fields(lb.rank_unverified(), sz));
         cands.push_back(std::move(cd));
     }
     result["candidates"] = std::move(cands);

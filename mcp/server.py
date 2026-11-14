@@ -1573,6 +1573,53 @@ def _diode_extras(c: dict) -> str:
     return out + _mosfet_extras({k: v for k, v in c.items() if k != "loss"})
 
 
+def _magnetic_extras(c: dict) -> str:
+    """One text segment per magnetic operating-point extra (owner 2026-11-14): the derived
+    L at Ipk / ripple / Ipk / Irms, the DCR and core-loss terms (or UNVERIFIED), the
+    saturation and thermal checks, over-rating, board area and price."""
+    out = ""
+    loss = c.get("loss")
+    if loss:
+        out += f" | {loss.get('conductionMode', '?').upper()}"
+        out += (f" | L@Ipk {loss['inductanceAtPeak'] * 1e6:.4g} uH, dI {loss['ripplePeakToPeak']:.3g} A"
+                f", Ipk {loss['peakCurrent']:.3g} A, Irms {loss['rmsCurrent']:.3g} A")
+        terms = []
+        for k, label in (("dcr", "DCR"), ("coreLoss", "core")):
+            t = (loss.get("terms") or {}).get(k) or {}
+            terms.append(f"{label} {_watts(t['watts'])}" if t.get("watts") is not None
+                         else f"{label} UNVERIFIED ({'; '.join(t.get('missing') or [])})")
+        total = (f"total {_watts(loss['total'])}" if loss.get("total") is not None
+                 else f"total >= {_watts(loss.get('computedSum') or 0)} (incomplete)")
+        out += f" | loss {total}: " + ", ".join(terms)
+        checks = []
+        for k in ("inductance", "saturation", "thermal"):
+            ch = (loss.get("checks") or {}).get(k) or {}
+            checks.append(f"{k} {ch.get('status')}" if ch.get("status") != "unverified"
+                          else f"{k} UNVERIFIED ({'; '.join(ch.get('missing') or [])})")
+        out += " | " + ", ".join(checks)
+    over = (c.get("overRating") or {}).get("axes") or []
+    cur = [a for a in over if a != "inductance"]
+    if cur:
+        out += f" | over-rated {'/'.join(cur)} (>3x the operating point's need; flag only)"
+    if "inductance" in over:
+        out += " | over-sized L (>2x the required; flag only)"
+    area = c.get("boardArea")
+    if area:
+        out += (f" | board {area['mm2']:.1f} mm2" if area.get("mm2") is not None
+                else " | board area not stated")
+    # Volume has equal billing with the board area (owner 2026-11-14).
+    vol = c.get("volume")
+    if vol:
+        out += (f" | volume {vol['mm3']:.0f} mm3" if vol.get("mm3") is not None
+                else " | volume not stated")
+    price = c.get("price")
+    if price:
+        q = (price.get("quotes") or [None])[0]
+        out += (f" | unit cost {q['unitCost']:.2f} {q['currency']} ({q['distributor']}; price at "
+                f"quantity not stated)" if q else " | price not stated")
+    return out
+
+
 def recommend_parts(family: str, requirements: dict, options: dict | None = None,
                     max_results: int = 12, include_envelope: bool = False) -> CallToolResult:
     """Ranked candidates for one component requirement.
@@ -1603,10 +1650,10 @@ def recommend_parts(family: str, requirements: dict, options: dict | None = None
             maxRippleVoltage?, ambientTemperature?} ranks by the ESR loss
             I_ripple^2 * ESR(fs) (tiebreaker lowest_operating_point_loss; I_ripple = dIpp/sqrt(12)
             at the output, Iout*sqrt(D(1-D)) at the input), ESR off the record's ESR(f) curve or
-            the stated ESR with its frequency named (a stated ESR with no frequency:
-            UNVERIFIED); a record stating only tan(delta) gets
+            the stated ESR with its frequency named (a stated ESR with no frequency is
+            ignored); a record with no ESR read gets
             ESR = tan(delta)/(2*pi*f*C) at tan(delta)'s own frequency, an upper bound at fs
-            (no stated frequency, or fs below it: UNVERIFIED). Checks: effective capacitance at
+            (labelled <=; no stated frequency, or fs below it: UNVERIFIED). Checks: effective capacitance at
             the DC voltage (DC-bias curve; a class-II ceramic without one is UNVERIFIED, never
             derated by a guessed factor), ripple voltage (output dIpp*ESR + dIpp/(8*fs*Ceff);
             input Iout*D*(1-D)/(fs*Ceff) + Iout*ESR) and the ripple-current rating moved to fs /
@@ -1628,6 +1675,26 @@ def recommend_parts(family: str, requirements: dict, options: dict | None = None
             candidate carries ratings, overRating (Vrrm/If(avg) > 3x the requirement: noted;
             ranked lower except under lowest_operating_point_loss and the Vrrm/If margin
             rankings), boardArea and price.
+            magnetic lossOperatingPoint {position: 'buckInductor', conductionMode: 'ccm' | 'dcm' |
+            'crm' (required, no default), inputVoltage, outputVoltage, outputCurrent,
+            ambientTemperature?; ccm: switchingFrequency and the required inductance
+            (requirements.magnetizingInductance, nominal >= it); dcm: switchingFrequency and
+            minimumInputVoltage (the part's nominal x (1 + tol+) must not exceed 0.9 x L_crit,
+            L_crit = Vout*(1 - Vout/Vin_min)/(2*Iout*fs), the CCM/DCM boundary at full load; the
+            requested L is no floor, its distance is a note); crm: minimumInductance and
+            maximumInductance (the tolerance band must lie inside; no switchingFrequency)} ranks
+            power inductors by loss at that point (tiebreaker lowest_operating_point_loss). The
+            waveform uses the part's tolerance-minimum L, read at Ipk off its L(I) curve at the
+            ambient (else at 20/25 degC or unstated) when it has one. Saturation: the current at
+            a 20 % L drop (that L(I) curve decides when present, else the stated Isat points at
+            the ambient, else at 20/25 degC or unstated, interpolated, never extrapolated) must
+            exceed Ipk. Thermal: the rated current at a 40 K rise (from the record's
+            rated-current points per rise) must cover Irms. Both are hard gates; a check the
+            record cannot settle is UNVERIFIED and ranks after, as does a part whose board area
+            or volume is not stated (one more UNVERIFIED item). The DCR loss Irms^2*DCR orders;
+            core loss is UNVERIFIED (no catalogue model; not counted in the order). Each
+            candidate carries ratings, overRating (Isat or rated current > 3x the need; ccm: L
+            above 2x the required: flag only), boardArea, volume and price.
         include_envelope: attach each candidate's full datasheet record (large).
     """
     key = _family(family)
@@ -1665,8 +1732,9 @@ def recommend_parts(family: str, requirements: dict, options: dict | None = None
         lines.append(f"  {c.get('mpn')} — {c.get('manufacturer')}"
                      + (f" [{dies}, ratings per die]" if dies else "")
                      + (f" | tightest margin {worst[0]} {worst[1]:.2f}x" if worst else "")
-                     + (_capacitor_extras(c) if key == "capacitor"
-                        else _diode_extras(c) if key == "diode" else _mosfet_extras(c)))
+                     + (_capacitor_extras(c) if key == "capacitor" else
+                        _diode_extras(c) if key == "diode" else
+                        _magnetic_extras(c) if key == "magnetic" else _mosfet_extras(c)))
     rejected = result.get("rejections") or {}
     return _result(
         f"{len(cands)} {key} candidate(s), best first "

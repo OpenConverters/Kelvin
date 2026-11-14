@@ -73,9 +73,20 @@ function parsedField(field) {
 }
 
 // The operating-point loss inputs the user filled in (blank = not given, never defaulted).
+// A lossPoint with a modeField shows (and sends) only the fields of the chosen mode.
+function lossPointMode() {
+  const mf = fam.value.recommend.lossPoint?.modeField
+  return mf ? form().loss[mf.key] || '' : ''
+}
+function lossPointFields() {
+  const lp = fam.value.recommend.lossPoint
+  if (!lp) return []
+  const mode = lossPointMode()
+  return lp.fields.filter((x) => !x.modes || x.modes.includes(mode))
+}
 function lossPointValues() {
   const out = {}
-  for (const field of fam.value.recommend.lossPoint?.fields ?? []) {
+  for (const field of lossPointFields()) {
     const raw = form().loss[field.key]
     if (raw == null || String(raw).trim() === '') continue
     const v = parseSI(raw)
@@ -98,11 +109,16 @@ const formErrors = computed(() => {
       if (Number.isNaN(v)) errs.push(`${k}: can't parse "${form().loss[k]}"`)
     }
     const given = Object.keys(lp).length
-    const core = ['inputVoltage', 'outputCurrent', 'switchingFrequency']
+    const mf = f.recommend.lossPoint.modeField
+    if (given && mf && !lossPointMode()) errs.push(`Operating-point loss needs the ${mf.label.toLowerCase()}`)
+    const core = (mf ? f.recommend.lossPoint.requiredByMode?.[lossPointMode()] : null) ??
+      f.recommend.lossPoint.required ?? ['inputVoltage', 'outputCurrent', 'switchingFrequency']
     if (given && core.some((k) => lp[k] == null)) {
-      errs.push('Operating-point loss needs Vin, Iout and fs')
+      const label = (k) => f.recommend.lossPoint.fields.find((x) => x.key === k)?.label ?? k
+      errs.push(`Operating-point loss needs ${core.map(label).join(', ')}`)
     }
-    if (given && lp.outputVoltage == null && lp.dutyCycle == null) {
+    const hasDuty = f.recommend.lossPoint.fields.some((x) => x.key === 'dutyCycle')
+    if (given && hasDuty && lp.outputVoltage == null && lp.dutyCycle == null) {
       errs.push('Operating-point loss needs Vout or a duty cycle')
     }
     const position = form().lossPosition || f.recommend.lossPoint.position
@@ -158,7 +174,11 @@ async function run() {
   }
   if (f.recommend.lossPoint) {
     const lp = lossPointValues()
-    if (Object.keys(lp).length) options.lossOperatingPoint = { position: st.lossPosition || f.recommend.lossPoint.position, ...lp }
+    if (Object.keys(lp).length) {
+      options.lossOperatingPoint = { position: st.lossPosition || f.recommend.lossPoint.position, ...lp }
+      const mf = f.recommend.lossPoint.modeField
+      if (mf && lossPointMode()) options.lossOperatingPoint[mf.key] = lossPointMode()
+    }
   }
   if (f.recommend.priceQuantity && st.priceQuantity !== '') options.priceQuantity = parseSI(st.priceQuantity)
   if (st.diversity) options.maxManufacturerFraction = 0.2
@@ -243,16 +263,28 @@ const target = computed(() => result.value?.target ?? null)
 const COMPARE_COLUMNS = 6
 const compareCands = computed(() => candidates.value.slice(0, COMPARE_COLUMNS))
 const showCompare = computed(() => compareCands.value.some((c) => c.loss || c.boardArea || c.price))
-const LOSS_TERMS = [
+const MOSFET_LOSS_TERMS = [
   ['conduction', 'Conduction'],
   ['switching', 'Switching'],
   ['gateDrive', 'Gate drive'],
   ['coss', 'Coss'],
   ['esrLoss', 'ESR loss'],
 ]
-// A family states its own loss terms and ratings row (families.js); the MOSFET ones otherwise.
-const lossTerms = computed(() => fam.value.recommend?.lossTerms ?? LOSS_TERMS)
+// A family's lossPoint may name its own terms, ratings, derived operating-point values and
+// checks (magnetic, owner 2026-11-14); absent = the MOSFET layout.
+// A family may also state its terms and ratings row directly (diode: lossTerms, ratingsRow).
+const lossTerms = computed(() => fam.value.recommend.lossPoint?.terms ?? fam.value.recommend?.lossTerms ?? MOSFET_LOSS_TERMS)
 const ratingsRow = computed(() => fam.value.recommend?.ratingsRow ?? { label: 'Vds / Id', keys: [['vds', 'V'], ['id', 'A']] })
+const RATINGS = computed(() => fam.value.recommend.lossPoint?.ratings ?? null)
+const DERIVED = computed(() => fam.value.recommend.lossPoint?.derived ?? [])
+const CHECKS = computed(() => fam.value.recommend.lossPoint?.checks ?? [])
+// Magnetic checks are pass/fail statuses (saturation, thermal, DCM); capacitor checks are values.
+function statusCheckCell(c, key) {
+  const k = c.loss?.checks?.[key]
+  if (!k) return { text: '—', title: '' }
+  if (k.status === 'unverified') return { text: 'UNVERIFIED', title: (k.missing ?? []).join('; '), unverified: true }
+  return { text: k.status, title: k.basis ?? '' }
+}
 function termCell(c, key) {
   const t = c.loss?.terms?.[key]
   if (!t) return { text: '—', title: '' }
@@ -378,7 +410,14 @@ function priceCell(c) {
               <option v-for="p in fam.recommend.lossPoint.positions.filter((x) => x !== fam.recommend.lossPoint.position)" :key="p" :value="p">{{ p }}</option>
             </select>
           </label>
-          <label v-for="lf in fam.recommend.lossPoint.fields" :key="lf.key" class="field">
+          <label v-if="fam.recommend.lossPoint.modeField" class="field">
+            <span>{{ fam.recommend.lossPoint.modeField.label }}</span>
+            <select v-model="form().loss[fam.recommend.lossPoint.modeField.key]">
+              <option value="">— choose —</option>
+              <option v-for="[v, l] in fam.recommend.lossPoint.modeField.choices" :key="v" :value="v">{{ l }}</option>
+            </select>
+          </label>
+          <label v-for="lf in lossPointFields()" :key="lf.key" class="field">
             <span>{{ lf.label }} <template v-if="lf.unit">({{ lf.unit }})</template></span>
             <input v-model="form().loss[lf.key]" :placeholder="lf.placeholder" />
           </label>
@@ -492,7 +531,7 @@ function priceCell(c) {
               </tr>
             </thead>
             <tbody>
-              <tr v-if="fam.key !== 'capacitor'">
+              <tr v-if="!RATINGS && fam.key !== 'capacitor'">
                 <th>{{ ratingsRow.label }}</th>
                 <td v-for="c in compareCands" :key="c.mpn">{{ ratingsRow.keys.map(([k, u]) => si(c.ratings?.[k], u)).join(' / ') }}</td>
               </tr>
@@ -500,6 +539,12 @@ function priceCell(c) {
                 <th>C / V rated</th>
                 <td v-for="c in compareCands" :key="c.mpn" :title="[c.ratings?.technology, c.ratings?.dielectric].filter(Boolean).join(' ')">{{ si(c.ratings?.capacitance, 'F') }} / {{ si(c.ratings?.voltage, 'V') }}</td>
               </tr>
+              <template v-if="RATINGS">
+                <tr v-for="[k, label, unit] in RATINGS" :key="'r-' + k">
+                  <th>{{ label }}</th>
+                  <td v-for="c in compareCands" :key="c.mpn">{{ c.ratings?.[k] == null ? 'not stated' : si(c.ratings[k], unit) }}</td>
+                </tr>
+              </template>
               <tr>
                 <th>Over-rated</th>
                 <td v-for="c in compareCands" :key="c.mpn" :title="(c.overRating?.notes ?? []).join('; ')" :class="{ warnc: c.overRating?.axes?.length }">
@@ -507,6 +552,14 @@ function priceCell(c) {
                 </td>
               </tr>
               <template v-if="compareCands.some((c) => c.loss)">
+                <tr v-for="[k, label, unit] in DERIVED" :key="'d-' + k">
+                  <th>{{ label }}</th>
+                  <td v-for="c in compareCands" :key="c.mpn">{{ c.loss?.[k] == null ? '—' : si(c.loss[k], unit) }}</td>
+                </tr>
+                <tr v-for="[k, label] in CHECKS" :key="'c-' + k">
+                  <th>{{ label }}</th>
+                  <td v-for="c in compareCands" :key="c.mpn" :title="statusCheckCell(c, k).title" :class="{ warnc: statusCheckCell(c, k).unverified }">{{ statusCheckCell(c, k).text }}</td>
+                </tr>
                 <tr v-for="[k, label] in lossTerms.filter(([t]) => compareCands.some((c) => c.loss?.terms?.[t]))" :key="k">
                   <th>{{ label }}</th>
                   <td v-for="c in compareCands" :key="c.mpn" :title="termCell(c, k).title" :class="{ warnc: termCell(c, k).unverified }">{{ termCell(c, k).text }}</td>
@@ -526,7 +579,7 @@ function priceCell(c) {
                 <th>Board area</th>
                 <td v-for="c in compareCands" :key="c.mpn" :title="areaCell(c).title" :class="{ warnc: areaCell(c).unverified }">{{ areaCell(c).text }}</td>
               </tr>
-              <tr v-if="compareCands.some((c) => c.volume)">
+              <tr v-if="fam.recommend.lossPoint?.volume || compareCands.some((c) => c.volume)">
                 <th>Volume</th>
                 <td v-for="c in compareCands" :key="c.mpn" :title="volumeCell(c).title" :class="{ warnc: volumeCell(c).unverified }">{{ volumeCell(c).text }}</td>
               </tr>

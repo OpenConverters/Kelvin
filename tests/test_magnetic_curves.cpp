@@ -381,7 +381,8 @@ TEST_CASE("curves: rated current ambient — room temperature matches, unstated 
 }
 
 // 14. A cable core's opening (owner 2026-11-14): the substitute must take at least the
-// original's largest cable. Kitagawa RFC-13-A takes 13.5 mm: RFC-9-A (9.5 mm) FAILS, RFC-H13-A
+// original's largest cable. Kitagawa RFC-13-A takes 13.5 mm: RFC-9-A (9.5 mm) is REJECTED (no
+// substitute; owner 2026-11-14, was a FAIL verdict on a ranked candidate), RFC-H13-A
 // (13.5 mm) passes. RFC-8-A (8.5 mm) as the original: RFC-13-A (13.5 mm, 1.59x) passes with a
 // note that the cable fits loosely.
 TEST_CASE("curves: a cable core must take the original's cable", "[magcurves][crossref][cable]") {
@@ -390,6 +391,9 @@ TEST_CASE("curves: a cable core must take the original's cable", "[magcurves][cr
     REQUIRE(o["number_turns"].get<double>() == 1.0);
     const json small = rank("chipBead", o, spec_of(row_of("RFC-9-A"), true));
     INFO(small.dump());
+    CHECK(small.value("status", "") == "no_substitute");
+    CHECK(small.value("reason", "") == "cable core opening smaller than the original's: the "
+                                       "original's cable does not pass through");
     CHECK(verdict_of(small, "cable_max_diameter_m") == "fail");
     CHECK(note_with(small, "cable opening 9.5 mm against the original's 13.5 mm — the original's "
                            "largest cable does not pass through the substitute") != "");

@@ -584,6 +584,8 @@ void row_io(Ar& ar, MagneticRow& r) {
     curves(ar, r.l_curves);            // v22 (curves)
     ar.curve(r.rated_points);              // v22 (curves, rated current per rise)
     ar.boolean(r.sat_table_from_curve);    // v22 (Z5)
+    ar.boolean(r.dcr_is_maximum);          // v22 (owner 2026-11-14, operating-point loss)
+    ar.str(r.price_quotes);                // v22 (owner 2026-11-14, price)
     ar.dbl(r.dm_impedance_100mhz);         // v22 (curves, CMC DM mode)
     ar.dbl(r.dm_impedance_peak);           // v22
     ar.dbl(r.dm_impedance_peak_freq);      // v22

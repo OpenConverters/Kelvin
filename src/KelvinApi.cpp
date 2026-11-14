@@ -607,9 +607,60 @@ json Engine::select(const std::string& category, const json& req, const json& op
         }
         if (auto p = opt_num(options, "peakCurrent")) c.peak_current = p;
         if (auto r = opt_num(options, "rmsCurrent")) c.rms_current = r;
+        // The converter operating point for lowest_operating_point_loss (owner 2026-11-14).
+        // Every value is the caller's; nothing is defaulted.
+        if (options.contains("lossOperatingPoint") && !options.at("lossOperatingPoint").is_null()) {
+            const json& op = options.at("lossOperatingPoint");
+            if (!op.is_object()) throw InvalidOptions("lossOperatingPoint must be an object");
+            InductorOperatingPoint lo;
+            auto pos = opt_str(op, "position");
+            if (!pos) throw InvalidOptions("lossOperatingPoint.position is required (buckInductor)");
+            lo.position = inductor_position_from_string(*pos);
+            // The conduction mode decides the inductance gate (owner 2026-11-14): required,
+            // never defaulted.
+            auto mode = opt_str(op, "conductionMode");
+            if (!mode)
+                throw InvalidOptions("lossOperatingPoint.conductionMode is required (ccm, dcm or "
+                                     "crm)");
+            lo.mode = conduction_mode_from_string(*mode);
+            // A key that is present must be a number (null = not given).
+            auto num = [&](const char* k) -> std::optional<double> {
+                if (!op.contains(k) || op.at(k).is_null()) return std::nullopt;
+                if (!op.at(k).is_number())
+                    throw InvalidOptions(std::string("lossOperatingPoint.") + k + " must be a number");
+                return op.at(k).get<double>();
+            };
+            auto need = [&](const char* k) {
+                auto v = num(k);
+                if (!v) throw InvalidOptions(std::string("lossOperatingPoint.") + k + " is required");
+                return *v;
+            };
+            lo.vin = need("inputVoltage");
+            lo.vout = need("outputVoltage");
+            lo.iout = need("outputCurrent");
+            lo.fsw = num("switchingFrequency");
+            lo.vin_min = num("minimumInputVoltage");
+            lo.window_min_l = num("minimumInductance");
+            lo.window_max_l = num("maximumInductance");
+            lo.ambient = num("ambientTemperature");
+            lo.validate();
+            c.loss_op = lo;
+        }
+        if (options.contains("priceQuantity") && !options.at("priceQuantity").is_null()) {
+            const json& q = options.at("priceQuantity");
+            if (!q.is_number() || !(q.get<double>() > 0))
+                throw InvalidOptions("priceQuantity must be a positive number");
+            c.price_quantity = q.get<double>();
+        }
+        c.exclude_discontinued = opt_bool(options, "excludeDiscontinued", true);
+        MagneticTiebreaker tb = MagneticTiebreaker::BestFit;
+        if (auto s = opt_str(options, "tiebreaker")) tb = magnetic_tiebreaker_from_string(*s);
+        else if (c.loss_op) tb = MagneticTiebreaker::LowestOperatingPointLoss;
         const Shard<MagneticRow>& sh = magnetic_shard();
         std::optional<FileRecordFetcher> fetch;
         if (include_env) fetch.emplace(ndjson_path(Family::Magnetic), sh.meta.source_size);
+        if (tb == MagneticTiebreaker::LowestOperatingPointLoss)
+            return select_magnetic_op_loss(sh, c, max_cand, include_env ? &*fetch : nullptr, mfr);
         return select_magnetic(sh, c, max_cand, include_env ? &*fetch : nullptr, mfr);
     }
     // controller
