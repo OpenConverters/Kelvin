@@ -63,12 +63,20 @@ export const XREF = [
       // ranker compares the currents at the same inductance drop instead of the bare Isat.
       bias_curve: r.bias_curve && Array.isArray(r.bias_curve.current) ? r.bias_curve : null,
       saturation_from_curve: r.saturation_from_curve === true,
+      // v22 (owner 2026-11-14): every L(I) curve the record states, per temperature
+      // ([{x: [A], y: [H], temperature?}]), compared at each temperature both state.
+      inductance_curves: r.inductance_curves ?? null,
+      // v22 (owner 2026-11-14): the rated currents per temperature rise ({x: [K], y: [A],
+      // temperature?: ambient degC}, one point or more); with both sides stating them the
+      // rated current is compared at a common rise.
+      rated_current_points: r.rated_current_points ?? null,
       // v22 (R2): the whole turnsRatios array (primary:secondary per secondary winding),
       // compared element-wise. null = not stated.
       turns_ratios: Array.isArray(r.turns_ratios) && r.turns_ratios.length ? r.turns_ratios : null,
       // v22 (W4): every wiring configuration's turnsRatios; the best-matching pair is credited.
       turns_ratio_configs: Array.isArray(r.turns_ratio_configs) && r.turns_ratio_configs.length
-        ? r.turns_ratio_configs : null }),
+        ? r.turns_ratio_configs : null,
+      ...magneticCurves(r) }),
     params: [
       { key: 'value', label: 'L', row: 'inductance', unit: 'H' },
       { key: 'turns_ratio', label: 'N', row: 'turns_ratio', unit: '' },
@@ -183,7 +191,9 @@ export const XREF = [
     // on a common basis (UNVERIFIED with a note otherwise).
     // die_configuration (v22): dual / complementary as stated; graded as an identity like the diode one.
     // internal_connection (v22): halfBridge / independent / commonDrain, graded the same way (owner 2026-11-13).
-    spec: (r) => ({ ...base(r), vds: nz(r.vds_rated), id: nz(r.id_continuous), rds_on: nz(r.rds_on), qg: nz(r.qg_total), coss: nz(r.coss), coss_vds: nz(r.coss_vds), vgs_threshold_max: nz(r.vgs_threshold_max), vgs_threshold_typ: nz(r.vgs_threshold_typ), rds_on_vgs: nz(r.rds_on_vgs), vgs_max: nz(r.vgs_max), technology: r.technology ?? '', qualification: r.qualification ?? '', channel: r.channel || null, die_configuration: r.die_configuration || null, internal_connection: r.internal_connection || null }),
+    spec: (r) => ({ ...base(r), vds: nz(r.vds_rated), id: nz(r.id_continuous), rds_on: nz(r.rds_on), qg: nz(r.qg_total), coss: nz(r.coss), coss_vds: nz(r.coss_vds), vgs_threshold_max: nz(r.vgs_threshold_max), vgs_threshold_typ: nz(r.vgs_threshold_typ), rds_on_vgs: nz(r.rds_on_vgs), vgs_max: nz(r.vgs_max), technology: r.technology ?? '', qualification: r.qualification ?? '', channel: r.channel || null, die_configuration: r.die_configuration || null, internal_connection: r.internal_connection || null,
+      // v22 (owner curve rule 2026-11-14): the measured curves and ambient ratings, as the row states them.
+      ciss_curve: r.ciss_curve ?? null, coss_curve: r.coss_curve ?? null, crss_curve: r.crss_curve ?? null, rds_on_id_curve: r.rds_on_id_curve ?? null, rds_on_tj_curve: r.rds_on_tj_curve ?? null, qg_curve: r.qg_curve ?? null, id_ambient_curves: r.id_ambient_curves ?? null }),
     params: [
       { key: 'vds', label: 'Vds', row: 'vds_rated', unit: 'V' },
       { key: 'id', label: 'Id', row: 'id_continuous', unit: 'A' },
@@ -308,6 +318,8 @@ export const XREF = [
       // over (a small pitch difference adds up along a row). null when unstated.
       rows: nz(r.rows),
       rated_current_A: nz(r.rated_current), rated_voltage_V: nz(r.rated_voltage),
+      // v22 (owner curve rule 2026-11-14): the per-contact current derating curve, as the row states it.
+      current_ambient_curve: r.current_ambient_curve ?? null,
       temp_min_C: r.temp_min_c, temp_max_C: r.temp_max_c,
       contact_plating: r.contact_plating || null, termination: r.termination || null,
       // The board attach (mechanical.mountingStyle: smt / tht / pressFit / skedd / panel /
@@ -390,6 +402,8 @@ export const XREF = [
       // v22 (owner 2026-11-13, Y5): the forward current Vf is stated at — the ranker compares two
       // forward voltages only at a common test current.
       vf_test_current: nz(r.vf_test_current),
+      // v22 (owner curve rule 2026-11-14): the measured Vf(If), Ir(Vr) and Cj(Vr) curves, as the row states them.
+      vf_curve: r.vf_curve ?? null, ir_curve: r.ir_curve ?? null, cj_curve: r.cj_curve ?? null,
       clamping_waveform: r.clamping_waveform ?? '',
       peak_pulse_power_waveform: r.peak_pulse_power_waveform ?? '',
       peak_pulse_current_waveform: r.peak_pulse_current_waveform ?? '',
@@ -431,6 +445,18 @@ const ZENER_VARIANT = {
   },
 }
 
+// The measured curves a magnetic row carries (v22, owner 2026-11-14: "compare ALL existing
+// graphs"), passed to the ranker as they come off the row (the shared curve shape {x, y,
+// conditions...} as the capacitor's, plus mode on a CMC's |Z|; null when the record states none). The ranker compares each one both records carry, curve vs curve
+// (src/CrossRefMagneticCurves.hpp). Shared by the inductor and the impedance (bead) models.
+const MAGNETIC_CURVE_KEYS = ['impedance_curve', 'resistance_curve', 'reactance_curve',
+  'dm_impedance_curve', 'cm_insertion_loss_curve', 'dm_insertion_loss_curve']
+export function magneticCurves(r) {
+  const out = {}
+  for (const k of MAGNETIC_CURVE_KEYS) out[k] = r[k] ?? null
+  return out
+}
+
 // Ferrite-bead view of the magnetic catalogue. Its primary axis is impedance at
 // 100 MHz — the number the whole industry quotes — but the ranker also compares
 // the peak of the measured curve and the frequency it occurs at, because parts
@@ -447,7 +473,13 @@ const BEAD_VARIANT = {
     // magnetic rule): MFBA3V1608K-471-R (to 150 degC) took a 125 degC MMZ1608 as 'upgrade'
     // because the bead spec never passed it (Qarlos r9 seed 23088792). Raw, NOT through
     // nz(): a cold limit is negative and 0 degC is a real rating.
-    temp_min_C: r.temp_min_c ?? null, temp_max_C: r.temp_max_c ?? null }),
+    temp_min_C: r.temp_min_c ?? null, temp_max_C: r.temp_max_c ?? null,
+    // v22 (owner 2026-11-14): the device type (a signal CMC ranked by this model opens its
+    // curves' useful band at 150 kHz, not 1 MHz) and the rated currents per temperature rise,
+    // as on the inductor model.
+    device_type: r.device_type ?? '',
+    rated_current_points: r.rated_current_points ?? null,
+    ...magneticCurves(r) }),
   params: [
     { key: 'impedance_100mhz', label: 'Z@100M', row: 'impedance_100mhz', unit: 'Ω' },
     { key: 'impedance_peak', label: 'peak Z', row: 'impedance_peak', unit: 'Ω' },
@@ -471,10 +503,36 @@ const BEAD_VARIANT = {
 // A CMC with neither stays on the inductor model and is refused for the missing L, honestly.
 const CMC_IMPEDANCE_VARIANT = { ...BEAD_VARIANT }
 
+// A cable core (MAS subtype 'cableCore': a clamp-on / sleeve ferrite on a cable, 597 records)
+// states no inductance — its datasheet IS its |Z|(f) curve — so the inductor model refused
+// every one for "no L value" and its impedance was never compared (graph inventory item 11,
+// owner 2026-11-14). It takes the impedance model, within its own device type (sameFacet), so
+// a cable core is only ever ranked against cable cores: the 100 MHz |Z| when the record
+// samples near 100 MHz, and its |Z|(f) curve against the other's in the useful band. A cable
+// core with no |Z| on record at all (no 100 MHz value, no curve of two samples) stays on the
+// inductor model and is refused for the missing L, as a bare CMC is.
+// Two axes of its own (owner 2026-11-14): the largest cable that passes through it
+// (maximumCableOuterDiameter; the substitute must take at least the original's) and the
+// number of cable passes its |Z| is stated for (numberTurns; must match). Not stated by the
+// substitute while the original states it -> UNVERIFIED, capped at minor_review (ranker).
+const CABLE_CORE_VARIANT = {
+  ...BEAD_VARIANT,
+  spec: (r) => ({ ...BEAD_VARIANT.spec(r),
+    cable_max_diameter_m: nz(r.cable_max_diameter), number_turns: nz(r.number_turns) }),
+  params: [
+    { key: 'cable_max_diameter_m', label: 'cable Ø max', row: 'cable_max_diameter', unit: 'm' },
+    { key: 'number_turns', label: 'passes', row: 'number_turns', unit: '' },
+    ...BEAD_VARIANT.params,
+  ],
+}
+
 export function magneticVariantFor(orig) {
   if (orig?.device_type === 'chipBead') return BEAD_VARIANT
   if (orig?.device_type === 'commonModeChoke' && nz(orig.inductance) == null &&
       nz(orig.impedance_100mhz) != null) return CMC_IMPEDANCE_VARIANT
+  if (orig?.device_type === 'cableCore' && nz(orig.inductance) == null &&
+      (nz(orig.impedance_100mhz) != null || Array.isArray(orig.impedance_curve?.x)))
+    return CABLE_CORE_VARIANT
   return null
 }
 

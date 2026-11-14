@@ -40,9 +40,11 @@
 #include <nlohmann/json.hpp>
 
 #include "CrossRefClasses.hpp"
+#include "CrossRefCurveChecks.hpp"
 #include "CrossRefCurves.hpp"
 #include "CrossRefDecode.hpp"
 #include "CrossRefDimensions.hpp"
+#include "CrossRefMagneticCurves.hpp"  // magnetic curves (owner 2026-11-14)
 #include "CrossRefParams.hpp"
 #include "CrossRefScore.hpp"
 
@@ -87,6 +89,12 @@ inline std::string signed_pct(double v) { return (v >= 0 ? "+" : "") + plain_pct
 //: 15 % off warns ("turns ratio can be +-15%, but with care"), beyond that fails.
 inline constexpr double kTurnsRatioPassRel = 0.01;
 inline constexpr double kTurnsRatioWarnRel = 0.15;
+// A cable core whose opening is more than this many times the original's fits the original's
+// cable loosely (owner 2026-11-14): a PASS with a note.
+inline constexpr double kCableLooseFitRatio = 1.5;
+// A capacitor's ESL curve is graded from this multiple of the original's self-resonance up
+// (owner 2026-11-14): X/omega = L(1 - 1/k^2), within about 11 % of L from k = 3.
+inline constexpr double kEslBandOfResonance = 3.0;
 
 // A resistance as an engineer writes it: SI prefix, up to six significant digits,
 // no trailing zeros ("14.7 kΩ", "15 kΩ", "0.5 Ω").
@@ -241,6 +249,10 @@ inline std::vector<std::string> comparison_source_fields(const std::string& cat,
         if (name == "power_dissipation") return {"electrical.powerDissipation"};
         if (name == "tj_max") return {"thermal.junctionTemperatureMax"};
         if (name == "junction_capacitance") return {"electrical.junctionCapacitance"};
+        // The measured curves (owner curve rule 2026-11-14), each read from its own curve.
+        if (name == "vf_vs_if") return {"curves.forwardVoltageVsCurrent"};
+        if (name == "ir_vs_vr") return {"curves.reverseCurrentVsVoltage"};
+        if (name == "cj_vs_vr") return {"curves.capacitanceVsVoltage"};
         if (name == "junction_capacitance_basis")
             return {"electrical.junctionCapacitance", "electrical.junctionCapacitanceVr"};
         if (name == "clamping_voltage") return {"electrical.clampingVoltage"};
@@ -256,6 +268,14 @@ inline std::vector<std::string> comparison_source_fields(const std::string& cat,
         if (name == "vds") return {"electrical.drainSourceVoltage"};
         if (name == "id") return {"electrical.continuousDrainCurrent"};
         if (name == "rds_on") return {"electrical.onResistance"};
+        // The measured curves (owner curve rule 2026-11-14), each read from its own curve.
+        if (name == "ciss_vs_vds") return {"curves.cissVsVds"};
+        if (name == "coss_vs_vds") return {"curves.cossVsVds"};
+        if (name == "crss_vs_vds") return {"curves.crssVsVds"};
+        if (name == "rds_on_vs_id") return {"curves.rdsOnVsId"};
+        if (name == "rds_on_vs_tj") return {"curves.rdsOnVsTj"};
+        if (name == "qg_vs_vgs") return {"curves.gateCharge"};
+        if (name == "id_vs_ambient") return {"electrical.ambientRatings"};
         if (name == "rds_on_basis") return {"electrical.onResistance", "electrical.onResistanceVgs"};
         if (name == "qg") return {"electrical.totalGateCharge"};
         if (name == "coss") return {"electrical.outputCapacitance"};
@@ -300,6 +320,9 @@ inline std::vector<std::string> comparison_source_fields(const std::string& cat,
     }
     if (cat == "connector") {
         if (name == "rated_current_A") return {"electrical.ratedCurrentPerContact"};
+        // The derating curve is a fraction, compared in amperes (x the rated current).
+        if (name == "current_vs_ambient")
+            return {"derating.currentVsAmbient", "electrical.ratedCurrentPerContact"};
         if (name == "rated_voltage_V") return {"electrical.ratedVoltage"};
         if (name == "positions") return {"mechanical.positions"};
         if (name == "pitch_mm") return {"mechanical.pitch"};
@@ -1222,6 +1245,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // A primary current rating (MOSFET Id, diode If(AV), IGBT Ic) stated by one record only
     // (owner 2026-11-13, Y1): UNVERIFIED with a note, capped at minor_review.
     bool current_rating_one_sided = false;
+    // A cable core's cable diameter or pass count the substitute does not state while the
+    // original does (owner 2026-11-14): UNVERIFIED, capped at minor_review.
+    bool cable_core_unverified = false;
     // Primary ratings the ORIGINAL does not state and the substitute does (owner 2026-11-13,
     // Y2; is_primary_rating): each candidate is capped at minor_review with a note.
     std::vector<std::string> orig_unstated_primary;
@@ -2208,6 +2234,18 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             compare_numeric(spec_for("ripple_current"), ripple_conv->o, ripple_conv->s),
             ripple_conv->o, ripple_conv->s};
     }
+    // A magnetic's rated current at a common temperature rise (owner 2026-11-14,
+    // magcurve::rated_at_common_rise): with rated-current points on both records it replaces
+    // the largest-current scalar comparison, the currents at the deciding rise carrying the
+    // direction; different ambients or no common rise -> UNVERIFIED + note (no cap).
+    if (cat == "magnetic" || cat == "chipBead") {
+        const auto rb =
+            magcurve::rated_at_common_rise(original, cand, spec_for("rated_current"));
+        if (rb.applies) {
+            if (!rb.note.empty()) notes.push_back(rb.note);
+            curve_override["rated_current"] = {rb.outcome, rb.orig_at, rb.sub_at};
+        }
+    }
     auto hz = [](double f) {
         char b[32];
         std::snprintf(b, sizeof b, "%g Hz", f);
@@ -2223,9 +2261,11 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // the curve's end (all that is known to be below resonance). No |Z| curve on the original
     // -> its self-resonance is unknown: the ESR curve is then graded from the band start up to
     // the end of the common range, with a note saying so (owner decision 2026-11-14, 1).
-    // ESL(f) is extracted from the INDUCTIVE region, so it gets its own band: from the
-    // original's self-resonance upward to the end of the common range (owner decision
-    // 2026-11-14, 2). Self-resonance unknown (no |Z| curve, or |Z| still falling at the end
+    // ESL(f) is extracted from the INDUCTIVE region, so it gets its own band: from 3x the
+    // original's self-resonance upward to the end of the common range (owner decisions
+    // 2026-11-14, 2, and 2026-11-14 follow-up: at k = f/f_res the reactance over omega reads
+    // L(1 - 1/k^2), so right above resonance the extracted ESL is far below the true L; from
+    // k = 3 it is within about 11 %). Self-resonance unknown (no |Z| curve, or |Z| still falling at the end
     // of its curve so the resonance lies somewhere above the measured range) -> no ESL band,
     // ESL is not graded (UNVERIFIED + note). (The catalogue states no SRF field for
     // capacitors, and every record with a C(f) curve also carries |Z|, so |Z| is the source.)
@@ -2277,10 +2317,12 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                         ", so its self-resonance (where the inductive region the ESL is "
                         "extracted from begins) lies above the measured range and is unknown";
         } else {
-            u.esl.band = std::make_pair(hi, HUGE_VAL);
-            u.esl.why = "ESL band from the original's self-resonance (|Z| minimum) at " + hz(hi) +
-                        " up to the end of the common range (ESL is extracted from the "
-                        "inductive region); points below it are not graded";
+            u.esl.band = std::make_pair(kEslBandOfResonance * hi, HUGE_VAL);
+            u.esl.why = "ESL band from 3x the original's self-resonance (|Z| minimum at " +
+                        hz(hi) + "), " + hz(kEslBandOfResonance * hi) +
+                        ", up to the end of the common range (ESL is extracted from the "
+                        "inductive region; just above resonance X/w reads L(1 - 1/k^2), within "
+                        "about 11 % from 3x); points below it are not graded";
         }
         if (lo > hi) {
             std::snprintf(buf, sizeof buf,
@@ -2401,13 +2443,45 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //    rule, 2026-11-09);
     //  * the original states no Vds -> compared as stated, exactly as before (no basis exists
     //    for any candidate, so none is skewed against another).
-    // No conversion between voltages is attempted, not even along the record's own Coss(Vds)
-    // curve.
+    // A stated Coss(Vds) curve resolves the mismatch (owner curve rule 2026-11-14): the
+    // substitute's curve read at the original's Vds, else the original's curve read at the
+    // substitute's stated Vds — inside the curve's measured range only, never extrapolated,
+    // linear in Vds (curve_checks). The scalar comparison is then made on that common basis
+    // (the Coss spec, through curve_override["coss"]) and the note names the reading. With no curve
+    // covering the other side's Vds, the rule above stands.
     bool coss_basis_unverified = false;
     if (cat == "mosfet") {
         const auto oc = num(original, "coss"), sc = num(cand, "coss");
         const auto ov = num(original, "coss_vds"), sv = num(cand, "coss_vds");
         if (oc && sc && ov &&
+            !(sv && std::fabs(*ov - *sv) <= 1e-9 * std::max(std::fabs(*ov), std::fabs(*sv)))) {
+            using curve_checks::read_at;
+            const auto s_curve = curve_checks::view_curve(cand, "coss_curve");
+            const auto o_curve = curve_checks::view_curve(original, "coss_curve");
+            const auto s_at = s_curve ? read_at(*s_curve, *ov, Interp::Linear) : std::nullopt;
+            const auto o_at =
+                !s_at && sv && o_curve ? read_at(*o_curve, *sv, Interp::Linear) : std::nullopt;
+            char rb[400], sv_txt[48] = "no stated Vds";
+            if (sv) std::snprintf(sv_txt, sizeof sv_txt, "%g V", *sv);
+            if (s_at) {
+                curve_override["coss"] = {compare_numeric(spec_for("coss"), oc, s_at), oc, s_at};
+                std::snprintf(rb, sizeof rb,
+                              "output capacitance compared at the original's %g V: the "
+                              "substitute's Coss(Vds) curve reads %.4g pF there (its record "
+                              "states %g pF at %s) against the original's %g pF",
+                              *ov, *s_at * 1e12, *sc * 1e12, sv_txt, *oc * 1e12);
+                notes.push_back(rb + curve_checks::inferred_units(cand, "coss_curve", "substitute's"));
+            } else if (o_at) {
+                curve_override["coss"] = {compare_numeric(spec_for("coss"), o_at, sc), o_at, sc};
+                std::snprintf(rb, sizeof rb,
+                              "output capacitance compared at the substitute's %g V: the "
+                              "original's Coss(Vds) curve reads %.4g pF there (its record "
+                              "states %g pF at %g V) against the substitute's %g pF",
+                              *sv, *o_at * 1e12, *oc * 1e12, *ov, *sc * 1e12);
+                notes.push_back(rb + curve_checks::inferred_units(original, "coss_curve", "original's"));
+            }
+        }
+        if (oc && sc && ov && !curve_override.count("coss") &&
             !(sv && std::fabs(*ov - *sv) <= 1e-9 * std::max(std::fabs(*ov), std::fabs(*sv)))) {
             coss_basis_unverified = true;
             params.push_back({{"name", "coss_basis"}, {"verdict", UNVERIFIED}});
@@ -2438,13 +2512,59 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //    (vf and a vf_basis row), a note giving both values and currents, no direction, no
     //    penalty, no demotion and no cap (Vf is a secondary electrical);
     //  * the original states no test current -> compared as stated, exactly as before.
-    // No conversion along the record's Vf(If) curve is attempted.
+    // A stated Vf(If) curve resolves the mismatch (owner curve rule 2026-11-14): the substitute's
+    // curve read at the original's test current, else the original's curve read at the
+    // substitute's stated current — inside the curve's measured range only, never extrapolated,
+    // log-log in If (curve_checks). Only a curve stated at room temperature (25 degC, or 20 degC:
+    // the same condition, owner 2026-11-14, is_room_temperature) is read: a scalar Vf states
+    // no temperature on record, and the owner's decision (2026-11-14) takes it as 25 degC; a
+    // curve at another temperature, or at none stated, is not on the scalar's basis. The scalar
+    // comparison is then made on that common basis (the Vf spec, through curve_override["vf"])
+    // and the note names the reading.
     bool vf_basis_unverified = false;
     if (cat == "diode") {
         const auto ov = num(original, "vf"), sv = num(cand, "vf");
         const auto oi = num(original, "vf_test_current"), si = num(cand, "vf_test_current");
-        if (ov && sv && oi &&
-            !(si && std::fabs(*oi - *si) <= 1e-9 * std::max(std::fabs(*oi), std::fabs(*si)))) {
+        const bool vf_basis_differs =
+            ov && sv && oi &&
+            !(si && std::fabs(*oi - *si) <= 1e-9 * std::max(std::fabs(*oi), std::fabs(*si)));
+        if (vf_basis_differs) {
+            using curve_checks::read_at;
+            auto at_25 = [](const json& v) -> std::optional<SpecCurve> {
+                auto c = curve_checks::view_curve(v, "vf_curve");
+                if (!c || !c->temperature || !is_room_temperature(*c->temperature))
+                    return std::nullopt;
+                return c;
+            };
+            const auto s_curve = at_25(cand), o_curve = at_25(original);
+            const auto s_at = s_curve ? read_at(*s_curve, *oi, Interp::LogLog) : std::nullopt;
+            const auto o_at =
+                !s_at && si && o_curve ? read_at(*o_curve, *si, Interp::LogLog) : std::nullopt;
+            char rb[560], si_txt[48] = "no stated current";
+            if (si) std::snprintf(si_txt, sizeof si_txt, "%g A", *si);
+            if (s_at) {
+                curve_override["vf"] = {compare_numeric(spec_for("vf"), ov, s_at), ov, s_at};
+                std::snprintf(rb, sizeof rb,
+                              "forward voltage compared at the original's %g A: the "
+                              "substitute's %g degC Vf(If) curve reads %.4g V there (its record "
+                              "states %g V at %s) against the original's %g V (the scalar Vf "
+                              "states no temperature and is taken as 25 degC; 20 and 25 degC "
+                              "are both room temperature)",
+                              *oi, *s_curve->temperature, *s_at, *sv, si_txt, *ov);
+                notes.push_back(rb + curve_checks::inferred_units(cand, "vf_curve", "substitute's"));
+            } else if (o_at) {
+                curve_override["vf"] = {compare_numeric(spec_for("vf"), o_at, sv), o_at, sv};
+                std::snprintf(rb, sizeof rb,
+                              "forward voltage compared at the substitute's %g A: the "
+                              "original's %g degC Vf(If) curve reads %.4g V there (its record "
+                              "states %g V at %g A) against the substitute's %g V (the scalar "
+                              "Vf states no temperature and is taken as 25 degC; 20 and 25 degC "
+                              "are both room temperature)",
+                              *si, *o_curve->temperature, *o_at, *ov, *oi, *sv);
+                notes.push_back(rb + curve_checks::inferred_units(original, "vf_curve", "original's"));
+            }
+        }
+        if (vf_basis_differs && !curve_override.count("vf")) {
             vf_basis_unverified = true;
             params.push_back({{"name", "vf_basis"}, {"verdict", UNVERIFIED}});
             char buf[400];
@@ -2972,6 +3092,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             const auto curves = spec.key == "saturation_current"
                                     ? isat::compare_curves(original, cand, spec.tol_factor)
                                     : isat::CurveCompare{};
+            if (!curves.not_applied_note.empty()) notes.push_back(curves.not_applied_note);
             if (curves.applies) {
                 // Owner 2026-11-13, Z5: the two L(I) curves decided (compare_saturation_current).
                 // Direction from the worst criterion read on both; none read -> blind.
@@ -3046,6 +3167,30 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         if (numeric && is_primary_rating(cat, spec.key) && !detail::jnum(original, spec.key) &&
             detail::jnum(cand, spec.key))
             orig_unstated(spec.key);
+    }
+
+    // ── magnetic curves, curve vs curve (owner 2026-11-14) ───────────────────
+    // Every curve BOTH records carry (CrossRefMagneticCurves.hpp): judged at every point
+    // inside both measured ranges with a scalar spec's bands, the worst point deciding. A WARN
+    // or FAIL is a measured regression (demoted and penalised like the scalar row it extends);
+    // UNVERIFIED (no overlap, different measurement conditions) is a note only, no cap.
+    if (cat == "magnetic" || cat == "chipBead") {
+        for (const magcurve::Result& r : magcurve::compare_all(original, cand)) {
+            params.push_back({{"name", r.name}, {"verdict", r.verdict}});
+            notes.push_back(r.note);
+            const std::string v = r.verdict;
+            if (v == FAIL) {
+                demote();
+                penalty += opt.gate_weight * kVerdictFailPenalty;
+                ++worse;
+            } else if (v == WARN) {
+                demote();
+                penalty += opt.gate_weight * warn_penalty(r.warn_depth);
+                ++worse;
+            } else if (v == PASS) {
+                note_direction(r.dir, r.orig_y, r.sub_y);
+            }
+        }
     }
 
     // ── capacitor curves with no scalar of their own (owner 2026-11-14) ─────────
@@ -3285,6 +3430,80 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                 : "the substitute's turns ratio is " + lists(s_cf) +
                                       "; the original's record states none — confirm both "
                                       "ratios match from the datasheets");
+        }
+    }
+
+    // ── cable cores: cable fit and pass count (owner 2026-11-14) ─────────────
+    // A cable core (MAS subtype cableCore) is chosen for the cable it must pass and is rated
+    // per pass count; ranked by the impedance model (chipBead), two of its axes are its own:
+    //   cable_max_diameter (maximumCableOuterDiameter, m): the substitute must accept at least
+    //     the original's largest cable — smaller -> FAIL; equal or larger -> PASS, and more than
+    //     1.5x the original's opening -> PASS with a note that the cable fits loosely;
+    //   number_turns (numberTurns, the cable passes its |Z| is stated for): must match -> FAIL.
+    // Not stated by the substitute while the original states it -> UNVERIFIED + note, capped
+    // at minor_review. Stated by the substitute only -> UNVERIFIED + note, no cap (the owner's
+    // rule covers the substitute-missing case only). Stated by neither -> nothing (no cap).
+    if ((cat == "chipBead" || cat == "magnetic") && str(original, "device_type") == "cableCore") {
+        auto mm = [](double m) {
+            char b[32];
+            std::snprintf(b, sizeof b, "%.3g mm", m * 1e3);
+            return std::string(b);
+        };
+        auto passes = [](double n) {
+            char b[32];
+            std::snprintf(b, sizeof b, "%g", n);
+            return std::string(b) + (n == 1.0 ? " pass" : " passes");
+        };
+        auto one_sided = [&](const char* key, const char* what, const std::optional<double>& o,
+                             const std::string& shown) {
+            params.push_back({{"name", key}, {"verdict", UNVERIFIED}});
+            if (o) {
+                cable_core_unverified = true;
+                demote();
+                notes.push_back(std::string("the original's ") + what + " is " + shown +
+                                "; the substitute's record states none — confirm it from the "
+                                "datasheet before this swap");
+            } else {
+                notes.push_back(std::string("the substitute's ") + what + " is " + shown +
+                                "; the original's record states none — confirm the original's "
+                                "from its datasheet");
+            }
+        };
+        const auto od = num(original, "cable_max_diameter_m"), sd = num(cand, "cable_max_diameter_m");
+        if (od && sd) {
+            const char* v = PASS;
+            if (*sd < *od && !same_stated_value(*sd, *od)) {
+                v = FAIL;
+                notes.push_back("cable opening " + mm(*sd) + " against the original's " + mm(*od) +
+                                " — the original's largest cable does not pass through the "
+                                "substitute");
+                demote();
+                penalty += opt.gate_weight * kVerdictFailPenalty;
+                ++worse;
+            } else if (*sd > kCableLooseFitRatio * *od) {
+                notes.push_back("cable opening " + mm(*sd) + " against the original's " + mm(*od) +
+                                " — more than 1.5x larger, so the original's cable fits loosely "
+                                "(less of the core's impedance couples to a thin cable; check "
+                                "the fit)");
+            }
+            params.push_back({{"name", "cable_max_diameter_m"}, {"verdict", v}});
+        } else if (od || sd) {
+            one_sided("cable_max_diameter_m", "maximum cable outer diameter", od, mm(od ? *od : *sd));
+        }
+        const auto on = num(original, "number_turns"), sn = num(cand, "number_turns");
+        if (on && sn) {
+            const bool same = same_stated_value(*on, *sn);
+            params.push_back({{"name", "number_turns"}, {"verdict", same ? PASS : FAIL}});
+            if (!same) {
+                notes.push_back("impedance stated for " + passes(*sn) + " of the cable against "
+                                "the original's " + passes(*on) +
+                                " — a different configuration, its |Z| is not the original's");
+                demote();
+                penalty += opt.gate_weight * kVerdictFailPenalty;
+                ++worse;
+            }
+        } else if (on || sn) {
+            one_sided("number_turns", "number of cable passes", on, passes(on ? *on : *sn));
         }
     }
 
@@ -4006,7 +4225,57 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         auto at_bias = [&](const std::optional<double>& v) {
             return v ? " at " + bias(*v) : std::string(" at no stated reverse voltage");
         };
-        if (cj_bound_worse) {
+        // A stated Cj(Vr) curve resolves the different bias first (owner curve rule
+        // 2026-11-14): the substitute's curve read at the original's bias, else the original's
+        // read at the substitute's stated bias — inside the measured range only, never
+        // extrapolated, linear in Vr (curve_checks). The capacitances are then compared on that
+        // common bias with the junction-capacitance spec; the bound rules below are only for
+        // a pair no curve settles.
+        std::optional<double> cj_s_at, cj_o_at;
+        if (cj_basis_differs) {
+            using curve_checks::read_at;
+            if (const auto c = curve_checks::view_curve(cand, "cj_curve"))
+                cj_s_at = read_at(*c, *ovr, Interp::Linear);
+            if (!cj_s_at && svr)
+                if (const auto c = curve_checks::view_curve(original, "cj_curve"))
+                    cj_o_at = read_at(*c, *svr, Interp::Linear);
+        }
+        if (cj_s_at || cj_o_at) {
+            const ParamSpec spec{"junction_capacitance", Dir::Lower, 2.0, std::nullopt, false,
+                                 false, nullptr};
+            const double o_c = cj_s_at ? *oc : *cj_o_at, s_c = cj_s_at ? *cj_s_at : *sc;
+            const ParamOutcome cmp = compare_numeric(spec, o_c, s_c);
+            const char* v = cmp.verdict;
+            params.push_back({{"name", "junction_capacitance"}, {"verdict", v}});
+            char rb[400];
+            if (cj_s_at)
+                std::snprintf(rb, sizeof rb,
+                              "junction capacitance compared at the original's %s: the "
+                              "substitute's Cj(Vr) curve reads %.4g pF there (its record states "
+                              "%s%s) against the original's %s",
+                              bias(*ovr).c_str(), *cj_s_at * 1e12, pf(*sc).c_str(),
+                              at_bias(svr).c_str(), pf(*oc).c_str());
+            else
+                std::snprintf(rb, sizeof rb,
+                              "junction capacitance compared at the substitute's %s: the "
+                              "original's Cj(Vr) curve reads %.4g pF there (its record states "
+                              "%s at %s) against the substitute's %s",
+                              bias(*svr).c_str(), *cj_o_at * 1e12, pf(*oc).c_str(),
+                              bias(*ovr).c_str(), pf(*sc).c_str());
+            notes.push_back(rb + (cj_s_at ? curve_checks::inferred_units(cand, "cj_curve", "substitute's")
+                                          : curve_checks::inferred_units(original, "cj_curve",
+                                                                         "original's")));
+            if (v == FAIL || v == WARN) {
+                demote();
+                penalty += opt.gate_weight *
+                           (v == FAIL ? kVerdictFailPenalty : warn_penalty(cmp.warn_depth));
+                ++worse;
+                notes.push_back("junction capacitance " + pf(s_c) + " against the original's " +
+                                pf(o_c) + " on a common bias — " + load);
+            } else {
+                note_direction(Dir::Lower, o_c, s_c);
+            }
+        } else if (cj_bound_worse) {
             const ParamSpec spec{"junction_capacitance", Dir::Lower, 2.0, std::nullopt, false,
                                  false, nullptr};
             const ParamOutcome cmp = compare_numeric(spec, oc, sc);
@@ -4065,6 +4334,25 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                             "; confirm it from the datasheet before this swap");
         } else if (sc) {
             params.push_back({{"name", "junction_capacitance"}, {"verdict", UNVERIFIED}});
+        }
+    }
+
+    // ── measured curves (owner rule 2026-11-14: Kelvin compares ALL existing graphs) ──
+    // Every curve both records state, judged point by point with its quantity's scalar spec on
+    // the overlap (curve_checks::run, CrossRefCurveChecks.hpp). A WARN or FAIL is a regression
+    // on that axis exactly as the scalar's would be: demoted, penalised (the depth-scaled warn),
+    // counted worse. UNVERIFIED (different conditions, no overlap, an unreadable curve) adds the
+    // row and its note only — no penalty, no cap. Every row carries its note: the x where the
+    // curves are worst (or closest to the limit) and both values there.
+    for (const auto& cr : curve_checks::run(cat, original, cand)) {
+        const char* v = cr.result.verdict;
+        params.push_back({{"name", cr.row}, {"verdict", v}});
+        notes.push_back(cr.result.note);
+        if (v == std::string(FAIL) || v == std::string(WARN)) {
+            demote();
+            penalty += opt.gate_weight * (v == std::string(FAIL) ? kVerdictFailPenalty
+                                                                 : warn_penalty(cr.result.warn_depth));
+            ++worse;
         }
     }
 
@@ -6149,6 +6437,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //     (connector_identity_gaps; owner 2026-11-13 W1)    primary    cap major_review
     //   connector orientation (connector_orientation_unv.)    primary    cap minor_review
     //   connector pluggable vs fixed (pluggable_unverified)   primary    cap minor_review
+    //   cable-core cable diameter / pass count not stated by
+    //     the substitute (owner 2026-11-14; cable_core_unv.)  primary    cap minor_review
     //   diode / MOSFET die configuration, internal connection primary  cap minor_review
     //   oscillator control-pin function (timebase_pin_unv.)   primary    cap minor_review
     //   resistor power at rating temp (power_basis_unverif.)  primary    cap minor_review
@@ -6222,6 +6512,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                     resistor_connection_unverified || resistor_count_one_sided ||
                                     mount_unverified || timebase_pin_unverified ||
                                     timebase_prog_order || current_rating_one_sided ||
+                                    cable_core_unverified ||
                                     !orig_unstated_primary.empty() ||
                                     !both_unstated_primary.empty() || cand_no_physical_data ||
                                     ac_rating_unverified;

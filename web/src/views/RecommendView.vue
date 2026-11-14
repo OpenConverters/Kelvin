@@ -261,7 +261,9 @@ const MOSFET_LOSS_TERMS = [
 ]
 // A family's lossPoint may name its own terms, ratings, derived operating-point values and
 // checks (magnetic, owner 2026-11-14); absent = the MOSFET layout.
-const LOSS_TERMS = computed(() => fam.value.recommend.lossPoint?.terms ?? MOSFET_LOSS_TERMS)
+// A family may also state its terms and ratings row directly (diode: lossTerms, ratingsRow).
+const LOSS_TERMS = computed(() => fam.value.recommend.lossPoint?.terms ?? fam.value.recommend?.lossTerms ?? MOSFET_LOSS_TERMS)
+const ratingsRow = computed(() => fam.value.recommend?.ratingsRow ?? { label: 'Vds / Id', keys: [['vds', 'V'], ['id', 'A']] })
 const RATINGS = computed(() => fam.value.recommend.lossPoint?.ratings ?? null)
 const DERIVED = computed(() => fam.value.recommend.lossPoint?.derived ?? [])
 const CHECKS = computed(() => fam.value.recommend.lossPoint?.checks ?? [])
@@ -493,8 +495,8 @@ function priceCell(c) {
             </thead>
             <tbody>
               <tr v-if="!RATINGS">
-                <th>Vds / Id</th>
-                <td v-for="c in compareCands" :key="c.mpn">{{ si(c.ratings?.vds, 'V') }} / {{ si(c.ratings?.id, 'A') }}</td>
+                <th>{{ ratingsRow.label }}</th>
+                <td v-for="c in compareCands" :key="c.mpn">{{ ratingsRow.keys.map(([k, u]) => si(c.ratings?.[k], u)).join(' / ') }}</td>
               </tr>
               <template v-else>
                 <tr v-for="[k, label, unit] in RATINGS" :key="'r-' + k">

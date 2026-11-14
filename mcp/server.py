@@ -1505,6 +1505,24 @@ def _mosfet_extras(c: dict) -> str:
     return out
 
 
+def _diode_extras(c: dict) -> str:
+    """The diode's operating-point loss segment (conduction, switching, leakage: each in watts
+    or UNVERIFIED with what is missing), then the over-rating, board area and price segments
+    exactly as _mosfet_extras writes them."""
+    out = ""
+    loss = c.get("loss")
+    if loss:
+        terms = []
+        for k, label in (("conduction", "cond"), ("switching", "sw"), ("leakage", "leak")):
+            t = (loss.get("terms") or {}).get(k) or {}
+            terms.append(f"{label} {_watts(t['watts'])}" if t.get("watts") is not None
+                         else f"{label} UNVERIFIED ({'; '.join(t.get('missing') or [])})")
+        total = (f"total {_watts(loss['total'])}" if loss.get("total") is not None
+                 else f"total >= {_watts(loss.get('computedSum') or 0)} (incomplete)")
+        out += f" | loss {total}: " + ", ".join(terms)
+    return out + _mosfet_extras({k: v for k, v in c.items() if k != "loss"})
+
+
 def _magnetic_extras(c: dict) -> str:
     """One text segment per magnetic operating-point extra (owner 2026-11-14): the derived
     L at Ipk / ripple / Ipk / Irms, the DCR and core-loss terms (or UNVERIFIED), the
@@ -1575,6 +1593,16 @@ def recommend_parts(family: str, requirements: dict, options: dict | None = None
             carries ratings, overRating (Vds/Id > 3x the requirement: noted; ranked lower except
             under lowest_operating_point_loss and the Vds/Id margin rankings),
             boardArea {mm2, basis} and price {quotes, atQuantity, basis}.
+            diode lossOperatingPoint {position: 'buckFreewheel', inputVoltage, outputCurrent,
+            switchingFrequency, dutyCycle | outputVoltage, inductorRippleCurrent?,
+            junctionTemperature?} ranks by the freewheel diode's loss at that point (tiebreaker
+            lowest_operating_point_loss): conduction (Vf at the current it conducts x If(avg)),
+            switching (Qrr*Vin*fs for PN / fast recovery; 1/2*Qc*Vin*fs for Schottky / SiC with
+            Qc from the Cj(Vr) curve) and leakage (Ir*Vin*D), each with its basis; a missing
+            input is UNVERIFIED, never estimated. diode priceQuantity as for mosfet. Every diode
+            candidate carries ratings, overRating (Vrrm/If(avg) > 3x the requirement: noted;
+            ranked lower except under lowest_operating_point_loss and the Vrrm/If margin
+            rankings), boardArea and price.
             magnetic lossOperatingPoint {position: 'buckInductor', conductionMode: 'ccm' | 'dcm' |
             'crm' (required, no default), inputVoltage, outputVoltage, outputCurrent,
             ambientTemperature?; ccm: switchingFrequency and the required inductance
@@ -1628,7 +1656,8 @@ def recommend_parts(family: str, requirements: dict, options: dict | None = None
         lines.append(f"  {c.get('mpn')} — {c.get('manufacturer')}"
                      + (f" [{dies}, ratings per die]" if dies else "")
                      + (f" | tightest margin {worst[0]} {worst[1]:.2f}x" if worst else "")
-                     + (_magnetic_extras(c) if key == "magnetic" else _mosfet_extras(c)))
+                     + (_diode_extras(c) if key == "diode" else
+                        _magnetic_extras(c) if key == "magnetic" else _mosfet_extras(c)))
     rejected = result.get("rejections") or {}
     return _result(
         f"{len(cands)} {key} candidate(s), best first "

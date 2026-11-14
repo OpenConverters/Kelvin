@@ -154,7 +154,26 @@ export const FAMILIES = [
         { key: 'ratedForwardCurrent', label: 'If >=', unit: 'A', required: true, placeholder: '3' },
       ],
       options: [{ key: 'qrrMax', label: 'Qrr <=', unit: 'C', placeholder: 'optional', asOption: true }],
-      tiebreakers: ['lowest_vf', 'lowest_qrr', 'highest_vrrm_margin', 'highest_if_margin'],
+      tiebreakers: ['lowest_vf', 'lowest_qrr', 'highest_vrrm_margin', 'highest_if_margin', 'lowest_operating_point_loss'],
+      // Operating-point loss of the buck freewheel diode (owner 2026-11-14):
+      // options.lossOperatingPoint. Nothing is defaulted — a value the record lacks makes its
+      // term UNVERIFIED in the result.
+      lossPoint: {
+        position: 'buckFreewheel',
+        fields: [
+          { key: 'inputVoltage', label: 'Vin', unit: 'V', placeholder: '36' },
+          { key: 'outputVoltage', label: 'Vout (duty = Vout/Vin)', unit: 'V', placeholder: '12' },
+          { key: 'dutyCycle', label: 'or switch duty cycle', unit: '', placeholder: '0.33' },
+          { key: 'outputCurrent', label: 'Iout', unit: 'A', placeholder: '2' },
+          { key: 'switchingFrequency', label: 'fs', unit: 'Hz', placeholder: '80k' },
+          { key: 'inductorRippleCurrent', label: 'Inductor ripple (p-p)', unit: 'A', placeholder: 'optional: follows the Vf(If) curve' },
+          { key: 'junctionTemperature', label: 'Tj', unit: '°C', placeholder: 'optional: compared with the curves' },
+        ],
+      },
+      // The side-by-side table's rows for this family.
+      lossTerms: [['conduction', 'Conduction'], ['switching', 'Switching'], ['leakage', 'Leakage']],
+      ratingsRow: { label: 'Vrrm / If(avg)', keys: [['vrrm', 'V'], ['ifAvg', 'A']] },
+      priceQuantity: true,
     },
   },
   {

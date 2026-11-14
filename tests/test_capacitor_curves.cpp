@@ -175,27 +175,31 @@ TEST_CASE("Frequency curves: |Z|, C(f) and ESL compared on the common band",
     CHECK(has_note(c, "capacitance vs frequency compared on both curves over frequency 100 to "
                       "2.18776e+07 Hz (55 points, log-log, bands of the capacitance spec): "
                       "passes everywhere, tightest at 125.893 Hz"));
-    // ESL: owner decision 2026-11-14 (2), ESL is extracted from the inductive region, so its
-    // band runs from the original's self-resonance (31.6 MHz) up to the end of the common
-    // range (1 GHz). The original's ESL curve starts at 33.1 MHz, inside that band; there the
-    // substitute's 0.264 nH is x16.7 the original's 0.0158 nH -> FAIL.
+    // ESL: owner decisions 2026-11-14 (2, and the follow-up): ESL is extracted from the
+    // inductive region, X/w = L(1 - 1/k^2) at k = f/f_res, so its band runs from 3x the
+    // original's self-resonance (3 x 31.6 MHz = 94.9 MHz, where the reading is within about
+    // 11 %) up to the end of the common range (1 GHz). At 94.9 MHz the substitute's 0.458 nH is
+    // x1.79 the original's 0.256 nH -> FAIL. (Before the 3x start the band opened at the
+    // resonance itself and the worst point was 33.1 MHz, 0.264 nH vs 0.0158 nH: the original's
+    // reading there was the L(1 - 1/k^2) artefact, not its ESL.)
     CHECK(verdict_of(c, "esl_curve") == "fail");
-    CHECK(has_note(c, "ESL compared on both curves over frequency 3.31131e+07 to 1e+09 Hz (31 "
-                      "points, log-log, bands of the ESR spec): worst at 3.31131e+07 Hz, "
-                      "substitute 2.637e-10 H vs original 1.575e-11 H (ESL band from the "
-                      "original's self-resonance (|Z| minimum) at 3.16228e+07 Hz up to the end "
-                      "of the common range (ESL is extracted from the inductive region); "
-                      "points below it are not graded)"));
+    CHECK(has_note(c, "ESL compared on both curves over frequency 9.48683e+07 to 1e+09 Hz (22 "
+                      "points, log-log, bands of the ESR spec): worst at 9.48683e+07 Hz, "
+                      "substitute 4.576e-10 H vs original 2.563e-10 H (ESL band from 3x the "
+                      "original's self-resonance (|Z| minimum at 3.16228e+07 Hz), 9.48683e+07 "
+                      "Hz, up to the end of the common range (ESL is extracted from the "
+                      "inductive region; just above resonance X/w reads L(1 - 1/k^2), within "
+                      "about 11 % from 3x); points below it are not graded)"));
     // (The 16 V substitute is rejected for the 25 V original's voltage anyway; the reverse
     // direction is the one a designer could take.) The other way round: |Z| still fails where
     // the two curves cross near the 16 V part's resonance (0.0616 vs 0.0265 ohm at 20 MHz);
-    // ESL is graded from its 25.1 MHz self-resonance up (both ESL curves start above it): the
-    // substitute is lower or equal everywhere -> pass.
+    // ESL is graded from 3x its 25.1 MHz self-resonance, 75.4 MHz, up: the substitute is lower
+    // or equal everywhere -> pass (tightest at 1 GHz, 0.328 vs 0.484 nH).
     const json r = rank_one("C0603C104M4RAC", "C0603C104K3RECTU");
     INFO(notes_of(r));
     CHECK(verdict_of(r, "impedance_curve") == "fail");
     CHECK(verdict_of(r, "esl_curve") == "pass");
-    CHECK(has_note(r, "ESL compared on both curves over frequency 3.31131e+07 to 1e+09 Hz (31 "
+    CHECK(has_note(r, "ESL compared on both curves over frequency 7.53566e+07 to 1e+09 Hz (24 "
                       "points, log-log, bands of the ESR spec): passes everywhere"));
     // ESR (owner 2026-11-14): the curve verdict is its own row and does not replace the scalar
     // ESR row; both are booked. Here the substitute's ESR curve is x1.7 the original's at
@@ -306,4 +310,28 @@ TEST_CASE("Ripple tables: a case-temperature table is not an ambient rating's ta
     CHECK(r.ripple_t_curve.empty());
     // A temperature table the same records would keep (UPW, unlabelled, 1.0 at its 105 degC).
     CHECK_FALSE(row("UPW1V102MHD").ripple_t_curve.empty());
+}
+
+TEST_CASE("room temperature: a curve at 20 degC and one at 25 degC are the same condition",
+          "[curves][capacitor][room-temperature]") {
+    // Owner 2026-11-14: 20 and 25 degC count as the same (room) temperature in
+    // conditions_differ, for every family. Murata GRM188B31H104KA92D states its |Z| and bias
+    // curves at 20 degC, GRM188R71H104KA93D at 25 degC (both 100 nF 50 V 0603, DC bias 0 V):
+    // before, the |Z| curves were "measured under different conditions (temperature 20 vs
+    // 25 degC)" and not compared; now they are compared on the useful band.
+    REQUIRE(row("GRM188B31H104KA92D").z_curve.temperature == 20.0);
+    REQUIRE(row("GRM188R71H104KA93D").z_curve.temperature == 25.0);
+    const json c = rank_one("GRM188B31H104KA92D", "GRM188R71H104KA93D");
+    INFO(notes_of(c));
+    CHECK(verdict_of(c, "impedance_curve") == "pass");
+    CHECK(has_note(c, "|Z| compared on both curves over frequency 1e+06 to 2.32769e+07 Hz "
+                      "(72 points, log-log, bands of the ESR spec): passes everywhere"));
+    CHECK_FALSE(has_note(c, "measured under different conditions"));
+    // The other way round the substitute's |Z| sits 0.9 % above the original's at 20.35 MHz:
+    // level under the owner's 2 % rule (2026-11-14), so it passes too.
+    const json r = rank_one("GRM188R71H104KA93D", "GRM188B31H104KA92D");
+    INFO(notes_of(r));
+    CHECK(verdict_of(r, "impedance_curve") == "pass");
+    CHECK(has_note(r, "tightest at 2.03511e+07 Hz, substitute 0.02722 ohm vs original "
+                      "0.02698 ohm"));
 }

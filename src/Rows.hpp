@@ -77,6 +77,40 @@ inline double kNaN() { return std::numeric_limits<double>::quiet_NaN(); }
 inline bool present(double x) { return !std::isnan(x); }
 
 // Common locator carried by every family row.
+// A measured curve carried on a row (v22, owner 2026-11-14: "compare ALL existing graphs").
+// x ascending, no duplicates, as float (compact: the curve is a measurement read to a few
+// digits). The two vectors are shared: identical grids and curves are stored once in the
+// shard's string pool and once in memory (most frequency grids repeat across a series).
+// Empty (null x) = the record states no usable curve. `temperature` / `dc_bias` /
+// `frequency` are the measurement conditions the record states for the curve (NaN = not
+// stated); two curves whose stated conditions differ are not compared.
+struct CurvePts {
+    std::shared_ptr<const std::vector<float>> x, y;
+    double temperature = std::numeric_limits<double>::quiet_NaN();
+    double dc_bias = std::numeric_limits<double>::quiet_NaN();
+    double frequency = std::numeric_limits<double>::quiet_NaN();
+    // Further conditions (MOSFET / diode / connector curves, owner 2026-11-14): named SI
+    // numbers the record states beyond the three above (gateSourceVoltage, drainSourceVoltage,
+    // duration, maxTemperatureRise, ...), keys sorted, values parallel; and one free-text
+    // condition ("" = none), e.g. the mounting an ambient rating was measured on. Compared
+    // like the three above.
+    std::vector<std::string> cond_keys;
+    std::vector<double> cond_vals;
+    std::string cond_text;
+    // A datasheetInfo.curves entry stating no axis label (xLabel / yLabel, which carry the
+    // units) and whose units its record's own scalar could not confirm: its points are NOT
+    // read (x / y stay empty) and this marks that the record states the curve all the same —
+    // the comparison reports it UNVERIFIED with a note instead of taking the numbers as SI.
+    bool unit_unstated = false;
+    // Owner 2026-11-14: an unlabelled curve IS read as SI when its record's own scalar lies on
+    // it within 2 % at the scalar's stated condition (Views.cpp settle_unit_unstated):
+    // unit_inferred, and unit_note names the scalar that confirmed it. On a curve left
+    // unit_unstated, unit_note says why it was not read ("" = no reason recorded).
+    bool unit_inferred = false;
+    std::string unit_note;
+    bool empty() const { return !x || x->empty(); }
+};
+
 struct RowBase {
     uint32_t lineno = 0;      // 1-based source line (the determinism tie-break key)
     uint64_t src_offset = 0;  // byte offset of the raw line start in the NDJSON
@@ -122,21 +156,6 @@ struct RowBase {
     // then left unfilled (length/width/height NaN) and the cross-reference reports the
     // footprint UNVERIFIED with a note instead of guessing an orientation.
     bool box_axes_ambiguous = false;
-};
-
-// A measured curve carried on a row (v22, owner 2026-11-14: "compare ALL existing graphs").
-// x ascending, no duplicates, as float (compact: the curve is a measurement read to a few
-// digits). The two vectors are shared: identical grids and curves are stored once in the
-// shard's string pool and once in memory (most frequency grids repeat across a series).
-// Empty (null x) = the record states no usable curve. `temperature` / `dc_bias` /
-// `frequency` are the measurement conditions the record states for the curve (NaN = not
-// stated); two curves whose stated conditions differ are not compared.
-struct CurvePts {
-    std::shared_ptr<const std::vector<float>> x, y;
-    double temperature = std::numeric_limits<double>::quiet_NaN();
-    double dc_bias = std::numeric_limits<double>::quiet_NaN();
-    double frequency = std::numeric_limits<double>::quiet_NaN();
-    bool empty() const { return !x || x->empty(); }
 };
 
 struct MosfetRow : RowBase {
@@ -185,15 +204,9 @@ struct MosfetRow : RowBase {
     // gateDrainCharge (C; the schema carries the whole Qgs, no Qgs2). qg_vgs: the Vgs the
     // stated Qg is specified at (electrical.totalGateChargeVgs).
     double qgs = kNaN(), qgd = kNaN(), qg_vgs = kNaN();
-    // curves.cossVsVds: Vds [V] -> Coss [F] (frequency condition kept on the curve).
-    CurvePts coss_curve;
-    // curves.rdsOnVsTj: Tj [degC] -> Rds(on) [ohm], measured at rds_on_tj_curve_vgs.
-    CurvePts rds_on_tj_curve;
-    double rds_on_tj_curve_vgs = kNaN();
-    // curves.gateCharge: gate charge [C] (the record states nC; converted) -> Vgs [V],
-    // measured at qg_curve_vds.
-    CurvePts qg_curve;
-    double qg_curve_vds = kNaN();
+    // The loss terms read the Coss(Vds), Rds(on)(Tj) and gate-charge curves below
+    // (coss_curve, rds_on_tj_curve, qg_curve: one set of curve fields, with the conditions
+    // each record states — MosfetLoss.hpp reads the Vgs / Vds a curve was taken at from them).
     // v22 (owner 2026-11-14) — the record's distributor unit-cost quotes, as a compact JSON
     // array [{distributor, unitCost, currency, moq?}] ("" when none). PEAS distributorInfo
     // carries ONE unit `cost` per distributor and no price breaks, so a price AT a quantity
@@ -215,6 +228,16 @@ struct MosfetRow : RowBase {
     // part.internalConnection of a multi-die record ('halfBridge' / 'independent' /
     // 'commonDrain' ...), "" when unstated; graded like the diode one (owner 2026-11-13, V2).
     std::string internal_connection;
+    // datasheetInfo.curves (owner rule 2026-11-14, compared by CrossRefCurveChecks.hpp): the
+    // capacitances against Vds, Rds(on) against Id and against Tj, and the gate-charge curve
+    // (x = Qg in C, y = Vgs), each with the conditions the record states; empty = not stated.
+    CurvePts ciss_curve, coss_curve, crss_curve, rds_on_id_curve, rds_on_tj_curve, qg_curve;
+    // electrical.ambientRatings[] (of the package, or of the identical dies a multi-die record
+    // is read from): one curve per rating, x = ambient degC, y = |continuous drain current| A,
+    // conditions timeBase / duration / gate-source voltage and the mounting as free text. This
+    // is the AMBIENT-rated current, a different quantity from id_continuous (case-rated); it is
+    // compared only as its own curve, never substituted for Id.
+    std::vector<CurvePts> id_ambient_curves;
     bool is_production = false;
     bool datasheet_usable = false;  // !_datasheet_unusable(datasheetUrl), precomputed at index time
     // Python evidence tier: no stated (positive) Qg OR datasheet unusable. Written as
@@ -271,6 +294,9 @@ struct DiodeRow : RowBase {
     // the MPN or the configuration (the ranker reads a stated 'dual' / 'single' as 2 / 1,
     // which is how SAS defines them).
     double number_of_elements = kNaN();
+    // datasheetInfo.curves (owner rule 2026-11-14): Vf against If, Ir against Vr and Cj
+    // against Vr, each with the conditions the record states (temperature); empty = none.
+    CurvePts vf_curve, ir_curve, cj_curve;
     // Transient-suppression specs (tvs / esd). These, not Vrrm, are what a protection diode
     // IS: the surge it absorbs, the level it clamps to, the capacitance it loads the line
     // with. None was carried, so a 400 W SMAJ came back an 'upgrade' for a 15 kW 15KP and a
@@ -291,6 +317,13 @@ struct DiodeRow : RowBase {
     // 7,010 of 50,987 records in TAS 6bd04c7). Vf rises with current, so 0.5 V at 1.5 A and
     // 0.5 V at 3 A are not the same part (owner 2026-11-13, Y5). NaN = not stated. v22.
     double vf_test_current = kNaN();
+    // v22 (owner 2026-11-14, operating-point loss) — electrical.reverseLeakageCurrent (A), NaN
+    // when not stated. SAS states neither the reverse voltage nor the temperature it is
+    // specified at, so the loss term names both as not stated.
+    double reverse_leakage = kNaN();
+    // v22 (owner 2026-11-14, price) — the record's distributor unit-cost quotes, as on
+    // MosfetRow::price_quotes ("" when none).
+    std::string price_quotes;
     std::string clamping_waveform, peak_pulse_power_waveform, peak_pulse_current_waveform;
     // part.qualification verbatim ("Automotive (AEC-Q101)", 5,352 of 47,193 diode records);
     // empty = the record states none. Not carried, an AEC-Q101 original (ROHM
@@ -540,7 +573,20 @@ struct MagneticRow : RowBase {
     // above was READ OFF this curve (the record states no Isat), not stated.
     std::vector<double> bias_curve_current;
     std::vector<double> bias_curve_ratio;
+    // The temperature (degC) the picked curve is stated at; NaN = not stated (owner
+    // 2026-11-14: two curves are read against each other only at one temperature).
+    double bias_curve_temperature = kNaN();
     bool sat_table_from_curve = false;
+    // v22 (owner 2026-11-14, "compare ALL existing graphs"): EVERY L(I) curve the record states
+    // (inductancePoints, one per stated temperature; an untemperatured set is its own curve),
+    // in henries vs amperes, with or without a 0 A point, in the shared curve storage (the
+    // CurvePts temperature is the curve's). Ascending temperature, the unstated one last.
+    std::vector<CurvePts> l_curves;
+    // v22 (owner 2026-11-14): the rated currents qualified by their temperature rise
+    // (ratedCurrentPoints): x = rise (K), y = current (A), temperature = ambient (degC, NaN =
+    // not stated). May hold ONE point (a single rating at its rise). Empty when not stated or
+    // not readable as one rating per rise (Views.cpp magnetic_rated_points).
+    CurvePts rated_points;
     // Winding structure: bit n set when some electrical[] wiring configuration has n windings besides
     // the primary (a single-winding inductor/chip bead sets bit 0; a transformer or coupled inductor sets
     // bit turnsRatios.size()). 0 means no configuration states its structure (e.g. a transformer entry
@@ -555,6 +601,27 @@ struct MagneticRow : RowBase {
     double impedance_100mhz = kNaN();     // ohm
     double impedance_peak = kNaN();       // ohm
     double impedance_peak_freq = kNaN();  // Hz
+    // A common-mode choke's differential-mode readings (v22, owner 2026-11-14): the same three
+    // readings off its DM |Z|(f) curve (differentialModeImpedancePoints, or the impedancePoints
+    // tagged winding "differential"); the three above are then its common-mode readings.
+    double dm_impedance_100mhz = kNaN();     // ohm
+    double dm_impedance_peak = kNaN();       // ohm
+    double dm_impedance_peak_freq = kNaN();  // Hz
+    // A cable core's fit and configuration (v22, owner 2026-11-14): the largest cable / bundle
+    // outer diameter that passes through it (maximumCableOuterDiameter, m) and the number of
+    // cable passes its |Z| is stated for (numberTurns). NaN = not stated.
+    double cable_max_diameter = kNaN();  // m
+    double number_turns = kNaN();
+    // Measured curves (v22, owner 2026-11-14: "compare ALL existing graphs") in the shared
+    // curve storage (CurvePts, as the capacitor's), empty when the record states fewer than
+    // two usable samples. The ranker compares them curve vs curve (CrossRefMagneticCurves.hpp).
+    CurvePts z_curve;  // |Z|(f), Hz -> ohm (a CMC's: common mode)
+    CurvePts r_curve;  // R(f), Hz -> ohm (resistancePoints)
+    CurvePts x_curve;  // X(f), Hz -> ohm, signed (reactancePoints)
+    // A common-mode choke's other curves (v22, owner 2026-11-14): its differential-mode |Z|(f)
+    // (the curve dm_impedance_* are read off) and its common- / differential-mode insertion
+    // loss, Hz -> dB (commonModeInsertionLossPoints / differentialModeInsertionLossPoints).
+    CurvePts dm_z_curve, cm_il_curve, dm_il_curve;
     std::string device_type;              // electrical[0].subtype (inductor/transformer/…): annotated, never gated
     std::string family;                   // manufacturerInfo.family or part.family (series, for context)
     // v20: the operating-temperature range (PEAS thermal.operatingTemperature, degC), which the
@@ -647,6 +714,9 @@ struct TimingRow : RowBase {
 // environmental.operatingTemperature, familyDetails, part).
 struct ConnectorRow : RowBase {
     double rated_current = kNaN();  // A per contact
+    // derating.currentVsAmbient (owner rule 2026-11-14): x = ambient degC, y = the stated
+    // FRACTION of rated_current (0..1), condition maxTemperatureRise; empty = none stated.
+    CurvePts current_ambient_curve;
     double rated_voltage = kNaN();  // V
     double positions = kNaN();      // contact count
     // m — contact-to-contact spacing. A connector record carries no body outline, so this IS
