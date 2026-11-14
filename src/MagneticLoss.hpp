@@ -480,9 +480,10 @@ inline MagneticCheck thermal_check_of(const MagneticRow& m, double irms,
 // The one read: at the operating ambient, else at room temperature (20 / 25 degC) or unstated;
 // one such curve. Its L(0) is its 0 A point; a curve with no 0 A point is read with the record's
 // nominal L as L(0) (datasheets define the Isat drop from the nominal), with a note saying so,
-// and is not read when the record states no nominal. With no ambient given, two room-temperature
-// curves (stated 20 / 25 degC) are both read and the one with the lower L at Ipk is used (the
-// breakdown solves each; owner 2026-11-14). Anything else is not read, and `why` says so: two
+// and is not read when the record states no nominal. With no ambient given, or a given ambient at
+// room temperature (20 = 25 degC), two room-temperature curves (stated 20 / 25 degC) are both
+// read and the one with the lower L at Ipk is used (the breakdown solves each; owner
+// 2026-11-14). Anything else is not read, and `why` says so: two
 // candidate curves otherwise (not chosen between), only other temperatures, a curve with no
 // L(0).
 struct LCurve {
@@ -558,11 +559,12 @@ inline LCurvePick pick_l_curve(const MagneticRow& m, std::optional<double> ambie
     const std::string n_qualify =
         "it states " + std::to_string(pick.size()) + " L(I) curves that qualify (" + qualify + ")";
     if (pick.size() > 1) {
-        // Owner 2026-11-14: with no ambient given, room-temperature curves stated at 20 and
-        // 25 degC are all read; the breakdown uses the one with the lower L at Ipk. An
-        // unstated temperature among them, or a given ambient, is not that case.
+        // Owner 2026-11-14: with no ambient given, or a given ambient at room temperature
+        // (20 = 25 degC, so both qualify), room-temperature curves stated at 20 and 25 degC are
+        // all read; the breakdown uses the one with the lower L at Ipk. An unstated
+        // temperature among them, or an ambient away from room temperature, is not that case.
         const bool room_pair =
-            !ambient && std::all_of(pick.begin(), pick.end(), [](const CurvePts* c) {
+            (!ambient || room_temperature(*ambient)) && std::all_of(pick.begin(), pick.end(), [](const CurvePts* c) {
                 return present(c->temperature);
             });
         if (!room_pair) {
@@ -632,7 +634,12 @@ inline LCurvePick pick_l_curve(const MagneticRow& m, std::optional<double> ambie
                                  l0 * 1e6);
         k.curves.push_back(std::move(lc));
     }
-    if (k.lowest_at_ipk) k.why = n_qualify;  // the breakdown completes it when it cannot choose
+    // The breakdown completes it (which one is used, or why it cannot choose).
+    if (k.lowest_at_ipk)
+        k.why = n_qualify + (ambient ? fmt(" and the operating ambient %g degC is room "
+                                           "temperature (20 = 25 degC)",
+                                           *ambient)
+                                     : std::string(" and no ambient is given"));
     return k;
 }
 
@@ -806,7 +813,8 @@ inline MagneticLossBreakdown inductor_loss(const MagneticRow& m, const InductorO
         used = &pick.curves.front();
         cr = solve(*used->ratio);
     } else {
-        // Two room-temperature curves, no ambient (owner 2026-11-14): read both, use the one
+        // Two room-temperature curves, no ambient or a room-temperature ambient (owner
+        // 2026-11-14): read both, use the one
         // with the lower L at Ipk. Each must read L at Ipk inside its measured range, or the
         // lower one is not known.
         std::vector<CurveRead> reads;
@@ -826,7 +834,7 @@ inline MagneticLossBreakdown inductor_loss(const MagneticRow& m, const InductorO
         }
         if (!not_read.empty()) {
             cr.read = Read::Unreadable;
-            cr.unreadable_why = pick.why + " and no ambient is given; " + not_read +
+            cr.unreadable_why = pick.why + "; " + not_read +
                                 ", so the one with the lower L at Ipk is not known";
         } else {
             std::size_t best = 0;
@@ -834,7 +842,7 @@ inline MagneticLossBreakdown inductor_loss(const MagneticRow& m, const InductorO
                 if (reads[i].ratio_at < reads[best].ratio_at) best = i;
             used = &pick.curves[best];
             cr = reads[best];
-            pair_basis = "; " + pick.why + " and no ambient is given: all read (L at Ipk " + each +
+            pair_basis = "; " + pick.why + ": all read (L at Ipk " + each +
                          "), the lower used (owner 2026-11-14)";
         }
     }
