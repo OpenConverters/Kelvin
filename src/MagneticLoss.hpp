@@ -478,13 +478,24 @@ inline MagneticCheck thermal_check_of(const MagneticRow& m, double irms,
 // ---- the L(I) curve the operating point reads (owner 2026-11-14) ----------------------------
 // MagneticRow::l_curves holds every stated L(I) curve (henries vs amperes, one per temperature).
 // The one read: at the operating ambient, else at room temperature (20 / 25 degC) or unstated;
-// exactly one such curve, starting at 0 A (its L(0)). Anything else is not read, and `why` says
-// so: two candidate curves (not chosen between), only other temperatures, no 0 A point.
+// one such curve. Its L(0) is its 0 A point; a curve with no 0 A point is read with the record's
+// nominal L as L(0) (datasheets define the Isat drop from the nominal), with a note saying so,
+// and is not read when the record states no nominal. With no ambient given, two room-temperature
+// curves (stated 20 / 25 degC) are both read and the one with the lower L at Ipk is used (the
+// breakdown solves each; owner 2026-11-14). Anything else is not read, and `why` says so: two
+// candidate curves otherwise (not chosen between), only other temperatures, a curve with no
+// L(0).
+struct LCurve {
+    std::optional<crossref::Curve> ratio;  // current (A) -> L / L(0); always set once picked
+    double temperature;     // as stated (NaN: unstated)
+    std::string temp_basis;  // its temperature, plus where its L(0) comes from when not stated
+    std::string l0_note;     // non-empty: L(0) is the record's nominal (no 0 A point)
+};
 struct LCurvePick {
-    std::optional<crossref::Curve> ratio;  // current (A) -> L / L(0)
-    bool stated = false;                   // the record states some L(I) curve
-    std::string why;                       // not read: why
-    std::string temp_basis;                // read: its temperature
+    std::vector<LCurve> curves;  // one, or the room-temperature pair (lowest_at_ipk)
+    bool lowest_at_ipk = false;  // read every curve, use the one with the lower L at Ipk
+    bool stated = false;         // the record states some L(I) curve
+    std::string why;             // not read: why
 };
 inline LCurvePick pick_l_curve(const MagneticRow& m, std::optional<double> ambient) {
     using magnetic_loss_detail::fmt;
@@ -542,40 +553,86 @@ inline LCurvePick pick_l_curve(const MagneticRow& m, std::optional<double> ambie
                 " nor at room temperature, and a curve is not read at another temperature";
         return k;
     }
+    std::string qualify;
+    for (const CurvePts* c : pick) qualify += (qualify.empty() ? "" : ", ") + temp_s(c->temperature);
+    const std::string n_qualify =
+        "it states " + std::to_string(pick.size()) + " L(I) curves that qualify (" + qualify + ")";
     if (pick.size() > 1) {
-        std::string w;
-        for (const CurvePts* c : pick) w += (w.empty() ? "" : ", ") + temp_s(c->temperature);
-        k.why = "it states " + std::to_string(pick.size()) + " L(I) curves that qualify (" + w +
-                "), and which one applies is not stated";
-        return k;
+        // Owner 2026-11-14: with no ambient given, room-temperature curves stated at 20 and
+        // 25 degC are all read; the breakdown uses the one with the lower L at Ipk. An
+        // unstated temperature among them, or a given ambient, is not that case.
+        const bool room_pair =
+            !ambient && std::all_of(pick.begin(), pick.end(), [](const CurvePts* c) {
+                return present(c->temperature);
+            });
+        if (!room_pair) {
+            k.why = n_qualify + ", and which one applies is not stated";
+            return k;
+        }
+        k.lowest_at_ipk = true;
     }
-    const CurvePts& c = *pick.front();
-    if (!(c.x->front() == 0.0f) || !(c.y->front() > 0.0f)) {
-        k.why = "its L(I) curve at " + temp_s(c.temperature) + fmt(" starts at %.4g A", c.x->front()) +
-                ", not at 0 A, so L(0) is not stated and L/L(0) is not known";
-        return k;
+    // Each picked curve as L / L(0) against current.
+    for (const CurvePts* cp : pick) {
+        const CurvePts& c = *cp;
+        LCurve lc{std::nullopt, c.temperature, {}, {}};
+        double l0 = 0;
+        std::vector<double> x, y;
+        if (c.x->front() == 0.0f && c.y->front() > 0.0f) {
+            l0 = c.y->front();
+        } else if (c.x->front() > 0.0f && c.y->front() > 0.0f) {
+            // No 0 A point (owner 2026-11-14): the record's nominal L is L(0) — datasheets
+            // define the Isat drop from the nominal. No nominal: L(0) is not known.
+            if (!present(m.inductance) || !(m.inductance > 0)) {
+                k.why = "its L(I) curve at " + temp_s(c.temperature) +
+                        fmt(" starts at %.4g A, not at 0 A, and the record states no nominal L, ",
+                            c.x->front()) +
+                        "so L(0) is not known and L/L(0) is not either";
+                k.curves.clear();
+                return k;
+            }
+            l0 = m.inductance;
+            x.push_back(0.0);
+            y.push_back(1.0);
+            lc.l0_note = "the L(I) curve at " + temp_s(c.temperature) +
+                         fmt(" starts at %.4g A, not at 0 A: L(0) is the record's nominal ",
+                             c.x->front()) +
+                         fmt("%.4g uH", l0 * 1e6) +
+                         " (datasheets define the Isat drop from the nominal; owner 2026-11-14)";
+        } else {
+            k.why = "its L(I) curve at " + temp_s(c.temperature) +
+                    fmt(" starts at %.4g A", c.x->front()) +
+                    fmt(" with L %.4g uH", c.y->front() * 1e6) +
+                    ", so L(0) is not known and L/L(0) is not either";
+            k.curves.clear();
+            return k;
+        }
+        for (std::size_t i = 0; i < c.x->size(); ++i) {
+            x.push_back((*c.x)[i]);
+            y.push_back((*c.y)[i] / l0);
+        }
+        try {
+            lc.ratio.emplace(std::move(x), std::move(y));
+        } catch (const std::invalid_argument& e) {
+            k.why = "its L(I) curve at " + temp_s(c.temperature) + " is not readable: " + e.what();
+            k.curves.clear();
+            return k;
+        }
+        if (at_amb)
+            lc.temp_basis = fmt(" at %g degC (the operating ambient)", c.temperature);
+        else
+            lc.temp_basis =
+                (present(c.temperature) ? fmt(" at %g degC (room temperature)", c.temperature)
+                                        : std::string(" (temperature not stated: read as room "
+                                                      "temperature)")) +
+                (ambient && !room_temperature(*ambient)
+                     ? fmt(", not at the operating ambient %g degC (not rescaled)", *ambient)
+                     : std::string());
+        if (!lc.l0_note.empty())
+            lc.temp_basis += fmt(", L(0) = the record's nominal %.4g uH (the curve has no 0 A point)",
+                                 l0 * 1e6);
+        k.curves.push_back(std::move(lc));
     }
-    const double l0 = c.y->front();
-    std::vector<double> x, y;
-    for (std::size_t i = 0; i < c.x->size(); ++i) {
-        x.push_back((*c.x)[i]);
-        y.push_back((*c.y)[i] / l0);
-    }
-    try {
-        k.ratio.emplace(std::move(x), std::move(y));
-    } catch (const std::invalid_argument& e) {
-        k.why = std::string("its L(I) curve is not readable: ") + e.what();
-        return k;
-    }
-    if (at_amb)
-        k.temp_basis = fmt(" at %g degC (the operating ambient)", c.temperature);
-    else
-        k.temp_basis = (present(c.temperature) ? fmt(" at %g degC (room temperature)", c.temperature)
-                                               : std::string(" (temperature not stated: read as room "
-                                                             "temperature)")) +
-                       (ambient && !room_temperature(*ambient)
-                            ? fmt(", not at the operating ambient %g degC (not rescaled)", *ambient)
-                            : std::string());
+    if (k.lowest_at_ipk) k.why = n_qualify;  // the breakdown completes it when it cannot choose
     return k;
 }
 
@@ -699,54 +756,102 @@ inline MagneticLossBreakdown inductor_loss(const MagneticRow& m, const InductorO
     // depends on L(Ipk), so solve h(I) = Ipk(l_base * ratio(I)) - I = 0 by bisection on the
     // curve's range: h(start) > 0 always; h(end) > 0 means the operating point lies beyond
     // the measured curve (not extrapolated).
-    enum class Read { NoCurve, Unreadable, InRange, Beyond } read = Read::NoCurve;
-    double curve_end = 0, ratio_at = 1;
-    std::string unreadable_why;
-    LCurvePick pick = pick_l_curve(m, op.ambient);
-    std::optional<crossref::Curve>& curve = pick.ratio;
-    if (!curve && pick.stated) {
-        read = Read::Unreadable;
-        unreadable_why = pick.why;
-    }
+    enum class Read { NoCurve, Unreadable, InRange, Beyond };
+    struct CurveRead {
+        Read read = Read::NoCurve;
+        double curve_end = 0, ratio_at = 1;
+        std::string unreadable_why;
+    };
     const InductorWaveform w_base = inductor_waveform(op, l_base);
-    InductorWaveform w = w_base;
-    if (curve) {
-        const crossref::Curve& c = *curve;
-        curve_end = c.x.back();
+    // Ipk and the L it is read at, solved together on one curve.
+    auto solve = [&](const crossref::Curve& c) {
+        CurveRead r;
+        r.curve_end = c.x.back();
         auto h = [&](double i) -> std::optional<double> {
-            const auto r = crossref::curve_at(c, i, crossref::Interp::Linear);
-            if (!r || !(*r > 0)) return std::nullopt;
-            return inductor_waveform(op, l_base * *r).ipk - i;
+            const auto q = crossref::curve_at(c, i, crossref::Interp::Linear);
+            if (!q || !(*q > 0)) return std::nullopt;
+            return inductor_waveform(op, l_base * *q).ipk - i;
         };
         const auto h_start = h(c.x.front());
-        const auto h_end = h(curve_end);
+        const auto h_end = h(r.curve_end);
         if (!h_start || !(*h_start > 0)) {
-            read = Read::Unreadable;
-            unreadable_why = "the curve does not start below Ipk";
+            r.read = Read::Unreadable;
+            r.unreadable_why = "the curve does not start below Ipk";
         } else if (!h_end || *h_end > 0) {
-            read = Read::Beyond;
+            r.read = Read::Beyond;
         } else {
-            double lo = c.x.front(), hi = curve_end;
-            for (int k = 0; k < 200 && hi - lo > 1e-12 * curve_end; ++k) {
+            double lo = c.x.front(), hi = r.curve_end;
+            r.read = Read::InRange;
+            for (int k = 0; k < 200 && hi - lo > 1e-12 * r.curve_end; ++k) {
                 const double mid = 0.5 * (lo + hi);
                 const auto hm = h(mid);
-                if (!hm) { read = Read::Beyond; break; }  // a non-positive sample: no reading
+                if (!hm) { r.read = Read::Beyond; break; }  // a non-positive sample: no reading
                 (*hm > 0 ? lo : hi) = mid;
             }
-            if (read != Read::Beyond) {
-                read = Read::InRange;
-                ratio_at = *crossref::curve_at(c, hi, crossref::Interp::Linear);
-                w = inductor_waveform(op, l_base * ratio_at);
-            }
+            if (r.read == Read::InRange)
+                r.ratio_at = *crossref::curve_at(c, hi, crossref::Interp::Linear);
+        }
+        return r;
+    };
+    LCurvePick pick = pick_l_curve(m, op.ambient);
+    CurveRead cr;
+    const LCurve* used = nullptr;  // the curve read
+    std::string pair_basis;        // the room-temperature pair: which one is used, and why
+    if (pick.curves.empty()) {
+        if (pick.stated) {
+            cr.read = Read::Unreadable;
+            cr.unreadable_why = pick.why;
+        }
+    } else if (!pick.lowest_at_ipk) {
+        used = &pick.curves.front();
+        cr = solve(*used->ratio);
+    } else {
+        // Two room-temperature curves, no ambient (owner 2026-11-14): read both, use the one
+        // with the lower L at Ipk. Each must read L at Ipk inside its measured range, or the
+        // lower one is not known.
+        std::vector<CurveRead> reads;
+        std::string not_read, each;
+        for (const LCurve& lc : pick.curves) {
+            reads.push_back(solve(*lc.ratio));
+            const CurveRead& r = reads.back();
+            const std::string t = fmt("%g degC", lc.temperature);
+            if (r.read == Read::InRange)
+                each += (each.empty() ? "" : ", ") + t +
+                        fmt(": %.4g uH", l_base * r.ratio_at * 1e6);
+            else if (not_read.empty())
+                not_read = r.read == Read::Beyond
+                               ? "Ipk lies beyond its " + t + " curve" +
+                                     fmt(" (measured to %.4g A)", r.curve_end)
+                               : "its " + t + " curve is not read (" + r.unreadable_why + ")";
+        }
+        if (!not_read.empty()) {
+            cr.read = Read::Unreadable;
+            cr.unreadable_why = pick.why + " and no ambient is given; " + not_read +
+                                ", so the one with the lower L at Ipk is not known";
+        } else {
+            std::size_t best = 0;
+            for (std::size_t i = 1; i < reads.size(); ++i)
+                if (reads[i].ratio_at < reads[best].ratio_at) best = i;
+            used = &pick.curves[best];
+            cr = reads[best];
+            pair_basis = "; " + pick.why + " and no ambient is given: all read (L at Ipk " + each +
+                         "), the lower used (owner 2026-11-14)";
         }
     }
+    const Read read = cr.read;
+    const double curve_end = cr.curve_end, ratio_at = cr.ratio_at;
+    const std::string& unreadable_why = cr.unreadable_why;
+    const std::string curve_basis = used ? used->temp_basis : std::string();
+    if (used && !used->l0_note.empty() && (read == Read::InRange || read == Read::Beyond))
+        b.notes.push_back(used->l0_note);
+    InductorWaveform w = read == Read::InRange ? inductor_waveform(op, l_base * ratio_at) : w_base;
     if (read == Read::InRange) {
         b.inductance = l_base * ratio_at;
         b.inductance_basis = "L " + fmt("%.4g uH", b.inductance * 1e6) +
                              fmt(" at Ipk %.4g A: ", w.ipk) + base_s +
                              fmt(" x L/L(0) %.4g", ratio_at) +
-                             " read off the record's L(I) curve" + pick.temp_basis +
-                             " (linear; Ipk and the L it is read at solved together)";
+                             " read off the record's L(I) curve" + curve_basis +
+                             " (linear; Ipk and the L it is read at solved together)" + pair_basis;
     } else {
         b.inductance = l_base;
         b.inductance_basis = base_s;
@@ -757,7 +862,7 @@ inline MagneticLossBreakdown inductor_loss(const MagneticRow& m, const InductorO
             b.inductance_basis += " (the record's L(I) curve is not read: " + unreadable_why +
                                   "; any roll-off below Isat is not in the waveform)";
         else
-            b.inductance_basis += "; Ipk lies beyond the record's L(I) curve" + pick.temp_basis +
+            b.inductance_basis += "; Ipk lies beyond the record's L(I) curve" + curve_basis +
                                   " (measured to " +
                                   fmt("%.4g A", curve_end) +
                                   "), so L at Ipk is not read and not extrapolated: the ripple, "
@@ -811,7 +916,7 @@ inline MagneticLossBreakdown inductor_loss(const MagneticRow& m, const InductorO
         MagneticCheck& s = b.saturation;
         if (read == Read::InRange) {
             // The curve decides directly: L at Ipk >= 0.8 x L(0).
-            const std::string r = "the record's L(I) curve" + pick.temp_basis +
+            const std::string r = "the record's L(I) curve" + curve_basis +
                                   fmt(": at Ipk %.4g A", b.ipk) +
                                   fmt(" L is %.3g %% of L(0)", ratio_at * 100);
             if (ratio_at >= 0.8) {
@@ -827,11 +932,11 @@ inline MagneticLossBreakdown inductor_loss(const MagneticRow& m, const InductorO
             // 80 % within its range fails it.
             bool decided = false;
             if (read == Read::Beyond) {
-                const crossref::Curve& c = *curve;
+                const crossref::Curve& c = *used->ratio;
                 for (std::size_t k = 0; k < c.x.size(); ++k)
                     if (c.y[k] < 0.8) {
                         s.status = MagneticCheck::Status::Fail;
-                        s.basis = "the record's L(I) curve" + pick.temp_basis +
+                        s.basis = "the record's L(I) curve" + curve_basis +
                                   fmt(" falls to %.3g %% of L(0)", c.y[k] * 100) +
                                   fmt(" at %.4g A, and Ipk lies beyond the curve", c.x[k]) +
                                   fmt(" (measured to %.4g A)", curve_end);

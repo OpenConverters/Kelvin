@@ -600,9 +600,11 @@ TEST_CASE("magnetic curves: the L(I) curve read is the one at the ambient, else 
     op.vout = 1.8;
     op.iout = 0.5;
     op.fsw = 2e6;
-    // No ambient: two room-temperature curves (20 and 25 degC) qualify; neither is chosen.
+    // No ambient: two room-temperature curves (20 and 25 degC) qualify; both are read and the
+    // lower L at Ipk is used (owner 2026-11-14; the test case below).
     const auto n = magnetic_loss(crow("LQM2HPZR56ME0"), op, 1e-9);
-    CHECK(has(n.inductance_basis, "it states 2 L(I) curves that qualify (20 degC, 25 degC)"));
+    CHECK(has(n.inductance_basis, "it states 2 L(I) curves that qualify (20 degC, 25 degC) and "
+                                  "no ambient is given: all read"));
     // At 85 degC: the 85 degC curve.
     op.ambient = 85;
     const auto a = magnetic_loss(crow("LQM2HPZR56ME0"), op, 1e-9);
@@ -611,9 +613,10 @@ TEST_CASE("magnetic curves: the L(I) curve read is the one at the ambient, else 
     op.ambient.reset();
     const auto v = magnetic_loss(crow("VLS5045EX-1R0N"), op, 1e-9);
     CHECK(has(v.inductance_basis, "its L(I) curves are stated only at -20 degC"));
-    // 7443310470 (Wuerth 4.7 uH): its 20 degC curve starts above 0 A -> no L(0), not read.
+    // 7443310470 (Wuerth 4.7 uH): its 20 degC curve starts above 0 A -> read with the nominal
+    // as L(0) (owner 2026-11-14; the test case below).
     const auto z = magnetic_loss(crow("7443310470"), op, 1e-9);
-    CHECK(has(z.inductance_basis, "not at 0 A, so L(0) is not stated"));
+    CHECK(has(z.inductance_basis, "L(0) = the record's nominal 4.7 uH (the curve has no 0 A point)"));
     // 1229AS-H-2R0M (Coilcraft 2 uH): its 20 degC curve states two inductances at one current.
     const auto d = magnetic_loss(crow("1229AS-H-2R0M"), op, 1e-9);
     CHECK(has(d.inductance_basis, "its L(I) curve at 20 degC states two inductances at one current"));
@@ -662,4 +665,81 @@ TEST_CASE("magnetic curves: a size that cannot be determined counts one more UNV
     CHECK(mbh->at("sortKey").at("unverifiedItems") == 3);
     CHECK(mbh->at("boardArea").at("mm2").is_null());
     CHECK(pos_in(r, "760800301") < pos_in(r, "MBH6045C-471MB=P3"));
+}
+
+// Owner 2026-11-14 (a): an L(I) curve with no 0 A point is read with the record's nominal L as
+// L(0) (datasheets define the Isat drop from the nominal), with a note, and decides saturation
+// like any curve. 7443310470 (Wuerth 4.7 uH, 3.76-5.64 uH) states at 20 degC: 4.7 uH at 2.28 A,
+// 4.687 at 5.59 A, 4.46 at 13 A, 3.16 at 41.1 A. With no nominal the curve is not read.
+TEST_CASE("magnetic curves: a curve with no 0 A point reads the nominal as L(0)",
+          "[magnetic_loss][magnetic_curves_op]") {
+    const MagneticRow& m = crow("7443310470");
+    InductorOperatingPoint op;
+    op.mode = ConductionMode::Ccm;
+    op.vin = 12;
+    op.vout = 5;
+    op.iout = 12;
+    op.fsw = 500e3;
+    // Ipk ~12.8 A, between the 5.59 A and 13 A points: L/L(0) about 0.95 -> saturation PASS
+    // decided by the curve; L at Ipk = 3.76 uH x that ratio.
+    const auto p = magnetic_loss(m, op, 1e-6);
+    CHECK(p.ipk > 5.59);
+    CHECK(p.ipk < 13);
+    const double r = p.inductance / 3.76e-6;
+    const double expect = (4.687 + (4.46 - 4.687) * (p.ipk - 5.59) / (13 - 5.59)) / 4.7;
+    CHECK(r == Approx(expect).epsilon(1e-6));
+    CHECK(has(p.inductance_basis, "read off the record's L(I) curve at 20 degC (room temperature), "
+                                  "L(0) = the record's nominal 4.7 uH (the curve has no 0 A point)"));
+    CHECK(p.saturation.str() == std::string("pass"));
+    CHECK(has(p.saturation.basis, "the record's L(I) curve at 20 degC"));
+    CHECK(has(p.saturation.basis, "within the 20 % drop criterion"));
+    CHECK(std::any_of(p.notes.begin(), p.notes.end(), [](const std::string& n) {
+        return has(n, "the L(I) curve at 20 degC starts at 2.28 A, not at 0 A: L(0) is the "
+                      "record's nominal 4.7 uH (datasheets define the Isat drop from the nominal");
+    }));
+    // Iout 35 A: Ipk ~35.5 A, where the curve has fallen to ~73 % of the nominal -> FAIL.
+    op.iout = 35;
+    const auto f = magnetic_loss(m, op, 1e-6);
+    CHECK(f.saturation.failed());
+    CHECK(has(f.saturation.basis, "beyond the 20 % drop criterion"));
+    // No nominal L: L(0) is not known, the curve is not read.
+    MagneticRow no_nominal = m;
+    no_nominal.inductance = kNaN();
+    const LCurvePick k = pick_l_curve(no_nominal, std::nullopt);
+    CHECK(k.curves.empty());
+    CHECK(has(k.why, "starts at 2.28 A, not at 0 A, and the record states no nominal L"));
+}
+
+// Owner 2026-11-14 (b): with no ambient given and two room-temperature curves (20 and 25 degC),
+// both are read and the one with the lower L at Ipk is used, named in the basis.
+// LQM2HPZR56ME0 (Murata 0.56 uH, curves at -55, -30, 20, 25, 85, 125 degC).
+TEST_CASE("magnetic curves: two room-temperature curves, the lower L at Ipk is used",
+          "[magnetic_loss][magnetic_curves_op]") {
+    const MagneticRow& m = crow("LQM2HPZR56ME0");
+    InductorOperatingPoint op;
+    op.mode = ConductionMode::Ccm;
+    op.vin = 5;
+    op.vout = 1.8;
+    op.iout = 1.0;
+    op.fsw = 2e6;
+    const auto b = magnetic_loss(m, op, 1e-9);
+    const LCurvePick k = pick_l_curve(m, std::nullopt);
+    REQUIRE(k.lowest_at_ipk);
+    REQUIRE(k.curves.size() == 2);
+    // The used L at Ipk is the lower: neither curve reads below it at the solved Ipk.
+    const double l_base = m.inductance;  // no tolerance stated: the nominal
+    std::vector<double> at_ipk;
+    for (const LCurve& c : k.curves)
+        at_ipk.push_back(l_base * *crossref::curve_at(*c.ratio, b.ipk, crossref::Interp::Linear));
+    const double lower = std::min(at_ipk[0], at_ipk[1]);
+    CHECK(b.inductance == Approx(lower).epsilon(1e-6));
+    CHECK(at_ipk[0] != Approx(at_ipk[1]).epsilon(1e-4));  // the two curves differ here
+    const std::string used = at_ipk[0] < at_ipk[1] ? "20 degC" : "25 degC";
+    CHECK(has(b.inductance_basis, "read off the record's L(I) curve at " + used + " (room temperature)"));
+    CHECK(has(b.inductance_basis, "and no ambient is given: all read (L at Ipk 20 degC: "));
+    CHECK(has(b.inductance_basis, "the lower used (owner 2026-11-14)"));
+    // A given ambient at room temperature is not this case (not decided by the owner): not read.
+    op.ambient = 25;
+    const auto a = magnetic_loss(m, op, 1e-9);
+    CHECK(has(a.inductance_basis, "which one applies is not stated"));
 }
