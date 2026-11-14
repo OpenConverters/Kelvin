@@ -155,11 +155,14 @@ TEST_CASE("diode loss: a candidate with an UNVERIFIED term ranks after every com
     c.loss_op = paper_point();
     json r = select_diode(fixture_shard(), c, DiodeTiebreaker::LowestOperatingPointLoss);
     const std::vector<std::string> order = mpns(r);
-    // MSS1P6HM3_A/H (1 A) is gated out. Two candidates have all three terms: C3D10065A (Vf
-    // and Qc off its curves, 1.47 W) and ES3J (scalars, 2.32 W) — in loss order, first.
+    // MSS1P6HM3_A/H (1 A) is gated out. Three candidates have all three terms: STPS30L60CT (Vf
+    // off its curve, Qc off its Cj(Vr) curve from 0.5 V: a lower bound, owner 2026-11-14),
+    // C3D10065A (Vf and Qc off its curves, 1.47 W) and ES3J (scalars, 2.32 W) — in loss
+    // order, first.
     REQUIRE(order.size() == 8);
-    CHECK(order[0] == "C3D10065A");
-    CHECK(order[1] == "ES3J");
+    CHECK(order[0] == "STPS30L60CT");
+    CHECK(order[1] == "C3D10065A");
+    CHECK(order[2] == "ES3J");
     CHECK(cand(r, "ES3J").at("loss").at("total").get<double>() > 2.0);
     // STPS8045's computed sum is far lower, but its switching term is UNVERIFIED.
     CHECK(cand(r, "STPS8045").at("loss").at("computedSum").get<double>() <
@@ -211,9 +214,11 @@ TEST_CASE("diode over-rating: a flag under the loss and margin rankings, a tier 
     // Under the operating-point loss: flagged, the loss alone orders.
     c.loss_op = paper_point();
     json op = select_diode(fixture_shard(), c, DiodeTiebreaker::LowestOperatingPointLoss);
-    // C3D10065A (650 V / 10 A: both axes over-rated) still leads on loss.
-    CHECK(op.at("candidates")[0].at("mpn") == "C3D10065A");
-    CHECK(op.at("candidates")[0].at("overRating").at("axes") == json::array({"vrrm", "if_avg"}));
+    // C3D10065A (650 V / 10 A: both axes over-rated) is not demoted: only STPS30L60CT's lower
+    // loss puts it ahead.
+    CHECK(op.at("candidates")[0].at("mpn") == "STPS30L60CT");
+    CHECK(op.at("candidates")[1].at("mpn") == "C3D10065A");
+    CHECK(op.at("candidates")[1].at("overRating").at("axes") == json::array({"vrrm", "if_avg"}));
     CHECK(has(cand(op, "STPS8045").at("overRating").at("notes")[0].get<std::string>(),
               "flagged only: the operating-point loss alone sets the order"));
     // Under a margin ranking: flagged, not demoted.
@@ -255,9 +260,10 @@ TEST_CASE("diode loss: the API reads lossOperatingPoint strictly", "[diode_loss]
     // With an operating point the loss ranking is the default, and over-rating is flagged.
     json r = eng.select("diode", req, {{"lossOperatingPoint", op}, {"includeEnvelope", false}});
     CHECK(r.at("tiebreaker") == "lowest_operating_point_loss");
-    CHECK(r.at("candidates")[0].at("mpn") == "C3D10065A");
-    CHECK(r.at("candidates")[1].at("mpn") == "ES3J");
-    CHECK(r.at("candidates")[1].at("overRating").at("axes") == json::array({"vrrm"}));
+    CHECK(r.at("candidates")[0].at("mpn") == "STPS30L60CT");
+    CHECK(r.at("candidates")[1].at("mpn") == "C3D10065A");
+    CHECK(r.at("candidates")[2].at("mpn") == "ES3J");
+    CHECK(r.at("candidates")[2].at("overRating").at("axes") == json::array({"vrrm"}));
     // The Engine ranks lowest_vf with the over-rating tier on: STPS8045 is no longer first.
     json vf = eng.select("diode", req, {{"includeEnvelope", false}});
     CHECK(vf.at("tiebreaker") == "lowest_vf");
@@ -316,10 +322,10 @@ TEST_CASE("diode loss: Vf read off the Vf(If) curve at the current conducted", "
     CHECK(has(o.conduction.basis, "If 40 A is outside the record's Vf(If) curve (0.1 to 30 A), not extrapolated"));
 }
 
-TEST_CASE("diode loss: Qc integrated from the Cj(Vr) curve only when it covers 0 to Vin",
+TEST_CASE("diode loss: Qc integrated from the Cj(Vr) curve up to Vin, never above its last point",
           "[diode_loss_curves]") {
     // C3D10065A: Cj 280 pF at 0 V, 150 pF at 10 V, 70 pF at 50 V. To 36 V (trapezoid, the end
-    // read linearly at 98 pF): Qc = 21.5 + 32.24 = 53.74 nC... in units of 1e-10 C * V.
+    // read linearly at 98 pF).
     const DiodeRow& c3d = row("C3D10065A");
     REQUIRE_FALSE(c3d.cj_curve.empty());
     const DiodeLossBreakdown b = diode_loss(c3d, paper_point(), curves_of(c3d));
@@ -327,12 +333,32 @@ TEST_CASE("diode loss: Qc integrated from the Cj(Vr) curve only when it covers 0
     REQUIRE(b.switching.watts);
     CHECK(*b.switching.watts == Approx(0.5 * qc * 36 * 80e3));
     CHECK(has(b.switching.basis, "integral of Cj(Vr) from 0 to 36 V on the record's Cj(Vr) curve"));
-    // STPS30L60CT's Cj(Vr) starts at 0.5 V: the charge below is not on record.
+    CHECK_FALSE(has(b.switching.basis, "lower bound"));
+    // STPS30L60CT's Cj(Vr) starts at 0.5 V (owner 2026-11-14): integrated from 0.5 V to Vin,
+    // computed, and the basis says the 0 to 0.5 V span is left out (a slight lower bound).
+    // Cj 4.5 / 3.2 / 1.5 / 1.1 / 0.8 / 0.5 nF at 0.5 / 1 / 5 / 10 / 20 / 40 V; at 36 V 0.56 nF.
     const DiodeRow& st = row("STPS30L60CT");
+    REQUIRE_FALSE(st.cj_curve.empty());
     const DiodeLossBreakdown s = diode_loss(st, paper_point(), curves_of(st));
-    CHECK_FALSE(s.switching.watts);
-    REQUIRE(s.switching.missing.size() == 1);
-    CHECK(has(s.switching.missing[0], "Cj(Vr) curve (0.5 to 60 V) does not cover 0 to 36 V"));
+    const double qs = 0.5 * (4.5e-9 + 3.2e-9) * 0.5 + 0.5 * (3.2e-9 + 1.5e-9) * 4 +
+                      0.5 * (1.5e-9 + 1.1e-9) * 5 + 0.5 * (1.1e-9 + 0.8e-9) * 10 +
+                      0.5 * (0.8e-9 + 0.56e-9) * 16;
+    REQUIRE(s.switching.watts);
+    CHECK(s.switching.missing.empty());
+    CHECK(*s.switching.watts == Approx(0.5 * qs * 36 * 80e3));
+    CHECK(has(s.switching.basis, "integral of Cj(Vr) from 0.5 to 36 V on the record's Cj(Vr) curve"));
+    CHECK(has(s.switching.basis,
+              "the curve starts at 0.5 V, so the 0 to 0.5 V span is not included and the term is a "
+              "slight lower bound"));
+    // Above the curve's last point (60 V) nothing is extrapolated: UNVERIFIED.
+    DiodeLossOperatingPoint hi = paper_point();
+    hi.vin = 70;
+    const DiodeLossBreakdown h = diode_loss(st, hi, curves_of(st));
+    CHECK_FALSE(h.switching.watts);
+    REQUIRE(h.switching.missing.size() == 1);
+    CHECK(has(h.switching.missing[0],
+              "Cj(Vr) curve (0.5 to 60 V) does not reach 70 V: the charge above its last point is "
+              "not on record, not extrapolated"));
 }
 
 TEST_CASE("diode loss: Ir read off the Ir(Vr) curve at Vin, its temperature stated",

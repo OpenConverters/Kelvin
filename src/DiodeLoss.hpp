@@ -7,6 +7,8 @@
 //                                              or the ramp Iout +/- dIpp/2 on the Vf(If) curve
 //   switching   PN / fast recovery:  P = Qrr * Vin * fs
 //               Schottky / SiC:      P = 1/2 * Qc * Vin * fs,  Qc = integral of Cj(Vr), 0..Vin
+//                                (from the curve's first point when it starts above 0 V:
+//                                 a slight lower bound, said so in the basis)
 //   leakage     P = Ir(Vin) * Vin * D
 // Every datasheet value is the record's; every operating-point value the caller's. A term
 // whose input is missing is UNVERIFIED (no watts, `missing` names what is absent) — never a
@@ -17,6 +19,7 @@
 // the row's curve fields are passed in as DiodeCurves so this header does not depend on how
 // a row carries them.
 #pragma once
+#include <algorithm>
 #include <cmath>
 #include <optional>
 #include <string>
@@ -100,17 +103,21 @@ inline std::string range_text(const CurvePts& c, const char* unit) {
     return fmt("(%g", (*c.x).front()) + fmt(" to %g ", (*c.x).back()) + unit + ")";
 }
 
-// The charge integral of Cj from 0 to v on the curve (trapezoid between samples, the end
-// read linearly). nullopt unless the curve's measured range covers [0, v]: the charge below
-// its first sample is not on record and is not extrapolated.
-inline std::optional<double> charge_0_to(const crossref::Curve& c, double v) {
-    if (c.x.front() > 0 || c.x.back() < v) return std::nullopt;
+// The charge integral of Cj over the measured part of 0..v on the curve (trapezoid between
+// samples, the end read linearly), from the curve's first point when that lies above 0 V
+// (owner 2026-11-14: the 0..first-point span is left out and the basis says the term is a
+// slight lower bound). nullopt unless the curve reaches v and starts below it: the charge
+// above its last sample is never extrapolated.
+inline std::optional<double> charge_to(const crossref::Curve& c, double v) {
+    if (c.x.back() < v || c.x.front() >= v) return std::nullopt;
     double q = 0;
     for (std::size_t i = 0; i + 1 < c.x.size() && c.x[i] < v; ++i) {
-        const double x0 = c.x[i];
+        const double x0 = std::max(c.x[i], 0.0);
         const double x1 = std::min(c.x[i + 1], v);
+        if (x1 <= x0) continue;
+        const auto y0 = crossref::curve_at(c, x0, crossref::Interp::Linear);
         const auto y1 = crossref::curve_at(c, x1, crossref::Interp::Linear);
-        q += 0.5 * (c.y[i] + *y1) * (x1 - x0);
+        q += 0.5 * (*y0 + *y1) * (x1 - x0);
     }
     return q;
 }
@@ -230,18 +237,26 @@ inline DiodeLossBreakdown buck_freewheel_loss(const DiodeRow& d, const DiodeLoss
             if (usable(cv.cj_vr)) {
                 const CurvePts& cp = *cv.cj_vr;
                 if (auto c = to_curve(cp)) {
-                    qc = charge_0_to(*c, vin);
+                    qc = charge_to(*c, vin);
                     if (qc && *qc > 0) {
+                        const double v0 = std::max(c->x.front(), 0.0);
                         t.watts = 0.5 * *qc * vin * fs;
                         t.basis = "1/2*Qc*Vin*fs with Qc " + fmt("%.4g nC", *qc * 1e9) +
-                                  fmt(" = integral of Cj(Vr) from 0 to %g V", vin) +
+                                  fmt(" = integral of Cj(Vr) from %g", v0) + fmt(" to %g V", vin) +
                                   " on the record's Cj(Vr) curve (trapezoid, " +
                                   curve_temperature(cp, op.tj) + ")";
+                        if (v0 > 0)
+                            t.basis += fmt("; the curve starts at %g V, so the 0 to ", v0) +
+                                       fmt("%g V span is not included and the term is a slight "
+                                           "lower bound",
+                                           v0);
                     } else {
                         why = "the record's Cj(Vr) curve " + range_text(cp, "V") +
-                              fmt(" does not cover 0 to %g V: the charge outside it is not on "
-                                  "record, not extrapolated",
-                                  vin);
+                              (c->x.back() < vin
+                                   ? fmt(" does not reach %g V: the charge above its last point "
+                                         "is not on record, not extrapolated",
+                                         vin)
+                                   : fmt(" holds no charge below %g V", vin));
                     }
                 }
             }
