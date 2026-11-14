@@ -31,23 +31,38 @@ export const FAMILIES = [
       required: [],
       tiebreakers: ['best_fit', 'lowest_operating_point_loss'],
       // Operating-point ranking of power inductors (owner 2026-11-14): options.lossOperatingPoint
-      // with the Inductance above as the required minimum. Isat > Ipk and Irms <= rated current
-      // are hard gates; the DCR loss orders; core loss is UNVERIFIED (no catalogue model).
-      // Nothing here is defaulted.
+      // with its conduction mode (required, never defaulted). CCM: the Inductance above is the
+      // required minimum; DCM: the part's guaranteed maximum must stay below the CCM/DCM
+      // boundary at the minimum Vin; CrM: its tolerance band must lie inside the window.
+      // Saturation (20 % drop) and thermal (40 K rise) are hard gates; the DCR loss orders; core
+      // loss is UNVERIFIED (no catalogue model). Nothing here is defaulted.
       lossPoint: {
         position: 'buckInductor',
-        required: ['inputVoltage', 'outputVoltage', 'outputCurrent', 'switchingFrequency'],
+        modeField: {
+          key: 'conductionMode',
+          label: 'Conduction mode',
+          choices: [['ccm', 'CCM'], ['dcm', 'DCM'], ['crm', 'CrM / QR']],
+        },
+        requiredByMode: {
+          ccm: ['inputVoltage', 'outputVoltage', 'outputCurrent', 'switchingFrequency'],
+          dcm: ['inputVoltage', 'minimumInputVoltage', 'outputVoltage', 'outputCurrent', 'switchingFrequency'],
+          crm: ['inputVoltage', 'outputVoltage', 'outputCurrent', 'minimumInductance', 'maximumInductance'],
+        },
         fields: [
           { key: 'inputVoltage', label: 'Vin', unit: 'V', placeholder: '36' },
+          { key: 'minimumInputVoltage', label: 'Vin min', unit: 'V', placeholder: '24 (DCM boundary)', modes: ['dcm'] },
           { key: 'outputVoltage', label: 'Vout', unit: 'V', placeholder: '12' },
           { key: 'outputCurrent', label: 'Iout', unit: 'A', placeholder: '2' },
-          { key: 'switchingFrequency', label: 'fs', unit: 'Hz', placeholder: '80k' },
+          { key: 'switchingFrequency', label: 'fs', unit: 'Hz', placeholder: '80k', modes: ['ccm', 'dcm'] },
+          { key: 'minimumInductance', label: 'L window min', unit: 'H', placeholder: '100u', modes: ['crm'] },
+          { key: 'maximumInductance', label: 'L window max', unit: 'H', placeholder: '150u', modes: ['crm'] },
           { key: 'ambientTemperature', label: 'Ambient', unit: '°C', placeholder: 'optional (stated, not applied)' },
         ],
         terms: [['dcr', 'DCR loss'], ['coreLoss', 'Core / AC loss']],
         ratings: [['inductance', 'L', 'H'], ['saturationCurrent', 'Isat', 'A'], ['ratedCurrent', 'I rated', 'A'], ['dcr', 'DCR', 'Ω']],
-        derived: [['inductanceAtPeak', 'L @ Ipk', 'H'], ['peakCurrent', 'Ipk', 'A'], ['rmsCurrent', 'Irms', 'A']],
-        checks: [['saturation', 'Saturation'], ['thermal', 'Thermal']],
+        derived: [['inductanceAtPeak', 'L @ Ipk', 'H'], ['peakCurrent', 'Ipk', 'A'], ['rmsCurrent', 'Irms', 'A'], ['switchingFrequency', 'fs (CrM, from L)', 'Hz']],
+        checks: [['inductance', 'Inductance (mode)'], ['saturation', 'Saturation (20 %)'], ['thermal', 'Thermal (40 K)']],
+        volume: true,
       },
       priceQuantity: true,
     },

@@ -12,12 +12,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+import pytest
+
 import server as S
 
 # Su et al. buck output inductor: 166.7 uH required; Vin 36 V, Vout 12 V, Iout 2 A, fs 80 kHz.
 REQ = {"magnetizingInductance": {"nominal": 166.7e-6}}
-POINT = {"position": "buckInductor", "inputVoltage": 36, "outputVoltage": 12,
-         "outputCurrent": 2, "switchingFrequency": 80e3}
+POINT = {"position": "buckInductor", "conductionMode": "ccm", "inputVoltage": 36,
+         "outputVoltage": 12, "outputCurrent": 2, "switchingFrequency": 80e3}
 
 
 def _run():
@@ -42,7 +44,9 @@ def test_gates_and_the_line_carry_every_term_and_check():
     # Power inductors only, and both current checks are hard gates with their own counts.
     assert rej.get("subtype_transformer", 0) > 0
     assert rej.get("saturation_current_below_peak", 0) > 0
-    assert rej.get("rated_current_below_rms", 0) > 0
+    # Owner 2026-11-14 (decision 4): the rated current at a 40 K rise is not carried by this index
+    # yet, so no record fails the thermal gate (was: > 0).
+    assert rej.get("rated_current_below_rms", 0) == 0
     assert rej.get("inductance_below_required", 0) > 0
     for c in cands:
         loss = c["_loss"]
@@ -58,6 +62,12 @@ def test_gates_and_the_line_carry_every_term_and_check():
         area = c["_boardArea"]
         assert (f"| board {area['mm2']:.1f} mm2" if area.get("mm2") is not None
                 else "| board area not stated") in line
+        # Volume beside the board area (owner 2026-11-14, equal billing).
+        vol = c["_volume"]
+        assert (f"| volume {vol['mm3']:.0f} mm3" if vol.get("mm3") is not None
+                else "| volume not stated") in line
+        assert line.count("| CCM") == 1
+        assert f"inductance {loss['checks']['inductance']['status']}" in line
 
 
 def test_unverified_checks_rank_after_verified_ones():
@@ -67,3 +77,22 @@ def test_unverified_checks_rank_after_verified_ones():
     first = [c for c in cands if (c.get("sortKey") or c["_sortKey"])["unverifiedChecksOrTerms"] == 0]
     sums = [(c.get("sortKey") or c["_sortKey"])["value"] for c in first]
     assert sums == sorted(sums)
+
+
+def test_conduction_mode_is_required_and_dcm_gates_on_the_boundary():
+    # Nothing defaults: an operating point without its conduction mode is refused.
+    bad = {k: v for k, v in POINT.items() if k != "conductionMode"}
+    with pytest.raises(S.kelvin.InvalidOptions, match="conductionMode is required"):
+        S.recommend_parts("magnetic", REQ, {"lossOperatingPoint": bad}, 5)
+    # DCM, Vin 24-36 V: L_max = 12 * (1 - 12/24) / (2 * 80 kHz * 2 A) = 18.75 uH; every candidate
+    # stays at or below it and the gate has its own rejection count.
+    dcm = dict(POINT, conductionMode="dcm", minimumInputVoltage=24)
+    r = S.recommend_parts("magnetic", {}, {"lossOperatingPoint": dcm}, 10)
+    sc = r.structuredContent
+    assert sc["rejections"].get("inductance_above_dcm_maximum", 0) > 0
+    assert sc["candidates"]
+    for c in sc["candidates"]:
+        assert c["_ratings"]["inductance"] <= 18.75e-6
+        assert c["_loss"]["conductionMode"] == "dcm"
+        assert c["_loss"]["checks"]["inductance"]["status"] != "fail"
+    assert "| DCM" in r.content[0].text

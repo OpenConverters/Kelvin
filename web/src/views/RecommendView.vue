@@ -72,9 +72,20 @@ function parsedField(field) {
 }
 
 // The operating-point loss inputs the user filled in (blank = not given, never defaulted).
+// A lossPoint with a modeField shows (and sends) only the fields of the chosen mode.
+function lossPointMode() {
+  const mf = fam.value.recommend.lossPoint?.modeField
+  return mf ? form().loss[mf.key] || '' : ''
+}
+function lossPointFields() {
+  const lp = fam.value.recommend.lossPoint
+  if (!lp) return []
+  const mode = lossPointMode()
+  return lp.fields.filter((x) => !x.modes || x.modes.includes(mode))
+}
 function lossPointValues() {
   const out = {}
-  for (const field of fam.value.recommend.lossPoint?.fields ?? []) {
+  for (const field of lossPointFields()) {
     const raw = form().loss[field.key]
     if (raw == null || String(raw).trim() === '') continue
     const v = parseSI(raw)
@@ -97,7 +108,10 @@ const formErrors = computed(() => {
       if (Number.isNaN(v)) errs.push(`${k}: can't parse "${form().loss[k]}"`)
     }
     const given = Object.keys(lp).length
-    const core = f.recommend.lossPoint.required ?? ['inputVoltage', 'outputCurrent', 'switchingFrequency']
+    const mf = f.recommend.lossPoint.modeField
+    if (given && mf && !lossPointMode()) errs.push(`Operating-point loss needs the ${mf.label.toLowerCase()}`)
+    const core = (mf ? f.recommend.lossPoint.requiredByMode?.[lossPointMode()] : null) ??
+      f.recommend.lossPoint.required ?? ['inputVoltage', 'outputCurrent', 'switchingFrequency']
     if (given && core.some((k) => lp[k] == null)) {
       const label = (k) => f.recommend.lossPoint.fields.find((x) => x.key === k)?.label ?? k
       errs.push(`Operating-point loss needs ${core.map(label).join(', ')}`)
@@ -150,7 +164,11 @@ async function run() {
   }
   if (f.recommend.lossPoint) {
     const lp = lossPointValues()
-    if (Object.keys(lp).length) options.lossOperatingPoint = { position: f.recommend.lossPoint.position, ...lp }
+    if (Object.keys(lp).length) {
+      options.lossOperatingPoint = { position: f.recommend.lossPoint.position, ...lp }
+      const mf = f.recommend.lossPoint.modeField
+      if (mf && lossPointMode()) options.lossOperatingPoint[mf.key] = lossPointMode()
+    }
   }
   if (f.recommend.priceQuantity && st.priceQuantity !== '') options.priceQuantity = parseSI(st.priceQuantity)
   if (st.diversity) options.maxManufacturerFraction = 0.2
@@ -276,6 +294,12 @@ function areaCell(c) {
   if (a.mm2 == null) return { text: 'not stated', title: a.basis ?? '', unverified: true }
   return { text: `${a.mm2.toFixed(1)} mm²`, title: a.basis ?? '' }
 }
+function volumeCell(c) {
+  const v = c.volume
+  if (!v) return { text: '—', title: '' }
+  if (v.mm3 == null) return { text: 'not stated', title: v.basis ?? '', unverified: true }
+  return { text: `${v.mm3.toFixed(0)} mm³`, title: v.basis ?? '' }
+}
 function priceCell(c) {
   const p = c.price
   if (!p) return { text: '—', title: '' }
@@ -347,7 +371,14 @@ function priceCell(c) {
 
         <fieldset v-if="fam.recommend.lossPoint" class="loss-point">
           <legend>Operating-point loss <span class="dim">({{ fam.recommend.lossPoint.position }})</span></legend>
-          <label v-for="lf in fam.recommend.lossPoint.fields" :key="lf.key" class="field">
+          <label v-if="fam.recommend.lossPoint.modeField" class="field">
+            <span>{{ fam.recommend.lossPoint.modeField.label }}</span>
+            <select v-model="form().loss[fam.recommend.lossPoint.modeField.key]">
+              <option value="">— choose —</option>
+              <option v-for="[v, l] in fam.recommend.lossPoint.modeField.choices" :key="v" :value="v">{{ l }}</option>
+            </select>
+          </label>
+          <label v-for="lf in lossPointFields()" :key="lf.key" class="field">
             <span>{{ lf.label }} <template v-if="lf.unit">({{ lf.unit }})</template></span>
             <input v-model="form().loss[lf.key]" :placeholder="lf.placeholder" />
           </label>
@@ -498,6 +529,10 @@ function priceCell(c) {
               <tr>
                 <th>Board area</th>
                 <td v-for="c in compareCands" :key="c.mpn" :title="areaCell(c).title" :class="{ warnc: areaCell(c).unverified }">{{ areaCell(c).text }}</td>
+              </tr>
+              <tr v-if="fam.recommend.lossPoint?.volume">
+                <th>Volume</th>
+                <td v-for="c in compareCands" :key="c.mpn" :title="volumeCell(c).title" :class="{ warnc: volumeCell(c).unverified }">{{ volumeCell(c).text }}</td>
               </tr>
               <tr>
                 <th>Price<template v-if="compareCands[0]?.price?.quantity"> @ {{ compareCands[0].price.quantity }}</template></th>

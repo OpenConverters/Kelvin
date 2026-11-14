@@ -1512,6 +1512,7 @@ def _magnetic_extras(c: dict) -> str:
     out = ""
     loss = c.get("loss")
     if loss:
+        out += f" | {loss.get('conductionMode', '?').upper()}"
         out += (f" | L@Ipk {loss['inductanceAtPeak'] * 1e6:.4g} uH, dI {loss['ripplePeakToPeak']:.3g} A"
                 f", Ipk {loss['peakCurrent']:.3g} A, Irms {loss['rmsCurrent']:.3g} A")
         terms = []
@@ -1523,18 +1524,26 @@ def _magnetic_extras(c: dict) -> str:
                  else f"total >= {_watts(loss.get('computedSum') or 0)} (incomplete)")
         out += f" | loss {total}: " + ", ".join(terms)
         checks = []
-        for k in ("saturation", "thermal"):
+        for k in ("inductance", "saturation", "thermal"):
             ch = (loss.get("checks") or {}).get(k) or {}
             checks.append(f"{k} {ch.get('status')}" if ch.get("status") != "unverified"
                           else f"{k} UNVERIFIED ({'; '.join(ch.get('missing') or [])})")
         out += " | " + ", ".join(checks)
     over = (c.get("overRating") or {}).get("axes") or []
-    if over:
-        out += f" | over-rated {'/'.join(over)} (>3x the operating point's need; flag only)"
+    cur = [a for a in over if a != "inductance"]
+    if cur:
+        out += f" | over-rated {'/'.join(cur)} (>3x the operating point's need; flag only)"
+    if "inductance" in over:
+        out += " | over-sized L (>2x the required; flag only)"
     area = c.get("boardArea")
     if area:
         out += (f" | board {area['mm2']:.1f} mm2" if area.get("mm2") is not None
                 else " | board area not stated")
+    # Volume has equal billing with the board area (owner 2026-11-14).
+    vol = c.get("volume")
+    if vol:
+        out += (f" | volume {vol['mm3']:.0f} mm3" if vol.get("mm3") is not None
+                else " | volume not stated")
     price = c.get("price")
     if price:
         q = (price.get("quotes") or [None])[0]
@@ -1566,14 +1575,22 @@ def recommend_parts(family: str, requirements: dict, options: dict | None = None
             carries ratings, overRating (Vds/Id > 3x the requirement: noted; ranked lower except
             under lowest_operating_point_loss and the Vds/Id margin rankings),
             boardArea {mm2, basis} and price {quotes, atQuantity, basis}.
-            magnetic lossOperatingPoint {position: 'buckInductor', inputVoltage, outputVoltage,
-            outputCurrent, switchingFrequency, ambientTemperature?} with the required inductance
-            (requirements.magnetizingInductance) ranks power inductors by loss at that point
-            (tiebreaker lowest_operating_point_loss): ripple from the part's own L (read at Ipk
-            off its L(I) curve when it has one), Isat > Ipk and Irms <= rated current are hard
-            gates, the DCR loss Irms^2*DCR orders; core loss is UNVERIFIED (no catalogue model;
-            not counted in the order). Each candidate carries ratings, overRating (Isat or rated
-            current > 3x the need: flag only), boardArea and price.
+            magnetic lossOperatingPoint {position: 'buckInductor', conductionMode: 'ccm' | 'dcm' |
+            'crm' (required, no default), inputVoltage, outputVoltage, outputCurrent,
+            ambientTemperature?; ccm: switchingFrequency and the required inductance
+            (requirements.magnetizingInductance, nominal >= it); dcm: switchingFrequency and
+            minimumInputVoltage (the part's nominal x (1 + tol+) must not exceed the CCM/DCM
+            boundary at that Vin and full load); crm: minimumInductance and maximumInductance
+            (the tolerance band must lie inside; no switchingFrequency)} ranks power inductors by
+            loss at that point (tiebreaker lowest_operating_point_loss). The waveform uses the
+            part's tolerance-minimum L, read at Ipk off its L(I) curve when it has one.
+            Saturation: the current at a 20 % L drop (the L(I) curve decides when present, else
+            the stated Isat points, interpolated, never extrapolated) must exceed Ipk. Thermal:
+            the rated current at a 40 K rise must cover Irms. Both are hard gates; a check the
+            record cannot settle is UNVERIFIED and ranks after. The DCR loss Irms^2*DCR orders;
+            core loss is UNVERIFIED (no catalogue model; not counted in the order). Each
+            candidate carries ratings, overRating (Isat or rated current > 3x the need; ccm: L
+            above 2x the required: flag only), boardArea, volume and price.
         include_envelope: attach each candidate's full datasheet record (large).
     """
     key = _family(family)
