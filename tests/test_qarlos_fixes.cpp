@@ -7434,7 +7434,9 @@ TEST_CASE("qarlos r23r25 T1/T2: an imperial(metric) chip case pair is the imperi
     CHECK(case_identity("capacitor", "3216 (1206)") == "1206");  // metric first
     CHECK(case_identity("capacitor", "0402 (1005 Metric)") == "0402");
     // Pairs the table cannot settle, and pairs that contradict it, stay as written.
-    CHECK(case_identity("resistor", "2512(6432)") == "25126432");
+    // owner 2026-11-14: was "25126432"; 6432 is Walsin's metric spelling of 2512
+    // (chip_vendor_metric_to_imperial), verified against the catalogue's stated 2512 bodies.
+    CHECK(case_identity("resistor", "2512(6432)") == "2512");
     CHECK(case_identity("resistor", "0603(3216)") == "06033216");
     CHECK(case_identity("capacitor", "0603 (3216 Metric)") == "06033216METRIC");
 
@@ -8862,4 +8864,44 @@ TEST_CASE("owner 2026-11-14: a primary rating stated by neither record caps only
         CHECK_FALSE(has_note(c, "neither record states"));
         CHECK(c["grade"] == "drop_in");
     }
+}
+
+namespace r29_bb {
+json res(const std::string& mpn) {
+    std::ifstream in(std::string(KELVIN_TEST_DIR) + "/fixtures/qarlos_r29_resistors.ndjson");
+    std::string line;
+    while (std::getline(in, line))
+        if (line.find("\"reference\": \"" + mpn + "\"") != std::string::npos ||
+            line.find("\"reference\":\"" + mpn + "\"") != std::string::npos)
+            return res_record_spec(line.c_str());
+    throw std::runtime_error("fixture has no resistor record " + mpn);
+}
+}  // namespace r29_bb
+
+// BB3 (r30 seed 34190066): Walsin's WR25X3650FTR "2512(6432)" against Panasonic's ERJS1TF3650U
+// (a 2512 stated 6.4 x 3.2 mm) was graded different_case. 6432 is Walsin's metric spelling of
+// 2512, verified against the bodies the catalogue's 2512 records state; 1218(3248) is not.
+TEST_CASE("qarlos r30 BB3: Walsin 2512(6432) is the 2512 chip", "[qarlos][crossref][r29-bb]") {
+    using kelvin::crossref::canonical_chip_case;
+    CHECK(canonical_chip_case("2512(6432)") == "2512");
+    CHECK(canonical_chip_case("6432(2512)") == "2512");
+    CHECK(canonical_chip_case("1218(3248)") != "1218");
+    CHECK(canonical_chip_case("6432M") != "2512");  // a vendor spelling is read only in a pair
+    CHECK(canonical_chip_case("2010(6432)") != "2010");
+    kelvin::crossref::Options opt;
+    opt.max_results = 5;
+    const json r = kelvin::crossref::cross_reference(
+        "resistor", r29_bb::res("WR25X3650FTR"),
+        json::array({r29_bb::res("ERJS1TF3650U"), r29_bb::res("RC1218FK-07365RL")}), opt);
+    bool seen_erj = false;
+    for (const auto& c : r["candidates"]) {
+        if (c["mpn"] == "ERJS1TF3650U") {
+            seen_erj = true;
+            CHECK(c["footprint"] != "different_case");
+            CHECK(verdict_of(c, "footprint") != "warn");
+        } else {
+            CHECK(c["footprint"] == "different_case");  // a 1218 is not a 2512
+        }
+    }
+    CHECK(seen_erj);
 }
