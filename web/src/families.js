@@ -29,7 +29,27 @@ export const FAMILIES = [
         { key: 'turnsRatio', label: 'Turns ratio (pri:sec)', unit: '', dimArray: 'turnsRatios', placeholder: '0.5 — transformers only' },
       ],
       required: [],
-      tiebreakers: [],
+      tiebreakers: ['best_fit', 'lowest_operating_point_loss'],
+      // Operating-point ranking of power inductors (owner 2026-11-14): options.lossOperatingPoint
+      // with the Inductance above as the required minimum. Isat > Ipk and Irms <= rated current
+      // are hard gates; the DCR loss orders; core loss is UNVERIFIED (no catalogue model).
+      // Nothing here is defaulted.
+      lossPoint: {
+        position: 'buckInductor',
+        required: ['inputVoltage', 'outputVoltage', 'outputCurrent', 'switchingFrequency'],
+        fields: [
+          { key: 'inputVoltage', label: 'Vin', unit: 'V', placeholder: '36' },
+          { key: 'outputVoltage', label: 'Vout', unit: 'V', placeholder: '12' },
+          { key: 'outputCurrent', label: 'Iout', unit: 'A', placeholder: '2' },
+          { key: 'switchingFrequency', label: 'fs', unit: 'Hz', placeholder: '80k' },
+          { key: 'ambientTemperature', label: 'Ambient', unit: '°C', placeholder: 'optional (stated, not applied)' },
+        ],
+        terms: [['dcr', 'DCR loss'], ['coreLoss', 'Core / AC loss']],
+        ratings: [['inductance', 'L', 'H'], ['saturationCurrent', 'Isat', 'A'], ['ratedCurrent', 'I rated', 'A'], ['dcr', 'DCR', 'Ω']],
+        derived: [['inductanceAtPeak', 'L @ Ipk', 'H'], ['peakCurrent', 'Ipk', 'A'], ['rmsCurrent', 'Irms', 'A']],
+        checks: [['saturation', 'Saturation'], ['thermal', 'Thermal']],
+      },
+      priceQuantity: true,
     },
   },
   {

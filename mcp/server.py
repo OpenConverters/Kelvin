@@ -1505,6 +1505,44 @@ def _mosfet_extras(c: dict) -> str:
     return out
 
 
+def _magnetic_extras(c: dict) -> str:
+    """One text segment per magnetic operating-point extra (owner 2026-11-14): the derived
+    L at Ipk / ripple / Ipk / Irms, the DCR and core-loss terms (or UNVERIFIED), the
+    saturation and thermal checks, over-rating, board area and price."""
+    out = ""
+    loss = c.get("loss")
+    if loss:
+        out += (f" | L@Ipk {loss['inductanceAtPeak'] * 1e6:.4g} uH, dI {loss['ripplePeakToPeak']:.3g} A"
+                f", Ipk {loss['peakCurrent']:.3g} A, Irms {loss['rmsCurrent']:.3g} A")
+        terms = []
+        for k, label in (("dcr", "DCR"), ("coreLoss", "core")):
+            t = (loss.get("terms") or {}).get(k) or {}
+            terms.append(f"{label} {_watts(t['watts'])}" if t.get("watts") is not None
+                         else f"{label} UNVERIFIED ({'; '.join(t.get('missing') or [])})")
+        total = (f"total {_watts(loss['total'])}" if loss.get("total") is not None
+                 else f"total >= {_watts(loss.get('computedSum') or 0)} (incomplete)")
+        out += f" | loss {total}: " + ", ".join(terms)
+        checks = []
+        for k in ("saturation", "thermal"):
+            ch = (loss.get("checks") or {}).get(k) or {}
+            checks.append(f"{k} {ch.get('status')}" if ch.get("status") != "unverified"
+                          else f"{k} UNVERIFIED ({'; '.join(ch.get('missing') or [])})")
+        out += " | " + ", ".join(checks)
+    over = (c.get("overRating") or {}).get("axes") or []
+    if over:
+        out += f" | over-rated {'/'.join(over)} (>3x the operating point's need; flag only)"
+    area = c.get("boardArea")
+    if area:
+        out += (f" | board {area['mm2']:.1f} mm2" if area.get("mm2") is not None
+                else " | board area not stated")
+    price = c.get("price")
+    if price:
+        q = (price.get("quotes") or [None])[0]
+        out += (f" | unit cost {q['unitCost']:.2f} {q['currency']} ({q['distributor']}; price at "
+                f"quantity not stated)" if q else " | price not stated")
+    return out
+
+
 def recommend_parts(family: str, requirements: dict, options: dict | None = None,
                     max_results: int = 12, include_envelope: bool = False) -> CallToolResult:
     """Ranked candidates for one component requirement.
@@ -1528,6 +1566,14 @@ def recommend_parts(family: str, requirements: dict, options: dict | None = None
             carries ratings, overRating (Vds/Id > 3x the requirement: noted; ranked lower except
             under lowest_operating_point_loss and the Vds/Id margin rankings),
             boardArea {mm2, basis} and price {quotes, atQuantity, basis}.
+            magnetic lossOperatingPoint {position: 'buckInductor', inputVoltage, outputVoltage,
+            outputCurrent, switchingFrequency, ambientTemperature?} with the required inductance
+            (requirements.magnetizingInductance) ranks power inductors by loss at that point
+            (tiebreaker lowest_operating_point_loss): ripple from the part's own L (read at Ipk
+            off its L(I) curve when it has one), Isat > Ipk and Irms <= rated current are hard
+            gates, the DCR loss Irms^2*DCR orders; core loss is UNVERIFIED (no catalogue model;
+            not counted in the order). Each candidate carries ratings, overRating (Isat or rated
+            current > 3x the need: flag only), boardArea and price.
         include_envelope: attach each candidate's full datasheet record (large).
     """
     key = _family(family)
@@ -1565,7 +1611,7 @@ def recommend_parts(family: str, requirements: dict, options: dict | None = None
         lines.append(f"  {c.get('mpn')} — {c.get('manufacturer')}"
                      + (f" [{dies}, ratings per die]" if dies else "")
                      + (f" | tightest margin {worst[0]} {worst[1]:.2f}x" if worst else "")
-                     + _mosfet_extras(c))
+                     + (_magnetic_extras(c) if key == "magnetic" else _mosfet_extras(c)))
     rejected = result.get("rejections") or {}
     return _result(
         f"{len(cands)} {key} candidate(s), best first "

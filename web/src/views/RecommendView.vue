@@ -97,11 +97,13 @@ const formErrors = computed(() => {
       if (Number.isNaN(v)) errs.push(`${k}: can't parse "${form().loss[k]}"`)
     }
     const given = Object.keys(lp).length
-    const core = ['inputVoltage', 'outputCurrent', 'switchingFrequency']
+    const core = f.recommend.lossPoint.required ?? ['inputVoltage', 'outputCurrent', 'switchingFrequency']
     if (given && core.some((k) => lp[k] == null)) {
-      errs.push('Operating-point loss needs Vin, Iout and fs')
+      const label = (k) => f.recommend.lossPoint.fields.find((x) => x.key === k)?.label ?? k
+      errs.push(`Operating-point loss needs ${core.map(label).join(', ')}`)
     }
-    if (given && lp.outputVoltage == null && lp.dutyCycle == null) {
+    const hasDuty = f.recommend.lossPoint.fields.some((x) => x.key === 'dutyCycle')
+    if (given && hasDuty && lp.outputVoltage == null && lp.dutyCycle == null) {
       errs.push('Operating-point loss needs Vout or a duty cycle')
     }
   }
@@ -233,12 +235,24 @@ const target = computed(() => result.value?.target ?? null)
 const COMPARE_COLUMNS = 6
 const compareCands = computed(() => candidates.value.slice(0, COMPARE_COLUMNS))
 const showCompare = computed(() => compareCands.value.some((c) => c.loss || c.boardArea || c.price))
-const LOSS_TERMS = [
+const MOSFET_LOSS_TERMS = [
   ['conduction', 'Conduction'],
   ['switching', 'Switching'],
   ['gateDrive', 'Gate drive'],
   ['coss', 'Coss'],
 ]
+// A family's lossPoint may name its own terms, ratings, derived operating-point values and
+// checks (magnetic, owner 2026-11-14); absent = the MOSFET layout.
+const LOSS_TERMS = computed(() => fam.value.recommend.lossPoint?.terms ?? MOSFET_LOSS_TERMS)
+const RATINGS = computed(() => fam.value.recommend.lossPoint?.ratings ?? null)
+const DERIVED = computed(() => fam.value.recommend.lossPoint?.derived ?? [])
+const CHECKS = computed(() => fam.value.recommend.lossPoint?.checks ?? [])
+function checkCell(c, key) {
+  const k = c.loss?.checks?.[key]
+  if (!k) return { text: '—', title: '' }
+  if (k.status === 'unverified') return { text: 'UNVERIFIED', title: (k.missing ?? []).join('; '), unverified: true }
+  return { text: k.status, title: k.basis ?? '' }
+}
 function termCell(c, key) {
   const t = c.loss?.terms?.[key]
   if (!t) return { text: '—', title: '' }
@@ -447,10 +461,16 @@ function priceCell(c) {
               </tr>
             </thead>
             <tbody>
-              <tr>
+              <tr v-if="!RATINGS">
                 <th>Vds / Id</th>
                 <td v-for="c in compareCands" :key="c.mpn">{{ si(c.ratings?.vds, 'V') }} / {{ si(c.ratings?.id, 'A') }}</td>
               </tr>
+              <template v-else>
+                <tr v-for="[k, label, unit] in RATINGS" :key="'r-' + k">
+                  <th>{{ label }}</th>
+                  <td v-for="c in compareCands" :key="c.mpn">{{ c.ratings?.[k] == null ? 'not stated' : si(c.ratings[k], unit) }}</td>
+                </tr>
+              </template>
               <tr>
                 <th>Over-rated</th>
                 <td v-for="c in compareCands" :key="c.mpn" :title="(c.overRating?.notes ?? []).join('; ')" :class="{ warnc: c.overRating?.axes?.length }">
@@ -458,6 +478,14 @@ function priceCell(c) {
                 </td>
               </tr>
               <template v-if="compareCands.some((c) => c.loss)">
+                <tr v-for="[k, label, unit] in DERIVED" :key="'d-' + k">
+                  <th>{{ label }}</th>
+                  <td v-for="c in compareCands" :key="c.mpn">{{ c.loss?.[k] == null ? '—' : si(c.loss[k], unit) }}</td>
+                </tr>
+                <tr v-for="[k, label] in CHECKS" :key="'c-' + k">
+                  <th>{{ label }}</th>
+                  <td v-for="c in compareCands" :key="c.mpn" :title="checkCell(c, k).title" :class="{ warnc: checkCell(c, k).unverified }">{{ checkCell(c, k).text }}</td>
+                </tr>
                 <tr v-for="[k, label] in LOSS_TERMS" :key="k">
                   <th>{{ label }}</th>
                   <td v-for="c in compareCands" :key="c.mpn" :title="termCell(c, k).title" :class="{ warnc: termCell(c, k).unverified }">{{ termCell(c, k).text }}</td>
