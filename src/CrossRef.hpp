@@ -464,6 +464,17 @@ inline std::string primary_rating_label(const std::string& key) {
     return it != k.end() ? it->second : param_label(key);
 }
 
+// Whether a spec states ANY physical datum: a case / package string, a body or lead-pitch
+// dimension, or a mount (connectors: `mounting`). The no-physical-data rule
+// (kNoPhysicalDataPenalty) reads it.
+inline bool states_physical_data(const json& p) {
+    for (const char* k : {"case_code", "package", "mount", "mounting"})
+        if (!str(p, k).empty()) return true;
+    for (const char* k : {"length_m", "width_m", "height_m", "lead_pitch_m"})
+        if (num(p, k)) return true;
+    return false;
+}
+
 inline bool is_hard_param(const std::string& cat, const std::string& key) {
     static const std::set<std::string> magnetic{"saturation_current", "rated_current"};
     // A connector is half of a mated pair: the other gender or another interface
@@ -557,6 +568,15 @@ inline constexpr double kVerdictFailPenalty = 3.0;
 // cost and more capacitance. A fixed step, well below a WARN (0.5), so it only orders among
 // otherwise-equal candidates; grade and direction are unchanged.
 inline constexpr double kGrossOverRatingFactor = 3.0;
+// A candidate that states NO physical data at all — no case / package string, no body or lead
+// dimension, no mount — against an original that states at least one (owner 2026-11-14;
+// states_physical_data): capped at minor_review, a note, and this small step on top of the
+// unknown-footprint penalty, so parts of a known size rank first. Below a WARN: it orders, it
+// does not judge (Qarlos r31 seed 34608982: Vishay D2TO020C1R910FTE3, whose record states no
+// case at all, against a Bourns 0201 chip).
+inline constexpr double kNoPhysicalDataPenalty = 0.25;
+static_assert(kNoPhysicalDataPenalty < kVerdictWarnPenalty,
+              "the no-physical-data step must stay below a WARN");
 inline constexpr double kGrossOverRatingPenalty = 0.15;
 static_assert(kGrossOverRatingPenalty < kVerdictWarnPenalty / 2,
               "Y4: the over-rating step must stay well below a WARN");
@@ -1611,6 +1631,41 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 demote();
                 penalty += opt.gate_weight * kVerdictFailPenalty;
                 missing_required_data = true;
+            }
+        } else if (const auto o_ac = num(original, "voltage_ac")) {
+            // An original with no safety class that still states an AC rating (a film
+            // capacitor rated 500 V DC / 250 V AC): the AC rating is a rating of its own, and
+            // the DC one is not it. Qarlos r28 seed 33352234: Vishay MKP1847H61525JP4 (250 V
+            // AC) took WIMA DC-LINK parts whose records state no AC rating, with no AC verdict
+            // or note. Rule (owner 2026-11-14):
+            //   * both stated -> compared like the rated voltage (the capacitor "voltage"
+            //     critical rating: HigherBetter, WARN below 0.95x, FAIL below 0.9x rejects);
+            //   * the substitute states none -> UNVERIFIED with a note (no cap, no penalty);
+            //   * the original states none -> nothing is compared.
+            const auto s_ac = num(cand, "voltage_ac");
+            char buf[160];
+            if (!s_ac) {
+                params.push_back({{"name", "voltage_ac"}, {"verdict", UNVERIFIED}});
+                std::snprintf(buf, sizeof buf, "%g V AC", *o_ac);
+                notes.push_back(std::string("the original is rated ") + buf +
+                                "; the substitute's record states no AC rating, so its AC "
+                                "rating could not be compared (its DC rating is not that "
+                                "rating) — confirm it on the datasheet before an AC duty");
+            } else {
+                const auto v =
+                    score_directional(o_ac, s_ac, Mode::HigherBetter, 0.95, 0.9);
+                params.push_back({{"name", "voltage_ac"}, {"verdict", v.verdict}});
+                if (v.verdict == FAIL || v.verdict == WARN) {
+                    std::snprintf(buf, sizeof buf, "%g V AC against the original's %g V AC",
+                                  *s_ac, *o_ac);
+                    notes.push_back(std::string("AC rating below the original's: ") + buf +
+                                    " — less margin to the circuit's AC voltage; confirm the "
+                                    "application's worst-case AC voltage is covered");
+                    if (v.verdict == FAIL)
+                        return reject("AC voltage rating falls far below the original's");
+                    demote();
+                    penalty += opt.gate_weight * v.penalty;
+                }
             }
         }
     }
@@ -5779,6 +5834,27 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                         "requirement there — capped below drop_in; confirm the original's "
                         "rating from its datasheet before this swap");
     }
+    // No physical data on the candidate at all while the original states some (owner
+    // 2026-11-14; kNoPhysicalDataPenalty): capped, a small extra penalty, and a note.
+    const bool cand_no_physical_data = (opt.check_footprint || cat == "connector") &&
+                                       states_physical_data(original) &&
+                                       !states_physical_data(cand);
+    if (cand_no_physical_data) {
+        demote();
+        penalty += opt.footprint_weight * kNoPhysicalDataPenalty;
+        // When the mount gate has already reported the missing mount (mount_unverified), this
+        // note leaves the mount out: one mount note per candidate (owner 2026-11-14; the
+        // connector guard "exactly one mount verdict and one note").
+        notes.push_back(mount_unverified
+                            ? "the substitute's record states no physical data at all (no case "
+                              "or package, no dimensions; its board attach is noted separately) "
+                              "— its size is unknown, so it ranks after parts of a known size; "
+                              "confirm the package from its datasheet before this swap"
+                            : "the substitute's record states no physical data at all (no case or "
+                              "package, no dimensions, no mount) — its size and how it mounts are "
+                              "unknown, so it ranks after parts of a known size; confirm the "
+                              "package from its datasheet before this swap");
+    }
     if (!both_unstated_primary.empty()) {
         std::string axes;
         for (size_t i = 0; i < both_unstated_primary.size(); ++i)
@@ -5887,6 +5963,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //   a primary RATING stated by the substitute and NOT by
     //     the original (owner 2026-11-13, Y2; axes listed in
     //     is_primary_rating; orig_unstated_primary)            primary    note, cap minor_review
+    //   a candidate stating no physical data at all (no case /
+    //     package, dimension or mount) while the original states
+    //     some (owner 2026-11-14; kNoPhysicalDataPenalty)    primary    note, small penalty,
+    //                                                                    cap minor_review
     //   a primary RATING real for the original's technology
     //     (both_unknown_cap_applies) stated by NEITHER record
     //     (owner 2026-11-14; both_unstated_primary)           primary    note, cap minor_review
@@ -5928,7 +6008,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                     mount_unverified || timebase_pin_unverified ||
                                     timebase_prog_order || current_rating_one_sided ||
                                     !orig_unstated_primary.empty() ||
-                                    !both_unstated_primary.empty();
+                                    !both_unstated_primary.empty() || cand_no_physical_data;
     out["grade"] = grade_for(status, tier, any_warn, any_fail, primary_unverified,
                              missing_required_data || connector_identity_gaps_major ||
                                  timebase_tech_major,
