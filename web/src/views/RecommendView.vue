@@ -33,6 +33,8 @@ function form() {
       diversity: true,
       allowlist: [],
       maxCandidates: 25,
+      loss: {}, // lossOperatingPoint field key -> raw text
+      priceQuantity: '',
     }
   }
   return forms[fam.value.key]
@@ -69,6 +71,18 @@ function parsedField(field) {
   return field.scale ? v * field.scale : v
 }
 
+// The operating-point loss inputs the user filled in (blank = not given, never defaulted).
+function lossPointValues() {
+  const out = {}
+  for (const field of fam.value.recommend.lossPoint?.fields ?? []) {
+    const raw = form().loss[field.key]
+    if (raw == null || String(raw).trim() === '') continue
+    const v = parseSI(raw)
+    out[field.key] = v == null ? NaN : v
+  }
+  return out
+}
+
 const formErrors = computed(() => {
   const errs = []
   const f = fam.value
@@ -76,6 +90,24 @@ const formErrors = computed(() => {
     const v = parsedField(field)
     if (Number.isNaN(v)) errs.push(`${field.label}: can't parse "${form().text[field.key]}"`)
     else if (v == null && field.required) errs.push(`${field.label} is required`)
+  }
+  if (f.recommend.lossPoint) {
+    const lp = lossPointValues()
+    for (const [k, v] of Object.entries(lp)) {
+      if (Number.isNaN(v)) errs.push(`${k}: can't parse "${form().loss[k]}"`)
+    }
+    const given = Object.keys(lp).length
+    const core = ['inputVoltage', 'outputCurrent', 'switchingFrequency']
+    if (given && core.some((k) => lp[k] == null)) {
+      errs.push('Operating-point loss needs Vin, Iout and fs')
+    }
+    if (given && lp.outputVoltage == null && lp.dutyCycle == null) {
+      errs.push('Operating-point loss needs Vout or a duty cycle')
+    }
+  }
+  if (f.recommend.priceQuantity && form().priceQuantity !== '') {
+    const q = parseSI(form().priceQuantity)
+    if (q == null || Number.isNaN(q) || !(q > 0)) errs.push('Price quantity must be a positive number')
   }
   if (f.recommend.contextRequired) {
     if (!form().topology) errs.push('Topology is required')
@@ -114,6 +146,11 @@ async function run() {
     options.inputVoltage = parseSI(st.inputVoltage)
     options.switchingFrequency = parseSI(st.switchingFrequency)
   }
+  if (f.recommend.lossPoint) {
+    const lp = lossPointValues()
+    if (Object.keys(lp).length) options.lossOperatingPoint = { position: f.recommend.lossPoint.position, ...lp }
+  }
+  if (f.recommend.priceQuantity && st.priceQuantity !== '') options.priceQuantity = parseSI(st.priceQuantity)
   if (st.diversity) options.maxManufacturerFraction = 0.2
   if (st.allowlist.length) options.manufacturerAllowlist = st.allowlist
 
@@ -189,6 +226,56 @@ function openPart(c) {
 }
 
 const target = computed(() => result.value?.target ?? null)
+
+// Side-by-side comparison (owner 2026-11-14): the operating-point loss terms, the over-rating
+// notes, board area and price of the first candidates, one column each. Every cell carries
+// its basis as a tooltip; an UNVERIFIED term says what is missing instead of a number.
+const COMPARE_COLUMNS = 6
+const compareCands = computed(() => candidates.value.slice(0, COMPARE_COLUMNS))
+const showCompare = computed(() => compareCands.value.some((c) => c.loss || c.boardArea || c.price))
+const LOSS_TERMS = [
+  ['conduction', 'Conduction'],
+  ['switching', 'Switching'],
+  ['gateDrive', 'Gate drive'],
+  ['coss', 'Coss'],
+]
+function termCell(c, key) {
+  const t = c.loss?.terms?.[key]
+  if (!t) return { text: '—', title: '' }
+  if (t.watts == null) return { text: 'UNVERIFIED', title: (t.missing ?? []).join('; '), unverified: true }
+  return { text: si(t.watts, 'W'), title: t.basis ?? '' }
+}
+function totalCell(c) {
+  if (!c.loss) return { text: '—', title: '' }
+  if (c.loss.total == null) {
+    return {
+      text: `≥ ${si(c.loss.computedSum, 'W')}`,
+      title: `incomplete: ${(c.loss.unverified ?? []).join(', ')} not computed`,
+      unverified: true,
+    }
+  }
+  return { text: si(c.loss.total, 'W'), title: (c.loss.notes ?? []).join('; ') }
+}
+function areaCell(c) {
+  const a = c.boardArea
+  if (!a) return { text: '—', title: '' }
+  if (a.mm2 == null) return { text: 'not stated', title: a.basis ?? '', unverified: true }
+  return { text: `${a.mm2.toFixed(1)} mm²`, title: a.basis ?? '' }
+}
+function priceCell(c) {
+  const p = c.price
+  if (!p) return { text: '—', title: '' }
+  const q = (p.quotes ?? [])[0]
+  if (p.atQuantity != null) return { text: `${p.atQuantity.toFixed(2)} ${p.currency}`, title: p.basis ?? '' }
+  if (q) {
+    return {
+      text: `${q.unitCost.toFixed(2)} ${q.currency} (unit)`,
+      title: `${q.distributor}${q.moq != null ? `, MOQ ${q.moq}` : ''} — ${p.basis ?? ''}`,
+      unverified: true,
+    }
+  }
+  return { text: 'not stated', title: p.basis ?? '', unverified: true }
+}
 </script>
 
 <template>
@@ -242,6 +329,19 @@ const target = computed(() => result.value?.target ?? null)
         <label v-for="opt in fam.recommend.options ?? []" :key="opt.key" class="field">
           <span>{{ opt.label }} <template v-if="opt.unit">({{ opt.unit }})</template></span>
           <input v-model="form().text[opt.key]" :placeholder="opt.placeholder" />
+        </label>
+
+        <fieldset v-if="fam.recommend.lossPoint" class="loss-point">
+          <legend>Operating-point loss <span class="dim">({{ fam.recommend.lossPoint.position }})</span></legend>
+          <label v-for="lf in fam.recommend.lossPoint.fields" :key="lf.key" class="field">
+            <span>{{ lf.label }} <template v-if="lf.unit">({{ lf.unit }})</template></span>
+            <input v-model="form().loss[lf.key]" :placeholder="lf.placeholder" />
+          </label>
+        </fieldset>
+
+        <label v-if="fam.recommend.priceQuantity" class="field">
+          <span>Price at quantity</span>
+          <input v-model="form().priceQuantity" placeholder="1000" />
         </label>
 
         <label v-if="fam.recommend.roleToggle" class="check">
@@ -337,7 +437,50 @@ const target = computed(() => result.value?.target ?? null)
           <p class="hint">Loosen the dominant gate above and re-run.</p>
         </div>
 
-        <ol v-else-if="candidates.length" class="cand-list">
+        <template v-else-if="candidates.length">
+        <div v-if="showCompare" class="compare-wrap">
+          <table class="compare mono">
+            <thead>
+              <tr>
+                <th />
+                <th v-for="c in compareCands" :key="c.mpn">{{ c.mpn }}<br><span class="dim">{{ c.manufacturer }}</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th>Vds / Id</th>
+                <td v-for="c in compareCands" :key="c.mpn">{{ si(c.ratings?.vds, 'V') }} / {{ si(c.ratings?.id, 'A') }}</td>
+              </tr>
+              <tr>
+                <th>Over-rated</th>
+                <td v-for="c in compareCands" :key="c.mpn" :title="(c.overRating?.notes ?? []).join('; ')" :class="{ warnc: c.overRating?.axes?.length }">
+                  {{ c.overRating?.axes?.length ? c.overRating.axes.join(', ') : 'no' }}
+                </td>
+              </tr>
+              <template v-if="compareCands.some((c) => c.loss)">
+                <tr v-for="[k, label] in LOSS_TERMS" :key="k">
+                  <th>{{ label }}</th>
+                  <td v-for="c in compareCands" :key="c.mpn" :title="termCell(c, k).title" :class="{ warnc: termCell(c, k).unverified }">{{ termCell(c, k).text }}</td>
+                </tr>
+                <tr class="total">
+                  <th>Total loss</th>
+                  <td v-for="c in compareCands" :key="c.mpn" :title="totalCell(c).title" :class="{ warnc: totalCell(c).unverified }">{{ totalCell(c).text }}</td>
+                </tr>
+              </template>
+              <tr>
+                <th>Board area</th>
+                <td v-for="c in compareCands" :key="c.mpn" :title="areaCell(c).title" :class="{ warnc: areaCell(c).unverified }">{{ areaCell(c).text }}</td>
+              </tr>
+              <tr>
+                <th>Price<template v-if="compareCands[0]?.price?.quantity"> @ {{ compareCands[0].price.quantity }}</template></th>
+                <td v-for="c in compareCands" :key="c.mpn" :title="priceCell(c).title" :class="{ warnc: priceCell(c).unverified }">{{ priceCell(c).text }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p class="hint">Hover a cell for its basis. UNVERIFIED = the record (or the operating point) lacks what the term needs; nothing is estimated.</p>
+        </div>
+
+        <ol class="cand-list">
           <li v-for="(c, i) in candidates" :key="c.mpn" class="cand">
             <header class="cand-head">
               <span class="rank mono">{{ String(i + 1).padStart(2, '0') }}</span>
@@ -363,6 +506,7 @@ const target = computed(() => result.value?.target ?? null)
             </div>
           </li>
         </ol>
+        </template>
 
         <p v-else-if="ran && result && !busy" class="idle">Selection returned no candidate list.</p>
       </section>
@@ -421,6 +565,16 @@ const target = computed(() => result.value?.target ?? null)
 .rej-bar i { display: block; height: 100%; background: var(--warm); opacity: 0.75; }
 .rej-n { font-size: 10px; text-align: right; color: var(--ink); }
 .hint { font-size: 11px; color: var(--ink-dim); }
+.loss-point { border: 1px solid var(--line-soft); border-radius: 6px; padding: 8px 10px; display: flex; flex-direction: column; gap: 8px; }
+.loss-point legend { font-size: 11px; color: var(--ink-dim); padding: 0 4px; }
+.compare-wrap { overflow-x: auto; margin-bottom: 12px; }
+.compare { border-collapse: collapse; font-size: 11px; min-width: 100%; }
+.compare th, .compare td { border: 1px solid var(--line-soft); padding: 4px 8px; text-align: right; white-space: nowrap; }
+.compare thead th { text-align: center; color: var(--k-hi); }
+.compare tbody th { text-align: left; color: var(--ink-dim); font-weight: normal; }
+.compare tr.total td { color: var(--k-hi); }
+.compare .warnc { color: var(--warm); }
+.compare .dim { color: var(--ink-dim); }
 
 @media (max-width: 1100px) {
   .split { grid-template-columns: 1fr; }
