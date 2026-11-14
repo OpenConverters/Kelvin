@@ -2207,23 +2207,33 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         std::snprintf(b, sizeof b, "%g Hz", f);
         return std::string(b);
     };
-    // ── the useful band of a capacitor's impedance-type curves (owner 2026-11-14) ──────
-    // |Z|(f), ESL(f) and ESR(f) are judged only from the original's stated rating frequency
-    // (its ESR test frequency, esrFrequency, when the record states one; 1 MHz when it does
-    // not — an ESR Kelvin itself read off the curve at 100 kHz, esr_from_curve, is not a
-    // stated frequency) up to the original's self-resonance: the minimum of its |Z| curve. When
-    // that minimum is the curve's last sample, |Z| is still falling where the measurement
-    // stops and the resonance lies above it, so the band ends at the curve's end (all that is
-    // known to be below resonance). No |Z| curve on the original -> no self-resonance on
-    // record, no band, the curves are not graded. (The catalogue states no SRF field for
+    // ── the useful bands of a capacitor's impedance-type curves (owner 2026-11-14) ─────
+    // |Z|(f) and ESR(f) are judged only BELOW the original's self-resonance: from its stated
+    // rating frequency (its ESR test frequency, esrFrequency, when the record states one;
+    // 1 MHz when it does not — an ESR Kelvin itself read off the curve at 100 kHz,
+    // esr_from_curve, is not a stated frequency) up to the original's self-resonance: the
+    // minimum of its |Z| curve. When that minimum is the curve's last sample, |Z| is still
+    // falling where the measurement stops and the resonance lies above it, so the band ends at
+    // the curve's end (all that is known to be below resonance). No |Z| curve on the original
+    // -> its self-resonance is unknown: the ESR curve is then graded from the band start up to
+    // the end of the common range, with a note saying so (owner decision 2026-11-14, 1).
+    // ESL(f) is extracted from the INDUCTIVE region, so it gets its own band: from the
+    // original's self-resonance upward to the end of the common range (owner decision
+    // 2026-11-14, 2). Self-resonance unknown (no |Z| curve, or |Z| still falling at the end
+    // of its curve so the resonance lies somewhere above the measured range) -> no ESL band,
+    // ESL is not graded (UNVERIFIED + note). (The catalogue states no SRF field for
     // capacitors, and every record with a C(f) curve also carries |Z|, so |Z| is the source.)
-    // Points outside the band are not graded; the note names the band.
-    struct UsefulBand {
+    // Points outside a band are not graded; the note names the band.
+    struct CurveBand {
         std::optional<std::pair<double, double>> band;
         std::string why;  // the band in words, or why there is none
     };
-    const UsefulBand useful_band = [&]() -> UsefulBand {
-        UsefulBand u;
+    struct UsefulBands {
+        CurveBand below;  // |Z| and ESR: rating frequency .. self-resonance
+        CurveBand esl;    // ESL: self-resonance .. end of the common range
+    };
+    const UsefulBands useful_band = [&]() -> UsefulBands {
+        UsefulBands u;
         if (cat != "capacitor") return u;
         char buf[320];
         const auto o_f = num(original, "esr_frequency");
@@ -2236,8 +2246,14 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                              : std::string("1 MHz (the original states no rating frequency)");
         const auto oz = curve_from_spec(original, "impedance_curve");
         if (!oz) {
-            u.why = "the original carries no |Z| curve, so its self-resonance (the top of the "
-                    "useful band) is not on record";
+            // Open-topped: compare_curves clips the band to the two curves' common range.
+            u.below.band = std::make_pair(lo, HUGE_VAL);
+            u.below.why = "useful band from " + lo_what +
+                          " up to the end of the common range; the original carries no |Z| "
+                          "curve, so its self-resonance is unknown and the band's top is not "
+                          "on record; points below the band are not graded";
+            u.esl.why = "the original carries no |Z| curve, so its self-resonance (where the "
+                        "inductive region the ESL is extracted from begins) is unknown";
             return u;
         }
         const auto& zy = oz->curve.y;
@@ -2249,16 +2265,27 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             at_end ? "the end of the original's |Z| curve at " + hz(hi) +
                          " (|Z| still falling there; its self-resonance lies above)"
                    : "the original's self-resonance (|Z| minimum) at " + hz(hi);
+        if (at_end) {
+            u.esl.why = "the original's |Z| is still falling at the end of its curve at " +
+                        hz(hi) +
+                        ", so its self-resonance (where the inductive region the ESL is "
+                        "extracted from begins) lies above the measured range and is unknown";
+        } else {
+            u.esl.band = std::make_pair(hi, HUGE_VAL);
+            u.esl.why = "ESL band from the original's self-resonance (|Z| minimum) at " + hz(hi) +
+                        " up to the end of the common range (ESL is extracted from the "
+                        "inductive region); points below it are not graded";
+        }
         if (lo > hi) {
             std::snprintf(buf, sizeof buf,
                           "no useful band: %s lies below %s",
                           hi_what.c_str(), lo_what.c_str());
-            u.why = buf;
+            u.below.why = buf;
             return u;
         }
-        u.band = std::make_pair(lo, hi);
-        u.why = "useful band from " + lo_what + " to " + hi_what +
-                "; points outside it are not graded";
+        u.below.band = std::make_pair(lo, hi);
+        u.below.why = "useful band from " + lo_what + " to " + hi_what +
+                      "; points outside it are not graded";
         return u;
     }();
     // ESR (a): both records carry an ESR-vs-frequency curve -> compared on the overlap of the
@@ -2281,21 +2308,21 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             const std::string cond = conditions_differ(*oc, *sc);
             auto row = [&](const char* v) { params.push_back({{"name", "esr_curve"}, {"verdict", v}}); };
             if (!cond.empty()) row(UNVERIFIED);
-            else if (!useful_band.band) row(UNVERIFIED);
+            else if (!useful_band.below.band) row(UNVERIFIED);
             if (!cond.empty()) {
                 notes.push_back("ESR curves measured under different conditions (" + cond +
                                 ") — the curves were not compared");
-            } else if (!useful_band.band) {
-                notes.push_back("ESR curves not compared: " + useful_band.why);
+            } else if (!useful_band.below.band) {
+                notes.push_back("ESR curves not compared: " + useful_band.below.why);
             } else {
                 const CurveVerdict v = compare_curves(oc->curve, sc->curve, esr_spec,
-                                                      Interp::LogLog, useful_band.band);
+                                                      Interp::LogLog, useful_band.below.band);
                 row(v.verdict);
                 if (v.verdict == std::string(UNVERIFIED)) {
                     notes.push_back("ESR curves do not meet inside the useful band (original " +
                                     hz(oc->curve.x.front()) + " to " + hz(oc->curve.x.back()) +
                                     ", substitute " + hz(sc->curve.x.front()) + " to " +
-                                    hz(sc->curve.x.back()) + "; " + useful_band.why +
+                                    hz(sc->curve.x.back()) + "; " + useful_band.below.why +
                                     ") — the curves were not compared");
                 } else {
                     char buf[640];
@@ -2305,7 +2332,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                   "%.4g ohm (%s)",
                                   v.range->first, v.range->second, v.points,
                                   v.verdict == std::string(PASS) ? "passes everywhere, tightest" : "worst",
-                                  v.worst_x, v.sub_y, v.orig_y, useful_band.why.c_str());
+                                  v.worst_x, v.sub_y, v.orig_y, useful_band.below.why.c_str());
                     notes.push_back(buf);
                     if (v.verdict == std::string(FAIL)) {
                         demote();
@@ -3025,7 +3052,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // a comparison and adds nothing.
     auto curve_param = [&](const char* key, const char* name, const char* what, const char* unit,
                            const char* x_what, const char* x_unit, const ParamSpec& spec,
-                           const char* spec_named, Interp interp, bool banded = false) {
+                           const char* spec_named, Interp interp,
+                           const CurveBand* banded = nullptr) {
         const auto oc = curve_from_spec(original, key), sc = curve_from_spec(cand, key);
         if (!oc || !sc) return;
         char buf[800];
@@ -3036,14 +3064,14 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                             cond + ") — not compared");
             return;
         }
-        // `banded`: an impedance-type curve, graded only inside the original's useful band.
-        if (banded && !useful_band.band) {
+        // `banded`: an impedance-type curve, graded only inside that band of the original's.
+        if (banded && !banded->band) {
             params.push_back({{"name", name}, {"verdict", UNVERIFIED}});
-            notes.push_back(std::string(what) + " curves not compared: " + useful_band.why);
+            notes.push_back(std::string(what) + " curves not compared: " + banded->why);
             return;
         }
         const CurveVerdict v = compare_curves(oc->curve, sc->curve, spec, interp,
-                                              banded ? useful_band.band : std::nullopt);
+                                              banded ? banded->band : std::nullopt);
         params.push_back({{"name", name}, {"verdict", v.verdict}});
         if (v.verdict == std::string(UNVERIFIED)) {
             std::snprintf(buf, sizeof buf,
@@ -3052,7 +3080,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                           what, banded ? "meet inside the useful band" : "overlap",
                           oc->curve.x.front(), oc->curve.x.back(), x_unit,
                           sc->curve.x.front(), sc->curve.x.back(), x_unit, banded ? "; " : "",
-                          banded ? useful_band.why.c_str() : "");
+                          banded ? banded->why.c_str() : "");
             notes.push_back(buf);
             return;
         }
@@ -3063,7 +3091,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                       what, x_what, v.range->first, v.range->second, x_unit, v.points,
                       interp == Interp::LogLog ? "log-log" : "linear", spec_named,
                       ok ? "passes everywhere, tightest" : "worst", v.worst_x, x_unit, v.sub_y, unit, v.orig_y,
-                      unit, banded ? " (" : "", banded ? useful_band.why.c_str() : "",
+                      unit, banded ? " (" : "", banded ? banded->why.c_str() : "",
                       banded ? ")" : "");
         notes.push_back(buf);
         if (v.verdict == std::string(FAIL)) {
@@ -3104,15 +3132,16 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                             std::nullopt, false, false, nullptr, 0.90};
         static const ParamSpec kEslSpec{"esl", Dir::Lower, 1.5, std::nullopt, false, false,
                                         nullptr};
-        // |Z| and ESL are graded only inside the original's useful band (useful_band above);
+        // |Z| is graded only below the original's self-resonance, ESL only above it
+        // (useful_band above);
         // C(f) is read only below self-resonance already (leading_positive), DC bias unchanged.
         curve_param("impedance_curve", "impedance_curve", "|Z|", "ohm", "frequency", "Hz",
-                    kImpedanceSpec, "ESR spec", Interp::LogLog, /*banded=*/true);
+                    kImpedanceSpec, "ESR spec", Interp::LogLog, &useful_band.below);
         curve_param("capacitance_frequency_curve", "capacitance_frequency_curve",
                     "capacitance vs frequency", "F", "frequency", "Hz", kCapFreqSpec,
                     "capacitance spec", Interp::LogLog);
         curve_param("esl_curve", "esl_curve", "ESL", "H", "frequency", "Hz", kEslSpec,
-                    "ESR spec", Interp::LogLog, /*banded=*/true);
+                    "ESR spec", Interp::LogLog, &useful_band.esl);
     }
 
     // ── transformer turns ratio (owner 2026-11-13, R2; W4) ───────────────────
