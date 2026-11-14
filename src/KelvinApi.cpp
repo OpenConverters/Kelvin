@@ -370,7 +370,8 @@ json Engine::select(const std::string& category, const json& req, const json& op
                 if (t.is_string()) c.technology_allowed.insert(t.get<std::string>());
         }
         c.exclude_discontinued = opt_bool(options, "excludeDiscontinued", true);
-        // Gross over-rating tier: on for every recommendation served (owner 2026-11-14).
+        // Gross over-rating: flagged on every recommendation served, ranked as a tier except
+        // under the operating-point loss and the Vds / Id margin rankings (owner 2026-11-14).
         c.over_rating_tier = true;
         // Optional real operating-point override (KH-mode loss ranking on measured stresses).
         if (options.contains("operatingPoint")) {

@@ -104,7 +104,9 @@ struct MosfetConstraints {
     // applied to recommendations): a candidate whose Vds or Id is more than 3x the requirement
     // sinks below the candidates of its evidence tier that are not, with a note; never
     // excluded. On for every recommendation the Engine serves; the Python-parity harness
-    // (selector.py has no such rule) runs the core with it off.
+    // (selector.py has no such rule) runs the core with it off. Under
+    // lowest_operating_point_loss, highest_vds_margin and highest_id_margin it is a flag and a
+    // note only, not a tier (owner 2026-11-14).
     // Price at this quantity (options.priceQuantity), echoed per candidate; nullopt = none asked.
     std::optional<double> price_quantity;
     bool over_rating_tier = false;

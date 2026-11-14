@@ -126,6 +126,9 @@ TEST_CASE("mosfet loss: every term read off the record's curves at the operating
           std::string::npos);
     // Vin Iout (Qgs + Qgd) / Ig fs.
     CHECK(*b.switching.watts == Approx(36.0 * 2 * 7e-9 / 1.5 * 80e3).epsilon(1e-6));
+    // Qgs+Qgd as stated (owner 2026-11-14, decision 3): the basis says it is an upper bound.
+    CHECK(b.switching.basis.find("the record states no Qgs2, so this is an upper bound") !=
+          std::string::npos);
     // Qg at 8 V: first crossing above the 4.5 V plateau, 7 + 3.5/5.5*13 nC.
     const double qg8 = (7 + 3.5 / 5.5 * 13) * 1e-9;
     CHECK(*b.gate_drive.watts == Approx(qg8 * 8 * 80e3).epsilon(1e-5));
@@ -328,5 +331,74 @@ TEST_CASE("mosfet board area and price: resolved land, stated unit cost, no inve
     CHECK(p.at("quotes")[0].at("unitCost").get<double>() == Approx(2.45));
     CHECK(nocase.at("price").at("quotes").empty());
     CHECK_THROWS_AS(eng.select("mosfet", req, {{"priceQuantity", "1000"}}), InvalidOptions);
+    fs::remove_all(dir);
+}
+
+// Owner 2026-11-14 (decision 2): under lowest_operating_point_loss the total loss alone sets the
+// order after the UNVERIFIED key — over-rating is a flag and a note, and the evidence / thermal
+// tiers do not reorder it; under highest_vds_margin / highest_id_margin the over-rating tier is
+// off; every other ranking keeps it. Real records from the frozen catalogue (data-524a699):
+//   CSD19537Q3       TI, 100 V / 12 A, 19 mohm — Id over-rated (6x)
+//   IGLD60R190D1     Infineon GaN, 600 V / 5 A — Vds over-rated (13.9x)
+//   NTMFD5C680NLT1G  onsemi dual, 60 V / 20 A — Id over-rated, no thermal data, datasheet unusable
+//   AO4286           AOS, 100 V / 4 A, 68 mohm — not over-rated
+TEST_CASE("mosfet over-rating: a flag under the loss and margin rankings, a tier elsewhere",
+          "[mosfet_overrating]") {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::path(KELVIN_TEST_DIR) / "_mosfet_op_loss_ranking";
+    fs::create_directories(dir);
+    fs::copy_file(fs::path(KELVIN_TEST_DIR) / "fixtures" / "mosfets_op_loss_ranking.ndjson",
+                  dir / "mosfets.ndjson", fs::copy_options::overwrite_existing);
+    api::Engine eng(dir.string(), "", /*quiet=*/true);
+    const json req = {{"ratedDrainSourceVoltage", 43.2},
+                      {"ratedContinuousDrainCurrent", 2},
+                      {"maximumOnResistance", 1}};
+    auto mpns = [](const json& r) {
+        std::vector<std::string> v;
+        for (const auto& c : r.at("candidates")) v.push_back(c.at("mpn").get<std::string>());
+        return v;
+    };
+    auto note_of = [](const json& r, const std::string& mpn) {
+        for (const auto& c : r.at("candidates"))
+            if (c.at("mpn") == mpn) return c.at("overRating").at("notes")[0].get<std::string>();
+        throw std::runtime_error("no " + mpn);
+    };
+
+    // Operating-point loss (Su et al. point, 10 V / 1 A drive): loss order, over-rated or not.
+    const json op = {{"position", "buckHighSide"}, {"inputVoltage", 36}, {"outputVoltage", 12},
+                     {"outputCurrent", 2}, {"switchingFrequency", 80e3},
+                     {"gateDriveVoltage", 10}, {"gateDriveCurrent", 1}};
+    json r = eng.select("mosfet", req, {{"lossOperatingPoint", op}, {"includeEnvelope", false}});
+    REQUIRE(r.at("candidates").size() == 4);
+    const std::vector<std::string> by_loss = mpns(r);
+    CHECK(std::vector<std::string>(by_loss.begin(), by_loss.begin() + 3) ==
+          std::vector<std::string>{"CSD19537Q3", "NTMFD5C680NLT1G", "AO4286"});
+    double prev = 0;
+    for (const auto& c : r.at("candidates")) {
+        if (c.at("loss").at("total").is_null()) continue;  // UNVERIFIED ranks after: not here
+        CHECK(c.at("loss").at("total").get<double>() >= prev);
+        prev = c.at("loss").at("total").get<double>();
+    }
+    CHECK(r.at("candidates")[0].at("overRating").at("axes") == json::array({"id"}));
+    // Decision 3: CSD19537Q3's switching term is Qgs+Qgd as stated, named an upper bound.
+    CHECK(r.at("candidates")[0].at("loss").at("terms").at("switching").at("basis")
+              .get<std::string>().find("the record states no Qgs2, so this is an upper bound") !=
+          std::string::npos);
+    CHECK(note_of(r, "CSD19537Q3").find("flagged only: the operating-point loss alone sets the order") !=
+          std::string::npos);
+
+    // lowest_rds_on keeps the tier: AO4286 (not over-rated) first, the incomplete record last.
+    r = eng.select("mosfet", req, {{"tiebreaker", "lowest_rds_on"}, {"includeEnvelope", false}});
+    CHECK(mpns(r) == std::vector<std::string>{"AO4286", "CSD19537Q3", "IGLD60R190D1",
+                                              "NTMFD5C680NLT1G"});
+    CHECK(note_of(r, "CSD19537Q3").find("ranked after closer-rated parts") != std::string::npos);
+
+    // Vds / Id margin rankings: no tier — the highest rating is what was asked for.
+    r = eng.select("mosfet", req, {{"tiebreaker", "highest_vds_margin"}, {"includeEnvelope", false}});
+    CHECK(mpns(r).front() == "IGLD60R190D1");
+    CHECK(note_of(r, "IGLD60R190D1").find("flagged only: this ranking does not demote it") !=
+          std::string::npos);
+    r = eng.select("mosfet", req, {{"tiebreaker", "highest_id_margin"}, {"includeEnvelope", false}});
+    CHECK(mpns(r).front() == "CSD19537Q3");
     fs::remove_all(dir);
 }

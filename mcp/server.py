@@ -1525,7 +1525,8 @@ def recommend_parts(family: str, requirements: dict, options: dict | None = None
             drive and Coss terms from datasheet values only, each with its basis; a term whose
             input is missing is UNVERIFIED (never estimated) and ranks after complete ones.
             mosfet priceQuantity: the quantity the price is asked at. Every mosfet candidate
-            carries ratings, overRating (Vds/Id > 3x the requirement: ranked lower, noted),
+            carries ratings, overRating (Vds/Id > 3x the requirement: noted; ranked lower except
+            under lowest_operating_point_loss and the Vds/Id margin rankings),
             boardArea {mm2, basis} and price {quotes, atQuantity, basis}.
         include_envelope: attach each candidate's full datasheet record (large).
     """

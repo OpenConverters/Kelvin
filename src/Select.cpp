@@ -217,15 +217,30 @@ json select_mosfet(const Shard<MosfetRow>& shard, const MosfetConstraints& c, Mo
             axes.push_back("id");
         return axes;
     };
+    // The tier ranks only where the ranking itself does not already weigh the rating (owner
+    // 2026-11-14): under the operating-point loss the loss decides (over-rating is a flag and a
+    // note), and under highest_vds_margin / highest_id_margin a higher rating is what was asked
+    // for. Everywhere else it stays a tier.
+    const bool over_rating_ranks = c.over_rating_tier && !op_loss_mode &&
+                                   tb != MosfetTiebreaker::HighestVdsMargin &&
+                                   tb != MosfetTiebreaker::HighestIdMargin;
     auto over_rated = [&](const MosfetRow* m) -> size_t {
-        return c.over_rating_tier ? over_rated_axes(m).size() : 0;
+        return over_rating_ranks ? over_rated_axes(m).size() : 0;
+    };
+    // Under the operating-point loss, total loss alone sets the order after the UNVERIFIED key
+    // (owner 2026-11-14): the evidence / thermal tiers do not reorder it.
+    auto evidence_tier = [&](const MosfetRow* m) -> int {
+        return !op_loss_mode && m->evidence_incomplete() ? 1 : 0;
+    };
+    auto thermal_tier = [&](const MosfetRow* m) -> int {
+        return !op_loss_mode && m->no_thermal() ? 1 : 0;
     };
     // tuple (evidence_incomplete, no_thermal, metric, lineno) ascending — mirrors Python min().
     std::sort(passing.begin(), passing.end(), [&](const MosfetRow* a, const MosfetRow* b) {
-        auto ka = std::make_tuple(unverified_terms(a), a->evidence_incomplete() ? 1 : 0,
-                                  a->no_thermal() ? 1 : 0, over_rated(a), metric(a), a->lineno);
-        auto kb = std::make_tuple(unverified_terms(b), b->evidence_incomplete() ? 1 : 0,
-                                  b->no_thermal() ? 1 : 0, over_rated(b), metric(b), b->lineno);
+        auto ka = std::make_tuple(unverified_terms(a), evidence_tier(a), thermal_tier(a),
+                                  over_rated(a), metric(a), a->lineno);
+        auto kb = std::make_tuple(unverified_terms(b), evidence_tier(b), thermal_tier(b),
+                                  over_rated(b), metric(b), b->lineno);
         return ka < kb;
     });
 
@@ -262,14 +277,19 @@ json select_mosfet(const Shard<MosfetRow>& shard, const MosfetConstraints& c, Mo
                 const bool v = ax == "vds";
                 const double have = v ? m->vds_rated : m->id_continuous;
                 const double need = v ? c.vds_min : c.id_min;
-                char b[320];
+                char b[400];
                 std::snprintf(b, sizeof b,
                               "%s %g %s is %.3gx the requirement's %g %s — more than %gx: a "
-                              "bigger body, higher cost and more capacitance are likely; ranked "
-                              "after closer-rated parts",
+                              "bigger body, higher cost and more capacitance are likely; %s",
                               v ? "drain-source voltage rating" : "continuous drain current rating",
                               have, v ? "V" : "A", have / need, need, v ? "V" : "A",
-                              crossref::kGrossOverRatingFactor);
+                              crossref::kGrossOverRatingFactor,
+                              over_rating_ranks
+                                  ? "ranked after closer-rated parts"
+                                  : (op_loss_mode ? "flagged only: the operating-point loss "
+                                                    "alone sets the order"
+                                                  : "flagged only: this ranking does not "
+                                                    "demote it"));
                 orj["axes"].push_back(ax);
                 orj["notes"].push_back(b);
             }
