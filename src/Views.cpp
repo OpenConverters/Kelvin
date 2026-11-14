@@ -849,6 +849,11 @@ int unstate_retracted_ratings(MagneticRow& r) {
         r.impedance_100mhz = r.impedance_peak = r.impedance_peak_freq = kNaN();
         ++n;
     }
+    if (!r.z_curve_f.empty() && field_retracted(r, "electrical.impedancePoints")) {
+        r.z_curve_f.clear();
+        r.z_curve_z.clear();
+        ++n;
+    }
     // A CMC's DM readings come from differentialModeImpedancePoints, or from the
     // impedancePoints tagged "differential" when that field is absent: either retraction
     // unstates them.
@@ -1673,6 +1678,29 @@ std::vector<std::pair<double, double>> impedance_curve_points(const json& pts,
     return curve;
 }
 
+// A measured curve onto the row as two float vectors (MagneticRow, v22 curves). `c` is sorted
+// by x. The row stores 4-byte floats, so x is compared AFTER that rounding: two samples that
+// land on the same float x with the same y are one sample; with different y the record states
+// two values at one x and the curve is not carried (which one is right is not on record).
+// Fewer than two samples is not a curve. Nothing is resampled or smoothed.
+void store_curve(const std::vector<std::pair<double, double>>& c, std::vector<float>& xs,
+                 std::vector<float>& ys) {
+    std::vector<float> x, y;
+    for (const auto& [cx, cy] : c) {
+        const float fx = static_cast<float>(cx), fy = static_cast<float>(cy);
+        if (!std::isfinite(fx) || !std::isfinite(fy)) return;
+        if (!x.empty() && fx == x.back()) {
+            if (fy != y.back()) return;
+            continue;
+        }
+        x.push_back(fx);
+        y.push_back(fy);
+    }
+    if (x.size() < 2) return;
+    xs = std::move(x);
+    ys = std::move(y);
+}
+
 // The readings Kelvin ranks a |Z|(f) curve on: |Z| at the conventional 100 MHz test point
 // and the bracketed peak with its frequency. A bead's published spec is |Z| at 100 MHz, and
 // TDK's own engineer calls that spot value "irrelevant and misleading" on its own: parts with
@@ -1831,6 +1859,7 @@ std::optional<MagneticRow> extract_magnetic(const json& env) {
             const auto cm = impedance_curve_points(*pts, cmc ? ImpedanceMode::Common
                                                              : ImpedanceMode::Untagged);
             impedance_readings(cm, r.impedance_100mhz, r.impedance_peak, r.impedance_peak_freq);
+            store_curve(cm, r.z_curve_f, r.z_curve_z);
             if (cmc) {
                 // differentialModeImpedancePoints is the schema's own DM field; the tagged
                 // points are read only when it is absent (every record that states both states

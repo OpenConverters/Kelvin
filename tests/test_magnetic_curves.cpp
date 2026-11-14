@@ -12,12 +12,16 @@
 #include <catch2/catch_test_macros.hpp>
 #include <nlohmann/json.hpp>
 
+#include "Browse.hpp"
+#include "CrossRef.hpp"
 #include "Views.hpp"
 
 using Catch::Approx;
 using nlohmann::json;
 
 namespace {
+// MAGNETIC_CURVE_KEYS in web/src/crossref.js.
+const char* const kCurveKeys[] = {"impedance_curve"};
 // The real record whose manufacturerInfo.reference is `mpn`; throws when the fixture lacks it.
 json real_record(const std::string& mpn) {
     std::ifstream in(std::string(KELVIN_TEST_DIR) + "/fixtures/magnetic_curves.ndjson");
@@ -33,6 +37,51 @@ kelvin::MagneticRow row_of(const std::string& mpn) {
     auto r = kelvin::extract_magnetic(real_record(mpn));
     if (!r) throw std::runtime_error("extract_magnetic refused " + mpn);
     return *r;
+}
+// The spec block web/src/crossref.js builds from the browse row: base() + the inductor model
+// (XREF 'magnetic') or, for `bead`, the impedance model (BEAD_VARIANT), with magneticCurves(r).
+json spec_of(const kelvin::MagneticRow& r, bool bead = false) {
+    json row;
+    kelvin::browse::extra_row_json(r, row);
+    auto nz = [](double v) { return std::isnan(v) || !(v > 0) ? json(nullptr) : json(v); };
+    auto raw = [](double v) { return std::isnan(v) ? json(nullptr) : json(v); };
+    json s{{"mpn", r.mpn},
+           {"length_m", nz(r.length_m)}, {"width_m", nz(r.width_m)},
+           {"height_m", nz(r.height_m)}, {"case_code", r.case_code}, {"mount", r.mount},
+           {"lead_pitch_m", nz(r.lead_pitch_m)}, {"is_production", r.is_production},
+           {"provenance_retracted", r.provenance_retracted},
+           {"rated_current", nz(r.rated_current)}, {"dcr", nz(r.dcr)}, {"srf", nz(r.srf)},
+           {"temp_min_C", raw(r.temp_min_c)}, {"temp_max_C", raw(r.temp_max_c)}};
+    if (bead) {
+        s["impedance_100mhz"] = nz(r.impedance_100mhz);
+        s["impedance_peak"] = nz(r.impedance_peak);
+        s["impedance_peak_freq"] = nz(r.impedance_peak_freq);
+    } else {
+        s["value_si"] = nz(r.inductance);
+        s["saturation_current"] = nz(r.saturation_current);
+        s["saturation_points"] = row["saturation_points"];
+        s["tolerance_minus_pct"] = raw(r.inductance_tol_minus_pct);
+        s["tolerance_plus_pct"] = raw(r.inductance_tol_plus_pct);
+        s["bias_curve"] = row["bias_curve"];
+        s["saturation_from_curve"] = row["saturation_from_curve"];
+    }
+    for (const char* k : kCurveKeys) s[k] = row.contains(k) ? row[k] : json(nullptr);
+    return s;
+}
+std::string verdict_of(const json& c, const std::string& name) {
+    for (const auto& p : c.at("params"))
+        if (p.value("name", "") == name) return p.value("verdict", "");
+    return "";
+}
+std::string note_with(const json& c, const std::string& needle) {
+    for (const auto& n : c.value("notes", json::array()))
+        if (n.get<std::string>().find(needle) != std::string::npos) return n.get<std::string>();
+    return "";
+}
+json rank(const char* cat, const json& orig, const json& cand) {
+    kelvin::crossref::Options opt;
+    auto r = kelvin::crossref::cross_reference(cat, orig, json::array({cand}), opt);
+    return r["candidates"].at(0);
 }
 }  // namespace
 
@@ -54,4 +103,25 @@ TEST_CASE("curves: a CMC's impedance readings are taken per winding mode",
     CHECK(r.dm_impedance_100mhz == Approx(30.067));
     CHECK(std::isnan(r.dm_impedance_peak));
     CHECK(std::isnan(r.dm_impedance_peak_freq));
+}
+
+// 2. An inductor's |Z|(f) curve (8,062 Murata / Würth / TDK records) was extracted into
+// Z@100M / peak readings the inductor model never compared. Now the curves are compared
+// point by point over the band both measured, log-log, with the chip-bead impedance spec's
+// bands (the one impedance spec Kelvin has: PASS >= 0.85x, WARN >= 0.8x).
+TEST_CASE("curves: an inductor's |Z|(f) curve is compared with the other's",
+          "[magcurves][crossref][impedance]") {
+    const auto o = row_of("LQG15HN10NJ02"), s = row_of("LQW15AN10NJ00");
+    REQUIRE(o.z_curve_f.size() == 300);
+    REQUIRE(s.z_curve_f.size() == 300);
+    const json c = rank("magnetic", spec_of(o), spec_of(s));
+    INFO(c.dump());
+    // Both 10 nH 0402 parts are swept 10 MHz-3 GHz; the wirewound LQW15AN sits at 217 ohm at
+    // 3 GHz against the multilayer LQG15HN's 379 ohm (0.57x): FAIL, demoted, named.
+    CHECK(verdict_of(c, "impedance_curve") == "fail");
+    const std::string note = note_with(c, "|Z|(f) compared on both curves");
+    CHECK(note.find("over 10 MHz-3 GHz") != std::string::npos);
+    CHECK(note.find("worst at 3 GHz, substitute 217 ohm vs original 379 ohm") !=
+          std::string::npos);
+    CHECK(c["status"] == "partial");
 }

@@ -65,7 +65,8 @@ export const XREF = [
       turns_ratios: Array.isArray(r.turns_ratios) && r.turns_ratios.length ? r.turns_ratios : null,
       // v22 (W4): every wiring configuration's turnsRatios; the best-matching pair is credited.
       turns_ratio_configs: Array.isArray(r.turns_ratio_configs) && r.turns_ratio_configs.length
-        ? r.turns_ratio_configs : null }),
+        ? r.turns_ratio_configs : null,
+      ...magneticCurves(r) }),
     params: [
       { key: 'value', label: 'L', row: 'inductance', unit: 'H' },
       { key: 'turns_ratio', label: 'N', row: 'turns_ratio', unit: '' },
@@ -420,6 +421,20 @@ const ZENER_VARIANT = {
   },
 }
 
+// The measured curves a magnetic row carries (v22, owner 2026-11-14: "compare ALL existing
+// graphs"), passed to the ranker as they come off the row ({x, y[, mode]}, null when the record
+// states none). The ranker compares each one both records carry, curve vs curve
+// (src/CrossRefMagneticCurves.hpp). Shared by the inductor and the impedance (bead) models.
+const MAGNETIC_CURVE_KEYS = ['impedance_curve']
+export function magneticCurves(r) {
+  const out = {}
+  for (const k of MAGNETIC_CURVE_KEYS) {
+    const c = r[k]
+    out[k] = c && Array.isArray(c.x) && Array.isArray(c.y) && c.x.length >= 2 ? c : null
+  }
+  return out
+}
+
 // Ferrite-bead view of the magnetic catalogue. Its primary axis is impedance at
 // 100 MHz — the number the whole industry quotes — but the ranker also compares
 // the peak of the measured curve and the frequency it occurs at, because parts
@@ -436,7 +451,8 @@ const BEAD_VARIANT = {
     // magnetic rule): MFBA3V1608K-471-R (to 150 degC) took a 125 degC MMZ1608 as 'upgrade'
     // because the bead spec never passed it (Qarlos r9 seed 23088792). Raw, NOT through
     // nz(): a cold limit is negative and 0 degC is a real rating.
-    temp_min_C: r.temp_min_c ?? null, temp_max_C: r.temp_max_c ?? null }),
+    temp_min_C: r.temp_min_c ?? null, temp_max_C: r.temp_max_c ?? null,
+    ...magneticCurves(r) }),
   params: [
     { key: 'impedance_100mhz', label: 'Z@100M', row: 'impedance_100mhz', unit: 'Ω' },
     { key: 'impedance_peak', label: 'peak Z', row: 'impedance_peak', unit: 'Ω' },

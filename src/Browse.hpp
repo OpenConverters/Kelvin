@@ -27,6 +27,8 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstdint>
 #include <limits>
 #include <map>
@@ -358,6 +360,30 @@ inline void extra_row_json(const ResistorRow& r, json& o) {
 // A magnetic's whole saturation table (v20) as the ranker's saturation_points shape:
 // [{current, percent_drop, temperature}], a criterion or temperature the record does not state
 // is null. null when the record states no Isat at all — never an empty table.
+// One measured curve as {x, y[, mode]}, or null when the row carries none.
+inline json curve_json(const std::vector<float>& x, const std::vector<float>& y,
+                       const std::string& mode = "") {
+    if (x.empty()) return nullptr;
+    // Each float as the shortest decimal that reads back to it (0.34756, not the double
+    // expansion 0.34755998849868774): the same value, a third of the JSON.
+    auto arr = [](const std::vector<float>& v) {
+        json a = json::array();
+        char b[32];
+        for (float f : v) {
+            double d = f;
+            for (int p = 6; p <= 9; ++p) {
+                std::snprintf(b, sizeof b, "%.*g", p, static_cast<double>(f));
+                d = std::strtod(b, nullptr);
+                if (static_cast<float>(d) == f) break;
+            }
+            a.push_back(d);
+        }
+        return a;
+    };
+    json o{{"x", arr(x)}, {"y", arr(y)}};
+    if (!mode.empty()) o["mode"] = mode;
+    return o;
+}
 inline void extra_row_json(const MagneticRow& r, json& o) {
     // The whole turns-ratio array (v22), null when the record states none.
     o["turns_ratios"] = r.turns_ratios.empty() ? json(nullptr) : json(r.turns_ratios);
@@ -371,6 +397,10 @@ inline void extra_row_json(const MagneticRow& r, json& o) {
     else
         o["bias_curve"] = {{"current", r.bias_curve_current}, {"ratio", r.bias_curve_ratio}};
     o["saturation_from_curve"] = r.sat_table_from_curve;
+    // Measured curves (v22, owner 2026-11-14) in the spec block's shape {x: [...], y: [...]},
+    // null when the record states none. A CMC's |Z|(f) is its common-mode curve ("mode").
+    o["impedance_curve"] = curve_json(r.z_curve_f, r.z_curve_z,
+                                      r.device_type == "commonModeChoke" ? "common" : "");
     if (r.sat_table_current.empty()) {
         o["saturation_points"] = nullptr;
         return;

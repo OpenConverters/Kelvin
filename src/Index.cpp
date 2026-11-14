@@ -233,6 +233,18 @@ struct WriteAr {
         u32(n);
         for (auto& x : v) dblvec(x);
     }
+    // v22 curves (owner 2026-11-14): measured curves stored as 4-byte floats, keeping the
+    // shard compact (a |Z|(f) sweep carries ~300 samples).
+    void fltvec(std::vector<float>& v) {
+        uint32_t n = static_cast<uint32_t>(v.size());
+        u32(n);
+        if (n) buf->append(reinterpret_cast<const char*>(v.data()), static_cast<size_t>(n) * 4);
+    }
+    void fltvecvec(std::vector<std::vector<float>>& v) {
+        uint32_t n = static_cast<uint32_t>(v.size());
+        u32(n);
+        for (auto& x : v) fltvec(x);
+    }
 };
 
 struct ReadAr {
@@ -289,6 +301,21 @@ struct ReadAr {
         need(static_cast<size_t>(n) * 4);  // each inner array carries at least its count
         v.resize(n);
         for (auto& x : v) dblvec(x);
+    }
+    void fltvec(std::vector<float>& v) {  // v22 curves
+        uint32_t n;
+        u32(n);
+        need(static_cast<size_t>(n) * 4);
+        v.resize(n);
+        if (n) std::memcpy(v.data(), rows_base + pos, static_cast<size_t>(n) * 4);
+        pos += static_cast<size_t>(n) * 4;
+    }
+    void fltvecvec(std::vector<std::vector<float>>& v) {  // v22 curves
+        uint32_t n;
+        u32(n);
+        need(static_cast<size_t>(n) * 4);  // each inner array carries at least its count
+        v.resize(n);
+        for (auto& x : v) fltvec(x);
     }
 };
 
@@ -487,6 +514,8 @@ void row_io(Ar& ar, MagneticRow& r) {
     ar.dbl(r.dm_impedance_100mhz);         // v22 (curves, CMC DM mode)
     ar.dbl(r.dm_impedance_peak);           // v22
     ar.dbl(r.dm_impedance_peak_freq);      // v22
+    ar.fltvec(r.z_curve_f);                // v22 curves
+    ar.fltvec(r.z_curve_z);
     ar.boolean(r.is_production);
 }
 

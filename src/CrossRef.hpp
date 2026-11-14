@@ -42,6 +42,7 @@
 #include "CrossRefClasses.hpp"
 #include "CrossRefDecode.hpp"
 #include "CrossRefDimensions.hpp"
+#include "CrossRefMagneticCurves.hpp"  // magnetic curves (owner 2026-11-14)
 #include "CrossRefParams.hpp"
 #include "CrossRefScore.hpp"
 
@@ -2599,6 +2600,30 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         if (numeric && is_primary_rating(cat, spec.key) && !detail::jnum(original, spec.key) &&
             detail::jnum(cand, spec.key))
             orig_unstated(spec.key);
+    }
+
+    // ── magnetic curves, curve vs curve (owner 2026-11-14) ───────────────────
+    // Every curve BOTH records carry (CrossRefMagneticCurves.hpp): judged at every point
+    // inside both measured ranges with a scalar spec's bands, the worst point deciding. A WARN
+    // or FAIL is a measured regression (demoted and penalised like the scalar row it extends);
+    // UNVERIFIED (no overlap, different measurement conditions) is a note only, no cap.
+    if (cat == "magnetic" || cat == "chipBead") {
+        for (const magcurve::Result& r : magcurve::compare_all(original, cand)) {
+            params.push_back({{"name", r.name}, {"verdict", r.verdict}});
+            notes.push_back(r.note);
+            const std::string v = r.verdict;
+            if (v == FAIL) {
+                demote();
+                penalty += opt.gate_weight * kVerdictFailPenalty;
+                ++worse;
+            } else if (v == WARN) {
+                demote();
+                penalty += opt.gate_weight * warn_penalty(r.warn_depth);
+                ++worse;
+            } else if (v == PASS) {
+                note_direction(r.dir, r.orig_y, r.sub_y);
+            }
+        }
     }
 
     // ── transformer turns ratio (owner 2026-11-13, R2; W4) ───────────────────
