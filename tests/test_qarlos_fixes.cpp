@@ -9037,3 +9037,32 @@ TEST_CASE("qarlos r28: an original's AC rating is compared without a safety clas
     CHECK(seen_low);
 }
 
+// Qarlos r28 seed 33352234 (data-524a699 records, verbatim in
+// tests/fixtures/qarlos_r28_diodes.ndjson): Nexperia PMEG3005ESFYL's case "DSN0603-2" was read as
+// the imperial 0603 chip (1.6 x 0.8 mm); DSN0603 is a 0.6 x 0.3 mm outline. A named package
+// family's digits are never read as a chip code.
+TEST_CASE("qarlos r28: a DSN0603 package is not the imperial 0603 chip",
+          "[qarlos][crossref][diode][r28-dsn]") {
+    using kelvin::crossref::resolve_dimensions;
+    CHECK_FALSE(resolve_dimensions("DSN0603-2", "diode").has_value());
+    CHECK_FALSE(resolve_dimensions("X3-DFN0603-2", "diode").has_value());
+    CHECK_FALSE(resolve_dimensions("DSN0603-2", "").has_value());
+    CHECK(resolve_dimensions("0603", "diode").has_value());  // a bare chip code still reads
+    CHECK(resolve_dimensions("SMD SC1812", "capacitor").has_value());  // WIMA's 1812 chip
+    auto sh = kelvin::build_diode_shard(std::string(KELVIN_TEST_DIR) +
+                                        "/fixtures/qarlos_r28_diodes.ndjson");
+    const json rows = kelvin::browse::browse_rows(sh, json{{"limit", 10}})["rows"];
+    json orig, cand;
+    for (const auto& x : rows) {
+        if (x["mpn"] == "JAN1N6857UR-1") orig = diode_spec(x);
+        if (x["mpn"] == "PMEG3005ESFYL") cand = diode_spec(x);
+    }
+    REQUIRE(!orig.is_null());
+    REQUIRE(!cand.is_null());
+    REQUIRE(cand["case_code"] == "DSN0603-2");
+    auto r = kelvin::crossref::cross_reference("diode", orig, json::array({cand}));
+    REQUIRE(r["candidates"].size() == 1);
+    const json c = r["candidates"][0];
+    CHECK_FALSE(has_note(c, "1.6"));
+    CHECK_FALSE(has_note(c, "0603 chip"));
+}
