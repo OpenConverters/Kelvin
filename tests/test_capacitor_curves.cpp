@@ -79,22 +79,24 @@ bool has_note(const json& c, const std::string& needle) {
 std::string notes_of(const json& c) { return c.contains("notes") ? c["notes"].dump(1) : ""; }
 }  // namespace
 
-TEST_CASE("ESR curves: both records carry one -> compared on the overlap",
+TEST_CASE("ESR curves: an original with no |Z| curve has no useful band -> not graded",
           "[curves][capacitor][esr-curve]") {
     // Samsung CL05A225KP5NSNC (0.0346 ohm at 100 kHz, curve 100 Hz-6 GHz) vs TDK
-    // C1005X5R1A225K050BC (no scalar, curve 1 kHz-3 GHz).
+    // C1005X5R1A225K050BC (no scalar, curve 1 kHz-3 GHz). Owner 2026-11-14: impedance-type
+    // curves (ESR included) are judged only in the useful band, from the original's rating
+    // frequency up to ITS self-resonance; the Samsung record carries no |Z| curve, so its
+    // self-resonance is not on record and the curves are not graded.
     const auto o = row("CL05A225KP5NSNC");
     const auto s = row("C1005X5R1A225K050BC");
     REQUIRE_FALSE(o.esr_curve.empty());
     REQUIRE_FALSE(s.esr_curve.empty());
     const json c = rank_one("CL05A225KP5NSNC", "C1005X5R1A225K050BC");
     INFO(notes_of(c));
-    // The overlap is the TDK range; the worst point is at 1.1 kHz, where the substitute's
-    // 3.17 ohm is x1.24 the original's 2.55 ohm: WARN (ESR spec, PASS <= 1x, FAIL > 1.5x).
-    CHECK(has_note(c, "ESR compared on both curves from 1002.73 to 3e+09 Hz (388 points, "
-                      "log-log): worst at 1099.4 Hz, substitute 3.168 ohm vs original 2.546 ohm"));
-    CHECK(verdict_of(c, "esr") == "warn");
-    CHECK(c["grade"] != "drop_in");
+    CHECK(has_note(c, "ESR curves not compared: the original carries no |Z| curve, so its "
+                      "self-resonance (the top of the useful band) is not on record"));
+    // The scalars are then compared as stated: 0.0346 ohm at 100 kHz against the TDK curve's
+    // own 100 kHz reading (a common basis) -> pass.
+    CHECK(verdict_of(c, "esr") == "pass");
 }
 
 TEST_CASE("ESR basis: the substitute's curve is read at the original's frequency",
@@ -123,12 +125,13 @@ TEST_CASE("DC-bias curves: effective capacitance compared on the common bias ran
     REQUIRE_FALSE(s.bias_curve.empty());
     CHECK(o.bias_curve.temperature == 25.0);
     CHECK(std::isnan(s.bias_curve.temperature));
+    // Owner 2026-11-14: a condition stated by ONE side only is a DIFFERENT condition. Murata's
+    // curve is at 25 degC, TDK's at no stated temperature -> not compared, UNVERIFIED + note.
     const json c = rank_one("ZRB157R6YA225ME11", "C1005X5R1V225K050BC");
     INFO(notes_of(c));
-    CHECK(verdict_of(c, "capacitance_bias") == "fail");
-    CHECK(has_note(c, "effective capacitance under DC bias compared on both curves over DC "
-                      "bias 0 to 35 V"));
-    CHECK(c["grade"] != "drop_in");
+    CHECK(verdict_of(c, "capacitance_bias") == "unverified");
+    CHECK(has_note(c, "effective capacitance under DC bias curves measured under different "
+                      "conditions (temperature 25 degC vs unstated) — not compared"));
     // The same part against itself: every point equal -> pass.
     const json same = rank_one("ZRB157R6YA225ME11", "ZRB157R6YA225ME11");
     CHECK(verdict_of(same, "capacitance_bias") == "pass");
@@ -146,39 +149,124 @@ TEST_CASE("Frequency curves: |Z|, C(f) and ESL compared on the common band",
     REQUIRE_FALSE(s.esl_curve.empty());
     const json c = rank_one("C0603C104K3RECTU", "C0603C104M4RAC");
     INFO(notes_of(c));
-    // |Z|: the substitute's 0.0893 ohm at 39.8 MHz is x2.5 the original's 0.0355 -> FAIL.
+    // Owner 2026-11-14: |Z|, ESL and ESR curves are graded only in the useful band, from the
+    // original's ESR test frequency (100 kHz, stated) to its self-resonance (|Z| minimum,
+    // 31.6 MHz). |Z|: the substitute's 0.0535 ohm at 31.6 MHz is x2.1 the original's 0.0251
+    // -> FAIL.
     CHECK(verdict_of(c, "impedance_curve") == "fail");
-    CHECK(has_note(c, "|Z| compared on both curves over frequency 100 to 1e+09 Hz (71 points, "
-                      "log-log, bands of the ESR spec): worst at 3.98107e+07 Hz, substitute "
-                      "0.08928 ohm vs original 0.03553 ohm"));
+    CHECK(has_note(c, "|Z| compared on both curves over frequency 100000 to 3.16228e+07 Hz (26 "
+                      "points, log-log, bands of the ESR spec): worst at 3.16228e+07 Hz, "
+                      "substitute 0.05346 ohm vs original 0.02514 ohm (useful band from the "
+                      "original's rating (ESR test) frequency 100000 Hz to the original's "
+                      "self-resonance (|Z| minimum) at 3.16228e+07 Hz; points outside it are "
+                      "not graded)"));
+    // ESR curves, the same band: the substitute is lower everywhere in it.
+    CHECK(verdict_of(c, "esr") == "pass");
+    CHECK(has_note(c, "ESR compared on both curves from 100000 to 3.16228e+07 Hz (28 points, "
+                      "log-log): passes everywhere"));
     // C(f) up to the original's self-resonance (21.9 MHz on the substitute): equal or more.
     CHECK(verdict_of(c, "capacitance_frequency_curve") == "pass");
     CHECK(has_note(c, "capacitance vs frequency compared on both curves over frequency 100 to "
                       "2.18776e+07 Hz (55 points, log-log, bands of the capacitance spec): "
                       "passes everywhere, tightest at 125.893 Hz"));
-    // ESL: 263.7 pH against 15.75 pH at 33.1 MHz -> FAIL.
-    CHECK(verdict_of(c, "esl_curve") == "fail");
-    CHECK(has_note(c, "ESL compared on both curves over frequency 3.31131e+07 to 1e+09 Hz (31 "
-                      "points, log-log, bands of the ESR spec): worst at 3.31131e+07 Hz, "
-                      "substitute 2.637e-10 H vs original 1.575e-11 H"));
+    // ESL: the original's ESL curve starts at 33.1 MHz, above its 31.6 MHz self-resonance, so
+    // no ESL point lies in the useful band -> UNVERIFIED, not graded.
+    CHECK(verdict_of(c, "esl_curve") == "unverified");
+    CHECK(has_note(c, "ESL curves do not meet inside the useful band (original 3.31131e+07 to "
+                      "1e+09 Hz, substitute 2.29087e+07 to 1e+09 Hz; useful band from the "
+                      "original's rating (ESR test) frequency 100000 Hz to the original's "
+                      "self-resonance (|Z| minimum) at 3.16228e+07 Hz; points outside it are "
+                      "not graded) — not compared"));
     // (The 16 V substitute is rejected for the 25 V original's voltage anyway; the reverse
-    // direction is the one a designer could take.) The other way round every curve is
-    // compared too: ESL passes, while |Z| still fails where the two curves cross near the
-    // 16 V part's resonance (0.0616 vs 0.0265 ohm at 20 MHz).
+    // direction is the one a designer could take.) The other way round: |Z| still fails where
+    // the two curves cross near the 16 V part's resonance (0.0616 vs 0.0265 ohm at 20 MHz);
+    // ESL is not graded (its 25.1 MHz self-resonance lies below both ESL curves' start).
     const json r = rank_one("C0603C104M4RAC", "C0603C104K3RECTU");
     INFO(notes_of(r));
     CHECK(verdict_of(r, "impedance_curve") == "fail");
-    CHECK(verdict_of(r, "esl_curve") == "pass");
+    CHECK(verdict_of(r, "esl_curve") == "unverified");
+    // ESR (owner 2026-11-14): the curve verdict is its own row and does not replace the scalar
+    // ESR row; both are booked. Here the substitute's ESR curve is x1.7 the original's at
+    // 100 kHz -> esr_curve FAIL, beside the scalar esr row.
+    CHECK(verdict_of(r, "esr_curve") == "fail");
+    CHECK(verdict_of(r, "esr") != "");
+    CHECK(has_note(r, "ESR compared on both curves from 100000 to 2.51189e+07 Hz (26 points, "
+                      "log-log): worst at 100000 Hz, substitute 0.3536 ohm vs original 0.2076 ohm"));
+    CHECK(verdict_of(c, "esr_curve") == "pass");
 }
 
-TEST_CASE("|Z| curves: conditions stated on one side only do not block the comparison",
+TEST_CASE("|Z| curves: a condition stated on one side only is a different condition",
           "[curves][capacitor][freq-curves]") {
     // Murata ZRB157R6YA225ME11 states its |Z| at 25 degC, 0 V bias; TDK C1005X5R1V225K050BC
-    // states no condition: not a difference on record, so the curves are compared.
+    // states no condition. Owner 2026-11-14: one-sided = different -> UNVERIFIED + note.
     const json c = rank_one("ZRB157R6YA225ME11", "C1005X5R1V225K050BC");
     INFO(notes_of(c));
-    CHECK(verdict_of(c, "impedance_curve") == "fail");
-    CHECK(has_note(c, "|Z| compared on both curves over frequency 1002.73 to 3e+09 Hz (658 "
-                      "points, log-log, bands of the ESR spec): worst at 3e+09 Hz, substitute "
-                      "9.33 ohm vs original 5.307 ohm"));
+    CHECK(verdict_of(c, "impedance_curve") == "unverified");
+    CHECK(has_note(c, "|Z| curves measured under different conditions (temperature 25 degC vs "
+                      "unstated, DC bias 0 V vs unstated) — not compared"));
+}
+
+TEST_CASE("|Z| useful band: an ESR Kelvin read off the curve is no rating frequency -> 1 MHz",
+          "[curves][capacitor][freq-curves][useful-band]") {
+    // TDK C1005X5R1V225K050BC states no ESR: Kelvin reads its ESR off the ESR curve at 100 kHz
+    // (esr_from_curve). That 100 kHz is not a frequency the record states, so the useful band
+    // of its curves starts at 1 MHz (owner 2026-11-14), up to its |Z| minimum.
+    const auto o = row("C1005X5R1V225K050BC");
+    REQUIRE(o.esr_from_curve);
+    REQUIRE_FALSE(o.z_curve.empty());
+    const json c = rank_one("C1005X5R1V225K050BC", "C1005X5R1A225K050BC");
+    INFO(notes_of(c));
+    CHECK(has_note(c, "useful band from 1 MHz (the original states no rating frequency) to "));
+    CHECK(has_note(c, "|Z| compared on both curves over frequency 1e+06 to "));
+}
+
+TEST_CASE("Ripple basis: frequency resolved on the substitute's own multiplier table",
+          "[curves][capacitor][ripple-curve]") {
+    // Panasonic ECE-A0JN102UB: 0.43 A at 120 Hz, no temperature stated. Vishay MAL212016102E3:
+    // 2.6 A at 10 kHz, with its "Ripple current multiplier" table 50 Hz - 10 kHz. Different
+    // frequency bases: the substitute's table moves its rating to 120 Hz (log-log), and the
+    // two are compared there instead of leaving the ripple basis UNVERIFIED.
+    const auto s = row("MAL212016102E3");
+    REQUIRE_FALSE(s.ripple_f_curve.empty());
+    const json c = rank_one("ECE-A0JN102UB", "MAL212016102E3");
+    INFO(notes_of(c));
+    CHECK(verdict_of(c, "ripple_current") == "pass");
+    CHECK(has_note(c, "ripple current compared on a common basis (120 Hz)"));
+    CHECK(has_note(c, "the substitute's own ripple-current frequency table"));
+    CHECK_FALSE(has_note(c, "ripple current quoted at different frequencies"));
+}
+
+TEST_CASE("Ripple basis: temperature resolved on a record's own temperature table",
+          "[curves][capacitor][ripple-curve]") {
+    // Nichicon UPW1V102MHD: 1.95 A at 100 kHz / 105 degC, temperature multipliers 60-105 degC
+    // (1.2 at 85 degC). Panasonic EEUEB1V102: 0.9 A at 100 kHz / 85 degC, multipliers
+    // 40-85 degC. The substitute's table does not reach 105 degC, so the original is moved to
+    // the substitute's 85 degC: 1.95 x 1.2 = 2.34 A against 0.9 A -> FAIL.
+    const auto o = row("UPW1V102MHD");
+    REQUIRE_FALSE(o.ripple_t_curve.empty());
+    const json c = rank_one("UPW1V102MHD", "EEUEB1V102");
+    INFO(notes_of(c));
+    CHECK(verdict_of(c, "ripple_current") == "fail");
+    CHECK(has_note(c, "ripple current compared on a common basis (85 degC): substitute 0.9 A "
+                      "(stated 0.9 A) vs original 2.34 A (stated 1.95 A)"));
+    CHECK_FALSE(has_note(c, "ripple current quoted at different temperatures"));
+    // The other way round, the substitute (UPW) is moved to the original's 85 degC first.
+    const json r = rank_one("EEUEB1V102", "UPW1V102MHD");
+    INFO(notes_of(r));
+    CHECK(verdict_of(r, "ripple_current") == "pass");
+    CHECK(has_note(r, "ripple current compared on a common basis (85 degC): substitute 2.34 A "
+                      "(stated 1.95 A) vs original 0.9 A (stated 0.9 A)"));
+}
+
+TEST_CASE("Ripple tables: a case-temperature table is not an ambient rating's table",
+          "[curves][capacitor][ripple-curve]") {
+    // Cornell Dubilier 930C1P22K-F: 2.3 A at 20 kHz / 25 degC, and a "Case temperature [C]" ->
+    // "Ripple current [A]" table stated at the same 20 kHz. Owner 2026-11-14: ripple curves at
+    // CASE temperature are a different condition from an ambient scalar rating, so the table
+    // is not kept.
+    const auto r = row("930C1P22K-F");
+    CHECK(r.ripple_current_rms == 2.3);
+    CHECK(r.ripple_t_curve.empty());
+    // A temperature table the same records would keep (UPW, unlabelled, 1.0 at its 105 degC).
+    CHECK_FALSE(row("UPW1V102MHD").ripple_t_curve.empty());
 }
