@@ -738,8 +738,22 @@ TEST_CASE("magnetic curves: two room-temperature curves, the lower L at Ipk is u
     CHECK(has(b.inductance_basis, "read off the record's L(I) curve at " + used + " (room temperature)"));
     CHECK(has(b.inductance_basis, "and no ambient is given: all read (L at Ipk 20 degC: "));
     CHECK(has(b.inductance_basis, "the lower used (owner 2026-11-14)"));
-    // A given ambient at room temperature is not this case (not decided by the owner): not read.
-    op.ambient = 25;
-    const auto a = magnetic_loss(m, op, 1e-9);
-    CHECK(has(a.inductance_basis, "which one applies is not stated"));
+    // A given ambient at room temperature (owner 2026-11-14): 20 = 25 degC, so both curves
+    // qualify and the same rule applies: the lower L at Ipk is used and named in the basis.
+    for (const double amb : {25.0, 20.0}) {
+        op.ambient = amb;
+        const LCurvePick ka = pick_l_curve(m, op.ambient);
+        REQUIRE(ka.lowest_at_ipk);
+        REQUIRE(ka.curves.size() == 2);
+        const auto a = magnetic_loss(m, op, 1e-9);
+        CHECK(a.inductance == Approx(b.inductance).epsilon(1e-9));
+        CHECK(has(a.inductance_basis,
+                  "read off the record's L(I) curve at " + used + " (room temperature)"));
+        CHECK(has(a.inductance_basis,
+                  "it states 2 L(I) curves that qualify (20 degC, 25 degC) and the operating "
+                  "ambient " + std::string(amb == 25.0 ? "25" : "20") +
+                      " degC is room temperature (20 = 25 degC): all read (L at Ipk 20 degC: "));
+        CHECK(has(a.inductance_basis, "the lower used (owner 2026-11-14)"));
+        CHECK(!has(a.inductance_basis, "which one applies is not stated"));
+    }
 }
