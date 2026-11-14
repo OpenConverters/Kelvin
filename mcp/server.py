@@ -1650,10 +1650,10 @@ def recommend_parts(family: str, requirements: dict, options: dict | None = None
             maxRippleVoltage?, ambientTemperature?} ranks by the ESR loss
             I_ripple^2 * ESR(fs) (tiebreaker lowest_operating_point_loss; I_ripple = dIpp/sqrt(12)
             at the output, Iout*sqrt(D(1-D)) at the input), ESR off the record's ESR(f) curve or
-            the stated ESR with its frequency named (a stated ESR with no frequency:
-            UNVERIFIED); a record stating only tan(delta) gets
+            the stated ESR with its frequency named (a stated ESR with no frequency is
+            ignored); a record with no ESR read gets
             ESR = tan(delta)/(2*pi*f*C) at tan(delta)'s own frequency, an upper bound at fs
-            (no stated frequency, or fs below it: UNVERIFIED). Checks: effective capacitance at
+            (labelled <=; no stated frequency, or fs below it: UNVERIFIED). Checks: effective capacitance at
             the DC voltage (DC-bias curve; a class-II ceramic without one is UNVERIFIED, never
             derated by a guessed factor), ripple voltage (output dIpp*ESR + dIpp/(8*fs*Ceff);
             input Iout*D*(1-D)/(fs*Ceff) + Iout*ESR) and the ripple-current rating moved to fs /

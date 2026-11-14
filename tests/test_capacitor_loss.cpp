@@ -500,3 +500,27 @@ TEST_CASE("capacitor loss: an ESR with no stated frequency is UNVERIFIED", "[cap
     REQUIRE(ok.esr_loss.watts);
     CHECK(has(ok.esr_loss.basis, "stated ESR 18 mohm at 100000 Hz"));
 }
+
+// Owner 2026-11-14: an ESR stated without its frequency is ignored; when the record states
+// tan(delta) with its frequency, the ESR comes from tan(delta) as an upper bound, like a record
+// stating no ESR, and the term is computed (labelled <=). Cornell Dubilier 730P106X9100
+// (data-524a699, tests/fixtures/capacitors_esr_nofreq.ndjson): 10 uF film, ESR 12 mohm with no
+// frequency, tan(delta) 0.001 at 1 kHz -> ESR <= 0.001 / (2*pi * 1 kHz * 10 uF) = 15.92 mohm.
+// With neither (860040878017: ESR, no frequency, no tan(delta)) it stays UNVERIFIED (above).
+TEST_CASE("capacitor loss: an ESR with no frequency is ignored; tan(delta) bounds it",
+          "[capacitor_loss]") {
+    const CapacitorRow x = row("730P106X9100", "capacitors_esr_nofreq.ndjson");
+    REQUIRE(x.esr == Approx(0.012));
+    REQUIRE(std::isnan(x.esr_frequency));
+    auto b = capacitor_loss(x, out_point());
+    const double esr = 0.001 / (2 * 3.14159265358979323846 * 1e3 * 10e-6);
+    REQUIRE(b.esr_at_fs);
+    CHECK(*b.esr_at_fs == Approx(esr));
+    CHECK(b.esr_upper_bound);
+    REQUIRE(b.esr_loss.watts);
+    CHECK(*b.esr_loss.watts == Approx(b.i_ripple * b.i_ripple * esr));
+    CHECK(has(b.esr_loss.basis, "ESR <= 15.92 mohm = tan(delta) 0.001 / (2*pi * 1000 Hz * 10 uF)"));
+    CHECK(has(b.esr_loss.basis, "(the record's ESR 12 mohm states no frequency and is ignored), "
+                                "an upper bound at fs 80000 Hz"));
+    CHECK(b.unverified().empty());
+}
