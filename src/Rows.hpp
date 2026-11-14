@@ -363,6 +363,15 @@ struct CapacitorRow : RowBase {
     // Hz -> ohm), read whole. Compared curve-vs-curve on the overlap and read at the other
     // side's stated ESR frequency to resolve a basis mismatch.
     CurvePts esr_curve;
+    // v22 (owner 2026-11-14): |Z| vs frequency (CAS electrical.impedancePoints, Hz -> ohm), with
+    // the conditions the record states (temperature, DC bias).
+    CurvePts z_curve;
+    // v22 (owner 2026-11-14): capacitance vs frequency (CAS electrical.capacitanceFrequencyPoints,
+    // Hz -> F), kept up to the first sample <= 0: past self-resonance the record states the
+    // reactance as a negative "capacitance", which is not a capacitance (|Z| covers it).
+    CurvePts cf_curve;
+    // v22 (owner 2026-11-14): ESL vs frequency (CAS electrical.inductanceFrequencyPoints, Hz -> H).
+    CurvePts esl_curve;
     // v22 (owner 2026-11-14): effective capacitance vs DC bias (CAS electrical.capacitanceBiasPoints,
     // V -> F, absolute farads as every record states them), with the one measurement
     // temperature the record states. Compared on the overlap of the two bias ranges.

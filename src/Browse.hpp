@@ -365,6 +365,9 @@ inline json curve_json(const CurvePts& c) {
 }
 inline void extra_row_json(const CapacitorRow& r, json& o) {
     o["esr_curve"] = curve_json(r.esr_curve);
+    o["impedance_curve"] = curve_json(r.z_curve);
+    o["capacitance_frequency_curve"] = curve_json(r.cf_curve);
+    o["esl_curve"] = curve_json(r.esl_curve);
     o["capacitance_bias_curve"] = curve_json(r.bias_curve);
 }
 

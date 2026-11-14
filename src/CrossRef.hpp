@@ -2003,7 +2003,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                   "log-log): %s at %g Hz, substitute %.4g ohm vs original "
                                   "%.4g ohm",
                                   v.range->first, v.range->second, v.points,
-                                  v.verdict == std::string(PASS) ? "closest at" : "worst",
+                                  v.verdict == std::string(PASS) ? "passes everywhere, tightest" : "worst",
                                   v.worst_x, v.sub_y, v.orig_y);
                     notes.push_back(buf);
                     CurveOverride ov;
@@ -2741,7 +2741,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                       "the %s): %s at %g %s, substitute %.4g %s vs original %.4g %s",
                       what, x_what, v.range->first, v.range->second, x_unit, v.points,
                       interp == Interp::LogLog ? "log-log" : "linear", spec_named,
-                      ok ? "closest at" : "worst", v.worst_x, x_unit, v.sub_y, unit, v.orig_y,
+                      ok ? "passes everywhere, tightest" : "worst", v.worst_x, x_unit, v.sub_y, unit, v.orig_y,
                       unit);
         notes.push_back(buf);
         if (v.verdict == std::string(FAIL)) {
@@ -2768,6 +2768,27 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         curve_param("capacitance_bias_curve", "capacitance_bias",
                     "effective capacitance under DC bias", "F", "DC bias", "V", kBiasSpec,
                     "capacitance spec", Interp::Linear);
+        // (c) The frequency curves, log-log (all three are plotted on log axes), each with the
+        // closest scalar spec, named in its note:
+        //  |Z|(f): the ESR spec (lower is better, PASS <= 1x, WARN to 1.5x, FAIL beyond) — the
+        //          impedance a decoupling or filter capacitor presents is what it is used for;
+        //  C(f):   the capacitance spec's lower bands, as for DC bias (read only below the first
+        //          non-positive sample, see Views.cpp leading_positive);
+        //  ESL(f): the ESR spec's bands (lower is better), the only lower-is-better impedance
+        //          spec the capacitor table has; ESL itself has no scalar spec.
+        static const ParamSpec kImpedanceSpec{"impedance", Dir::Lower, 1.5, std::nullopt,
+                                              false, false, nullptr};
+        static const ParamSpec kCapFreqSpec{"capacitance_frequency", Dir::Higher, 0.80,
+                                            std::nullopt, false, false, nullptr, 0.90};
+        static const ParamSpec kEslSpec{"esl", Dir::Lower, 1.5, std::nullopt, false, false,
+                                        nullptr};
+        curve_param("impedance_curve", "impedance_curve", "|Z|", "ohm", "frequency", "Hz",
+                    kImpedanceSpec, "ESR spec", Interp::LogLog);
+        curve_param("capacitance_frequency_curve", "capacitance_frequency_curve",
+                    "capacitance vs frequency", "F", "frequency", "Hz", kCapFreqSpec,
+                    "capacitance spec", Interp::LogLog);
+        curve_param("esl_curve", "esl_curve", "ESL", "H", "frequency", "Hz", kEslSpec,
+                    "ESR spec", Interp::LogLog);
     }
 
     // ── transformer turns ratio (owner 2026-11-13, R2; W4) ───────────────────

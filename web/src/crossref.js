@@ -102,7 +102,7 @@ export const XREF = [
       ripple_current_temperature: r.ripple_current_temperature ?? null, safety_class: r.safety_class || null,
       // v22 (owner 2026-11-14): the measured curves, {x, y, temperature?, dc_bias?, frequency?} or
       // null — compared curve-vs-curve on their overlap (src/CrossRefCurves.hpp).
-      esr_curve: r.esr_curve ?? null, capacitance_bias_curve: r.capacitance_bias_curve ?? null,
+      esr_curve: r.esr_curve ?? null, impedance_curve: r.impedance_curve ?? null, capacitance_frequency_curve: r.capacitance_frequency_curve ?? null, esl_curve: r.esl_curve ?? null, capacitance_bias_curve: r.capacitance_bias_curve ?? null,
       // v20 (Qarlos 2026-11-09): the guaranteed capacitance band in farads, as the record states
       // its two ends (compared as farads, never turned into a percentage); the leaded form
       // (axial / radial, a land-pattern identity); and the qualified reliability level

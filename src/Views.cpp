@@ -165,6 +165,20 @@ CurvePts read_curve_xy(const json* c, const char* x_unit, std::initializer_list<
     return out;
 }
 
+// The leading run of a curve up to (not including) its first sample <= 0; empty when fewer
+// than two samples remain. Used where a sign change ends the quantity's meaning (C(f) past
+// self-resonance), so the rest of the curve is not read as that quantity.
+CurvePts leading_positive(CurvePts c) {
+    if (c.empty()) return c;
+    size_t n = 0;
+    while (n < c.y->size() && (*c.y)[n] > 0) ++n;
+    if (n == c.y->size()) return c;
+    if (n < 2) return CurvePts{};
+    c.x = std::make_shared<std::vector<float>>(c.x->begin(), c.x->begin() + n);
+    c.y = std::make_shared<std::vector<float>>(c.y->begin(), c.y->begin() + n);
+    return c;
+}
+
 // CAS capacitanceBiasPoints ([{voltage, capacitance, temperature?, acVoltage?}]) as a curve:
 // DC bias V -> effective capacitance F, absolute, as the records state it (34,110 records,
 // none states a ratio). Put in voltage order; NOT kept when it is not one curve: fewer than
@@ -1183,6 +1197,12 @@ std::optional<CapacitorRow> extract_capacitor(const json& env) {
     r.esr_curve = read_curve_xy(obj_get(*elec, "esrPoints"), "[Hz]", {"Ohm", "\u03a9"},
                                 /*positive_y=*/true);
     r.bias_curve = read_bias_curve(obj_get(*elec, "capacitanceBiasPoints"));
+    r.z_curve = read_curve_xy(obj_get(*elec, "impedancePoints"), "[Hz]", {"Ohm", "\u03a9"},
+                              /*positive_y=*/true);
+    r.cf_curve = leading_positive(read_curve_xy(obj_get(*elec, "capacitanceFrequencyPoints"),
+                                                "[Hz]", {"[F]"}, /*positive_y=*/false));
+    r.esl_curve = read_curve_xy(obj_get(*elec, "inductanceFrequencyPoints"), "[Hz]", {"[H]"},
+                                /*positive_y=*/true);
     if (!present(r.esr)) {
         if (auto v = curve_at(obj_get(*elec, "esrPoints"), 1e5, "[Hz]", "Ohm"); v) {
             r.esr = *v;

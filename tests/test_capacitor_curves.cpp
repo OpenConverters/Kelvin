@@ -22,7 +22,10 @@ json fixture(const std::string& mpn) {
     std::string line;
     while (std::getline(in, line)) {
         json j = json::parse(line);
-        if (j["capacitor"]["manufacturerInfo"]["reference"] == mpn) return j;
+        const json& mi = j["capacitor"]["manufacturerInfo"];
+        if (mi.value("reference", "") == mpn ||
+            mi["datasheetInfo"]["part"].value("partNumber", "") == mpn)
+            return j;
     }
     FAIL("fixture " << mpn << " missing");
     return {};
@@ -129,4 +132,53 @@ TEST_CASE("DC-bias curves: effective capacitance compared on the common bias ran
     // The same part against itself: every point equal -> pass.
     const json same = rank_one("ZRB157R6YA225ME11", "ZRB157R6YA225ME11");
     CHECK(verdict_of(same, "capacitance_bias") == "pass");
+}
+
+TEST_CASE("Frequency curves: |Z|, C(f) and ESL compared on the common band",
+          "[curves][capacitor][freq-curves]") {
+    // KEMET C0603C104K3RECTU (100 nF 25 V 0603) vs C0603C104M4RAC (100 nF 16 V 0603): both
+    // carry |Z|, C(f) and ESL curves (KEMET is the only maker with ESL curves, 16,583 records).
+    const auto o = row("C0603C104K3RECTU");
+    const auto s = row("C0603C104M4RAC");
+    REQUIRE_FALSE(o.z_curve.empty());
+    REQUIRE_FALSE(o.cf_curve.empty());
+    REQUIRE_FALSE(o.esl_curve.empty());
+    REQUIRE_FALSE(s.esl_curve.empty());
+    const json c = rank_one("C0603C104K3RECTU", "C0603C104M4RAC");
+    INFO(notes_of(c));
+    // |Z|: the substitute's 0.0893 ohm at 39.8 MHz is x2.5 the original's 0.0355 -> FAIL.
+    CHECK(verdict_of(c, "impedance_curve") == "fail");
+    CHECK(has_note(c, "|Z| compared on both curves over frequency 100 to 1e+09 Hz (71 points, "
+                      "log-log, bands of the ESR spec): worst at 3.98107e+07 Hz, substitute "
+                      "0.08928 ohm vs original 0.03553 ohm"));
+    // C(f) up to the original's self-resonance (21.9 MHz on the substitute): equal or more.
+    CHECK(verdict_of(c, "capacitance_frequency_curve") == "pass");
+    CHECK(has_note(c, "capacitance vs frequency compared on both curves over frequency 100 to "
+                      "2.18776e+07 Hz (55 points, log-log, bands of the capacitance spec): "
+                      "passes everywhere, tightest at 125.893 Hz"));
+    // ESL: 263.7 pH against 15.75 pH at 33.1 MHz -> FAIL.
+    CHECK(verdict_of(c, "esl_curve") == "fail");
+    CHECK(has_note(c, "ESL compared on both curves over frequency 3.31131e+07 to 1e+09 Hz (31 "
+                      "points, log-log, bands of the ESR spec): worst at 3.31131e+07 Hz, "
+                      "substitute 2.637e-10 H vs original 1.575e-11 H"));
+    // (The 16 V substitute is rejected for the 25 V original's voltage anyway; the reverse
+    // direction is the one a designer could take.) The other way round every curve is
+    // compared too: ESL passes, while |Z| still fails where the two curves cross near the
+    // 16 V part's resonance (0.0616 vs 0.0265 ohm at 20 MHz).
+    const json r = rank_one("C0603C104M4RAC", "C0603C104K3RECTU");
+    INFO(notes_of(r));
+    CHECK(verdict_of(r, "impedance_curve") == "fail");
+    CHECK(verdict_of(r, "esl_curve") == "pass");
+}
+
+TEST_CASE("|Z| curves: conditions stated on one side only do not block the comparison",
+          "[curves][capacitor][freq-curves]") {
+    // Murata ZRB157R6YA225ME11 states its |Z| at 25 degC, 0 V bias; TDK C1005X5R1V225K050BC
+    // states no condition: not a difference on record, so the curves are compared.
+    const json c = rank_one("ZRB157R6YA225ME11", "C1005X5R1V225K050BC");
+    INFO(notes_of(c));
+    CHECK(verdict_of(c, "impedance_curve") == "fail");
+    CHECK(has_note(c, "|Z| compared on both curves over frequency 1002.73 to 3e+09 Hz (658 "
+                      "points, log-log, bands of the ESR spec): worst at 3e+09 Hz, substitute "
+                      "9.33 ohm vs original 5.307 ohm"));
 }

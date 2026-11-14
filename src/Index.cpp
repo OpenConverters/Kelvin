@@ -439,6 +439,9 @@ void row_io(Ar& ar, CapacitorRow& r) {
     ar.boolean(r.is_production);
     ar.dbl(r.ripple_current_temperature);  // v22 (Qarlos r26)
     ar.curve(r.esr_curve);                 // v22 (owner 2026-11-14, curves)
+    ar.curve(r.z_curve);
+    ar.curve(r.cf_curve);
+    ar.curve(r.esl_curve);
     ar.curve(r.bias_curve);
 }
 
