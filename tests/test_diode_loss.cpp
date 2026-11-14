@@ -155,9 +155,11 @@ TEST_CASE("diode loss: a candidate with an UNVERIFIED term ranks after every com
     c.loss_op = paper_point();
     json r = select_diode(fixture_shard(), c, DiodeTiebreaker::LowestOperatingPointLoss);
     const std::vector<std::string> order = mpns(r);
-    // MSS1P6HM3_A/H (1 A) is gated out; ES3J is the only one with all three terms.
+    // MSS1P6HM3_A/H (1 A) is gated out. Two candidates have all three terms: C3D10065A (Vf
+    // and Qc off its curves, 1.47 W) and ES3J (scalars, 2.32 W) — in loss order, first.
     REQUIRE(order.size() == 8);
-    CHECK(order[0] == "ES3J");
+    CHECK(order[0] == "C3D10065A");
+    CHECK(order[1] == "ES3J");
     CHECK(cand(r, "ES3J").at("loss").at("total").get<double>() > 2.0);
     // STPS8045's computed sum is far lower, but its switching term is UNVERIFIED.
     CHECK(cand(r, "STPS8045").at("loss").at("computedSum").get<double>() <
@@ -209,8 +211,9 @@ TEST_CASE("diode over-rating: a flag under the loss and margin rankings, a tier 
     // Under the operating-point loss: flagged, the loss alone orders.
     c.loss_op = paper_point();
     json op = select_diode(fixture_shard(), c, DiodeTiebreaker::LowestOperatingPointLoss);
-    CHECK(op.at("candidates")[0].at("mpn") == "ES3J");
-    CHECK(op.at("candidates")[0].at("overRating").at("axes") == json::array({"vrrm"}));
+    // C3D10065A (650 V / 10 A: both axes over-rated) still leads on loss.
+    CHECK(op.at("candidates")[0].at("mpn") == "C3D10065A");
+    CHECK(op.at("candidates")[0].at("overRating").at("axes") == json::array({"vrrm", "if_avg"}));
     CHECK(has(cand(op, "STPS8045").at("overRating").at("notes")[0].get<std::string>(),
               "flagged only: the operating-point loss alone sets the order"));
     // Under a margin ranking: flagged, not demoted.
@@ -252,8 +255,9 @@ TEST_CASE("diode loss: the API reads lossOperatingPoint strictly", "[diode_loss]
     // With an operating point the loss ranking is the default, and over-rating is flagged.
     json r = eng.select("diode", req, {{"lossOperatingPoint", op}, {"includeEnvelope", false}});
     CHECK(r.at("tiebreaker") == "lowest_operating_point_loss");
-    CHECK(r.at("candidates")[0].at("mpn") == "ES3J");
-    CHECK(r.at("candidates")[0].at("overRating").at("axes") == json::array({"vrrm"}));
+    CHECK(r.at("candidates")[0].at("mpn") == "C3D10065A");
+    CHECK(r.at("candidates")[1].at("mpn") == "ES3J");
+    CHECK(r.at("candidates")[1].at("overRating").at("axes") == json::array({"vrrm"}));
     // The Engine ranks lowest_vf with the over-rating tier on: STPS8045 is no longer first.
     json vf = eng.select("diode", req, {{"includeEnvelope", false}});
     CHECK(vf.at("tiebreaker") == "lowest_vf");
@@ -278,4 +282,83 @@ TEST_CASE("diode loss: the API reads lossOperatingPoint strictly", "[diode_loss]
     CHECK_THROWS_AS(eng.select("diode", req, {{"tiebreaker", "lowest_operating_point_loss"}}),
                     InvalidOptions);
     fs::remove_all(dir);
+}
+
+// ---- curves (Vf(If), Cj(Vr), Ir(Vr) on DiodeRow since curves-ff) ---------------------------
+
+namespace {
+DiodeCurves curves_of(const DiodeRow& d) { return {&d.vf_curve, &d.cj_curve, &d.ir_curve}; }
+}  // namespace
+
+TEST_CASE("diode loss: Vf read off the Vf(If) curve at the current conducted", "[diode_loss_curves]") {
+    // STPS30L60CT: Vf(If) 1 A 0.30 V, 5 A 0.36 V (unlabelled; its own 0.42 V at 15 A confirms SI).
+    const DiodeRow& d = row("STPS30L60CT");
+    REQUIRE_FALSE(d.vf_curve.empty());
+    const DiodeLossBreakdown b = diode_loss(d, paper_point(), curves_of(d));
+    const double vf2 = std::exp(std::log(0.30) + std::log(2.0) / std::log(5.0) *
+                                                     (std::log(0.36) - std::log(0.30)));
+    CHECK(*b.conduction.watts == Approx(vf2 * 4.0 / 3));
+    CHECK(has(b.conduction.basis, "read off the record's Vf(If) curve (log-log, curve temperature not stated"));
+    CHECK(has(b.conduction.basis, "units inferred"));
+    // With ripple the term follows the ramp 1.6 .. 2.4 A on the curve: Vf*i is convex there,
+    // so the ramp average is at least the flat-top value.
+    DiodeLossOperatingPoint op = paper_point();
+    op.ripple_pp = 0.8;
+    const DiodeLossBreakdown r = diode_loss(d, op, curves_of(d));
+    CHECK(has(r.conduction.basis, "averaged over the freewheel ramp 1.6 to 2.4 A"));
+    CHECK(*r.conduction.watts >= *b.conduction.watts);
+    CHECK(*r.conduction.watts == Approx(*b.conduction.watts).epsilon(0.02));
+    // Outside the curve (0.1 .. 30 A): not extrapolated, the stated scalar with the reason.
+    op = paper_point();
+    op.iout = 40;
+    const DiodeLossBreakdown o = diode_loss(d, op, curves_of(d));
+    CHECK(has(o.conduction.basis, "stated Vf 0.42 V at If 15 A"));
+    CHECK(has(o.conduction.basis, "If 40 A is outside the record's Vf(If) curve (0.1 to 30 A), not extrapolated"));
+}
+
+TEST_CASE("diode loss: Qc integrated from the Cj(Vr) curve only when it covers 0 to Vin",
+          "[diode_loss_curves]") {
+    // C3D10065A: Cj 280 pF at 0 V, 150 pF at 10 V, 70 pF at 50 V. To 36 V (trapezoid, the end
+    // read linearly at 98 pF): Qc = 21.5 + 32.24 = 53.74 nC... in units of 1e-10 C * V.
+    const DiodeRow& c3d = row("C3D10065A");
+    REQUIRE_FALSE(c3d.cj_curve.empty());
+    const DiodeLossBreakdown b = diode_loss(c3d, paper_point(), curves_of(c3d));
+    const double qc = 0.5 * (280e-12 + 150e-12) * 10 + 0.5 * (150e-12 + 98e-12) * 26;
+    REQUIRE(b.switching.watts);
+    CHECK(*b.switching.watts == Approx(0.5 * qc * 36 * 80e3));
+    CHECK(has(b.switching.basis, "integral of Cj(Vr) from 0 to 36 V on the record's Cj(Vr) curve"));
+    // STPS30L60CT's Cj(Vr) starts at 0.5 V: the charge below is not on record.
+    const DiodeRow& st = row("STPS30L60CT");
+    const DiodeLossBreakdown s = diode_loss(st, paper_point(), curves_of(st));
+    CHECK_FALSE(s.switching.watts);
+    REQUIRE(s.switching.missing.size() == 1);
+    CHECK(has(s.switching.missing[0], "Cj(Vr) curve (0.5 to 60 V) does not cover 0 to 36 V"));
+}
+
+TEST_CASE("diode loss: Ir read off the Ir(Vr) curve at Vin, its temperature stated",
+          "[diode_loss_curves]") {
+    // MSS1P6HM3_A/H: Ir(Vr) at 125 degC, 2.62 mA at 36.02 V, 1.911 mA at 18.02 V.
+    const DiodeRow& d = row("MSS1P6HM3_A/H");
+    REQUIRE_FALSE(d.ir_curve.empty());
+    DiodeLossOperatingPoint op = paper_point();
+    op.tj = 100;
+    const DiodeLossBreakdown b = diode_loss(d, op, curves_of(d));
+    REQUIRE(b.leakage.watts);
+    const double t = (std::log(36.0) - std::log(18.02)) / (std::log(36.02) - std::log(18.02));
+    const double ir = std::exp(std::log(1.911e-3) + t * (std::log(2.62e-3) - std::log(1.911e-3)));
+    CHECK(*b.leakage.watts == Approx(ir * 36 / 3).epsilon(1e-4));
+    CHECK(has(b.leakage.basis, "Ir(Vr) curve (log-log, curve at 125 degC, not at the operating Tj 100 degC)"));
+}
+
+TEST_CASE("diode loss: the selector reads the row's curves", "[diode_loss_curves]") {
+    DiodeConstraints c = su_constraints();
+    c.loss_op = paper_point();
+    json r = select_diode(fixture_shard(), c, DiodeTiebreaker::LowestOperatingPointLoss);
+    // C3D10065A now has every term (curve Qc, scalar Vf and Ir): complete, so among the first.
+    const json& k = cand(r, "C3D10065A");
+    CHECK(k.at("loss").at("unverified").empty());
+    CHECK(has(k.at("loss").at("terms").at("switching").at("basis").get<std::string>(),
+              "Cj(Vr) curve"));
+    CHECK(has(cand(r, "STPS30L60CT").at("loss").at("terms").at("conduction").at("basis")
+                  .get<std::string>(), "Vf(If) curve"));
 }

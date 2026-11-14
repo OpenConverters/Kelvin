@@ -75,16 +75,25 @@ inline bool usable(const CurvePts* c) { return c && !c->empty(); }
 // "at 125 degC, not at Tj 100 degC", "temperature not stated". 20 and 25 degC count as the
 // same (owner 2026-11-14).
 inline std::string curve_temperature(const CurvePts& c, const std::optional<double>& tj) {
-    if (!present(c.temperature)) return "curve temperature not stated";
-    std::string s = fmt("curve at %g degC", c.temperature);
-    if (tj) {
-        const bool room = [](double a, double b) {
-            auto r = [](double t) { return t == 20.0 || t == 25.0; };
-            return a == b || (r(a) && r(b));
-        }(c.temperature, *tj);
-        if (!room) s += fmt(", not at the operating Tj %g degC", *tj);
+    std::string s;
+    if (!present(c.temperature)) {
+        s = "curve temperature not stated";
+    } else {
+        s = fmt("curve at %g degC", c.temperature);
+        if (tj && !crossref::same_stated_value(c.temperature, *tj) &&
+            !crossref::same_room_temperature(c.temperature, *tj))
+            s += fmt(", not at the operating Tj %g degC", *tj);
     }
+    if (c.unit_inferred) s += "; units inferred: " + c.unit_note;
     return s;
+}
+
+// Why a curve the record states was not read: it gives no units its own scalar confirms
+// (Views.cpp settle_unit_unstated keeps its points out). "" when there is no such curve.
+inline std::string unread_curve(const CurvePts* c, const char* name) {
+    if (!c || !c->unit_unstated) return "";
+    return std::string("; the record's ") + name + " curve states no units" +
+           (c->unit_note.empty() ? std::string() : " (" + c->unit_note + ")") + ", not read";
 }
 
 inline std::string range_text(const CurvePts& c, const char* unit) {
@@ -131,7 +140,7 @@ inline DiodeLossBreakdown buck_freewheel_loss(const DiodeRow& d, const DiodeLoss
     // ---- conduction: Vf(If) * If * (1-D) -----------------------------------------------
     {
         LossTerm& t = b.conduction;
-        std::string curve_miss;
+        std::string curve_miss = unread_curve(cv.vf_if, "Vf(If)");
         if (usable(cv.vf_if)) {
             const CurvePts& cp = *cv.vf_if;
             if (auto c = to_curve(cp)) {
@@ -237,6 +246,8 @@ inline DiodeLossBreakdown buck_freewheel_loss(const DiodeRow& d, const DiodeLoss
                 }
             }
             if (!t.watts) {
+                if (why.empty() && cv.cj_vr && cv.cj_vr->unit_unstated)
+                    why = "Qc not on record (SAS states no Qc)" + unread_curve(cv.cj_vr, "Cj(Vr)");
                 if (why.empty()) why = "Qc not on record: the record has no Cj(Vr) curve (SAS states no Qc)";
                 if (present(d.junction_capacitance))
                     why += "; the single stated Cj " + fmt("%.4g pF", d.junction_capacitance * 1e12) +
@@ -275,7 +286,7 @@ inline DiodeLossBreakdown buck_freewheel_loss(const DiodeRow& d, const DiodeLoss
     // ---- leakage: Ir(Vin) * Vin * D ----------------------------------------------------
     {
         LossTerm& t = b.leakage;
-        std::string curve_miss;
+        std::string curve_miss = unread_curve(cv.ir_vr, "Ir(Vr)");
         if (usable(cv.ir_vr)) {
             const CurvePts& cp = *cv.ir_vr;
             if (auto c = to_curve(cp)) {

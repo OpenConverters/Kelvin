@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <unordered_map>
 
+#include "CrossRefCurves.hpp"      // crossref::curve_at (unit check of unlabelled curves)
 #include "CrossRefDimensions.hpp"  // crossref::normalize_mount (smd / leaded)
 #include "DimensionJson.hpp"       // PEAS::resolve_dimensional_values (json overload)
 
@@ -41,6 +42,178 @@ bool get_bool(const json& o, const char* key, bool dflt) {
     const json* v = obj_get(o, key);
     if (v && v->is_boolean()) return v->get<bool>();
     return dflt;
+}
+
+// ---- measured curves (owner rule 2026-11-14: Kelvin compares ALL existing graphs) ----------
+// SI scale of the unit a curve label states in brackets ("Gate charge [nC]" -> 1e-9). No label,
+// or no bracket, is the schema's SI. A unit not in this table is a record Kelvin cannot read
+// without guessing, so it throws with the part and the label.
+double curve_label_scale(const std::string& label, const std::string& who) {
+    const auto lb = label.rfind('['), rb = label.rfind(']');
+    if (lb == std::string::npos || rb == std::string::npos || rb < lb) return 1.0;
+    const std::string u = label.substr(lb + 1, rb - lb - 1);
+    static const std::unordered_map<std::string, double> k = {
+        {"V", 1.0},   {"A", 1.0},     {"F", 1.0},     {"C", 1.0},    {"ohm", 1.0},
+        {"degC", 1.0}, {"nC", 1e-9},  {"pF", 1e-12},  {"nF", 1e-9},  {"mA", 1e-3},
+        {"uA", 1e-6}, {"mV", 1e-3},   {"mohm", 1e-3}};
+    const auto it = k.find(u);
+    if (it == k.end())
+        throw std::runtime_error(who + ": curve label '" + label + "' states a unit Kelvin "
+                                 "does not read");
+    return it->second;
+}
+
+// The samples of one curve, in x order, as a row carries them (CurvePts): a permutation of the
+// stated samples. Two samples at one x (or one float apart) state two values there and which is
+// the curve is not on record: the curve is NOT kept (empty), as read_curve_xy below does.
+CurvePts curve_pts(std::vector<std::pair<double, double>> pts) {
+    std::stable_sort(pts.begin(), pts.end(),
+                     [](const auto& a, const auto& b) { return a.first < b.first; });
+    auto x = std::make_shared<std::vector<float>>();
+    auto y = std::make_shared<std::vector<float>>();
+    for (const auto& [xi, yi] : pts) {
+        const float xf = static_cast<float>(xi);
+        if (!x->empty() && !(xf > x->back())) return CurvePts{};
+        x->push_back(xf);
+        y->push_back(static_cast<float>(yi));
+    }
+    CurvePts out;
+    if (x->size() < 2) return out;  // one sample is a rating, not a curve
+    out.x = std::move(x);
+    out.y = std::move(y);
+    return out;
+}
+// A stated numeric condition onto the curve: temperature / dcBias / frequency into their own
+// fields (the capacitor curves' shape), any other into the sorted named list.
+void set_condition(CurvePts& c, const std::string& key, double v) {
+    if (key == "temperature") c.temperature = v;
+    else if (key == "dcBias") c.dc_bias = v;
+    else if (key == "frequency") c.frequency = v;
+    else {
+        const auto it = std::lower_bound(c.cond_keys.begin(), c.cond_keys.end(), key);
+        const auto i = it - c.cond_keys.begin();
+        c.cond_keys.insert(it, key);
+        c.cond_vals.insert(c.cond_vals.begin() + i, v);
+    }
+}
+
+// Reads a datasheetInfo.curves entry {xData, yData, xLabel?, yLabel?, conditions?} into a
+// CurvePts: SI (the labels' units applied), in x order, every numeric condition carried. A
+// malformed curve is a record defect that would put a wrong number in front of an engineer:
+// loud, with the part (the resistor derating precedent below). Two samples at one x, or fewer
+// than two samples: not kept (curve_pts).
+CurvePts read_xy_curve(const json& c, const std::string& who) {
+    auto bad = [&](const char* why) { return std::runtime_error(who + " " + why); };
+    const json* xs = obj_get(c, "xData");
+    const json* ys = obj_get(c, "yData");
+    if (!xs || !ys || !xs->is_array() || !ys->is_array())
+        throw bad("must carry xData[] and yData[]");
+    if (xs->size() != ys->size() || xs->empty())
+        throw bad("xData[] and yData[] must be equal-length and non-empty");
+    const double sx = curve_label_scale(get_str(c, "xLabel").value_or(""), who);
+    const double sy = curve_label_scale(get_str(c, "yLabel").value_or(""), who);
+    std::vector<std::pair<double, double>> pts;
+    for (size_t i = 0; i < xs->size(); ++i) {
+        const json &xv = (*xs)[i], &yv = (*ys)[i];
+        if (!xv.is_number() || xv.is_boolean() || !yv.is_number() || yv.is_boolean())
+            throw bad("holds a non-numeric point");
+        const double x = xv.get<double>() * sx, y = yv.get<double>() * sy;
+        if (!std::isfinite(x) || !std::isfinite(y)) throw bad("holds a non-finite point");
+        pts.emplace_back(x, y);
+    }
+    CurvePts out = curve_pts(std::move(pts));
+    if (out.empty()) return out;
+    if (const json* cond = obj_get(c, "conditions"); cond && cond->is_object())
+        for (auto it = cond->begin(); it != cond->end(); ++it)
+            if (it->is_number() && !it->is_boolean()) set_condition(out, it.key(), it->get<double>());
+    return out;
+}
+
+// datasheetInfo.curves.<name>, or an empty curve when the record states none.
+CurvePts read_named_curve(const json& di, const char* name, const std::string& mpn) {
+    const json* curves = obj_get(di, "curves");
+    const json* c = curves ? obj_get(*curves, name) : nullptr;
+    if (!c) return {};
+    if (!c->is_object()) throw std::runtime_error(mpn + ": curves." + name + " is not an object");
+    // The labels carry the units (PEAS curve: "label for the X axis, including unit"); the
+    // schema does not say an unlabelled axis is SI. A curve missing either label has no scale
+    // on record: not read, never assumed SI — marked, so the comparison says why it is
+    // UNVERIFIED (6 records in data 524a699: IPB017N10N5 cossVsVds / rdsOnVsTj, STPS30L60CT,
+    // C3D10065A and C4D10120A forwardVoltageVsCurrent / capacitanceVsVoltage).
+    // Owner 2026-11-14: such a curve is read as SI when its record's own scalar lies on it
+    // (settle_unit_unstated below, which every unlabelled curve goes through). Until then the
+    // points are read as SI and the curve is marked.
+    if (!get_str(*c, "xLabel") || !get_str(*c, "yLabel")) {
+        CurvePts out = read_xy_curve(*c, mpn + ": curves." + name);
+        out.unit_unstated = true;
+        return out;
+    }
+    return read_xy_curve(*c, mpn + ": curves." + name);
+}
+
+// The record's own scalar a curve without axis units is checked against (owner 2026-11-14):
+// `scalar` (SI, in the curve's y quantity) stated at `at` (SI, on the curve's x axis). Both
+// must be stated; the curve is read at `at` with the comparison's own interpolation.
+struct UnitCheck {
+    std::optional<double> scalar, at;
+    bool loglog = false;
+    const char* what = "";    // "Coss"
+    const char* y_unit = "";  // printed unit of the scalar, after y_scale
+    double y_scale = 1.0;
+    const char* x_unit = "";  // printed unit of `at`
+};
+// An unlabelled curve (read_named_curve) is kept, read as SI, only when the record's own scalar
+// lies on it within 2 % at the scalar's stated condition; it is then marked unit_inferred and
+// its unit_note says which scalar confirmed it. Otherwise its points are dropped (stated, not
+// readable: unit_unstated) and unit_note says why — no scalar to check, the scalar's condition
+// outside the curve, or the scalar not on it. A labelled curve is left as it is.
+void settle_unit_unstated(CurvePts& c, const UnitCheck* check) {
+    if (!c.unit_unstated) return;
+    auto drop = [&](std::string why) {
+        CurvePts out;
+        out.unit_unstated = true;
+        out.unit_note = std::move(why);
+        c = std::move(out);
+    };
+    if (c.empty()) return drop("");
+    if (!check || !check->scalar || !check->at)
+        return drop("no scalar of its record states a value on it to check the units against");
+    char b[320];
+    const double sc = *check->scalar, at = *check->at;
+    std::optional<double> read;
+    {
+        std::vector<double> xs(c.x->begin(), c.x->end()), ys(c.y->begin(), c.y->end());
+        const crossref::Curve cv(std::move(xs), std::move(ys));
+        bool ok = true;
+        if (check->loglog)
+            for (size_t i = 0; i < cv.x.size(); ++i)
+                if (!(cv.x[i] > 0) || !(cv.y[i] > 0)) ok = false;
+        if (ok) read = crossref::curve_at(cv, at, check->loglog ? crossref::Interp::LogLog
+                                                                : crossref::Interp::Linear);
+    }
+    if (!read) {
+        std::snprintf(b, sizeof b,
+                      "its record's %s of %.4g %s is stated at %g %s, which the curve does not "
+                      "reach as SI, so the units cannot be checked",
+                      check->what, sc * check->y_scale, check->y_unit, at, check->x_unit);
+        return drop(b);
+    }
+    if (!(std::fabs(*read - sc) <= crossref::kCurveLevelFraction * std::fabs(sc))) {
+        std::snprintf(b, sizeof b,
+                      "its record's %s of %.4g %s at %g %s does not lie on it read as SI "
+                      "(%.4g %s there), so the units are not confirmed",
+                      check->what, sc * check->y_scale, check->y_unit, at, check->x_unit,
+                      *read * check->y_scale, check->y_unit);
+        return drop(b);
+    }
+    std::snprintf(b, sizeof b,
+                  "its axes state no units; read as SI because its record's own %s of %.4g %s "
+                  "at %g %s lies on it (%.4g %s read there)",
+                  check->what, sc * check->y_scale, check->y_unit, at, check->x_unit,
+                  *read * check->y_scale, check->y_unit);
+    c.unit_unstated = false;
+    c.unit_inferred = true;
+    c.unit_note = b;
 }
 
 // A dimensionWithTolerance-or-scalar field, collapsed to a scalar with the CANONICAL resolver
@@ -720,30 +893,8 @@ std::optional<MosfetRow> extract_mosfet(const json& env) {
     if (auto v = get_num(*elec, "gateDrainCharge"); pos(v)) r.qgd = *v;
     if (auto v = rating_magnitude(get_num(*elec, "totalGateChargeVgs"), p_channel); pos(v))
         r.qg_vgs = *v;
-    if (const json* curves = obj_get(*di, "curves"); curves && curves->is_object()) {
-        r.coss_curve = read_curve_xy(obj_get(*curves, "cossVsVds"), "V", {"F"}, true);
-        // Rds(on) against Tj: x crosses 0 degC; y an absolute resistance (a label naming a
-        // milli-unit or a normalised ratio is not read: read_curve_xy's label check).
-        const json* rtj = obj_get(*curves, "rdsOnVsTj");
-        r.rds_on_tj_curve = read_curve_xy(rtj, "degC", {"ohm", "Ohm"}, true, false, true);
-        if (!r.rds_on_tj_curve.empty())
-            if (const json* cond = rtj ? obj_get(*rtj, "conditions") : nullptr; cond && cond->is_object())
-                if (auto v = rating_magnitude(get_num(*cond, "gateSourceVoltage"), p_channel); pos(v))
-                    r.rds_on_tj_curve_vgs = *v;
-        // Gate charge: the records label x "Gate charge [nC]" and state it in nC. Only an
-        // nC-labelled curve is read (read_curve_xy rejects another unit), then put in C.
-        const json* gq = obj_get(*curves, "gateCharge");
-        CurvePts q = read_curve_xy(gq, "[nC]", {"V"}, false, true);
-        if (!q.empty()) {
-            auto xs = std::make_shared<std::vector<float>>();
-            for (float x : *q.x) xs->push_back(x * 1e-9f);
-            q.x = std::move(xs);
-            r.qg_curve = std::move(q);
-            if (const json* cond = obj_get(*gq, "conditions"); cond && cond->is_object())
-                if (auto v = rating_magnitude(get_num(*cond, "drainSourceVoltage"), p_channel); pos(v))
-                    r.qg_curve_vds = *v;
-        }
-    }
+    // The Coss(Vds), Rds(on)(Tj) and gate-charge curves the loss terms read are the row's
+    // measured curves below (read_named_curve: one set, with the conditions each states).
     if (vgs) r.vgs_threshold_max = *vgs;
     if (vgs_typ) r.vgs_threshold_typ = *vgs_typ;
     if (auto v = rating_magnitude(get_num(*elec, "onResistanceVgs"), p_channel); pos(v))
@@ -755,6 +906,79 @@ std::optional<MosfetRow> extract_mosfet(const json& env) {
     r.internal_connection = get_str(*part, "internalConnection").value_or("");
     r.qualification = get_str(*part, "qualification").value_or("");
     r.technology = get_str(*part, "technology").value_or("");
+    // Measured curves (owner rule 2026-11-14), as stated; compared by CrossRefCurveChecks.hpp.
+    r.ciss_curve = read_named_curve(*di, "cissVsVds", *mpn);
+    r.coss_curve = read_named_curve(*di, "cossVsVds", *mpn);
+    r.crss_curve = read_named_curve(*di, "crssVsVds", *mpn);
+    r.rds_on_id_curve = read_named_curve(*di, "rdsOnVsId", *mpn);
+    r.rds_on_tj_curve = read_named_curve(*di, "rdsOnVsTj", *mpn);
+    r.qg_curve = read_named_curve(*di, "gateCharge", *mpn);
+    {
+        // Unlabelled curves: checked against the record's own scalar at its stated condition.
+        auto opt = [](double v) { return present(v) ? std::optional<double>(v) : std::nullopt; };
+        auto elec_pos = [&](const char* k) -> std::optional<double> {
+            auto v = get_num(*elec, k);
+            return pos(v) ? v : std::nullopt;
+        };
+        const std::optional<double> cvds = opt(r.coss_vds);
+        const UnitCheck ciss{elec_pos("inputCapacitance"), cvds, false, "Ciss", "pF", 1e12, "V"};
+        const UnitCheck coss{opt(r.coss), cvds, false, "Coss", "pF", 1e12, "V"};
+        const UnitCheck crss{elec_pos("reverseTransferCapacitance"), cvds, false, "Crss", "pF",
+                             1e12, "V"};
+        const UnitCheck rid{opt(r.rds_on), elec_pos("onResistanceId"), false, "Rds(on)", "mohm",
+                            1e3, "A"};
+        settle_unit_unstated(r.ciss_curve, &ciss);
+        settle_unit_unstated(r.coss_curve, &coss);
+        settle_unit_unstated(r.crss_curve, &crss);
+        settle_unit_unstated(r.rds_on_id_curve, &rid);
+        // Rds(on)(Tj): the scalar Rds(on) states no junction temperature, so it has no x on this
+        // curve; the gate-charge curve's x is the charge, no scalar states a Vgs-to-charge point
+        // checked here. Neither is checked.
+        settle_unit_unstated(r.rds_on_tj_curve, nullptr);
+        settle_unit_unstated(r.qg_curve, nullptr);
+    }
+    // Ambient ratings (the package's, or the identical dies' this row is read from — the 43
+    // AOS duals state their per-die Id only here, ABT #2388): one curve per rating and per
+    // gate-source voltage its points state, x = ambient degC, y = |Id| (a P-channel record
+    // states a negative current; the rating is its magnitude, as rating_magnitude reads Id).
+    // Points stating no drain current (power only) are not Id points and are not part of it.
+    // The conditions: timeBase and mounting (free text), duration and Vgs (numbers).
+    if (const json* ars = obj_get(*elec, "ambientRatings"); ars && ars->is_array()) {
+        for (const auto& a : *ars) {
+            const json* pts = obj_get(a, "points");
+            if (!pts || !pts->is_array()) continue;
+            std::string text;
+            if (auto tb = get_str(a, "timeBase")) text = *tb;
+            if (auto mt = get_str(a, "mounting"))
+                text += (text.empty() ? "" : "; ") + *mt;
+            // group by the Vgs each point states (none = its own group)
+            std::vector<std::pair<std::optional<double>, std::vector<std::pair<double, double>>>> g;
+            for (const auto& p : *pts) {
+                const auto t = get_num(p, "ambientTemperature");
+                const auto id_a = get_num(p, "continuousDrainCurrent");
+                if (!id_a) continue;
+                if (!t) throw std::runtime_error(*mpn + ": an ambientRatings point states a drain "
+                                                 "current at no ambient temperature");
+                const auto vg = get_num(p, "gateSourceVoltage");
+                auto it = std::find_if(g.begin(), g.end(), [&](const auto& e) { return e.first == vg; });
+                if (it == g.end()) {
+                    g.push_back({vg, {}});
+                    it = g.end() - 1;
+                }
+                it->second.emplace_back(*t, std::fabs(*id_a));
+            }
+            for (auto& [vg, xy] : g) {
+                std::stable_sort(xy.begin(), xy.end(),
+                                 [](const auto& l, const auto& rr) { return l.first < rr.first; });
+                CurvePts c = curve_pts(xy);
+                if (c.empty()) continue;  // one ambient point, or two at one temperature
+                if (auto d = get_num(a, "duration")) set_condition(c, "duration", *d);
+                if (vg) set_condition(c, "gateSourceVoltage", *vg);
+                c.cond_text = text;
+                r.id_ambient_curves.push_back(std::move(c));
+            }
+        }
+    }
     auto status = get_str(*mi, "status");
     r.is_production = status.has_value() && *status == "production";
     r.datasheet_usable = !datasheet_unusable(get_str(*mi, "datasheetUrl").value_or(""));
@@ -940,6 +1164,21 @@ std::optional<DiodeRow> extract_diode(const json& env) {
             quotes.push_back(std::move(q));
         }
         if (!quotes.empty()) r.price_quotes = quotes.dump();
+    }
+    // Measured curves (owner rule 2026-11-14), as stated; compared by CrossRefCurveChecks.hpp.
+    r.vf_curve = read_named_curve(*di, "forwardVoltageVsCurrent", *mpn);
+    r.ir_curve = read_named_curve(*di, "reverseCurrentVsVoltage", *mpn);
+    r.cj_curve = read_named_curve(*di, "capacitanceVsVoltage", *mpn);
+    {
+        // Unlabelled curves: checked against the record's own scalar at its stated condition.
+        auto opt = [](double v) { return present(v) ? std::optional<double>(v) : std::nullopt; };
+        const UnitCheck vf{opt(r.vf_typ), opt(r.vf_test_current), true, "Vf", "V", 1.0, "A"};
+        const UnitCheck cj{opt(r.junction_capacitance), opt(r.junction_capacitance_vr), false,
+                           "junction capacitance", "pF", 1e12, "V"};
+        settle_unit_unstated(r.vf_curve, &vf);
+        // Ir(Vr): the record's reverse leakage states no reverse voltage on record — not checked.
+        settle_unit_unstated(r.ir_curve, nullptr);
+        settle_unit_unstated(r.cj_curve, &cj);
     }
     r.clamping_waveform = get_str(*elec, "clampingWaveform").value_or("");
     r.peak_pulse_power_waveform = get_str(*elec, "peakPulsePowerWaveform").value_or("");
@@ -2344,6 +2583,23 @@ std::optional<ConnectorRow> extract_connector(const json& env) {
     if (elec && elec->is_object()) {
         set_if_pos(r.rated_current, get_num(*elec, "ratedCurrentPerContact"));
         set_if_pos(r.rated_voltage, get_num(*elec, "ratedVoltage"));
+    }
+    // derating.currentVsAmbient (owner rule 2026-11-14): the per-contact current FRACTION
+    // against ambient, {temperature[], amplitude[]}, and the contact temperature rise it was
+    // set for (maxTemperatureRise) as its condition. Malformed -> loud, with the part.
+    if (const json* der = obj_get(*di, "derating")) {
+        if (const json* cva = obj_get(*der, "currentVsAmbient")) {
+            json xy = {{"xData", cva->value("temperature", json(nullptr))},
+                       {"yData", cva->value("amplitude", json(nullptr))}};
+            if (auto rise = get_num(*der, "maxTemperatureRise"))
+                xy["conditions"] = {{"maxTemperatureRise", *rise}};
+            r.current_ambient_curve = read_xy_curve(xy, *mpn + ": derating.currentVsAmbient");
+            if (!r.current_ambient_curve.empty())
+                for (float a : *r.current_ambient_curve.y)
+                    if (!(a >= 0.0f && a <= 1.0f))
+                        throw std::runtime_error(*mpn + ": derating.currentVsAmbient amplitude must "
+                                             "lie in [0, 1]");
+        }
     }
     const json* mech = obj_get(*di, "mechanical");
     if (mech && mech->is_object()) {

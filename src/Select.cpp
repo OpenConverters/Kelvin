@@ -357,9 +357,8 @@ json price_json(const DiodeRow& d, std::optional<double> quantity) {
     return p;
 }
 
-// The curves a diode row carries for the loss terms. The row carries none yet: the Vf(If),
-// Cj(Vr) and Ir(Vr) curve fields arrive with the curves branch, and are wired here then.
-DiodeCurves diode_curves_of(const DiodeRow&) { return {}; }
+// The curves a diode row carries for the loss terms (datasheetInfo.curves, SI).
+DiodeCurves diode_curves_of(const DiodeRow& d) { return {&d.vf_curve, &d.cj_curve, &d.ir_curve}; }
 
 json diode_loss_json(const DiodeLossBreakdown& lb, const DiodeLossOperatingPoint& op) {
     json loss;
