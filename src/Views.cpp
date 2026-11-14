@@ -1707,6 +1707,7 @@ void magnetic_saturation_table(const json& elec, MagneticRow& r) {
 // bias_curve_ratio, L / L(0)) whether or not the record also states a bare Isat, so the
 // ranker can compare two curves like for like at the same drop. The table is derived from it
 // only when the record states no Isat (sat_table_from_curve then marks the table as derived).
+void store_curve(const std::vector<std::pair<double, double>>& c, CurvePts& out);  // below
 void magnetic_saturation_from_bias_curve(const json& elec, MagneticRow& r) {
     const bool stated = !r.sat_table_current.empty();  // the record states its Isat outright
     const json* pts = obj_get(elec, "inductancePoints");
@@ -1739,12 +1740,32 @@ void magnetic_saturation_from_bias_curve(const json& elec, MagneticRow& r) {
     if (!pick)
         for (const auto& c : curves)
             if (!c.has_temp) pick = &c;
+    // Every stated curve, as it is (owner 2026-11-14): stated temperatures ascending, the
+    // untemperatured set last; a curve stating two inductances at one current is not carried
+    // (store_curve).
+    std::vector<const Curve*> order;
+    for (const auto& c : curves) order.push_back(&c);
+    std::stable_sort(order.begin(), order.end(), [](const Curve* a, const Curve* b) {
+        if (a->has_temp != b->has_temp) return a->has_temp;
+        return a->has_temp && a->temp < b->temp;
+    });
+    for (const Curve* c : order) {
+        std::vector<std::pair<double, double>> xy;
+        for (const BiasPoint& p : c->pts) xy.emplace_back(p.current, p.inductance);
+        std::sort(xy.begin(), xy.end());
+        CurvePts cp;
+        store_curve(xy, cp);
+        if (cp.empty()) continue;
+        if (c->has_temp) cp.temperature = c->temp;
+        r.l_curves.push_back(std::move(cp));
+    }
     if (!pick) return;
     std::vector<BiasPoint> curve = pick->pts;
     std::stable_sort(curve.begin(), curve.end(),
                      [](const BiasPoint& a, const BiasPoint& b) { return a.current < b.current; });
     if (curve.size() < 2 || curve.front().current != 0.0) return;  // no small-signal reference
     const double L0 = curve.front().inductance;
+    if (pick->has_temp) r.bias_curve_temperature = pick->temp;
     for (const BiasPoint& p : curve) {
         r.bias_curve_current.push_back(p.current);
         r.bias_curve_ratio.push_back(p.inductance / L0);

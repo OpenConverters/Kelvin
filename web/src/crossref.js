@@ -63,6 +63,9 @@ export const XREF = [
       // ranker compares the currents at the same inductance drop instead of the bare Isat.
       bias_curve: r.bias_curve && Array.isArray(r.bias_curve.current) ? r.bias_curve : null,
       saturation_from_curve: r.saturation_from_curve === true,
+      // v22 (owner 2026-11-14): every L(I) curve the record states, per temperature
+      // ([{x: [A], y: [H], temperature?}]), compared at each temperature both state.
+      inductance_curves: r.inductance_curves ?? null,
       // v22 (R2): the whole turnsRatios array (primary:secondary per secondary winding),
       // compared element-wise. null = not stated.
       turns_ratios: Array.isArray(r.turns_ratios) && r.turns_ratios.length ? r.turns_ratios : null,

@@ -13,6 +13,7 @@
 // note when the curves do not overlap or were measured under different conditions (no cap).
 // Program-only, no I/O.
 #pragma once
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <optional>
@@ -361,6 +362,109 @@ inline Result compare_pair(const Def& d, const Curve& orig, const Curve& sub,
     return r;
 }
 
+// ── L(I): inductance vs DC bias, per temperature (owner 2026-11-14) ─────────────────────
+// MAS inductancePoints state L(I) optionally per temperature; the spec block carries every
+// curve the record states as "inductance_curves" (the shared curve shape, a list: x = A,
+// y = H, temperature when stated). Two records' curves are compared at each temperature BOTH
+// state; an unstated temperature matches only an unstated one (owner 2026-11-14: a condition
+// stated by one side only is a different condition). Read directly in henries on the current
+// range both measured, linear axes, never extrapolated; a curve with no 0 A point is compared
+// like any other (no L(0) is needed to compare two L(I) curves). Bands: the inductance spec's
+// lower side (primary_value_spec "magnetic", Higher — more inductance held under bias is
+// never a regression): PASS down to the original's stated tolerance floor (owner 2026-11-13
+// R1) or 0.85x when it states none, WARN down to 0.8x, FAIL below. The worst point over every
+// common temperature decides. No common temperature -> UNVERIFIED + note, no cap.
+inline ParamSpec inductance_curve_spec(const nlohmann::json& orig) {
+    PrimaryValueSpec pv{};
+    if (!primary_value_spec("magnetic", pv))
+        throw std::logic_error("magcurve: no magnetic primary value spec");
+    double pass = pv.tight_lo;
+    if (orig.is_object()) {
+        const auto t = orig.find("tolerance_minus_pct");
+        if (t != orig.end() && t->is_number() && t->get<double>() >= 0)
+            pass = std::max(pv.accept_lo, 1.0 - t->get<double>() / 100.0);
+    }
+    return ParamSpec{"inductance_curve", Dir::Higher, pv.accept_lo, std::nullopt, false, false,
+                     nullptr, pass};
+}
+inline std::string temp_word(const std::optional<double>& t) {
+    if (!t) return "no stated temperature";
+    char b[32];
+    std::snprintf(b, sizeof b, "%g degC", *t);
+    return b;
+}
+inline std::optional<Result> compare_inductance_curves(const nlohmann::json& orig,
+                                                       const nlohmann::json& sub) {
+    if (!orig.is_object() || !sub.is_object()) return std::nullopt;
+    const auto oc = curves_from_spec(orig, "inductance_curves");
+    const auto sc = curves_from_spec(sub, "inductance_curves");
+    if (oc.empty() || sc.empty()) return std::nullopt;
+    const ParamSpec spec = inductance_curve_spec(orig);
+    Result r;
+    r.name = "inductance_curve";
+    r.dir = Dir::Higher;
+    auto temps = [](const std::vector<SpecCurve>& v) {
+        std::string s;
+        for (const auto& c : v) s += (s.empty() ? "" : ", ") + temp_word(c.temperature);
+        return s;
+    };
+    auto rank = [](const char* v) {
+        const std::string s = v;
+        return s == FAIL ? 3 : s == WARN ? 2 : 1;
+    };
+    int best = 0;
+    double best_ratio = HUGE_VAL;
+    std::optional<double> best_temp;
+    CurveVerdict best_v;
+    std::string compared;
+    std::size_t pairs = 0;
+    for (const auto& o : oc)
+        for (const auto& s : sc) {
+            if (o.temperature.has_value() != s.temperature.has_value()) continue;
+            if (o.temperature && !same_stated_value(*o.temperature, *s.temperature)) continue;
+            ++pairs;
+            const CurveVerdict v = compare_curves(o.curve, s.curve, spec, Interp::Linear);
+            if (v.verdict == std::string(UNVERIFIED)) continue;
+            compared += (compared.empty() ? "" : ", ") + temp_word(o.temperature);
+            const double ratio = v.orig_y > 0 ? v.sub_y / v.orig_y : HUGE_VAL;
+            const int rk = rank(v.verdict);
+            if (rk > best || (rk == best && ratio < best_ratio)) {
+                best = rk;
+                best_ratio = ratio;
+                best_temp = o.temperature;
+                best_v = v;
+            }
+        }
+    if (pairs == 0) {
+        r.note = "L(I) curves not compared: stated at different temperatures (original " +
+                 temps(oc) + "; substitute " + temps(sc) + ") — a curve is not read across "
+                 "temperatures";
+        return r;
+    }
+    if (best == 0) {
+        r.note = "L(I) curves not compared: at the common temperature(s) the two curves cover "
+                 "no common current range — nothing is extrapolated";
+        return r;
+    }
+    r.verdict = best_v.verdict;
+    r.warn_depth = best_v.warn_depth;
+    r.orig_y = best_v.orig_y;
+    r.sub_y = best_v.sub_y;
+    char band[96];
+    std::snprintf(band, sizeof band, "PASS >= %.3gx, WARN >= %.3gx", *spec.pass_factor,
+                  spec.tol_factor);
+    const std::string what = r.verdict == std::string(PASS)   ? "level or ahead everywhere"
+                             : r.verdict == std::string(WARN) ? "holds less inductance"
+                                                              : "holds far less inductance";
+    r.note = "L(I) compared on both curves at " + compared + " (linear, " +
+             fmt(best_v.range->first, "A") + "-" + fmt(best_v.range->second, "A") +
+             " at the deciding temperature, the inductance spec's lower side: " + band + "): " +
+             what + " — worst at " + fmt(best_v.worst_x, "A") + ", " + temp_word(best_temp) +
+             ", substitute " + fmt(best_v.sub_y, "H") + " vs original " +
+             fmt(best_v.orig_y, "H");
+    return r;
+}
+
 // Every curve both records carry, compared (see the header comment).
 inline std::vector<Result> compare_all(const nlohmann::json& orig, const nlohmann::json& sub) {
     std::vector<Result> out;
@@ -393,6 +497,7 @@ inline std::vector<Result> compare_all(const nlohmann::json& orig, const nlohman
         }
         out.push_back(compare_pair(d, o->curve, s->curve, band));
     }
+    if (auto l = compare_inductance_curves(orig, sub)) out.push_back(std::move(*l));
     return out;
 }
 

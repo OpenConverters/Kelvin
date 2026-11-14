@@ -66,6 +66,7 @@ json spec_of(const kelvin::MagneticRow& r, bool bead = false) {
         s["tolerance_plus_pct"] = raw(r.inductance_tol_plus_pct);
         s["bias_curve"] = row["bias_curve"];
         s["saturation_from_curve"] = row["saturation_from_curve"];
+        s["inductance_curves"] = row["inductance_curves"];
     }
     for (const char* k : kCurveKeys) s[k] = row.contains(k) ? row[k] : json(nullptr);
     return s;

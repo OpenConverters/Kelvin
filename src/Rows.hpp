@@ -507,7 +507,15 @@ struct MagneticRow : RowBase {
     // above was READ OFF this curve (the record states no Isat), not stated.
     std::vector<double> bias_curve_current;
     std::vector<double> bias_curve_ratio;
+    // The temperature (degC) the picked curve is stated at; NaN = not stated (owner
+    // 2026-11-14: two curves are read against each other only at one temperature).
+    double bias_curve_temperature = kNaN();
     bool sat_table_from_curve = false;
+    // v22 (owner 2026-11-14, "compare ALL existing graphs"): EVERY L(I) curve the record states
+    // (inductancePoints, one per stated temperature; an untemperatured set is its own curve),
+    // in henries vs amperes, with or without a 0 A point, in the shared curve storage (the
+    // CurvePts temperature is the curve's). Ascending temperature, the unstated one last.
+    std::vector<CurvePts> l_curves;
     // Winding structure: bit n set when some electrical[] wiring configuration has n windings besides
     // the primary (a single-winding inductor/chip bead sets bit 0; a transformer or coupled inductor sets
     // bit turnsRatios.size()). 0 means no configuration states its structure (e.g. a transformer entry

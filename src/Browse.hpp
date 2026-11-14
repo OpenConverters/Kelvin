@@ -389,6 +389,15 @@ inline void extra_row_json(const MagneticRow& r, json& o) {
         o["bias_curve"] = nullptr;
     else
         o["bias_curve"] = {{"current", r.bias_curve_current}, {"ratio", r.bias_curve_ratio}};
+    if (!r.bias_curve_current.empty() && !std::isnan(r.bias_curve_temperature))
+        o["bias_curve"]["temperature"] = r.bias_curve_temperature;
+    // Every L(I) curve (v22, owner 2026-11-14) in the shared curve shape, null when none.
+    if (r.l_curves.empty()) {
+        o["inductance_curves"] = nullptr;
+    } else {
+        o["inductance_curves"] = json::array();
+        for (const CurvePts& c : r.l_curves) o["inductance_curves"].push_back(curve_json(c));
+    }
     o["saturation_from_curve"] = r.sat_table_from_curve;
     // Measured curves (v22, owner 2026-11-14) in the spec block's shape {x: [...], y: [...]},
     // null when the record states none. A CMC's |Z|(f) is its common-mode curve ("mode").

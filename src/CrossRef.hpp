@@ -2717,6 +2717,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             const auto curves = spec.key == "saturation_current"
                                     ? isat::compare_curves(original, cand, spec.tol_factor)
                                     : isat::CurveCompare{};
+            if (!curves.not_applied_note.empty()) notes.push_back(curves.not_applied_note);
             if (curves.applies) {
                 // Owner 2026-11-13, Z5: the two L(I) curves decided (compare_saturation_current).
                 // Direction from the worst criterion read on both; none read -> blind.

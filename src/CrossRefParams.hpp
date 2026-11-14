@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <optional>
 #include <string>
 #include <utility>
@@ -432,6 +433,7 @@ inline Verdict compare(const std::vector<Point>& op, const std::vector<Point>& s
 // Worst: FAIL, then UNVERIFIED, then PASS.
 struct BiasCurve {
     std::vector<double> current, ratio;
+    std::optional<double> temperature;  // degC the curve is stated at (owner 2026-11-14)
 };
 inline std::optional<BiasCurve> bias_curve(const nlohmann::json& s) {
     if (!s.is_object()) return std::nullopt;
@@ -450,6 +452,8 @@ inline std::optional<BiasCurve> bias_curve(const nlohmann::json& s) {
         c.ratio.push_back(b.get<double>());
     }
     if (c.current.front() != 0.0) return std::nullopt;  // no small-signal reference
+    if (auto t = it->find("temperature"); t != it->end() && t->is_number())
+        c.temperature = t->get<double>();
     return c;
 }
 inline std::optional<double> curve_current_at_drop(const BiasCurve& c, double drop_pct) {
@@ -474,12 +478,30 @@ struct CurveCompare {
     std::vector<CurveCriterion> rows;
     const char* verdict = PASS;
     std::optional<size_t> decisive;  // the worst criterion with both currents read
+    // Both records state a curve but at different temperatures (or only one states its
+    // temperature): the curves are not read against each other (owner 2026-11-14) and this
+    // says why; the stated Isat figures are compared instead.
+    std::string not_applied_note;
 };
 inline CurveCompare compare_curves(const nlohmann::json& orig, const nlohmann::json& sub,
                                    double margin) {
     CurveCompare out;
     const auto oc = bias_curve(orig), sc = bias_curve(sub);
     if (!oc || !sc) return out;
+    if (oc->temperature.has_value() != sc->temperature.has_value() ||
+        (oc->temperature && *oc->temperature != *sc->temperature)) {
+        auto t = [](const std::optional<double>& v) {
+            if (!v) return std::string("no stated temperature");
+            char b[32];
+            std::snprintf(b, sizeof b, "%g degC", *v);
+            return std::string(b);
+        };
+        out.not_applied_note = "L(I) curves stated at different temperatures (original " +
+                               t(oc->temperature) + ", substitute " + t(sc->temperature) +
+                               ") — Isat not read off the two curves; the stated figures are "
+                               "compared instead";
+        return out;
+    }
     out.applies = true;
     std::vector<double> drops;
     const bool from_curve = orig.is_object() && orig.value("saturation_from_curve", false);

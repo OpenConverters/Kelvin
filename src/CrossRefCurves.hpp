@@ -176,9 +176,24 @@ struct SpecCurve {
     Curve curve;
     std::optional<double> temperature, dc_bias, frequency;  // stated measurement conditions
 };
+inline SpecCurve spec_curve_of(const nlohmann::json& c, const std::string& key);
 inline std::optional<SpecCurve> curve_from_spec(const nlohmann::json& s, const std::string& key) {
     auto it = s.find(key);
     if (it == s.end() || it->is_null()) return std::nullopt;
+    return spec_curve_of(*it, key);
+}
+// A list of curves under `key` ([{x, y, temperature?, ...}, ...], e.g. an inductor's L(I) per
+// temperature), each in the shape above; empty when absent / null.
+inline std::vector<SpecCurve> curves_from_spec(const nlohmann::json& s, const std::string& key) {
+    std::vector<SpecCurve> out;
+    auto it = s.find(key);
+    if (it == s.end() || it->is_null()) return out;
+    if (!it->is_array()) throw std::invalid_argument("curves_from_spec: '" + key + "' is not a list");
+    for (const auto& c : *it) out.push_back(spec_curve_of(c, key));
+    return out;
+}
+inline SpecCurve spec_curve_of(const nlohmann::json& c, const std::string& key) {
+    const nlohmann::json* it = &c;
     if (!it->is_object() || !it->contains("x") || !it->contains("y"))
         throw std::invalid_argument("curve_from_spec: '" + key + "' is not {x, y}");
     SpecCurve out{Curve(it->at("x").get<std::vector<double>>(),
