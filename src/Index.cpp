@@ -544,6 +544,8 @@ void row_io(Ar& ar, MagneticRow& r) {
     ar.dblvec(r.bias_curve_current);       // v22 (Z5)
     ar.dblvec(r.bias_curve_ratio);         // v22 (Z5)
     ar.boolean(r.sat_table_from_curve);    // v22 (Z5)
+    ar.boolean(r.dcr_is_maximum);          // v22 (owner 2026-11-14, operating-point loss)
+    ar.str(r.price_quotes);                // v22 (owner 2026-11-14, price)
     ar.boolean(r.is_production);
 }
 

@@ -251,6 +251,44 @@ struct ConnectorConstraints {
     }
 };
 
+// ---- Magnetic operating-point ranking (owner 2026-11-14) ------------------------------
+// best_fit is the legacy rank-not-gate order (closest inductance, soft current penalties).
+// lowest_operating_point_loss ranks power inductors at a stated converter operating point:
+// the record's own L (read at Ipk off its L(I) curve when it states one) sets the ripple,
+// saturation and the rated (temperature-rise) current are hard gates, and the DCR loss orders.
+enum class MagneticTiebreaker { BestFit, LowestOperatingPointLoss };
+const char* to_string(MagneticTiebreaker t);
+MagneticTiebreaker magnetic_tiebreaker_from_string(const std::string& s);
+
+// Where the magnetic sits in the converter. Only the buck output inductor is modelled; another
+// position (boost inductor, flyback transformer) is a further value and a further branch in
+// MagneticLoss.hpp, not a new path.
+enum class InductorPosition { BuckInductor };
+InductorPosition inductor_position_from_string(const std::string& s);
+const char* to_string(InductorPosition p);
+
+// The converter operating point a magnetic is ranked at (SI units). Every value is the
+// caller's; nothing is defaulted. The duty is the ideal CCM buck's Vout/Vin.
+struct InductorOperatingPoint {
+    InductorPosition position = InductorPosition::BuckInductor;
+    double vin = 0, vout = 0, iout = 0, fsw = 0;
+    std::optional<double> ambient;  // degC; stated in the basis, never assumed
+    void validate() const {
+        auto pos = [](double v, const char* n) {
+            if (!(v > 0)) throw InvalidOptions(std::string("lossOperatingPoint.") + n +
+                                               " must be a positive number");
+        };
+        pos(vin, "inputVoltage");
+        pos(vout, "outputVoltage");
+        pos(iout, "outputCurrent");
+        pos(fsw, "switchingFrequency");
+        if (!(vout < vin))
+            throw InvalidOptions("lossOperatingPoint.outputVoltage must be below inputVoltage "
+                                 "for a buck");
+    }
+    double duty() const { return vout / vin; }
+};
+
 // Magnetic constraints — deliberately ALL-OPTIONAL and never-throwing. The magnetic selector
 // ranks the whole catalogue toward these targets and returns the top-N even if none satisfy them
 // (the "magnetic-first fallback" the caller needs), so there is nothing to hard-validate: a
@@ -264,6 +302,11 @@ struct MagneticConstraints {
     // single-winding inductor spec. Unset for a spec-less seed (nothing to judge structure against).
     std::optional<int> secondary_windings;
     std::string kind;                          // "inductor"/"transformer" hint — annotation only
+    // lowest_operating_point_loss only (owner 2026-11-14). The legacy best_fit order reads none
+    // of these: it stays rank-not-gate and never throws.
+    std::optional<InductorOperatingPoint> loss_op;
+    std::optional<double> price_quantity;  // options.priceQuantity, echoed per candidate
+    bool exclude_discontinued = true;
     void validate() const {}                   // never throws — imperfect matches are still returned
 };
 

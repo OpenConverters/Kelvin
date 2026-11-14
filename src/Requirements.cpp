@@ -256,6 +256,31 @@ const char* to_string(SwitchPosition p) {
     return "";
 }
 
+// ---- magnetic tiebreaker / inductor position <-> string --------------------
+const char* to_string(MagneticTiebreaker t) {
+    switch (t) {
+        case MagneticTiebreaker::BestFit: return "best_fit";
+        case MagneticTiebreaker::LowestOperatingPointLoss: return "lowest_operating_point_loss";
+    }
+    return "";
+}
+MagneticTiebreaker magnetic_tiebreaker_from_string(const std::string& s) {
+    if (s == "best_fit") return MagneticTiebreaker::BestFit;
+    if (s == "lowest_operating_point_loss") return MagneticTiebreaker::LowestOperatingPointLoss;
+    throw InvalidOptions("unknown magnetic tiebreaker: " + s);
+}
+InductorPosition inductor_position_from_string(const std::string& s) {
+    if (s == "buckInductor") return InductorPosition::BuckInductor;
+    throw InvalidOptions("unknown magnetic lossOperatingPoint.position: " + s +
+                         " (only buckInductor is modelled)");
+}
+const char* to_string(InductorPosition p) {
+    switch (p) {
+        case InductorPosition::BuckInductor: return "buckInductor";
+    }
+    return "";
+}
+
 // ---- original tiebreaker <-> string ----------------------------------------
 const char* to_string(MosfetTiebreaker t) {
     switch (t) {

@@ -1950,6 +1950,25 @@ std::optional<MagneticRow> extract_magnetic(const json& env) {
     if (const json* mech = obj_get(*di, "mechanical"))
         if (auto m = get_str(*mech, "mounting")) r.mount = *m;
     fill_dimensions(r, *di, *part);
+    // Distributor unit costs (owner 2026-11-14): only a stated positive value with a currency,
+    // the MOSFET extractor's rule.
+    if (const json* dis = obj_get(*mag, "distributorsInfo"); dis && dis->is_array()) {
+        json quotes = json::array();
+        for (const json& d : *dis) {
+            if (!d.is_object()) continue;
+            const json* cost = obj_get(d, "cost");
+            if (!cost || !cost->is_object()) continue;
+            auto v = get_num(*cost, "value");
+            auto cur = get_str(*cost, "currency");
+            if (!v || !(*v > 0) || !cur || cur->empty()) continue;
+            json q = {{"distributor", get_str(d, "name").value_or("")},
+                      {"unitCost", *v},
+                      {"currency", *cur}};
+            if (auto moq = get_num(d, "moq"); moq && *moq > 0) q["moq"] = *moq;
+            quotes.push_back(std::move(q));
+        }
+        if (!quotes.empty()) r.price_quotes = quotes.dump();
+    }
 
     // electrical is an ARRAY; the first entry is the primary-winding projection we rank on.
     const json* elec_arr = obj_get(*di, "electrical");
@@ -2012,17 +2031,24 @@ std::optional<MagneticRow> extract_magnetic(const json& env) {
             }
         // DCR: prefer the worst-case (maximum) bound; fall back to the plural dcResistances[0].
         auto dcr = resolve_field(elec, "dcResistance", PEAS::DimensionalValues::MAXIMUM);
+        const json* dcr_src = dcr ? obj_get(elec, "dcResistance") : nullptr;
         if (!dcr) {
             const json* dcrs = obj_get(elec, "dcResistances");
             if (dcrs && dcrs->is_array() && !dcrs->empty()) {
                 try {
                     dcr = PEAS::resolve_dimensional_values(dcrs->front(),
                                                            PEAS::DimensionalValues::MAXIMUM);
+                    dcr_src = &dcrs->front();
                 } catch (const std::exception&) {
                 }
             }
         }
-        if (dcr && *dcr > 0) r.dcr = *dcr;
+        if (dcr && *dcr > 0) {
+            r.dcr = *dcr;
+            // Which bound the resolver returned (owner 2026-11-14): the MAXIMUM when the
+            // record states one, else its nominal (a bare number reads as a nominal).
+            r.dcr_is_maximum = dcr_src && dcr_src->is_object() && dcr_src->contains("maximum");
+        }
         auto srf = get_num(elec, "selfResonantFrequency");
         if (srf && *srf > 0) r.srf = *srf;
         // Chip-bead impedance curve. A bead's published spec is |Z| at 100 MHz,
