@@ -372,9 +372,10 @@ TEST_CASE("mosfet over-rating: a flag under the loss and margin rankings, a tier
     REQUIRE(r.at("candidates").size() == 4);
     const std::vector<std::string> by_loss = mpns(r);
     // Owner 2026-11-14 (size and voltage, a): a board area that cannot be determined counts one
-    // more UNVERIFIED item — CSD19537Q3 ("SON (3x3)") and NTMFD5C680NLT1G (no drawn size) rank
-    // after AO4286 and IGLD60R190D1, whose areas resolve.
-    CHECK(by_loss == std::vector<std::string>{"AO4286", "IGLD60R190D1", "CSD19537Q3",
+    // more UNVERIFIED item — NTMFD5C680NLT1G ("SO-8FL Dual / DFN-8", no drawn size) ranks after
+    // the three whose areas resolve. CSD19537Q3's "SON (3x3)" resolves since the stated-body
+    // rule (owner 2026-11-14), so it takes the place its loss gives it.
+    CHECK(by_loss == std::vector<std::string>{"CSD19537Q3", "AO4286", "IGLD60R190D1",
                                               "NTMFD5C680NLT1G"});
     double prev = 0;
     size_t prev_items = 0;
@@ -416,15 +417,18 @@ TEST_CASE("mosfet over-rating: a flag under the loss and margin rankings, a tier
 
 // Owner 2026-11-14 (size and voltage, a): under the operating-point ranking a candidate whose
 // board area cannot be determined counts one more UNVERIFIED item (op_ranking, every family).
-// Real records (data-524a699, mosfets_op_loss_ranking.ndjson): CSD19537Q3 has the lowest loss of
-// the four, but its case "SON (3x3)" resolves to no land and it draws no size; AO4286 (SO8,
-// drawn 4.9 x 3.9 mm) and IGLD60R190D1 (drawn 13 x 7.6 mm) resolve. Only the size item moves it.
+// CSD19537Q3's "SON (3x3)" resolves since the stated-body rule, so the guard uses a real record
+// whose case still resolves to no land (owner 2026-11-14, approved fixture change):
+// mosfets_op_size.ndjson is mosfets_op_loss_ranking.ndjson plus NTMFD016N06CT1G (data-524a699,
+// verbatim), case "SO-8FL Dual / DFN-8" (an onsemi name, no registered outline), no drawn size.
+// Every loss term is computed and its loss (0.062 W) is below AO4286's (SO8, drawn 4.9 x 3.9 mm)
+// and IGLD60R190D1's (drawn 13 x 7.6 mm); only the size item ranks it after both.
 TEST_CASE("mosfet op loss: a board area that cannot be determined is one more UNVERIFIED item",
           "[mosfet_loss][op_size]") {
     namespace fs = std::filesystem;
     const fs::path dir = fs::path(KELVIN_TEST_DIR) / "_mosfet_op_size";
     fs::create_directories(dir);
-    fs::copy_file(fs::path(KELVIN_TEST_DIR) / "fixtures" / "mosfets_op_loss_ranking.ndjson",
+    fs::copy_file(fs::path(KELVIN_TEST_DIR) / "fixtures" / "mosfets_op_size.ndjson",
                   dir / "mosfets.ndjson", fs::copy_options::overwrite_existing);
     api::Engine eng(dir.string(), "", /*quiet=*/true);
     const json req = {{"ratedDrainSourceVoltage", 43.2},
@@ -434,25 +438,28 @@ TEST_CASE("mosfet op loss: a board area that cannot be determined is one more UN
                      {"outputCurrent", 2}, {"switchingFrequency", 80e3},
                      {"gateDriveVoltage", 10}, {"gateDriveCurrent", 1}};
     json r = eng.select("mosfet", req, {{"lossOperatingPoint", op}, {"includeEnvelope", false}});
-    auto get = [&](const std::string& mpn) -> const json& {
-        for (const auto& c : r.at("candidates"))
-            if (c.at("mpn") == mpn) return c;
+    auto index_of = [&](const std::string& mpn) -> size_t {
+        for (size_t k = 0; k < r.at("candidates").size(); ++k)
+            if (r.at("candidates")[k].at("mpn") == mpn) return k;
         throw std::runtime_error("no " + mpn);
     };
-    const json& csd = get("CSD19537Q3");
-    const json& ao = get("AO4286");
-    CHECK(csd.at("boardArea").at("mm2").is_null());
-    CHECK(csd.at("loss").at("unverified").empty());  // every loss term computed
-    CHECK(csd.at("sortKey").at("sizeUnverified") == true);
-    CHECK(csd.at("sortKey").at("unverifiedItems") == 1);
-    CHECK(csd.at("loss").at("notes").dump().find(
+    const json& nt = r.at("candidates")[index_of("NTMFD016N06CT1G")];
+    const json& ao = r.at("candidates")[index_of("AO4286")];
+    const json& ig = r.at("candidates")[index_of("IGLD60R190D1")];
+    CHECK(nt.at("boardArea").at("mm2").is_null());
+    CHECK(nt.at("loss").at("unverified").empty());  // every loss term computed
+    CHECK(nt.at("sortKey").at("sizeUnverified") == true);
+    CHECK(nt.at("sortKey").at("unverifiedItems") == 1);
+    CHECK(nt.at("loss").at("notes").dump().find(
               "size UNVERIFIED (board area not stated: no drawn L x W and no resolvable case code "
-              "('SON (3x3)')): counts one more UNVERIFIED item in the operating-point ranking") !=
-          std::string::npos);
+              "('SO-8FL Dual / DFN-8')): counts one more UNVERIFIED item in the operating-point "
+              "ranking") != std::string::npos);
     CHECK(ao.at("sortKey").at("sizeUnverified") == false);
     CHECK(ao.at("sortKey").at("unverifiedItems") == 0);
-    CHECK(csd.at("loss").at("total").get<double>() < ao.at("loss").at("total").get<double>());
-    CHECK(r.at("candidates")[0].at("mpn") == "AO4286");
+    CHECK(nt.at("loss").at("total").get<double>() < ao.at("loss").at("total").get<double>());
+    CHECK(nt.at("loss").at("total").get<double>() < ig.at("loss").at("total").get<double>());
+    CHECK(index_of("NTMFD016N06CT1G") > index_of("AO4286"));
+    CHECK(index_of("NTMFD016N06CT1G") > index_of("IGLD60R190D1"));
     // A legacy ranking has no such key.
     json legacy = eng.select("mosfet", req, {{"tiebreaker", "lowest_rds_on"}, {"includeEnvelope", false}});
     CHECK_FALSE(legacy.at("candidates")[0].at("sortKey").contains("unverifiedItems"));
