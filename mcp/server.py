@@ -1505,6 +1505,56 @@ def _mosfet_extras(c: dict) -> str:
     return out
 
 
+def _capacitor_extras(c: dict) -> str:
+    """One text segment per capacitor extra (owner 2026-11-14): the operating-point ESR loss (or
+    UNVERIFIED with what is missing), Ceff, the ripple voltage against its limit, the
+    ripple-current rating at the operating point, over-rating, board area, volume and price."""
+    out = ""
+    loss = c.get("loss")
+    if loss:
+        t = (loss.get("terms") or {}).get("esrLoss") or {}
+        out += (f" | ESR loss {'<= ' if t.get('upperBound') else ''}{_watts(t['watts'])}"
+                if t.get("watts") is not None
+                else f" | ESR loss UNVERIFIED ({'; '.join(t.get('missing') or [])})")
+        out += f" at I_ripple {loss.get('rippleCurrent', 0):.3g} A"
+        ch = loss.get("checks") or {}
+        ce = ch.get("effectiveCapacitance") or {}
+        out += (f" | Ceff {ce['farads'] * 1e6:.3g} uF" if ce.get("farads") is not None
+                else f" | Ceff UNVERIFIED ({'; '.join(ce.get('missing') or [])})")
+        rv = ch.get("rippleVoltage")
+        if rv is not None:
+            if rv.get("volts") is not None:
+                out += f" | ripple {rv['volts'] * 1e3:.3g} mV"
+                if rv.get("limit") is not None:
+                    out += (f" OVER the {rv['limit'] * 1e3:.3g} mV limit" if rv.get("overLimit")
+                            else f" (limit {rv['limit'] * 1e3:.3g} mV)")
+            else:
+                out += f" | ripple UNVERIFIED ({'; '.join(rv.get('missing') or [])})"
+        rr = ch.get("rippleCurrentRating") or {}
+        if rr.get("amperes") is not None:
+            out += (f" | ripple rating {rr['amperes']:.3g} A at the operating point"
+                    + ("" if rr.get("meets") else f" BELOW the {rr.get('needed', 0):.3g} A needed"))
+        else:
+            out += f" | ripple rating UNVERIFIED ({'; '.join(rr.get('missing') or [])})"
+    over = (c.get("overRating") or {}).get("axes") or []
+    if over:
+        out += f" | over-rated {'/'.join(over)} (>3x the requirement)"
+    area = c.get("boardArea")
+    if area:
+        out += (f" | board {area['mm2']:.1f} mm2" if area.get("mm2") is not None
+                else " | board area not stated")
+    vol = c.get("volume")
+    if vol:
+        out += (f" | volume {vol['mm3']:.0f} mm3" if vol.get("mm3") is not None
+                else " | volume not stated")
+    price = c.get("price")
+    if price:
+        q = (price.get("quotes") or [None])[0]
+        out += (f" | unit cost {q['unitCost']:.2f} {q['currency']} ({q['distributor']}; price at "
+                f"quantity not stated)" if q else " | price not stated")
+    return out
+
+
 def _diode_extras(c: dict) -> str:
     """The diode's operating-point loss segment (conduction, switching, leakage: each in watts
     or UNVERIFIED with what is missing), then the over-rating, board area and price segments
@@ -1541,11 +1591,33 @@ def recommend_parts(family: str, requirements: dict, options: dict | None = None
             gateDriveVoltage?, gateDriveCurrent?, junctionTemperature?} ranks by the switch loss
             at that point (tiebreaker lowest_operating_point_loss): conduction, switching, gate
             drive and Coss terms from datasheet values only, each with its basis; a term whose
-            input is missing is UNVERIFIED (never estimated) and ranks after complete ones.
+            input is missing is UNVERIFIED (never estimated) and ranks after complete ones; a
+            board area that cannot be determined counts one more UNVERIFIED item (mosfet and
+            diode alike).
             mosfet priceQuantity: the quantity the price is asked at. Every mosfet candidate
             carries ratings, overRating (Vds/Id > 3x the requirement: noted; ranked lower except
             under lowest_operating_point_loss and the Vds/Id margin rankings),
             boardArea {mm2, basis} and price {quotes, atQuantity, basis}.
+            capacitor lossOperatingPoint {position: 'buckOutput' | 'buckInput', inputVoltage,
+            outputVoltage, outputCurrent, switchingFrequency, inductorRippleCurrent (buckOutput),
+            maxRippleVoltage?, ambientTemperature?} ranks by the ESR loss
+            I_ripple^2 * ESR(fs) (tiebreaker lowest_operating_point_loss; I_ripple = dIpp/sqrt(12)
+            at the output, Iout*sqrt(D(1-D)) at the input), ESR off the record's ESR(f) curve or
+            the stated ESR with its frequency named (a stated ESR with no frequency:
+            UNVERIFIED); a record stating only tan(delta) gets
+            ESR = tan(delta)/(2*pi*f*C) at tan(delta)'s own frequency, an upper bound at fs
+            (no stated frequency, or fs below it: UNVERIFIED). Checks: effective capacitance at
+            the DC voltage (DC-bias curve; a class-II ceramic without one is UNVERIFIED, never
+            derated by a guessed factor), ripple voltage (output dIpp*ESR + dIpp/(8*fs*Ceff);
+            input Iout*D*(1-D)/(fs*Ceff) + Iout*ESR) and the ripple-current rating moved to fs /
+            the ambient on the record's own tables (never extrapolated; stated at or above the
+            ambient with no temperature table: a conservative lower bound). Order: UNVERIFIED
+            count (a board area or volume that cannot be determined counts one more, as in every
+            family's operating-point ranking), then over the ripple-voltage limit OR under the
+            ripple-current rating (ranked after those that pass, still listed), then a rated
+            voltage > 3x the need (capacitor size and cost scale with voltage), then the loss.
+            Every capacitor candidate carries ratings, overRating (rated voltage > 3x the need),
+            boardArea, volume {mm3, basis} and price.
             diode lossOperatingPoint {position: 'buckFreewheel', inputVoltage, outputCurrent,
             switchingFrequency, dutyCycle | outputVoltage, inductorRippleCurrent?,
             junctionTemperature?} ranks by the freewheel diode's loss at that point (tiebreaker
@@ -1593,7 +1665,8 @@ def recommend_parts(family: str, requirements: dict, options: dict | None = None
         lines.append(f"  {c.get('mpn')} — {c.get('manufacturer')}"
                      + (f" [{dies}, ratings per die]" if dies else "")
                      + (f" | tightest margin {worst[0]} {worst[1]:.2f}x" if worst else "")
-                     + (_diode_extras(c) if key == "diode" else _mosfet_extras(c)))
+                     + (_capacitor_extras(c) if key == "capacitor"
+                        else _diode_extras(c) if key == "diode" else _mosfet_extras(c)))
     rejected = result.get("rejections") or {}
     return _result(
         f"{len(cands)} {key} candidate(s), best first "

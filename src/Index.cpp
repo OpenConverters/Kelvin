@@ -144,7 +144,9 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // v22 (not yet deployed when added, so no bump) also carries a timing device's supply current
 // (TimingRow.current_consumption, TDAS electrical.supply.currentConsumption; owner 2026-11-13),
 // and a capacitor's ripple-rating temperature (CapacitorRow.ripple_current_temperature, CAS
-// electrical.rippleCurrentTemperature; Qarlos r26).
+// electrical.rippleCurrentTemperature; Qarlos r26), and (owner 2026-11-14, capacitor
+// operating-point selector) a capacitor's distributor price quotes and its dissipation factor
+// with the frequency it is stated at.
 constexpr uint32_t kFormatVersion = 22;
 
 // Identity of the code that produces rows, so a cached shard can be recognised as
@@ -487,6 +489,9 @@ void row_io(Ar& ar, CapacitorRow& r) {
     ar.boolean(r.esr_from_curve);          // v22 (owner 2026-11-14, useful band)
     ar.curve(r.ripple_f_curve);            // v22 (owner 2026-11-14, ripple tables)
     ar.curve(r.ripple_t_curve);
+    ar.str(r.price_quotes);                // v22 (owner 2026-11-14, capacitor price)
+    ar.dbl(r.dissipation_factor);          // v22 (owner 2026-11-14, ESR from tan delta)
+    ar.dbl(r.dissipation_factor_frequency);
 }
 
 template <class Ar>
