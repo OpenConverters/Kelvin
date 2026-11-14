@@ -8763,3 +8763,25 @@ TEST_CASE("qarlos r31 BB4: a timing record stating the body the other case names
     CHECK(has_note(same, "names the 3225 body and the substitute's record states that body"));
     CHECK(big.value("footprint", "") == "different_case");
 }
+
+// BB5 (bench 20680025): CWR06FH335KCB's case-gate note gave "5.08 x 1.27 mm", a size its record
+// (case "C", series CWR06) states nowhere. It is CWR06's case C from the series' case table
+// (Vishay doc 40009, owner 2026-11-13) — correct, but the note now says where it comes from.
+// Specs: web/src/crossref.js specs of the data-524a699 rows.
+namespace r29_bb {
+const char* kCWR06FH335KCB = R"KSPEC({"mpn":"CWR06FH335KCB","length_m":null,"width_m":null,"height_m":null,"case_code":"C","mount":"SMT","lead_pitch_m":null,"is_production":false,"provenance_retracted":false,"retracted_fields":[],"retraction_reason":"","box_axes_ambiguous":false,"value_si":0.0000033,"voltage":10,"esr":5.5,"ripple_current":null,"technology":"tantalum-mno2","dielectric_code":"","family":"CWR06","voltage_ac":null,"esr_frequency":100000,"temp_min_C":-55,"temp_max_C":125,"ripple_current_frequency":null,"ripple_current_temperature":null,"safety_class":null,"capacitance_min":0.00000297,"capacitance_max":0.00000363,"lead_form":null,"qualified_spec":null,"qualified_grade":null,"qualified_failure_rate":null})KSPEC";
+const char* kCWR11HH335KB = R"KSPEC({"mpn":"CWR11HH335KB","length_m":0.0035,"width_m":0.0028,"height_m":0.0019,"case_code":"1411","mount":"SMT","lead_pitch_m":null,"is_production":true,"provenance_retracted":false,"retracted_fields":[],"retraction_reason":"","box_axes_ambiguous":false,"value_si":0.0000032999999999999997,"voltage":15,"esr":5,"ripple_current":0.13,"technology":"tantalum-mno2","dielectric_code":"","family":"T492 CWR11","voltage_ac":null,"esr_frequency":100000,"temp_min_C":-55,"temp_max_C":125,"ripple_current_frequency":100000,"ripple_current_temperature":25,"safety_class":null,"capacitance_min":0.00000297,"capacitance_max":0.00000363,"lead_form":null,"qualified_spec":null,"qualified_grade":null,"qualified_failure_rate":null})KSPEC";
+}  // namespace r29_bb
+TEST_CASE("qarlos bench BB5: a table land in the case-gate note names its table",
+          "[qarlos][crossref][r29-bb]") {
+    const json r = kelvin::crossref::cross_reference(
+        "capacitor", json::parse(r29_bb::kCWR06FH335KCB),
+        json::array({json::parse(r29_bb::kCWR11HH335KB)}));
+    REQUIRE(r["candidates"].size() == 1);
+    const json& c = r["candidates"][0];
+    CHECK(c["footprint"] == "different_case");
+    CHECK(has_note(c, "different package/case (C -> 1411) — 5.08 x 1.27 mm against 3.5 x 2.8 mm"));
+    CHECK(has_note(c, "the original's from the CWR06 series' case C in its case table"));
+    // The substitute's 3.5 x 2.8 mm is its record's own drawing: no source is claimed for it.
+    CHECK_FALSE(has_note(c, "the substitute's from"));
+}

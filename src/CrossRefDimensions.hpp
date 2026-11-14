@@ -51,6 +51,10 @@ struct Dims {
     // weighed against a record's drawn body as if it were that part's body (Qarlos
     // 2026-11-09, seed 22041502). See CrossRef.hpp, the same-case rule.
     bool land_from_table = false;
+    // Where a table land came from, for the notes that print it (Qarlos bench 20680025:
+    // CWR06FH335KCB's case-gate note gave "5.08 x 1.27 mm", which its record states nowhere —
+    // it is the CWR06 series' case C). Empty when the land is the record's own drawing.
+    std::string land_source;
 };
 
 namespace dims_detail {
@@ -327,6 +331,8 @@ inline std::optional<Dims> resolve_tantalum_letter(const std::string& case_code,
     Dims d = to_metres(it->second);
     d.height_from_table = d.height.has_value();
     d.land_from_table = true;
+    d.land_source = "the " + upper(trim(series)) + " series' case " + upper(trim(case_code)) +
+                    " in its case table";
     return d;
 }
 
@@ -348,10 +354,11 @@ inline std::optional<Dims> resolve_dimensions(const std::string& case_code,
     std::string cat = category;
     for (auto& c : cat) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 
-    auto from_table = [](const LWH& v) {
+    auto from_table = [&raw](const LWH& v) {
         Dims d = to_metres(v);
         d.height_from_table = d.height.has_value();
         d.land_from_table = true;
+        d.land_source = "the case table's outline for '" + raw + "'";
         return d;
     };
 

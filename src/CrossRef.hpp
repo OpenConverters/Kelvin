@@ -4258,8 +4258,19 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 // not just two strings: CWR06DC155JCA's case "A" is CWR06's 2.54 x 1.27 mm,
                 // not the EIA 3216 (owner 2026-11-13, r16 26859036).
                 std::string bodies;
-                if (o_dims && s_dims && has_land(*o_dims) && has_land(*s_dims))
+                if (o_dims && s_dims && has_land(*o_dims) && has_land(*s_dims)) {
                     bodies = " — " + land_mm(*o_dims) + " against " + land_mm(*s_dims);
+                    // Say where a size the record does not state comes from (Qarlos bench
+                    // 20680025: CWR06FH335KCB's 5.08 x 1.27 mm is its series' case C).
+                    std::vector<std::string> src;
+                    if (o_dims->land_from_table && !o_dims->land_source.empty())
+                        src.push_back("the original's from " + o_dims->land_source);
+                    if (s_dims->land_from_table && !s_dims->land_source.empty())
+                        src.push_back("the substitute's from " + s_dims->land_source);
+                    if (!src.empty())
+                        bodies += " (" + src[0] + (src.size() > 1 ? "; " + src[1] : "") +
+                                  " — a table size, not one the record states)";
+                }
                 notes.push_back("different package/case (" + oc + " -> " + sc + ")" + bodies +
                                 " — different land pattern; a substitute to re-lay-out, not a "
                                 "drop-in (verify pads/pinout)");
