@@ -185,6 +185,14 @@ TEST_CASE("Frequency curves: |Z|, C(f) and ESL compared on the common band",
     INFO(notes_of(r));
     CHECK(verdict_of(r, "impedance_curve") == "fail");
     CHECK(verdict_of(r, "esl_curve") == "unverified");
+    // ESR (owner 2026-11-14): the curve verdict is its own row and does not replace the scalar
+    // ESR row; both are booked. Here the substitute's ESR curve is x1.7 the original's at
+    // 100 kHz -> esr_curve FAIL, beside the scalar esr row.
+    CHECK(verdict_of(r, "esr_curve") == "fail");
+    CHECK(verdict_of(r, "esr") != "");
+    CHECK(has_note(r, "ESR compared on both curves from 100000 to 2.51189e+07 Hz (26 points, "
+                      "log-log): worst at 100000 Hz, substitute 0.3536 ohm vs original 0.2076 ohm"));
+    CHECK(verdict_of(c, "esr_curve") == "pass");
 }
 
 TEST_CASE("|Z| curves: a condition stated on one side only is a different condition",

@@ -2207,19 +2207,26 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         return u;
     }();
     // ESR (a): both records carry an ESR-vs-frequency curve -> compared on the overlap of the
-    // two measured ranges, log-log (ESR curves are plotted on log axes), with the ESR spec's
-    // bands at each point; the worst point decides. Different stated conditions or no overlap
-    // -> a note, and the scalars keep their own (basis) rule. Otherwise, when the two scalars
-    // are quoted at different frequencies, a curve resolves the basis: the substitute's ESR is
-    // read from its curve at the original's frequency (or the original's from its curve at the
-    // substitute's), inside the measured range only.
+    // two measured ranges inside the original's useful band, log-log (ESR curves are plotted on
+    // log axes), with the ESR spec's bands at each point; the worst point decides. Owner
+    // 2026-11-14: the curve verdict does NOT replace the scalar ESR verdict — it is its own
+    // row (esr_curve), booked like every curve (a WARN demotes and costs its depth-scaled
+    // warn, a FAIL demotes and costs the FAIL penalty), and the scalar ESR row is judged on
+    // its own; both penalise. Different stated conditions, no band or no overlap -> an
+    // UNVERIFIED esr_curve row and a note (no penalty, no cap).
+    // ESR (b), the scalar: when the two scalars are quoted at different frequencies, a curve
+    // resolves the basis: the substitute's ESR is read from its curve at the original's
+    // frequency (or the original's from its curve at the substitute's), inside the measured
+    // range only.
     if (cat == "capacitor") {
         const auto oc = curve_from_spec(original, "esr_curve"),
                    sc = curve_from_spec(cand, "esr_curve");
         const ParamSpec& esr_spec = spec_for("esr");
-        bool decided = false;
         if (oc && sc) {
             const std::string cond = conditions_differ(*oc, *sc);
+            auto row = [&](const char* v) { params.push_back({{"name", "esr_curve"}, {"verdict", v}}); };
+            if (!cond.empty()) row(UNVERIFIED);
+            else if (!useful_band.band) row(UNVERIFIED);
             if (!cond.empty()) {
                 notes.push_back("ESR curves measured under different conditions (" + cond +
                                 ") — the curves were not compared");
@@ -2228,6 +2235,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             } else {
                 const CurveVerdict v = compare_curves(oc->curve, sc->curve, esr_spec,
                                                       Interp::LogLog, useful_band.band);
+                row(v.verdict);
                 if (v.verdict == std::string(UNVERIFIED)) {
                     notes.push_back("ESR curves do not meet inside the useful band (original " +
                                     hz(oc->curve.x.front()) + " to " + hz(oc->curve.x.back()) +
@@ -2244,13 +2252,17 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                   v.verdict == std::string(PASS) ? "passes everywhere, tightest" : "worst",
                                   v.worst_x, v.sub_y, v.orig_y, useful_band.why.c_str());
                     notes.push_back(buf);
-                    CurveOverride ov;
-                    ov.outcome = ParamOutcome(v.verdict);
-                    ov.outcome.warn_depth = v.warn_depth;
-                    ov.o = v.orig_y;
-                    ov.s = v.sub_y;
-                    curve_override["esr"] = ov;
-                    decided = true;
+                    if (v.verdict == std::string(FAIL)) {
+                        demote();
+                        penalty += opt.gate_weight * kVerdictFailPenalty;
+                        ++worse;
+                    } else if (v.verdict == std::string(WARN)) {
+                        demote();
+                        penalty += opt.gate_weight * warn_penalty(v.warn_depth);
+                        ++worse;
+                    } else {
+                        note_direction(esr_spec.dir, v.orig_y, v.sub_y);
+                    }
                 }
             }
         }
@@ -2260,7 +2272,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         auto mains = [&](double f) { return same_f(f, 100.0) || same_f(f, 120.0); };
         const bool basis_differs =
             o_v && s_v && o_f && !(s_f && (same_f(*o_f, *s_f) || (mains(*o_f) && mains(*s_f))));
-        if (!decided && basis_differs) {
+        if (basis_differs) {
             char buf[320];
             const auto s_at = sc ? curve_at(sc->curve, *o_f, Interp::LogLog) : std::nullopt;
             const auto o_at =
