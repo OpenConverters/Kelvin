@@ -123,12 +123,13 @@ TEST_CASE("DC-bias curves: effective capacitance compared on the common bias ran
     REQUIRE_FALSE(s.bias_curve.empty());
     CHECK(o.bias_curve.temperature == 25.0);
     CHECK(std::isnan(s.bias_curve.temperature));
+    // Owner 2026-11-14: a condition stated by ONE side only is a DIFFERENT condition. Murata's
+    // curve is at 25 degC, TDK's at no stated temperature -> not compared, UNVERIFIED + note.
     const json c = rank_one("ZRB157R6YA225ME11", "C1005X5R1V225K050BC");
     INFO(notes_of(c));
-    CHECK(verdict_of(c, "capacitance_bias") == "fail");
-    CHECK(has_note(c, "effective capacitance under DC bias compared on both curves over DC "
-                      "bias 0 to 35 V"));
-    CHECK(c["grade"] != "drop_in");
+    CHECK(verdict_of(c, "capacitance_bias") == "unverified");
+    CHECK(has_note(c, "effective capacitance under DC bias curves measured under different "
+                      "conditions (temperature 25 degC vs unstated) — not compared"));
     // The same part against itself: every point equal -> pass.
     const json same = rank_one("ZRB157R6YA225ME11", "ZRB157R6YA225ME11");
     CHECK(verdict_of(same, "capacitance_bias") == "pass");
@@ -171,14 +172,13 @@ TEST_CASE("Frequency curves: |Z|, C(f) and ESL compared on the common band",
     CHECK(verdict_of(r, "esl_curve") == "pass");
 }
 
-TEST_CASE("|Z| curves: conditions stated on one side only do not block the comparison",
+TEST_CASE("|Z| curves: a condition stated on one side only is a different condition",
           "[curves][capacitor][freq-curves]") {
     // Murata ZRB157R6YA225ME11 states its |Z| at 25 degC, 0 V bias; TDK C1005X5R1V225K050BC
-    // states no condition: not a difference on record, so the curves are compared.
+    // states no condition. Owner 2026-11-14: one-sided = different -> UNVERIFIED + note.
     const json c = rank_one("ZRB157R6YA225ME11", "C1005X5R1V225K050BC");
     INFO(notes_of(c));
-    CHECK(verdict_of(c, "impedance_curve") == "fail");
-    CHECK(has_note(c, "|Z| compared on both curves over frequency 1002.73 to 3e+09 Hz (658 "
-                      "points, log-log, bands of the ESR spec): worst at 3e+09 Hz, substitute "
-                      "9.33 ohm vs original 5.307 ohm"));
+    CHECK(verdict_of(c, "impedance_curve") == "unverified");
+    CHECK(has_note(c, "|Z| curves measured under different conditions (temperature 25 degC vs "
+                      "unstated, DC bias 0 V vs unstated) — not compared"));
 }
