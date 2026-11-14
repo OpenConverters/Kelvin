@@ -8686,3 +8686,44 @@ TEST_CASE("owner 2026-11-13 C: a not-stated primary value fails the selector fil
     rc.target_ohms = 1000;
     CHECK_THROWS_AS(kelvin::select_resistor(rs, rc), kelvin::NoCandidates);
 }
+
+// ── Qarlos r29-r31, group BB ─────────────────────────────────────────────────────────────
+// REAL TAS records: every line of tests/fixtures/qarlos_r29_*.ndjson is a verbatim line of
+// tools/qarlos/bench/data-524a699 (TAS 524a699), run through the real extractor and browse row.
+namespace r29_bb {
+json mos_row(const std::string& mpn) {
+    static const json rows = [] {
+        auto sh = kelvin::build_mosfet_shard(std::string(KELVIN_TEST_DIR) +
+                                             "/fixtures/qarlos_r29_mosfets.ndjson");
+        return kelvin::browse::browse_rows(sh, json{{"limit", 100}})["rows"];
+    }();
+    for (const auto& r : rows)
+        if (r.value("mpn", "") == mpn) return r;
+    throw std::runtime_error("fixture has no mosfet record " + mpn);
+}
+json mos_spec(const std::string& mpn) {
+    const json r = mos_row(mpn);
+    json s = mosfet_spec(r);
+    s["coss_vds"] = nz_(r["coss_vds"]);
+    return s;
+}
+}  // namespace r29_bb
+
+// BB2 (r29 seed 33666421): ROHM's SCT3060AL 'TO-247N' (record body 21 x 16 x 5 mm) against
+// Infineon's IMW65R060M2H 'TO247' / PG-TO247-3 was graded different_case and ranked below a TOLL
+// part. TO-247N is ROHM's name for the 3-lead TO-247.
+TEST_CASE("qarlos r29 BB2: ROHM TO-247N is the 3-lead TO-247", "[qarlos][crossref][r29-bb]") {
+    using kelvin::crossref::case_identity;
+    CHECK(case_identity("mosfet", "TO-247N") == case_identity("mosfet", "TO247"));
+    CHECK(case_identity("mosfet", "TO-247N") == case_identity("mosfet", "PG-TO247-3"));
+    CHECK(case_identity("mosfet", "TO-247N") != case_identity("mosfet", "TO-247-4L"));
+    kelvin::crossref::Options opt;
+    opt.max_results = 5;
+    const json r = kelvin::crossref::cross_reference(
+        "mosfet", r29_bb::mos_spec("SCT3060AL"),
+        json::array({r29_bb::mos_spec("IMW65R060M2H")}), opt);
+    REQUIRE(r["candidates"].size() == 1);
+    const json& c = r["candidates"][0];
+    CHECK(c["footprint"] == "fits");
+    CHECK(verdict_of(c, "footprint") == "pass");
+}

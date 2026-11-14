@@ -862,6 +862,11 @@ inline std::string canonical_case_in(const std::vector<std::vector<std::string>>
 //            Kelvin-source TO-247; Qarlos r13 seed 25078643: onsemi FCH023N65S3L4 'TO-247-4'
 //            against Infineon IPZ65R019C7 'TO247 4-pin' / PG-TO247-4 was called a different
 //            package). It is NOT the 3-lead TO-247: the groups stay apart.
+//   TO-247 also = ROHM's TO-247N (Qarlos r29 seed 33666421: SCT3060AL 'TO-247N' against
+//            Infineon IMW65R060M2H 'TO247' / PG-TO247-3 was graded a different case). All 14
+//            catalogue records naming TO-247N are ROHM's; the 4 that state a body give
+//            21 x 16 x 5 mm, the 3-lead TO-247 body (table: 20 x 15.9 x 5.3 mm). ROHM's
+//            four-lead part is 'TO-247-4L' and stays in the TO-247-4 group.
 // Different outlines stay different: Q-DPAK, D2PAK-7 / D2PAK 7-pin / TO-263-7, the
 // asymmetric-lead 'TO247 4-pin (asymmetric leads)', 'TO-247-4 HC 8.8mm', Toshiba's
 // TO-247-4L(X), ST's HiP247-4, sTOLL, DPAK+, ThinDPAK, TO-220SIS each normalise to
@@ -874,7 +879,7 @@ inline std::string canonical_mosfet_case(const std::string& s) {
         {"I2PAK", "TO262", "TO2623"},
         {"TO220", "TO2203", "TO220AB", "PGTO2203"},
         {"TO220FP", "TO220FULLPAK", "TO220F", "TO2203FULLPAK", "TO220FP3"},
-        {"TO247", "TO2473", "TO247AC", "TO247AD", "PGTO2473"},
+        {"TO247", "TO2473", "TO247AC", "TO247AD", "PGTO2473", "TO247N"},
         {"TO2474", "TO2474L", "TO2474PIN", "PGTO2474"},
         {"SOT23", "TO236", "TO236AB", "SOT233"},
         {"SOT223", "TO261", "TO261AA", "SOT2234", "TO2614"},
