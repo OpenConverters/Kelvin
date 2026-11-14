@@ -3917,6 +3917,11 @@ json mosfet_spec(const json& r) {
     s["die_configuration"] = dc.empty() ? json(nullptr) : json(dc);
     const std::string ic = r.value("internal_connection", "");
     s["internal_connection"] = ic.empty() ? json(nullptr) : json(ic);
+    // v22 (owner curve rule 2026-11-14): the measured curves and ambient ratings, as
+    // crossref.js passes them (`r.ciss_curve ?? null`, ...). Owner-approved 2026-11-14.
+    for (const char* k : {"ciss_curve", "coss_curve", "crss_curve", "rds_on_id_curve",
+                          "rds_on_tj_curve", "qg_curve", "id_ambient_curves"})
+        s[k] = r.contains(k) ? r[k] : json(nullptr);
     return s;
 }
 // XREF diode spec (web/src/crossref.js).
@@ -4912,12 +4917,15 @@ TEST_CASE("qarlos r11r13 D3: MOSFET Coss on different drain-source voltages is n
     const json r = rank("mosfet", "AOD4N60", {"IPD95R2K0P7", "AOD7N60", "XP60CM600EH"});
     const json none = find(r, "IPD95R2K0P7");
     REQUIRE(!none.is_null());
-    CHECK(verdict_of(none, "coss") == "unverified");
-    CHECK(verdict_of(none, "coss_basis") == "unverified");
-    CHECK(has_note(none, "the original's output capacitance is 53 pF at 25 V; the substitute's "
-                         "record states 5 pF at no drain-source voltage"));
-    // Secondary axis: no demotion, no cap.
-    CHECK(none["grade"] == "drop_in");
+    // Owner 2026-11-14 (curve rule): the substitute's Coss(Vds) curve settles the basis — read
+    // at the original's 25 V it gives 72.65 pF against 53 pF (1.37x: warn), no coss_basis row.
+    CHECK(verdict_of(none, "coss") == "warn");
+    CHECK(verdict_of(none, "coss_basis") == "");
+    CHECK(has_note(none, "output capacitance compared at the original's 25 V: the substitute's "
+                         "Coss(Vds) curve reads 72.65 pF there (its record states 5 pF at no "
+                         "stated Vds) against the original's 53 pF"));
+    // A Coss warn demotes, as AOD7N60's below (owner 2026-11-14).
+    CHECK(none["grade"] == "minor_review");
     const json other = find(r, "XP60CM600EH");
     REQUIRE(!other.is_null());
     CHECK(verdict_of(other, "coss") == "unverified");
@@ -9006,6 +9014,19 @@ TEST_CASE("qarlos r28: an original's AC rating is compared without a safety clas
     const json c = r["candidates"][0];
     CHECK(verdict_of(c, "voltage_ac") == "unverified");
     CHECK(has_note(c, "the original is rated 250 V AC"));
+    // owner 2026-11-14: capped at minor_review like a missing primary rating.
+    CHECK(c["grade"] != "drop_in");
+    CHECK(c["grade"] != "upgrade");
+    CHECK(c["status"] != "recommended");
+    // The cap in isolation: the original's own record with only its AC rating removed would be
+    // a drop-in; without the AC rating it is capped at minor_review.
+    json no_ac = orig;
+    no_ac["mpn"] = "SAME_NO_AC";
+    no_ac["voltage_ac"] = nullptr;
+    auto r1 = kelvin::crossref::cross_reference("capacitor", orig, json::array({no_ac}), opt);
+    REQUIRE(r1["candidates"].size() == 1);
+    CHECK(r1["candidates"][0]["grade"] == "minor_review");
+    CHECK(r1["candidates"][0]["status"] != "recommended");
     // Both stated: compared like the rated voltage (the original's own record against an AC
     // rating 5 % and 20 % lower).
     json warm = orig, low = orig;
@@ -9065,4 +9086,31 @@ TEST_CASE("qarlos r28: a DSN0603 package is not the imperial 0603 chip",
     const json c = r["candidates"][0];
     CHECK_FALSE(has_note(c, "1.6"));
     CHECK_FALSE(has_note(c, "0603 chip"));
+}
+
+// Qarlos r28 (data-524a699 records, verbatim in tests/fixtures/qarlos_r28_timing.ndjson): Abracon
+// ABM13N-48.0000MHZ-8-D1X-T5 (-40..85 degC) took Wurth 830108049101 (-30..85 degC) with only a
+// temp_min WARN. Owner 2026-11-14: timing and connectors drop the 15 degC band; a substitute that
+// does not cover the original's operating range FAILs at that end, as in the other families.
+TEST_CASE("qarlos r28: a timing substitute not covering the original's cold end fails",
+          "[qarlos][crossref][timing][r28-temp]") {
+    std::ifstream in(std::string(KELVIN_TEST_DIR) + "/fixtures/qarlos_r28_timing.ndjson");
+    std::string line, orig_line, cand_line;
+    while (std::getline(in, line)) {
+        if (line.find("ABM13N-48.0000MHZ-8-D1X-T5") != std::string::npos) orig_line = line;
+        if (line.find("\"830108049101\"") != std::string::npos) cand_line = line;
+    }
+    REQUIRE(!orig_line.empty());
+    REQUIRE(!cand_line.empty());
+    const json o = timing_tech::spec(orig_line.c_str()), s = timing_tech::spec(cand_line.c_str());
+    REQUIRE(o["temp_min_C"] == -40.0);
+    REQUIRE(s["temp_min_C"] == -30.0);
+    auto r = kelvin::crossref::cross_reference("timeBase", o, json::array({s}));
+    REQUIRE(r["candidates"].size() == 1);
+    const json c = r["candidates"][0];
+    CHECK(verdict_of(c, "temp_min_C") == "fail");
+    CHECK(has_note(c, "does not cover the original's cold end"));
+    CHECK(c["status"] != "recommended");
+    CHECK(c["grade"] != "minor_review");
+    CHECK(c["grade"] != "drop_in");
 }

@@ -119,6 +119,7 @@ if (KELVIN_BUILD_TESTS AND NOT EMSCRIPTEN AND KELVIN_TOP)
         tests/test_phase5.cpp
         tests/test_crossref_score.cpp
         tests/test_crossref_curves.cpp
+        tests/test_crossref_curves_ff.cpp
         tests/test_capacitor_curves.cpp
         tests/test_crossref_rank.cpp
         tests/test_crossref_dimensions.cpp
@@ -130,7 +131,8 @@ if (KELVIN_BUILD_TESTS AND NOT EMSCRIPTEN AND KELVIN_TOP)
         tests/test_browse.cpp
         tests/test_spice_model.cpp
         tests/test_qarlos_fixes.cpp
-        tests/test_magnetic_curves.cpp)
+        tests/test_magnetic_curves.cpp
+        tests/test_mosfet_loss.cpp)
     target_compile_definitions(test_kelvin PRIVATE
         KELVIN_TEST_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests")
     target_link_libraries(test_kelvin PRIVATE kelvin Catch2::Catch2WithMain)

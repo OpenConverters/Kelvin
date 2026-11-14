@@ -171,13 +171,16 @@ inline bool same_stated_value(double a, double b) {
     if (a == b) return true;
     return std::abs(a - b) <= kRepresentationEpsilon * std::max(std::abs(a), std::abs(b));
 }
-// Two stated temperatures (degC) that name the same condition. Owner 2026-11-14: 20 degC and
-// 25 degC are both room temperature, the same condition — for a magnetic's ambient ratings
-// (rated current) and for its L(I) / Isat curve temperatures (Würth states 20 degC where
-// Coilcraft states 25 degC for the same bench measurement). Otherwise only the same stated
-// value matches. Case vs ambient, and a temperature stated by one side only, are the caller's
-// to tell apart (they are different conditions).
-// A stated room temperature: 20 or 25 degC (owner 2026-11-14).
+// Room temperature (owner 2026-11-14): 20 degC and 25 degC are the same measurement
+// condition, in every family — datasheets quote "room temperature" at either (Würth states
+// 20 degC where Coilcraft states 25 degC for the same bench measurement). One definition for
+// every caller: curve conditions (conditions_differ), a magnetic's L(I) / Isat curve
+// temperatures and its rated-current ambient. Two stated temperatures name the same condition
+// when they are the same stated value or both room temperature. Both values must be stated:
+// a temperature stated on one side only is a different condition, and case vs ambient is the
+// caller's to tell apart — the one exception is a magnetic's rated-current ambient, where an
+// unstated ambient is read as room temperature (owner 2026-11-14,
+// magcurve::rated_at_common_rise).
 inline bool is_room_temperature(double t) {
     return same_stated_value(t, 20.0) || same_stated_value(t, 25.0);
 }
@@ -815,8 +818,12 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
         // family goes through — a second copy here pushed two verdicts and two notes.
         {"rated_current_A", D::Higher, 0.9, std::nullopt, false, true, nullptr},
         {"rated_voltage_V", D::Higher, 0.9, std::nullopt, false, false, nullptr},
-        {"temp_min_C", D::Lower, 0.0, 15.0, false, false, nullptr},
-        {"temp_max_C", D::Higher, 0.0, 15.0, false, false, nullptr},
+        // The original's operating range must be covered at both ends with NO band (owner
+        // 2026-11-14; was a 15 degC WARN band): any shortfall is a FAIL, as in the other
+        // families (Qarlos r28: ABM13N-48.0000MHZ-8-D1X-T5, -40 degC, took 830108049101,
+        // -30 degC, as a WARN).
+        {"temp_min_C", D::Lower, 0.0, 0.0, false, false, nullptr},
+        {"temp_max_C", D::Higher, 0.0, 0.0, false, false, nullptr},
         // Identity, not equal-or-better: the finish on the separable surface is a
         // compatibility property of the PAIR, so a change is a change in both directions
         // — a tin substitute cannot be mated to the gold counterpart the original was
@@ -897,8 +904,12 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
         {"supply_min_V", D::Lower, 0.0, 0.0, false, false, nullptr},
         {"supply_max_V", D::Higher, 0.0, 0.0, false, false, nullptr},
         {"current_consumption", D::Lower, 3.0, std::nullopt, false, false, nullptr},
-        {"temp_min_C", D::Lower, 0.0, 15.0, false, false, nullptr},
-        {"temp_max_C", D::Higher, 0.0, 15.0, false, false, nullptr},
+        // The original's operating range must be covered at both ends with NO band (owner
+        // 2026-11-14; was a 15 degC WARN band): any shortfall is a FAIL, as in the other
+        // families (Qarlos r28: ABM13N-48.0000MHZ-8-D1X-T5, -40 degC, took 830108049101,
+        // -30 degC, as a WARN).
+        {"temp_min_C", D::Lower, 0.0, 0.0, false, false, nullptr},
+        {"temp_max_C", D::Higher, 0.0, 0.0, false, false, nullptr},
         {"package", D::ExactMatch, 0.0, std::nullopt, false, false, nullptr},
     };
     if (category == "capacitor") return kCapacitor;

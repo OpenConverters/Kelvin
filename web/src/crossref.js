@@ -191,7 +191,9 @@ export const XREF = [
     // on a common basis (UNVERIFIED with a note otherwise).
     // die_configuration (v22): dual / complementary as stated; graded as an identity like the diode one.
     // internal_connection (v22): halfBridge / independent / commonDrain, graded the same way (owner 2026-11-13).
-    spec: (r) => ({ ...base(r), vds: nz(r.vds_rated), id: nz(r.id_continuous), rds_on: nz(r.rds_on), qg: nz(r.qg_total), coss: nz(r.coss), coss_vds: nz(r.coss_vds), vgs_threshold_max: nz(r.vgs_threshold_max), vgs_threshold_typ: nz(r.vgs_threshold_typ), rds_on_vgs: nz(r.rds_on_vgs), vgs_max: nz(r.vgs_max), technology: r.technology ?? '', qualification: r.qualification ?? '', channel: r.channel || null, die_configuration: r.die_configuration || null, internal_connection: r.internal_connection || null }),
+    spec: (r) => ({ ...base(r), vds: nz(r.vds_rated), id: nz(r.id_continuous), rds_on: nz(r.rds_on), qg: nz(r.qg_total), coss: nz(r.coss), coss_vds: nz(r.coss_vds), vgs_threshold_max: nz(r.vgs_threshold_max), vgs_threshold_typ: nz(r.vgs_threshold_typ), rds_on_vgs: nz(r.rds_on_vgs), vgs_max: nz(r.vgs_max), technology: r.technology ?? '', qualification: r.qualification ?? '', channel: r.channel || null, die_configuration: r.die_configuration || null, internal_connection: r.internal_connection || null,
+      // v22 (owner curve rule 2026-11-14): the measured curves and ambient ratings, as the row states them.
+      ciss_curve: r.ciss_curve ?? null, coss_curve: r.coss_curve ?? null, crss_curve: r.crss_curve ?? null, rds_on_id_curve: r.rds_on_id_curve ?? null, rds_on_tj_curve: r.rds_on_tj_curve ?? null, qg_curve: r.qg_curve ?? null, id_ambient_curves: r.id_ambient_curves ?? null }),
     params: [
       { key: 'vds', label: 'Vds', row: 'vds_rated', unit: 'V' },
       { key: 'id', label: 'Id', row: 'id_continuous', unit: 'A' },
@@ -316,6 +318,8 @@ export const XREF = [
       // over (a small pitch difference adds up along a row). null when unstated.
       rows: nz(r.rows),
       rated_current_A: nz(r.rated_current), rated_voltage_V: nz(r.rated_voltage),
+      // v22 (owner curve rule 2026-11-14): the per-contact current derating curve, as the row states it.
+      current_ambient_curve: r.current_ambient_curve ?? null,
       temp_min_C: r.temp_min_c, temp_max_C: r.temp_max_c,
       contact_plating: r.contact_plating || null, termination: r.termination || null,
       // The board attach (mechanical.mountingStyle: smt / tht / pressFit / skedd / panel /
@@ -398,6 +402,8 @@ export const XREF = [
       // v22 (owner 2026-11-13, Y5): the forward current Vf is stated at — the ranker compares two
       // forward voltages only at a common test current.
       vf_test_current: nz(r.vf_test_current),
+      // v22 (owner curve rule 2026-11-14): the measured Vf(If), Ir(Vr) and Cj(Vr) curves, as the row states them.
+      vf_curve: r.vf_curve ?? null, ir_curve: r.ir_curve ?? null, cj_curve: r.cj_curve ?? null,
       clamping_waveform: r.clamping_waveform ?? '',
       peak_pulse_power_waveform: r.peak_pulse_power_waveform ?? '',
       peak_pulse_current_waveform: r.peak_pulse_current_waveform ?? '',

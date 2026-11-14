@@ -77,6 +77,40 @@ inline double kNaN() { return std::numeric_limits<double>::quiet_NaN(); }
 inline bool present(double x) { return !std::isnan(x); }
 
 // Common locator carried by every family row.
+// A measured curve carried on a row (v22, owner 2026-11-14: "compare ALL existing graphs").
+// x ascending, no duplicates, as float (compact: the curve is a measurement read to a few
+// digits). The two vectors are shared: identical grids and curves are stored once in the
+// shard's string pool and once in memory (most frequency grids repeat across a series).
+// Empty (null x) = the record states no usable curve. `temperature` / `dc_bias` /
+// `frequency` are the measurement conditions the record states for the curve (NaN = not
+// stated); two curves whose stated conditions differ are not compared.
+struct CurvePts {
+    std::shared_ptr<const std::vector<float>> x, y;
+    double temperature = std::numeric_limits<double>::quiet_NaN();
+    double dc_bias = std::numeric_limits<double>::quiet_NaN();
+    double frequency = std::numeric_limits<double>::quiet_NaN();
+    // Further conditions (MOSFET / diode / connector curves, owner 2026-11-14): named SI
+    // numbers the record states beyond the three above (gateSourceVoltage, drainSourceVoltage,
+    // duration, maxTemperatureRise, ...), keys sorted, values parallel; and one free-text
+    // condition ("" = none), e.g. the mounting an ambient rating was measured on. Compared
+    // like the three above.
+    std::vector<std::string> cond_keys;
+    std::vector<double> cond_vals;
+    std::string cond_text;
+    // A datasheetInfo.curves entry stating no axis label (xLabel / yLabel, which carry the
+    // units) and whose units its record's own scalar could not confirm: its points are NOT
+    // read (x / y stay empty) and this marks that the record states the curve all the same —
+    // the comparison reports it UNVERIFIED with a note instead of taking the numbers as SI.
+    bool unit_unstated = false;
+    // Owner 2026-11-14: an unlabelled curve IS read as SI when its record's own scalar lies on
+    // it within 2 % at the scalar's stated condition (Views.cpp settle_unit_unstated):
+    // unit_inferred, and unit_note names the scalar that confirmed it. On a curve left
+    // unit_unstated, unit_note says why it was not read ("" = no reason recorded).
+    bool unit_inferred = false;
+    std::string unit_note;
+    bool empty() const { return !x || x->empty(); }
+};
+
 struct RowBase {
     uint32_t lineno = 0;      // 1-based source line (the determinism tie-break key)
     uint64_t src_offset = 0;  // byte offset of the raw line start in the NDJSON
@@ -164,6 +198,20 @@ struct MosfetRow : RowBase {
     // indistinguishable, which is a documented substitution hazard.
     double rds_on_vgs = kNaN();
     double vgs_max = kNaN();       // absolute gate-source rating
+    // v22 (owner 2026-11-14, operating-point loss ranking) — the datasheet values the buck
+    // switch loss terms are computed from, NaN / empty when the record does not state them
+    // (the term is then UNVERIFIED, never estimated). Qgs / Qgd: electrical.gateSourceCharge /
+    // gateDrainCharge (C; the schema carries the whole Qgs, no Qgs2). qg_vgs: the Vgs the
+    // stated Qg is specified at (electrical.totalGateChargeVgs).
+    double qgs = kNaN(), qgd = kNaN(), qg_vgs = kNaN();
+    // The loss terms read the Coss(Vds), Rds(on)(Tj) and gate-charge curves below
+    // (coss_curve, rds_on_tj_curve, qg_curve: one set of curve fields, with the conditions
+    // each record states — MosfetLoss.hpp reads the Vgs / Vds a curve was taken at from them).
+    // v22 (owner 2026-11-14) — the record's distributor unit-cost quotes, as a compact JSON
+    // array [{distributor, unitCost, currency, moq?}] ("" when none). PEAS distributorInfo
+    // carries ONE unit `cost` per distributor and no price breaks, so a price AT a quantity
+    // is never on record; a cost <= 0 is not a price and is not kept.
+    std::string price_quotes;
     std::string qualification;     // AEC-Q101 etc., when the datasheet states it
     double rth_ja = kNaN(), rth_jc = kNaN(), tj_max = kNaN();
     std::string technology;   // Si / SiC / GaN (part.technology)
@@ -180,6 +228,16 @@ struct MosfetRow : RowBase {
     // part.internalConnection of a multi-die record ('halfBridge' / 'independent' /
     // 'commonDrain' ...), "" when unstated; graded like the diode one (owner 2026-11-13, V2).
     std::string internal_connection;
+    // datasheetInfo.curves (owner rule 2026-11-14, compared by CrossRefCurveChecks.hpp): the
+    // capacitances against Vds, Rds(on) against Id and against Tj, and the gate-charge curve
+    // (x = Qg in C, y = Vgs), each with the conditions the record states; empty = not stated.
+    CurvePts ciss_curve, coss_curve, crss_curve, rds_on_id_curve, rds_on_tj_curve, qg_curve;
+    // electrical.ambientRatings[] (of the package, or of the identical dies a multi-die record
+    // is read from): one curve per rating, x = ambient degC, y = |continuous drain current| A,
+    // conditions timeBase / duration / gate-source voltage and the mounting as free text. This
+    // is the AMBIENT-rated current, a different quantity from id_continuous (case-rated); it is
+    // compared only as its own curve, never substituted for Id.
+    std::vector<CurvePts> id_ambient_curves;
     bool is_production = false;
     bool datasheet_usable = false;  // !_datasheet_unusable(datasheetUrl), precomputed at index time
     // Python evidence tier: no stated (positive) Qg OR datasheet unusable. Written as
@@ -236,6 +294,9 @@ struct DiodeRow : RowBase {
     // the MPN or the configuration (the ranker reads a stated 'dual' / 'single' as 2 / 1,
     // which is how SAS defines them).
     double number_of_elements = kNaN();
+    // datasheetInfo.curves (owner rule 2026-11-14): Vf against If, Ir against Vr and Cj
+    // against Vr, each with the conditions the record states (temperature); empty = none.
+    CurvePts vf_curve, ir_curve, cj_curve;
     // Transient-suppression specs (tvs / esd). These, not Vrrm, are what a protection diode
     // IS: the surge it absorbs, the level it clamps to, the capacitance it loads the line
     // with. None was carried, so a 400 W SMAJ came back an 'upgrade' for a 15 kW 15KP and a
@@ -264,21 +325,6 @@ struct DiodeRow : RowBase {
     std::string qualification;
     bool is_production = false;
     bool no_thermal() const { return !present(rth_ja) || !present(tj_max); }
-};
-
-// A measured curve carried on a row (v22, owner 2026-11-14: "compare ALL existing graphs").
-// x ascending, no duplicates, as float (compact: the curve is a measurement read to a few
-// digits). The two vectors are shared: identical grids and curves are stored once in the
-// shard's string pool and once in memory (most frequency grids repeat across a series).
-// Empty (null x) = the record states no usable curve. `temperature` / `dc_bias` /
-// `frequency` are the measurement conditions the record states for the curve (NaN = not
-// stated); two curves whose stated conditions differ are not compared.
-struct CurvePts {
-    std::shared_ptr<const std::vector<float>> x, y;
-    double temperature = std::numeric_limits<double>::quiet_NaN();
-    double dc_bias = std::numeric_limits<double>::quiet_NaN();
-    double frequency = std::numeric_limits<double>::quiet_NaN();
-    bool empty() const { return !x || x->empty(); }
 };
 
 struct CapacitorRow : RowBase {
@@ -654,6 +700,9 @@ struct TimingRow : RowBase {
 // environmental.operatingTemperature, familyDetails, part).
 struct ConnectorRow : RowBase {
     double rated_current = kNaN();  // A per contact
+    // derating.currentVsAmbient (owner rule 2026-11-14): x = ambient degC, y = the stated
+    // FRACTION of rated_current (0..1), condition maxTemperatureRise; empty = none stated.
+    CurvePts current_ambient_curve;
     double rated_voltage = kNaN();  // V
     double positions = kNaN();      // contact count
     // m — contact-to-contact spacing. A connector record carries no body outline, so this IS
