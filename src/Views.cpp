@@ -119,7 +119,7 @@ std::optional<double> curve_at(const json* c, double x, const char* x_unit, cons
 // the capacitor curves are frequencies or voltages from 0: `nonneg_x` admits x = 0).
 // `conditions` {temperature, dcBias, frequency} are kept when numeric.
 CurvePts read_curve_xy(const json* c, const char* x_unit, std::initializer_list<const char*> y_units,
-                       bool positive_y, bool nonneg_x = false) {
+                       bool positive_y, bool nonneg_x = false, bool signed_x = false) {
     CurvePts out;
     if (!c || !c->is_object()) return out;
     if (auto xl = get_str(*c, "xLabel"); xl && xl->find(x_unit) == std::string::npos) return out;
@@ -142,7 +142,8 @@ CurvePts read_curve_xy(const json* c, const char* x_unit, std::initializer_list<
         if (!xv.is_number() || !yv.is_number()) return out;
         const double xi = xv.get<double>(), yi = yv.get<double>();
         if (!std::isfinite(xi) || !std::isfinite(yi)) return out;
-        if (nonneg_x ? xi < 0 : !(xi > 0)) return out;
+        // `signed_x`: an axis that legitimately crosses 0 (junction temperature, degC).
+        if (!signed_x && (nonneg_x ? xi < 0 : !(xi > 0))) return out;
         if (positive_y && !(yi > 0)) return out;
         pts.emplace_back(xi, yi);
     }
@@ -591,6 +592,35 @@ std::optional<MosfetRow> extract_mosfet(const json& env) {
     if (pos(qg)) r.qg_total = *qg;
     if (pos(coss_o)) r.coss = *coss_o;
     if (auto v = get_num(*elec, "capacitanceMeasurementVds"); pos(v)) r.coss_vds = *v;
+    // Operating-point loss inputs (owner 2026-11-14): stated values only, absent stays NaN.
+    if (auto v = get_num(*elec, "gateSourceCharge"); pos(v)) r.qgs = *v;
+    if (auto v = get_num(*elec, "gateDrainCharge"); pos(v)) r.qgd = *v;
+    if (auto v = rating_magnitude(get_num(*elec, "totalGateChargeVgs"), p_channel); pos(v))
+        r.qg_vgs = *v;
+    if (const json* curves = obj_get(*di, "curves"); curves && curves->is_object()) {
+        r.coss_curve = read_curve_xy(obj_get(*curves, "cossVsVds"), "V", {"F"}, true);
+        // Rds(on) against Tj: x crosses 0 degC; y an absolute resistance (a label naming a
+        // milli-unit or a normalised ratio is not read: read_curve_xy's label check).
+        const json* rtj = obj_get(*curves, "rdsOnVsTj");
+        r.rds_on_tj_curve = read_curve_xy(rtj, "degC", {"ohm", "Ohm"}, true, false, true);
+        if (!r.rds_on_tj_curve.empty())
+            if (const json* cond = rtj ? obj_get(*rtj, "conditions") : nullptr; cond && cond->is_object())
+                if (auto v = rating_magnitude(get_num(*cond, "gateSourceVoltage"), p_channel); pos(v))
+                    r.rds_on_tj_curve_vgs = *v;
+        // Gate charge: the records label x "Gate charge [nC]" and state it in nC. Only an
+        // nC-labelled curve is read (read_curve_xy rejects another unit), then put in C.
+        const json* gq = obj_get(*curves, "gateCharge");
+        CurvePts q = read_curve_xy(gq, "[nC]", {"V"}, false, true);
+        if (!q.empty()) {
+            auto xs = std::make_shared<std::vector<float>>();
+            for (float x : *q.x) xs->push_back(x * 1e-9f);
+            q.x = std::move(xs);
+            r.qg_curve = std::move(q);
+            if (const json* cond = obj_get(*gq, "conditions"); cond && cond->is_object())
+                if (auto v = rating_magnitude(get_num(*cond, "drainSourceVoltage"), p_channel); pos(v))
+                    r.qg_curve_vds = *v;
+        }
+    }
     if (vgs) r.vgs_threshold_max = *vgs;
     if (vgs_typ) r.vgs_threshold_typ = *vgs_typ;
     if (auto v = rating_magnitude(get_num(*elec, "onResistanceVgs"), p_channel); pos(v))

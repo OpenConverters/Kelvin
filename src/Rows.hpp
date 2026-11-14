@@ -124,6 +124,21 @@ struct RowBase {
     bool box_axes_ambiguous = false;
 };
 
+// A measured curve carried on a row (v22, owner 2026-11-14: "compare ALL existing graphs").
+// x ascending, no duplicates, as float (compact: the curve is a measurement read to a few
+// digits). The two vectors are shared: identical grids and curves are stored once in the
+// shard's string pool and once in memory (most frequency grids repeat across a series).
+// Empty (null x) = the record states no usable curve. `temperature` / `dc_bias` /
+// `frequency` are the measurement conditions the record states for the curve (NaN = not
+// stated); two curves whose stated conditions differ are not compared.
+struct CurvePts {
+    std::shared_ptr<const std::vector<float>> x, y;
+    double temperature = std::numeric_limits<double>::quiet_NaN();
+    double dc_bias = std::numeric_limits<double>::quiet_NaN();
+    double frequency = std::numeric_limits<double>::quiet_NaN();
+    bool empty() const { return !x || x->empty(); }
+};
+
 struct MosfetRow : RowBase {
     // Required by the extractor (a record lacking one is unreadable), so never absent.
     double vds_rated = 0, rds_on = 0;
@@ -164,6 +179,21 @@ struct MosfetRow : RowBase {
     // indistinguishable, which is a documented substitution hazard.
     double rds_on_vgs = kNaN();
     double vgs_max = kNaN();       // absolute gate-source rating
+    // v22 (owner 2026-11-14, operating-point loss ranking) — the datasheet values the buck
+    // switch loss terms are computed from, NaN / empty when the record does not state them
+    // (the term is then UNVERIFIED, never estimated). Qgs / Qgd: electrical.gateSourceCharge /
+    // gateDrainCharge (C; the schema carries the whole Qgs, no Qgs2). qg_vgs: the Vgs the
+    // stated Qg is specified at (electrical.totalGateChargeVgs).
+    double qgs = kNaN(), qgd = kNaN(), qg_vgs = kNaN();
+    // curves.cossVsVds: Vds [V] -> Coss [F] (frequency condition kept on the curve).
+    CurvePts coss_curve;
+    // curves.rdsOnVsTj: Tj [degC] -> Rds(on) [ohm], measured at rds_on_tj_curve_vgs.
+    CurvePts rds_on_tj_curve;
+    double rds_on_tj_curve_vgs = kNaN();
+    // curves.gateCharge: gate charge [C] (the record states nC; converted) -> Vgs [V],
+    // measured at qg_curve_vds.
+    CurvePts qg_curve;
+    double qg_curve_vds = kNaN();
     std::string qualification;     // AEC-Q101 etc., when the datasheet states it
     double rth_ja = kNaN(), rth_jc = kNaN(), tj_max = kNaN();
     std::string technology;   // Si / SiC / GaN (part.technology)
@@ -264,21 +294,6 @@ struct DiodeRow : RowBase {
     std::string qualification;
     bool is_production = false;
     bool no_thermal() const { return !present(rth_ja) || !present(tj_max); }
-};
-
-// A measured curve carried on a row (v22, owner 2026-11-14: "compare ALL existing graphs").
-// x ascending, no duplicates, as float (compact: the curve is a measurement read to a few
-// digits). The two vectors are shared: identical grids and curves are stored once in the
-// shard's string pool and once in memory (most frequency grids repeat across a series).
-// Empty (null x) = the record states no usable curve. `temperature` / `dc_bias` /
-// `frequency` are the measurement conditions the record states for the curve (NaN = not
-// stated); two curves whose stated conditions differ are not compared.
-struct CurvePts {
-    std::shared_ptr<const std::vector<float>> x, y;
-    double temperature = std::numeric_limits<double>::quiet_NaN();
-    double dc_bias = std::numeric_limits<double>::quiet_NaN();
-    double frequency = std::numeric_limits<double>::quiet_NaN();
-    bool empty() const { return !x || x->empty(); }
 };
 
 struct CapacitorRow : RowBase {

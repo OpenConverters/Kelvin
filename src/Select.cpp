@@ -1,4 +1,5 @@
 #include "MfrPolicy.hpp"
+#include "MosfetLoss.hpp"
 #include "Select.hpp"
 
 #include <algorithm>
@@ -49,6 +50,46 @@ json base_candidate(const Row* r, RecordFetcher* fetcher) {
     return c;
 }
 
+json loss_term_json(const LossTerm& t) {
+    json j;
+    j["watts"] = t.watts ? json(*t.watts) : json(nullptr);
+    if (t.watts) j["basis"] = t.basis;
+    else j["missing"] = t.missing;
+    return j;
+}
+
+// One candidate's operating-point loss: every term (watts + basis, or null + what is
+// missing), the total (null while any term is UNVERIFIED), and the notes.
+json loss_json(const LossBreakdown& lb, const LossOperatingPoint& op) {
+    json loss;
+    loss["position"] = to_string(op.position);
+    loss["dutyCycle"] = lb.duty;
+    loss["dutyBasis"] = lb.duty_basis;
+    loss["irms"] = lb.irms;
+    loss["terms"] = {{"conduction", loss_term_json(lb.conduction)},
+                     {"switching", loss_term_json(lb.switching)},
+                     {"gateDrive", loss_term_json(lb.gate_drive)},
+                     {"coss", loss_term_json(lb.coss)}};
+    const auto tot = lb.total();
+    loss["total"] = tot ? json(*tot) : json(nullptr);
+    loss["computedSum"] = lb.computed_sum();
+    loss["unverified"] = lb.unverified();
+    loss["notes"] = lb.notes;
+    return loss;
+}
+
+json loss_op_json(const LossOperatingPoint& op) {
+    json o = {{"position", to_string(op.position)}, {"inputVoltage", op.vin},
+              {"outputCurrent", op.iout}, {"switchingFrequency", op.fsw},
+              {"dutyCycle", op.duty_value()}};
+    if (op.vout) o["outputVoltage"] = *op.vout;
+    if (op.ripple_pp) o["inductorRippleCurrent"] = *op.ripple_pp;
+    if (op.vdrive) o["gateDriveVoltage"] = *op.vdrive;
+    if (op.idrive) o["gateDriveCurrent"] = *op.idrive;
+    if (op.tj) o["junctionTemperature"] = *op.tj;
+    return o;
+}
+
 }  // namespace
 
 json select_mosfet(const Shard<MosfetRow>& shard, const MosfetConstraints& c, MosfetTiebreaker tb,
@@ -89,6 +130,17 @@ json select_mosfet(const Shard<MosfetRow>& shard, const MosfetConstraints& c, Mo
                 "LOWEST_TOTAL_LOSS requires op_i_rms/op_vds/op_duty/op_fsw on MosfetConstraints");
         op_i = *c.op_i_rms; op_v = *c.op_vds; op_d = *c.op_duty; op_f = *c.op_fsw;
     }
+    // LOWEST_OPERATING_POINT_LOSS (owner 2026-11-14): the caller's operating point, required.
+    const bool op_loss_mode = tb == MosfetTiebreaker::LowestOperatingPointLoss;
+    std::map<const MosfetRow*, LossBreakdown> op_loss;
+    if (op_loss_mode) {
+        if (!c.loss_op)
+            throw InvalidOptions("lowest_operating_point_loss requires a lossOperatingPoint "
+                                 "(position, inputVoltage, outputCurrent, switchingFrequency, "
+                                 "dutyCycle or outputVoltage)");
+        c.loss_op->validate();
+        for (const MosfetRow* m : passing) op_loss.emplace(m, switch_loss(*m, *c.loss_op));
+    }
     constexpr double kIg = 1.0;  // gate-drive current proxy
     auto total_loss = [&](const MosfetRow* m) {
         double p_cond = op_d * op_i * op_i * m->rds_on;
@@ -108,21 +160,30 @@ json select_mosfet(const Shard<MosfetRow>& shard, const MosfetConstraints& c, Mo
             case MosfetTiebreaker::HighestVdsMargin: return -m->vds_rated / c.vds_min;
             case MosfetTiebreaker::HighestIdMargin: return -m->id_continuous / c.id_min;
             case MosfetTiebreaker::LowestTotalLoss: return total_loss(m);
+            case MosfetTiebreaker::LowestOperatingPointLoss: return op_loss.at(m).computed_sum();
         }
         return 0;
     };
+    // Operating-point loss: a candidate with an UNVERIFIED term ranks after every fully
+    // computed one (owner 2026-11-14) — first key, ahead of the evidence tiers; among the
+    // incomplete ones, fewer unverified terms first, then the sum of the terms that were
+    // computed.
+    auto unverified_terms = [&](const MosfetRow* m) -> size_t {
+        return op_loss_mode ? op_loss.at(m).unverified().size() : 0;
+    };
     // tuple (evidence_incomplete, no_thermal, metric, lineno) ascending — mirrors Python min().
     std::sort(passing.begin(), passing.end(), [&](const MosfetRow* a, const MosfetRow* b) {
-        auto ka = std::make_tuple(a->evidence_incomplete() ? 1 : 0, a->no_thermal() ? 1 : 0,
-                                  metric(a), a->lineno);
-        auto kb = std::make_tuple(b->evidence_incomplete() ? 1 : 0, b->no_thermal() ? 1 : 0,
-                                  metric(b), b->lineno);
+        auto ka = std::make_tuple(unverified_terms(a), a->evidence_incomplete() ? 1 : 0,
+                                  a->no_thermal() ? 1 : 0, metric(a), a->lineno);
+        auto kb = std::make_tuple(unverified_terms(b), b->evidence_incomplete() ? 1 : 0,
+                                  b->no_thermal() ? 1 : 0, metric(b), b->lineno);
         return ka < kb;
     });
 
     json result;
     result["category"] = "mosfet";
     result["tiebreaker"] = to_string(tb);
+    if (op_loss_mode) result["lossOperatingPoint"] = loss_op_json(*c.loss_op);
     result["totalRowsConsidered"] = shard.meta.source_line_count;
     result["alternativesConsidered"] = passing.size();
     result["rejections"] = emit_rejections(rej);
@@ -154,6 +215,11 @@ json select_mosfet(const Shard<MosfetRow>& shard, const MosfetConstraints& c, Mo
             double p_coss = m->coss > 0 ? 0.5 * m->coss * op_v * op_v * op_f : 0.0;
             cd["sortKey"] = {{"metric", "total_loss"}, {"pCond", p_cond}, {"pSw", p_sw},
                              {"pCoss", p_coss}, {"total", p_cond + p_sw + p_coss}};
+        } else if (op_loss_mode) {
+            cd["loss"] = loss_json(op_loss.at(m), *c.loss_op);
+            const LossBreakdown& lb = op_loss.at(m);
+            cd["sortKey"] = {{"metric", to_string(tb)}, {"value", lb.computed_sum()},
+                             {"unverifiedTerms", lb.unverified().size()}};
         } else {
             cd["sortKey"] = {{"metric", to_string(tb)}, {"value", metric(m)}};
         }
