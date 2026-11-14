@@ -42,6 +42,9 @@ export const XREF = [
     // compared as a basis-unknown value.
     // srf: the self-resonant frequency, compared like the bead's (Qarlos 2026-11-09).
     spec: (r) => ({ ...base(r), value_si: nz(r.inductance), saturation_current: nz(r.saturation_current),
+      // The device type (inductor / transformer / ...): the both-unknown primary cap (owner
+      // 2026-11-14, both_unknown_cap_applies) applies Isat / rated current to inductors only.
+      device_type: r.device_type ?? '',
       saturation_points: Array.isArray(r.saturation_points) && r.saturation_points.length
         ? r.saturation_points : null,
       rated_current: nz(r.rated_current), dcr: nz(r.dcr), srf: nz(r.srf),
@@ -101,6 +104,9 @@ export const XREF = [
       ripple_current_frequency: nz(r.ripple_current_frequency),
       // v22 (Qarlos r26): the temperature the ripple rating is stated at (85 vs 105 degC).
       ripple_current_temperature: r.ripple_current_temperature ?? null, safety_class: r.safety_class || null,
+      // v22 (owner 2026-11-14): the measured curves, {x, y, temperature?, dc_bias?, frequency?} or
+      // null — compared curve-vs-curve on their overlap (src/CrossRefCurves.hpp).
+      esr_curve: r.esr_curve ?? null, impedance_curve: r.impedance_curve ?? null, capacitance_frequency_curve: r.capacitance_frequency_curve ?? null, esl_curve: r.esl_curve ?? null, capacitance_bias_curve: r.capacitance_bias_curve ?? null,
       // v20 (Qarlos 2026-11-09): the guaranteed capacitance band in farads, as the record states
       // its two ends (compared as farads, never turned into a percentage); the leaded form
       // (axial / radial, a land-pattern identity); and the qualified reliability level
@@ -422,16 +428,13 @@ const ZENER_VARIANT = {
 }
 
 // The measured curves a magnetic row carries (v22, owner 2026-11-14: "compare ALL existing
-// graphs"), passed to the ranker as they come off the row ({x, y[, mode]}, null when the record
-// states none). The ranker compares each one both records carry, curve vs curve
+// graphs"), passed to the ranker as they come off the row (the shared curve shape {x, y,
+// conditions...} as the capacitor's, plus mode on a CMC's |Z|; null when the record states none). The ranker compares each one both records carry, curve vs curve
 // (src/CrossRefMagneticCurves.hpp). Shared by the inductor and the impedance (bead) models.
 const MAGNETIC_CURVE_KEYS = ['impedance_curve', 'resistance_curve', 'reactance_curve']
 export function magneticCurves(r) {
   const out = {}
-  for (const k of MAGNETIC_CURVE_KEYS) {
-    const c = r[k]
-    out[k] = c && Array.isArray(c.x) && Array.isArray(c.y) && c.x.length >= 2 ? c : null
-  }
+  for (const k of MAGNETIC_CURVE_KEYS) out[k] = r[k] ?? null
   return out
 }
 

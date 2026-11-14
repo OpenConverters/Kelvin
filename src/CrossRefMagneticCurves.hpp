@@ -55,20 +55,16 @@ inline std::string fmt(double v, const char* unit) {
     return b;
 }
 
-// The curve under `key` in a spec block, nullopt when absent / null. A present but malformed
-// curve THROWS (the browse row builds it; a bad one is a bug, not missing data).
-inline std::optional<Curve> read_curve(const nlohmann::json& s, const char* key,
-                                       std::string* mode = nullptr) {
+// The curve under `key` in a spec block (the shared spec shape, curve_from_spec: {x, y,
+// temperature?, dc_bias?, frequency?}, plus "mode" on a common-mode choke's |Z|), nullopt when
+// absent / null. A present but malformed curve THROWS (the browse row builds it; a bad one is a
+// bug, not missing data).
+inline std::optional<SpecCurve> read_curve(const nlohmann::json& s, const char* key,
+                                           std::string* mode = nullptr) {
     if (!s.is_object()) return std::nullopt;
-    const auto it = s.find(key);
-    if (it == s.end() || it->is_null()) return std::nullopt;
-    if (!it->is_object() || !it->contains("x") || !it->contains("y"))
-        throw std::invalid_argument(std::string("curve '") + key + "' is not {x, y}");
-    std::vector<double> x, y;
-    for (const auto& v : it->at("x")) x.push_back(v.get<double>());
-    for (const auto& v : it->at("y")) y.push_back(v.get<double>());
-    if (mode) *mode = it->value("mode", std::string());
-    return Curve(std::move(x), std::move(y));
+    auto c = curve_from_spec(s, key);
+    if (c && mode) *mode = s.at(key).value("mode", std::string());
+    return c;
 }
 
 struct Def {
@@ -246,7 +242,7 @@ inline std::vector<Result> compare_all(const nlohmann::json& orig, const nlohman
             out.push_back(std::move(r));
             continue;
         }
-        out.push_back(compare_pair(d, *o, *s));
+        out.push_back(compare_pair(d, o->curve, s->curve));
     }
     return out;
 }

@@ -1419,8 +1419,14 @@ TEST_CASE("a zener's guaranteed window is compared, not just its marked voltage"
     // Same grade: judged, passed, and said nothing about — a match needs no note.
     const json same = by_mpn("A_GRADE");
     CHECK(verdict_of(same, "vz_tolerance_pct") == PASS);
-    CHECK(same["grade"] == "drop_in");
-    CHECK_FALSE(same.contains("notes"));
+    // owner 2026-11-14 (both-unknown primary cap): was drop_in with no notes; neither record
+    // states the zener's power dissipation, a primary rating for a zener, so the grade is
+    // capped and that is the one note — the window itself still needs none.
+    CHECK(same["grade"] == "minor_review");
+    REQUIRE(same.contains("notes"));
+    CHECK(same["notes"].size() == 1);
+    CHECK(same["notes"].dump().find("neither record states the power dissipation rating") !=
+          std::string::npos);
 
     // The '-B' grade: same marking, 4.5x the window. A regression, sized in volts.
     const json loose = by_mpn("B_GRADE");
@@ -1443,7 +1449,9 @@ TEST_CASE("a zener's guaranteed window is compared, not just its marked voltage"
           std::string::npos);
     CHECK(unknown["notes"].dump().find("no breakdown-voltage band") != std::string::npos);
     // and the unknown is not a regression: nothing was compared, so nothing failed
-    CHECK(unknown["status"] == "recommended");
+    // owner 2026-11-14 (both-unknown primary cap): was "recommended"; the unstated zener Pd
+    // on both records demotes it.
+    CHECK(unknown["status"] == "partial");
 
     // The other way round — the original's own window is not on record — reports the
     // same unverified verdict WITHOUT the note: there is no guarantee being dropped.
@@ -1452,7 +1460,12 @@ TEST_CASE("a zener's guaranteed window is compared, not just its marked voltage"
     auto r2 = cross_reference("diode", bare_original, json::array({cands[0]}), Options{});
     const json tighter = r2["candidates"][0];
     CHECK(verdict_of(tighter, "vz_tolerance_pct") == UNVERIFIED);
-    CHECK_FALSE(tighter.contains("notes"));
+    // owner 2026-11-14 (both-unknown primary cap): was "no notes"; the one note now is the
+    // unstated-Pd cap — still none about a dropped breakdown window.
+    REQUIRE(tighter.contains("notes"));
+    CHECK(tighter["notes"].size() == 1);
+    CHECK(tighter["notes"].dump().find("neither record states the power dissipation rating") !=
+          std::string::npos);
 }
 
 // The ratings of a P-channel and an N-channel MOSFET are both magnitudes, so nothing

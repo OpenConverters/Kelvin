@@ -109,6 +109,114 @@ std::optional<double> curve_at(const json* c, double x, const char* x_unit, cons
     return std::exp(std::log(ylo) + t * (std::log(yhi) - std::log(ylo)));
 }
 
+// A PEAS `curve` ({xData, yData, xLabel?, yLabel?, conditions?}) read WHOLE onto a row
+// (v22, owner 2026-11-14). The samples are put in x order (the order a record lists them in
+// carries no meaning); nothing else is changed. The curve is NOT kept (empty, counted by the
+// caller's statistics as "no curve") when it is not one: fewer than two samples, x and y of
+// different lengths, a non-numeric or non-finite sample, a label naming a different unit
+// than the caller's (any of `y_units`; a milli-prefixed one is a different unit), two
+// samples at one x (which of the two is the curve is not on record), or — when
+// `positive_y` — a sample <= 0 on a quantity read on log axes. Every x must be > 0 (all
+// the capacitor curves are frequencies or voltages from 0: `nonneg_x` admits x = 0).
+// `conditions` {temperature, dcBias, frequency} are kept when numeric.
+CurvePts read_curve_xy(const json* c, const char* x_unit, std::initializer_list<const char*> y_units,
+                       bool positive_y, bool nonneg_x = false) {
+    CurvePts out;
+    if (!c || !c->is_object()) return out;
+    if (auto xl = get_str(*c, "xLabel"); xl && xl->find(x_unit) == std::string::npos) return out;
+    if (auto yl = get_str(*c, "yLabel")) {
+        bool ok = false;
+        for (const char* u : y_units)
+            if (yl->find(u) != std::string::npos && yl->find(std::string("m") + u) == std::string::npos)
+                ok = true;
+        if (!ok) return out;
+    }
+    const json* xs = obj_get(*c, "xData");
+    const json* ys = obj_get(*c, "yData");
+    if (!xs || !ys || !xs->is_array() || !ys->is_array() || xs->size() != ys->size() ||
+        xs->size() < 2)
+        return out;
+    std::vector<std::pair<double, double>> pts;
+    for (size_t i = 0; i < xs->size(); ++i) {
+        const json& xv = (*xs)[i];
+        const json& yv = (*ys)[i];
+        if (!xv.is_number() || !yv.is_number()) return out;
+        const double xi = xv.get<double>(), yi = yv.get<double>();
+        if (!std::isfinite(xi) || !std::isfinite(yi)) return out;
+        if (nonneg_x ? xi < 0 : !(xi > 0)) return out;
+        if (positive_y && !(yi > 0)) return out;
+        pts.emplace_back(xi, yi);
+    }
+    std::sort(pts.begin(), pts.end());
+    auto x = std::make_shared<std::vector<float>>();
+    auto y = std::make_shared<std::vector<float>>();
+    for (const auto& [xi, yi] : pts) {
+        const float xf = static_cast<float>(xi);
+        if (!x->empty() && !(xf > x->back())) return out;  // duplicate x (or one float apart)
+        x->push_back(xf);
+        y->push_back(static_cast<float>(yi));
+    }
+    out.x = std::move(x);
+    out.y = std::move(y);
+    if (const json* cond = obj_get(*c, "conditions"); cond && cond->is_object()) {
+        if (auto v = get_num(*cond, "temperature")) out.temperature = *v;
+        if (auto v = get_num(*cond, "dcBias")) out.dc_bias = *v;
+        if (auto v = get_num(*cond, "frequency")) out.frequency = *v;
+    }
+    return out;
+}
+
+// The leading run of a curve up to (not including) its first sample <= 0; empty when fewer
+// than two samples remain. Used where a sign change ends the quantity's meaning (C(f) past
+// self-resonance), so the rest of the curve is not read as that quantity.
+CurvePts leading_positive(CurvePts c) {
+    if (c.empty()) return c;
+    size_t n = 0;
+    while (n < c.y->size() && (*c.y)[n] > 0) ++n;
+    if (n == c.y->size()) return c;
+    if (n < 2) return CurvePts{};
+    c.x = std::make_shared<std::vector<float>>(c.x->begin(), c.x->begin() + n);
+    c.y = std::make_shared<std::vector<float>>(c.y->begin(), c.y->begin() + n);
+    return c;
+}
+
+// CAS capacitanceBiasPoints ([{voltage, capacitance, temperature?, acVoltage?}]) as a curve:
+// DC bias V -> effective capacitance F, absolute, as the records state it (34,110 records,
+// none states a ratio). Put in voltage order; NOT kept when it is not one curve: fewer than
+// two points, a non-numeric / negative voltage or a capacitance <= 0, two points at one
+// voltage, or points at more than one temperature (one curve per temperature is not what a
+// single row carries). The temperature, when stated, is the curve's condition.
+CurvePts read_bias_curve(const json* b) {
+    CurvePts out;
+    if (!b || !b->is_array() || b->size() < 2) return out;
+    std::vector<std::pair<double, double>> pts;
+    std::optional<double> temp;
+    bool first = true;
+    for (const json& p : *b) {
+        if (!p.is_object()) return out;
+        const auto v = get_num(p, "voltage"), c = get_num(p, "capacitance");
+        if (!v || !c || !std::isfinite(*v) || !std::isfinite(*c) || *v < 0 || !(*c > 0)) return out;
+        const auto t = get_num(p, "temperature");
+        if (first) temp = t;
+        else if (t.has_value() != temp.has_value() || (t && *t != *temp)) return out;
+        first = false;
+        pts.emplace_back(*v, *c);
+    }
+    std::sort(pts.begin(), pts.end());
+    auto x = std::make_shared<std::vector<float>>();
+    auto y = std::make_shared<std::vector<float>>();
+    for (const auto& [xi, yi] : pts) {
+        const float xf = static_cast<float>(xi);
+        if (!x->empty() && !(xf > x->back())) return out;
+        x->push_back(xf);
+        y->push_back(static_cast<float>(yi));
+    }
+    out.x = std::move(x);
+    out.y = std::move(y);
+    if (temp) out.temperature = *temp;
+    return out;
+}
+
 // Physical body size + case code, shared by every family extractor: the
 // cross-reference footprint check needs a real size, because a substitute that
 // does not fit the board is not a substitute. Dimensions are
@@ -850,19 +958,13 @@ int unstate_retracted_ratings(MagneticRow& r) {
         r.impedance_100mhz = r.impedance_peak = r.impedance_peak_freq = kNaN();
         ++n;
     }
-    for (auto [path, xs, ys] :
-         {std::tuple{"electrical.resistancePoints", &r.r_curve_f, &r.r_curve_r},
-          std::tuple{"electrical.reactancePoints", &r.x_curve_f, &r.x_curve_x}})
-        if (!xs->empty() && field_retracted(r, path)) {
-            xs->clear();
-            ys->clear();
+    for (auto [path, c] : {std::pair{"electrical.resistancePoints", &r.r_curve},
+                           std::pair{"electrical.reactancePoints", &r.x_curve},
+                           std::pair{"electrical.impedancePoints", &r.z_curve}})
+        if (!c->empty() && field_retracted(r, path)) {
+            *c = CurvePts{};
             ++n;
         }
-    if (!r.z_curve_f.empty() && field_retracted(r, "electrical.impedancePoints")) {
-        r.z_curve_f.clear();
-        r.z_curve_z.clear();
-        ++n;
-    }
     // A CMC's DM readings come from differentialModeImpedancePoints, or from the
     // impedancePoints tagged "differential" when that field is absent: either retraction
     // unstates them.
@@ -1107,6 +1209,17 @@ std::optional<CapacitorRow> extract_capacitor(const json& env) {
     // the ranker with "no ESR" while its record carried 325 measured points (ABT #2031).
     // Only an INTERPOLATION between two samples that bracket 100 kHz is taken — never an
     // extrapolation — and only from a curve whose labels, when present, say Hz and ohm.
+    // The whole curve is kept too (v22, owner 2026-11-14): the ranker compares two ESR curves
+    // on their overlap and reads one at the other side's stated ESR frequency.
+    r.esr_curve = read_curve_xy(obj_get(*elec, "esrPoints"), "[Hz]", {"Ohm", "\u03a9"},
+                                /*positive_y=*/true);
+    r.bias_curve = read_bias_curve(obj_get(*elec, "capacitanceBiasPoints"));
+    r.z_curve = read_curve_xy(obj_get(*elec, "impedancePoints"), "[Hz]", {"Ohm", "\u03a9"},
+                              /*positive_y=*/true);
+    r.cf_curve = leading_positive(read_curve_xy(obj_get(*elec, "capacitanceFrequencyPoints"),
+                                                "[Hz]", {"[F]"}, /*positive_y=*/false));
+    r.esl_curve = read_curve_xy(obj_get(*elec, "inductanceFrequencyPoints"), "[Hz]", {"[H]"},
+                                /*positive_y=*/true);
     if (!present(r.esr)) {
         if (auto v = curve_at(obj_get(*elec, "esrPoints"), 1e5, "[Hz]", "Ohm"); v) {
             r.esr = *v;
@@ -1692,8 +1805,7 @@ std::vector<std::pair<double, double>> impedance_curve_points(const json& pts,
 // land on the same float x with the same y are one sample; with different y the record states
 // two values at one x and the curve is not carried (which one is right is not on record).
 // Fewer than two samples is not a curve. Nothing is resampled or smoothed.
-void store_curve(const std::vector<std::pair<double, double>>& c, std::vector<float>& xs,
-                 std::vector<float>& ys) {
+void store_curve(const std::vector<std::pair<double, double>>& c, CurvePts& out) {
     std::vector<float> x, y;
     for (const auto& [cx, cy] : c) {
         const float fx = static_cast<float>(cx), fy = static_cast<float>(cy);
@@ -1706,8 +1818,8 @@ void store_curve(const std::vector<std::pair<double, double>>& c, std::vector<fl
         y.push_back(fy);
     }
     if (x.size() < 2) return;
-    xs = std::move(x);
-    ys = std::move(y);
+    out.x = std::make_shared<const std::vector<float>>(std::move(x));
+    out.y = std::make_shared<const std::vector<float>>(std::move(y));
 }
 
 // A frequency sweep of one scalar (resistancePoints {frequency, resistance}, reactancePoints
@@ -1892,7 +2004,7 @@ std::optional<MagneticRow> extract_magnetic(const json& env) {
             const auto cm = impedance_curve_points(*pts, cmc ? ImpedanceMode::Common
                                                              : ImpedanceMode::Untagged);
             impedance_readings(cm, r.impedance_100mhz, r.impedance_peak, r.impedance_peak_freq);
-            store_curve(cm, r.z_curve_f, r.z_curve_z);
+            store_curve(cm, r.z_curve);
             if (cmc) {
                 // differentialModeImpedancePoints is the schema's own DM field; the tagged
                 // points are read only when it is absent (every record that states both states
@@ -1909,9 +2021,9 @@ std::optional<MagneticRow> extract_magnetic(const json& env) {
         // R(f) and X(f) (v22 curves): the dissipative and the reactive part of a bead's
         // impedance, compared curve vs curve by the ranker.
         if (const json* rp = obj_get(elec, "resistancePoints"))
-            store_curve(sweep_points(*rp, "resistance"), r.r_curve_f, r.r_curve_r);
+            store_curve(sweep_points(*rp, "resistance"), r.r_curve);
         if (const json* xp = obj_get(elec, "reactancePoints"))
-            store_curve(sweep_points(*xp, "reactance"), r.x_curve_f, r.x_curve_x);
+            store_curve(sweep_points(*xp, "reactance"), r.x_curve);
         // Transformer turns ratio (primary:secondary): electrical[0].turnsRatios[0] (a dimWithTol). Lets
         // select_magnetic rank a catalog transformer by how close its ratio is to the design's required
         // ratio — the meaningful match for flyback/isolated transformers (TAS has no per-winding structure).

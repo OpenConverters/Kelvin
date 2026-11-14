@@ -112,8 +112,8 @@ TEST_CASE("curves: a CMC's impedance readings are taken per winding mode",
 TEST_CASE("curves: an inductor's |Z|(f) curve is compared with the other's",
           "[magcurves][crossref][impedance]") {
     const auto o = row_of("LQG15HN10NJ02"), s = row_of("LQW15AN10NJ00");
-    REQUIRE(o.z_curve_f.size() == 300);
-    REQUIRE(s.z_curve_f.size() == 300);
+    REQUIRE(o.z_curve.x->size() == 300);
+    REQUIRE(s.z_curve.x->size() == 300);
     const json c = rank("magnetic", spec_of(o), spec_of(s));
     INFO(c.dump());
     // Both 10 nH 0402 parts are swept 10 MHz-3 GHz; the wirewound LQW15AN sits at 217 ohm at
@@ -133,8 +133,8 @@ TEST_CASE("curves: an inductor's |Z|(f) curve is compared with the other's",
 TEST_CASE("curves: a bead's R(f) and X(f) are compared with the other's",
           "[magcurves][crossref][bead]") {
     const auto o = row_of("742792653"), s = row_of("74279265");
-    REQUIRE(o.r_curve_f.size() >= 2);
-    REQUIRE(s.x_curve_f.size() >= 2);
+    REQUIRE(o.r_curve.x->size() >= 2);
+    REQUIRE(s.x_curve.x->size() >= 2);
     const json c = rank("chipBead", spec_of(o, true), spec_of(s, true));
     INFO(c.dump());
     CHECK(verdict_of(c, "resistance_curve") == "XX");

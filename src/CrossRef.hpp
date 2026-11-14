@@ -40,6 +40,7 @@
 #include <nlohmann/json.hpp>
 
 #include "CrossRefClasses.hpp"
+#include "CrossRefCurves.hpp"
 #include "CrossRefDecode.hpp"
 #include "CrossRefDimensions.hpp"
 #include "CrossRefMagneticCurves.hpp"  // magnetic curves (owner 2026-11-14)
@@ -391,6 +392,61 @@ inline bool is_primary_rating(const std::string& cat, const std::string& key) {
     const auto it = k.find(cat);
     return it != k.end() && it->second.count(key);
 }
+// Both-unknown primary cap (owner decision 2026-11-14; both_unstated_primary in
+// score_candidate): a primary axis stated by NEITHER record caps the grade at minor_review —
+// but only where that axis is a real datasheet rating for the ORIGINAL's technology. A rating
+// the technology does not publish (ripple current on an MLCC, If(AV) on a TVS) is missing from
+// every record of that kind, so its absence says nothing about the pair. The one table:
+//
+//   category   axis (key)                       technologies it applies to
+//   ---------  -------------------------------  -------------------------------------------
+//   capacitor  ripple current (ripple_current)  aluminium electrolytic (wet, hybrid, polymer)
+//                                               and tantalum polymer; NOT ceramic (MLCC),
+//                                               film, tantalum MnO2, others
+//   diode      If(AV) (if_avg)                  rectifier, schottky, sicSchottky,
+//                                               fastRecovery, ultrafast; NOT tvs/esd/zener/
+//                                               switching/pin
+//   diode      Ppk, Ipp (peak_pulse_power,      tvs, esd
+//              peak_pulse_current)
+//   diode      Pd (power_dissipation)           zener, tvs, esd, switching, pin; NOT the
+//                                               rectifiers (rectifier, schottky, sicSchottky,
+//                                               fastRecovery, ultrafast)
+//   magnetic   Isat, rated current              inductor, coupledInductor (device_type);
+//              (saturation_current,             NOT transformer, commonModeChoke, cableCore
+//              rated_current)
+//   mosfet     Vds, Id, Rds(on)                 every MOSFET
+//   connector  rated current (rated_current_A)  every connector; NOT rated voltage
+//
+// Every other primary axis (capacitor rated voltage, diode Vrrm, IGBT, chip bead, varistor,
+// resistor power, connector rated voltage) has no both-unknown cap. An original whose
+// technology is not stated gives no cap on a technology-scoped axis: whether the rating exists
+// for it is unknown, and no technology is assumed.
+inline bool both_unknown_cap_applies(const std::string& cat, const std::string& key,
+                                     const std::string& original_technology) {
+    const std::string& t = original_technology;
+    if (cat == "mosfet") return key == "vds" || key == "id" || key == "rds_on";
+    if (cat == "connector") return key == "rated_current_A";
+    if (cat == "magnetic")
+        return (key == "saturation_current" || key == "rated_current") &&
+               (t == "inductor" || t == "coupledInductor");
+    if (cat == "capacitor") {
+        if (key != "ripple_current") return false;
+        const CapFamily f = cap_family(t);
+        return f == CapFamily::AluminiumWet || f == CapFamily::AluminiumHybrid ||
+               f == CapFamily::AluminiumPolymer || f == CapFamily::TantalumPolymer;
+    }
+    if (cat == "diode") {
+        static const std::set<std::string> rectifiers{"rectifier", "schottky", "sicSchottky",
+                                                      "fastRecovery", "ultrafast"};
+        static const std::set<std::string> pd{"zener", "tvs", "esd", "switching", "pin"};
+        if (key == "if_avg") return rectifiers.count(t) > 0;
+        if (key == "peak_pulse_power" || key == "peak_pulse_current")
+            return t == "tvs" || t == "esd";
+        if (key == "power_dissipation") return pd.count(t) > 0;
+        return false;
+    }
+    return false;
+}
 inline std::string primary_rating_label(const std::string& key) {
     static const std::map<std::string, std::string> k = {
         {"vds", "drain-source voltage rating (Vds)"},
@@ -494,8 +550,9 @@ inline constexpr double kUnknownTempGradePenaltyPerC = 0.002;
 // numeric terms so no single categorical miss can outweigh the primary value.
 inline constexpr double kVerdictWarnPenalty = 0.5;
 inline constexpr double kVerdictFailPenalty = 3.0;
-// Gross over-rating (owner 2026-11-13, Y4): a substitute whose primary voltage or current
-// rating is more than kGrossOverRatingFactor times the original's costs
+// Gross over-rating (owner 2026-11-13, Y4; resistor power rating added by the owner
+// 2026-11-14): a substitute whose primary voltage, current or (resistor) power rating is
+// more than kGrossOverRatingFactor times the original's costs
 // kGrossOverRatingPenalty per such axis, plus a note naming it — a 200 V / 3 A rectifier for
 // a 70 V / 70 mA signal Schottky is "better" on paper and very likely a bigger body, more
 // cost and more capacitance. A fixed step, well below a WARN (0.5), so it only orders among
@@ -1152,6 +1209,27 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             orig_unstated_primary.end())
             orig_unstated_primary.push_back(l);
     };
+    // Primary ratings stated by NEITHER record (owner decision 2026-11-14): each candidate is
+    // capped at minor_review with a note naming the axes. This reverses, for primary axes
+    // only, the 2026-11-12 rule "missing data on both sides is not capped": a drop_in claims
+    // the axis the match turns on was compared, and here it never was. Scoped (owner
+    // 2026-11-14) to the axes that are a real datasheet rating for the original's technology:
+    // both_unknown_cap_applies holds the one table. Secondary axes stay uncapped, and the
+    // footprint keeps its own owner rules (N1b: neither side states a land -> uncapped).
+    std::vector<std::string> both_unstated_primary;
+    auto both_unstated = [&](const std::string& key) {
+        static const std::map<std::string, std::string> kCurrent = {
+            {"id", "continuous drain current (Id)"},
+            {"if_avg", "average forward current (If(AV))"}};
+        const std::string tech =
+            cat == "magnetic" ? str(original, "device_type") : str(original, "technology");
+        if (!both_unknown_cap_applies(cat, key, tech)) return;
+        const auto c = kCurrent.find(key);
+        const std::string l = c != kCurrent.end() ? c->second : primary_rating_label(key);
+        if (std::find(both_unstated_primary.begin(), both_unstated_primary.end(), l) ==
+            both_unstated_primary.end())
+            both_unstated_primary.push_back(l);
+    };
     // Y4: one note and one small penalty per grossly over-rated primary V / A rating.
     auto gross_over_rating = [&](const std::string& key, std::optional<double> o,
                                  std::optional<double> s) {
@@ -1167,17 +1245,22 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             {"saturation_current", {"saturation current", "A"}},
             {"rated_current", {"rated current", "A"}},
             {"rated_current_A", {"rated current", "A"}},
-            {"rated_voltage_V", {"rated voltage", "V"}}};
+            {"rated_voltage_V", {"rated voltage", "V"}},
+            // A resistor's power rating (owner 2026-11-14): a 35 W power resistor for a 50 mW
+            // chip is the same over-rating — a bigger body and more cost (no capacitance claim).
+            {"power_rating", {"power rating", "W"}}};
         const auto it = kWhat.find(key);
         if (it == kWhat.end()) return;
         penalty += opt.gate_weight * kGrossOverRatingPenalty;
+        const char* likely = key == "power_rating"
+                                 ? "a bigger body and higher cost are likely"
+                                 : "a bigger body, higher cost and more capacitance are likely";
         char b[320];
         std::snprintf(b, sizeof b,
                       "%s %g %s is %.3gx the original's %g %s — far above what the original is "
-                      "rated for (more than %gx): a bigger body, higher cost and more "
-                      "capacitance are likely; ranked after closer-rated parts",
+                      "rated for (more than %gx): %s; ranked after closer-rated parts",
                       it->second.first, *s, it->second.second, *s / *o, *o, it->second.second,
-                      kGrossOverRatingFactor);
+                      kGrossOverRatingFactor, likely);
         notes.push_back(b);
     };
     // Direction bookkeeping: on each directional parameter we could compare,
@@ -1952,9 +2035,103 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         demote();
         return true;
     }();
+    // ── capacitor curves (owner 2026-11-14: "compare ALL existing graphs") ──────
+    // A curve's verdict replaces the scalar comparison of its quantity (curve_override, read
+    // in the parameter loop below): the outcome, and the two values it was decided on (they
+    // carry the direction and the over-dimensioning tie-breaker like stated scalars do).
+    struct CurveOverride {
+        ParamOutcome outcome{UNVERIFIED};
+        std::optional<double> o, s;
+    };
+    std::map<std::string, CurveOverride> curve_override;
+    auto spec_for = [&](const char* key) -> const ParamSpec& {
+        for (const ParamSpec& p : params_for(cat))
+            if (p.key == key) return p;
+        throw std::logic_error(std::string("no ParamSpec '") + key + "' for " + cat);
+    };
+    auto hz = [](double f) {
+        char b[32];
+        std::snprintf(b, sizeof b, "%g Hz", f);
+        return std::string(b);
+    };
+    // ESR (a): both records carry an ESR-vs-frequency curve -> compared on the overlap of the
+    // two measured ranges, log-log (ESR curves are plotted on log axes), with the ESR spec's
+    // bands at each point; the worst point decides. Different stated conditions or no overlap
+    // -> a note, and the scalars keep their own (basis) rule. Otherwise, when the two scalars
+    // are quoted at different frequencies, a curve resolves the basis: the substitute's ESR is
+    // read from its curve at the original's frequency (or the original's from its curve at the
+    // substitute's), inside the measured range only.
+    if (cat == "capacitor") {
+        const auto oc = curve_from_spec(original, "esr_curve"),
+                   sc = curve_from_spec(cand, "esr_curve");
+        const ParamSpec& esr_spec = spec_for("esr");
+        bool decided = false;
+        if (oc && sc) {
+            const std::string cond = conditions_differ(*oc, *sc);
+            if (!cond.empty()) {
+                notes.push_back("ESR curves measured under different conditions (" + cond +
+                                ") — the curves were not compared");
+            } else {
+                const CurveVerdict v = compare_curves(oc->curve, sc->curve, esr_spec,
+                                                      Interp::LogLog);
+                if (v.verdict == std::string(UNVERIFIED)) {
+                    notes.push_back("ESR curves do not overlap (original " +
+                                    hz(oc->curve.x.front()) + " to " + hz(oc->curve.x.back()) +
+                                    ", substitute " + hz(sc->curve.x.front()) + " to " +
+                                    hz(sc->curve.x.back()) + ") — the curves were not compared");
+                } else {
+                    char buf[320];
+                    std::snprintf(buf, sizeof buf,
+                                  "ESR compared on both curves from %g to %g Hz (%zu points, "
+                                  "log-log): %s at %g Hz, substitute %.4g ohm vs original "
+                                  "%.4g ohm",
+                                  v.range->first, v.range->second, v.points,
+                                  v.verdict == std::string(PASS) ? "passes everywhere, tightest" : "worst",
+                                  v.worst_x, v.sub_y, v.orig_y);
+                    notes.push_back(buf);
+                    CurveOverride ov;
+                    ov.outcome = ParamOutcome(v.verdict);
+                    ov.outcome.warn_depth = v.warn_depth;
+                    ov.o = v.orig_y;
+                    ov.s = v.sub_y;
+                    curve_override["esr"] = ov;
+                    decided = true;
+                }
+            }
+        }
+        const auto o_v = num(original, "esr"), s_v = num(cand, "esr");
+        const auto o_f = num(original, "esr_frequency"), s_f = num(cand, "esr_frequency");
+        auto same_f = [](double a, double b) { return std::fabs(a - b) <= 1e-9 * std::max(a, b); };
+        auto mains = [&](double f) { return same_f(f, 100.0) || same_f(f, 120.0); };
+        const bool basis_differs =
+            o_v && s_v && o_f && !(s_f && (same_f(*o_f, *s_f) || (mains(*o_f) && mains(*s_f))));
+        if (!decided && basis_differs) {
+            char buf[320];
+            const auto s_at = sc ? curve_at(sc->curve, *o_f, Interp::LogLog) : std::nullopt;
+            const auto o_at =
+                !s_at && oc && s_f ? curve_at(oc->curve, *s_f, Interp::LogLog) : std::nullopt;
+            if (s_at) {
+                std::snprintf(buf, sizeof buf,
+                              "ESR compared at the original's %g Hz: the substitute's curve "
+                              "reads %.4g ohm there (its record quotes %g ohm at %s) against "
+                              "the original's %g ohm",
+                              *o_f, *s_at, *s_v, s_f ? hz(*s_f).c_str() : "no frequency", *o_v);
+                notes.push_back(buf);
+                curve_override["esr"] = {compare_numeric(esr_spec, o_v, s_at), o_v, s_at};
+            } else if (o_at) {
+                std::snprintf(buf, sizeof buf,
+                              "ESR compared at the substitute's %g Hz: the original's curve "
+                              "reads %.4g ohm there (its record quotes %g ohm at %g Hz) "
+                              "against the substitute's %g ohm",
+                              *s_f, *o_at, *o_v, *o_f, *s_v);
+                notes.push_back(buf);
+                curve_override["esr"] = {compare_numeric(esr_spec, o_at, s_v), o_at, s_v};
+            }
+        }
+    }
     const bool esr_basis_unverified =
-        cat == "capacitor" && basis_unverified("esr", "esr_frequency", "ESR", "ohm",
-                                              /*primary=*/false);
+        cat == "capacitor" && !curve_override.count("esr") &&
+        basis_unverified("esr", "esr_frequency", "ESR", "ohm", /*primary=*/false);
     if (esr_basis_unverified) params.push_back({{"name", "esr_basis"}, {"verdict", UNVERIFIED}});
 
     // ── MOSFET Coss basis (the Vds the capacitances are stated at) ───────────
@@ -2141,18 +2318,22 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         }
         if (cat == "capacitor" && spec.key == "tolerance_pct" && cap_tol_judged) continue;
         bool has_data = detail::present(original, spec.key) || detail::present(cand, spec.key);
+        const auto curve_ov = curve_override.find(spec.key);
+        if (curve_ov != curve_override.end()) has_data = true;
         if (spec.key == "saturation_current")
             has_data = has_data || detail::present(original, "saturation_points") ||
                        detail::present(cand, "saturation_points");
         // A magnetic's saturation current stated on NEITHER record (Qarlos bench 20269028
         // IHSM5832ER151L -> B82477G2154M000, r16 26859036 LSQCA201616T680M -> LQH2MCN680K02):
         // the axis was skipped without a row, so a part came back drop_in / 'upgrade' with
-        // nothing saying Isat was never compared. Missing on both sides is not capped and not
-        // penalised (owner 2026-11-12: identical for every candidate, it cannot skew one against
+        // nothing saying Isat was never compared. Missing on both sides is not penalised, and
+        // since 2026-11-14 (owner) it caps at minor_review like every primary axis stated by
+        // neither record (both_unstated_primary); before that it was not capped (owner 2026-11-12: identical for every candidate, it cannot skew one against
         // another), but the gap is shown as an UNVERIFIED row with a note (owner, 2026-11-13;
         // test_crossref_ranking_golden ABT #545 was narrowed to "no footprint/package note"
         // with the owner's approval). The direction becomes 'unknown' for 'upgrade' and
         // 'equivalent' (owner 2026-11-13; see out["direction"] below).
+        if (!has_data) both_unstated(spec.key);  // owner 2026-11-14
         if (!has_data && cat == "magnetic" && spec.key == "saturation_current") {
             params.push_back({{"name", spec.key}, {"verdict", UNVERIFIED}});
             isat_unstated_both = true;
@@ -2190,6 +2371,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         }();
         const ParamOutcome outcome =
             pin_field             ? ParamOutcome(connector_pitch.verdict)
+            : curve_ov != curve_override.end() ? curve_ov->second.outcome
             : vz_grade_same       ? ParamOutcome(PASS)
             : ripple_blind        ? ParamOutcome(UNVERIFIED)
             : coss_blind          ? ParamOutcome(UNVERIFIED)
@@ -2423,6 +2605,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                                          : std::nullopt;
         auto s = numeric && !ripple_blind && !coss_blind ? detail::jnum(cand, spec.key)
                                                          : std::nullopt;
+        if (curve_ov != curve_override.end()) {  // decided on a curve: its two values
+            o = curve_ov->second.o;
+            s = curve_ov->second.s;
+        }
         if (power_at_t) {
             using power_detail::celsius;
             using power_detail::watts;
@@ -2515,6 +2701,11 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 (spec.key == "saturation_current" || spec.key == "rated_current" ||
                  spec.key == "rated_current_A" || spec.key == "rated_voltage_V"))
                 gross_over_rating(spec.key, o, s);
+            // Resistor power (owner 2026-11-14): the NOMINAL ratings, whatever basis (rating
+            // temperature, derating curve) the PASS was decided on.
+            if (cat == "resistor" && spec.key == "power_rating")
+                gross_over_rating(spec.key, num(original, "power_rating"),
+                                  num(cand, "power_rating"));
         }
         if (numeric) {
             // Isat is compared at a common inductance-drop criterion, so its direction is too:
@@ -2624,6 +2815,94 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 note_direction(r.dir, r.orig_y, r.sub_y);
             }
         }
+    }
+
+    // ── capacitor curves with no scalar of their own (owner 2026-11-14) ─────────
+    // Each is compared on the overlap of the two measured ranges with the bands and direction of
+    // the closest scalar spec (named in its note), the worst point deciding. Booked exactly like
+    // a table parameter: a WARN demotes and costs its depth-scaled warn, a FAIL demotes and
+    // costs the FAIL penalty (any_warn / any_fail then set the grade), both count as a
+    // regression. Both records stating the curve under different conditions, or no overlap ->
+    // UNVERIFIED with a note: no penalty, no cap, no direction. A curve on one side only is not
+    // a comparison and adds nothing.
+    auto curve_param = [&](const char* key, const char* name, const char* what, const char* unit,
+                           const char* x_what, const char* x_unit, const ParamSpec& spec,
+                           const char* spec_named, Interp interp) {
+        const auto oc = curve_from_spec(original, key), sc = curve_from_spec(cand, key);
+        if (!oc || !sc) return;
+        char buf[400];
+        const std::string cond = conditions_differ(*oc, *sc);
+        if (!cond.empty()) {
+            params.push_back({{"name", name}, {"verdict", UNVERIFIED}});
+            notes.push_back(std::string(what) + " curves measured under different conditions (" +
+                            cond + ") — not compared");
+            return;
+        }
+        const CurveVerdict v = compare_curves(oc->curve, sc->curve, spec, interp);
+        params.push_back({{"name", name}, {"verdict", v.verdict}});
+        if (v.verdict == std::string(UNVERIFIED)) {
+            std::snprintf(buf, sizeof buf,
+                          "%s curves do not overlap (original %g to %g %s, substitute %g to %g "
+                          "%s) — not compared",
+                          what, oc->curve.x.front(), oc->curve.x.back(), x_unit,
+                          sc->curve.x.front(), sc->curve.x.back(), x_unit);
+            notes.push_back(buf);
+            return;
+        }
+        const bool ok = v.verdict == std::string(PASS);
+        std::snprintf(buf, sizeof buf,
+                      "%s compared on both curves over %s %g to %g %s (%zu points, %s, bands of "
+                      "the %s): %s at %g %s, substitute %.4g %s vs original %.4g %s",
+                      what, x_what, v.range->first, v.range->second, x_unit, v.points,
+                      interp == Interp::LogLog ? "log-log" : "linear", spec_named,
+                      ok ? "passes everywhere, tightest" : "worst", v.worst_x, x_unit, v.sub_y, unit, v.orig_y,
+                      unit);
+        notes.push_back(buf);
+        if (v.verdict == std::string(FAIL)) {
+            demote();
+            penalty += opt.gate_weight * kVerdictFailPenalty;
+            ++worse;
+        } else if (v.verdict == std::string(WARN)) {
+            demote();
+            penalty += opt.gate_weight * warn_penalty(v.warn_depth);
+            ++worse;
+        } else {
+            note_direction(spec.dir, v.orig_y, v.sub_y);
+        }
+    };
+    if (cat == "capacitor") {
+        // (b) DC bias (owner 2026-11-14, "compare when both state curves"): effective
+        // capacitance at each common bias voltage, absolute farads as the records state them,
+        // linear in V (the bias axis is linear and starts at 0 V). Bands from the capacitance
+        // spec's lower side (primary_value_spec("capacitor"): PASS down to 0.90x, accept down
+        // to 0.80x): PASS >= 0.90x the original's C_eff, WARN down to 0.80x, FAIL below. More
+        // capacitance is never a regression here; the nominal window still bounds the top.
+        static const ParamSpec kBiasSpec{"capacitance_bias", Dir::Higher, 0.80, std::nullopt,
+                                         false, false, nullptr, 0.90};
+        curve_param("capacitance_bias_curve", "capacitance_bias",
+                    "effective capacitance under DC bias", "F", "DC bias", "V", kBiasSpec,
+                    "capacitance spec", Interp::Linear);
+        // (c) The frequency curves, log-log (all three are plotted on log axes), each with the
+        // closest scalar spec, named in its note:
+        //  |Z|(f): the ESR spec (lower is better, PASS <= 1x, WARN to 1.5x, FAIL beyond) — the
+        //          impedance a decoupling or filter capacitor presents is what it is used for;
+        //  C(f):   the capacitance spec's lower bands, as for DC bias (read only below the first
+        //          non-positive sample, see Views.cpp leading_positive);
+        //  ESL(f): the ESR spec's bands (lower is better), the only lower-is-better impedance
+        //          spec the capacitor table has; ESL itself has no scalar spec.
+        static const ParamSpec kImpedanceSpec{"impedance", Dir::Lower, 1.5, std::nullopt,
+                                              false, false, nullptr};
+        static const ParamSpec kCapFreqSpec{"capacitance_frequency", Dir::Higher, 0.80,
+                                            std::nullopt, false, false, nullptr, 0.90};
+        static const ParamSpec kEslSpec{"esl", Dir::Lower, 1.5, std::nullopt, false, false,
+                                        nullptr};
+        curve_param("impedance_curve", "impedance_curve", "|Z|", "ohm", "frequency", "Hz",
+                    kImpedanceSpec, "ESR spec", Interp::LogLog);
+        curve_param("capacitance_frequency_curve", "capacitance_frequency_curve",
+                    "capacitance vs frequency", "F", "frequency", "Hz", kCapFreqSpec,
+                    "capacitance spec", Interp::LogLog);
+        curve_param("esl_curve", "esl_curve", "ESL", "H", "frequency", "Hz", kEslSpec,
+                    "ESR spec", Interp::LogLog);
     }
 
     // ── transformer turns ratio (owner 2026-11-13, R2; W4) ───────────────────
@@ -3153,7 +3432,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                   const char* label, const char* unit, bool cap,
                                   const char* consequence) {
             const auto o = num(original, key), s = num(cand, key);
-            if (!o && !s) return;
+            if (!o && !s) {
+                both_unstated(key);  // owner 2026-11-14
+                return;
+            }
             const std::string ow = str(original, wf_key), sw = str(cand, wf_key);
             if (!o) {  // the original states nothing to hold the substitute to
                 params.push_back({{"name", key}, {"verdict", UNVERIFIED}});
@@ -3697,7 +3979,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // ── critical ratings (Vds / Vrrm / rated voltage / Id / If) ──────────────
     for (const auto& r : critical_ratings(cat)) {
         auto o = num(original, r.key), s = num(cand, r.key);
-        if (!o && !s) continue;
+        if (!o && !s) {
+            both_unstated(r.key);  // owner 2026-11-14
+            continue;
+        }
         if (!o && s && is_primary_rating(cat, r.key)) orig_unstated(r.key);
         if (!current_basis_note.empty() && std::string(r.key) == "if_avg") {
             params.push_back({{"name", r.key}, {"verdict", UNVERIFIED}});
@@ -5519,6 +5804,16 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                         "requirement there — capped below drop_in; confirm the original's "
                         "rating from its datasheet before this swap");
     }
+    if (!both_unstated_primary.empty()) {
+        std::string axes;
+        for (size_t i = 0; i < both_unstated_primary.size(); ++i)
+            axes += (i ? ", " : "") + both_unstated_primary[i];
+        demote();
+        notes.push_back("neither record states the " + axes +
+                        " — a primary rating the match turns on was not compared, so the grade "
+                        "is capped below drop_in; confirm it from both datasheets before this "
+                        "swap");
+    }
     out["status"] = status;
     out["penalty"] = penalty;
     out["params"] = params;
@@ -5607,7 +5902,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //                                                                    no cap
     //   magnetic Isat stated by NEITHER record (owner
     //     2026-11-13)                                         both-unst. UNVERIFIED row + note,
-    //                                                                    no cap, no penalty
+    //                                                                    no penalty; capped
+    //                                                                    minor_review since
+    //                                                                    2026-11-14 (below)
     //   Id / If(AV) / Ic stated by one record only (owner
     //     2026-11-13, Y1; current_rating_one_sided)           primary    note, cap minor_review
     //   chip-bead rated current, connector rated voltage,
@@ -5615,6 +5912,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //   a primary RATING stated by the substitute and NOT by
     //     the original (owner 2026-11-13, Y2; axes listed in
     //     is_primary_rating; orig_unstated_primary)            primary    note, cap minor_review
+    //   a primary RATING real for the original's technology
+    //     (both_unknown_cap_applies) stated by NEITHER record
+    //     (owner 2026-11-14; both_unstated_primary)           primary    note, cap minor_review
     //   height-only clearance (height_fit unknown)            secondary  note only
     //   operating-temperature range (resistor, magnetic)      secondary  note only
     //   resistor TCR                                          secondary  note only
@@ -5652,7 +5952,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                     resistor_connection_unverified || resistor_count_one_sided ||
                                     mount_unverified || timebase_pin_unverified ||
                                     timebase_prog_order || current_rating_one_sided ||
-                                    !orig_unstated_primary.empty();
+                                    !orig_unstated_primary.empty() ||
+                                    !both_unstated_primary.empty();
     out["grade"] = grade_for(status, tier, any_warn, any_fail, primary_unverified,
                              missing_required_data || connector_identity_gaps_major ||
                                  timebase_tech_major,
