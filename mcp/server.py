@@ -1471,6 +1471,40 @@ def part_details(family: str, mpn: str, manufacturer: str | None = None,
     meta=UI_PICKER_META,
     structured_output=False,
 )
+def _watts(w) -> str:
+    return f"{w * 1e3:.3g} mW" if w < 1 else f"{w:.3g} W"
+
+
+def _mosfet_extras(c: dict) -> str:
+    """One text segment per MOSFET extra: operating-point loss (each term or UNVERIFIED),
+    gross over-rating, board area and price — what the structured fields carry."""
+    out = ""
+    loss = c.get("loss")
+    if loss:
+        terms = []
+        for k, label in (("conduction", "cond"), ("switching", "sw"), ("gateDrive", "gate"),
+                         ("coss", "Coss")):
+            t = (loss.get("terms") or {}).get(k) or {}
+            terms.append(f"{label} {_watts(t['watts'])}" if t.get("watts") is not None
+                         else f"{label} UNVERIFIED ({'; '.join(t.get('missing') or [])})")
+        total = (f"total {_watts(loss['total'])}" if loss.get("total") is not None
+                 else f"total >= {_watts(loss.get('computedSum') or 0)} (incomplete)")
+        out += f" | loss {total}: " + ", ".join(terms)
+    over = (c.get("overRating") or {}).get("axes") or []
+    if over:
+        out += f" | over-rated {'/'.join(over)} (>3x the requirement)"
+    area = c.get("boardArea")
+    if area:
+        out += (f" | board {area['mm2']:.1f} mm2" if area.get("mm2") is not None
+                else " | board area not stated")
+    price = c.get("price")
+    if price:
+        q = (price.get("quotes") or [None])[0]
+        out += (f" | unit cost {q['unitCost']:.2f} {q['currency']} ({q['distributor']}; price at "
+                f"quantity not stated)" if q else " | price not stated")
+    return out
+
+
 def recommend_parts(family: str, requirements: dict, options: dict | None = None,
                     max_results: int = 12, include_envelope: bool = False) -> CallToolResult:
     """Ranked candidates for one component requirement.
@@ -1484,6 +1518,16 @@ def recommend_parts(family: str, requirements: dict, options: dict | None = None
             technologyAllowed, diode qrrMax, capacitor capacitanceMin|Max, resistor
             maxValueDeviation|maxTolerance, controller topology + inputVoltage +
             switchingFrequency, magnetic peakCurrent|rmsCurrent).
+            mosfet lossOperatingPoint {position: 'buckHighSide', inputVoltage, outputCurrent,
+            switchingFrequency, dutyCycle | outputVoltage, inductorRippleCurrent?,
+            gateDriveVoltage?, gateDriveCurrent?, junctionTemperature?} ranks by the switch loss
+            at that point (tiebreaker lowest_operating_point_loss): conduction, switching, gate
+            drive and Coss terms from datasheet values only, each with its basis; a term whose
+            input is missing is UNVERIFIED (never estimated) and ranks after complete ones.
+            mosfet priceQuantity: the quantity the price is asked at. Every mosfet candidate
+            carries ratings, overRating (Vds/Id > 3x the requirement: noted; ranked lower except
+            under lowest_operating_point_loss and the Vds/Id margin rankings),
+            boardArea {mm2, basis} and price {quotes, atQuantity, basis}.
         include_envelope: attach each candidate's full datasheet record (large).
     """
     key = _family(family)
@@ -1520,7 +1564,8 @@ def recommend_parts(family: str, requirements: dict, options: dict | None = None
         dies = "/".join(v for v in (ev.get("dieConfiguration"), ev.get("internalConnection")) if v)
         lines.append(f"  {c.get('mpn')} — {c.get('manufacturer')}"
                      + (f" [{dies}, ratings per die]" if dies else "")
-                     + (f" | tightest margin {worst[0]} {worst[1]:.2f}x" if worst else ""))
+                     + (f" | tightest margin {worst[0]} {worst[1]:.2f}x" if worst else "")
+                     + _mosfet_extras(c))
     rejected = result.get("rejections") or {}
     return _result(
         f"{len(cands)} {key} candidate(s), best first "

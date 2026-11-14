@@ -20,6 +20,13 @@ enum class MosfetTiebreaker {
     HighestVdsMargin,
     HighestIdMargin,
     LowestTotalLoss,
+    // Owner 2026-11-14: datasheet-value loss of the switch at a stated converter operating
+    // point (MosfetConstraints::loss_op; method per TI SLVAEQ9 / Fairchild AN-6005 / ROHM buck
+    // efficiency note). Unlike LowestTotalLoss (the Python-parity proxy, which assumes a 1 A
+    // gate current, duty 0.5 and the rated Id/Vds as the operating point), every input is the
+    // caller's and every datasheet value the record's — a missing one makes its term
+    // UNVERIFIED, never a guessed number.
+    LowestOperatingPointLoss,
 };
 enum class DiodeTiebreaker {
     LowestVf,
@@ -41,6 +48,49 @@ MosfetTiebreaker mosfet_tiebreaker_from_string(const std::string& s);
 DiodeTiebreaker diode_tiebreaker_from_string(const std::string& s);
 CapacitorTiebreaker capacitor_tiebreaker_from_string(const std::string& s);
 
+// Where the switch sits in the converter. Only the hard-switched buck high side is modelled;
+// the low side / synchronous rectifier (conduction over 1-D, body-diode dead time, Qrr) is a
+// further value of this enum and a further branch in MosfetLoss.hpp, not a new path.
+enum class SwitchPosition { BuckHighSide };
+SwitchPosition switch_position_from_string(const std::string& s);
+const char* to_string(SwitchPosition p);
+
+// The converter operating point the switch is ranked at (owner 2026-11-14). SI units.
+// Required: position, vin, iout, fsw and the duty (stated, or derived as Vout/Vin — the ideal
+// CCM buck — when only vout is given). Optional, each enabling or refining ONE term:
+// ripple_pp (inductor peak-to-peak ripple -> Irms), vdrive (gate-drive voltage -> gate-drive
+// term and the Qg read), idrive (gate-drive current -> switching term), tj (junction
+// temperature -> Rds(on) read off the record's Rds(on)(Tj) curve).
+struct LossOperatingPoint {
+    SwitchPosition position = SwitchPosition::BuckHighSide;
+    double vin = 0, iout = 0, fsw = 0;
+    std::optional<double> duty, vout, ripple_pp, vdrive, idrive, tj;
+    void validate() const {
+        auto pos = [](double v, const char* n) {
+            if (!(v > 0)) throw InvalidOptions(std::string("lossOperatingPoint.") + n +
+                                               " must be a positive number");
+        };
+        pos(vin, "inputVoltage");
+        pos(iout, "outputCurrent");
+        pos(fsw, "switchingFrequency");
+        if (!duty && !vout)
+            throw InvalidOptions("lossOperatingPoint needs dutyCycle or outputVoltage");
+        if (duty && !(*duty > 0 && *duty < 1))
+            throw InvalidOptions("lossOperatingPoint.dutyCycle must be in (0, 1)");
+        if (!duty && !(*vout > 0 && *vout < vin))
+            throw InvalidOptions("lossOperatingPoint.outputVoltage must be in (0, inputVoltage) "
+                                 "for a buck");
+        if (ripple_pp && !(*ripple_pp >= 0))
+            throw InvalidOptions("lossOperatingPoint.inductorRippleCurrent must be >= 0");
+        if (vdrive && !(*vdrive > 0))
+            throw InvalidOptions("lossOperatingPoint.gateDriveVoltage must be positive");
+        if (idrive && !(*idrive > 0))
+            throw InvalidOptions("lossOperatingPoint.gateDriveCurrent must be positive");
+    }
+    // The duty used, and where it came from.
+    double duty_value() const { return duty ? *duty : *vout / vin; }
+};
+
 struct MosfetConstraints {
     double vds_min = 0, id_min = 0, rds_on_max = 0, qg_max = 0;
     std::set<std::string> technology_allowed{"Si", "SiC", "GaN"};
@@ -49,6 +99,17 @@ struct MosfetConstraints {
     std::optional<std::string> channel;
     bool exclude_discontinued = true;
     std::optional<double> op_i_rms, op_vds, op_duty, op_fsw;
+    std::optional<LossOperatingPoint> loss_op;  // LowestOperatingPointLoss's operating point
+    // Gross over-rating (owner 2026-11-14, the cross-reference's kGrossOverRatingFactor rule
+    // applied to recommendations): a candidate whose Vds or Id is more than 3x the requirement
+    // sinks below the candidates of its evidence tier that are not, with a note; never
+    // excluded. On for every recommendation the Engine serves; the Python-parity harness
+    // (selector.py has no such rule) runs the core with it off. Under
+    // lowest_operating_point_loss, highest_vds_margin and highest_id_margin it is a flag and a
+    // note only, not a tier (owner 2026-11-14).
+    // Price at this quantity (options.priceQuantity), echoed per candidate; nullopt = none asked.
+    std::optional<double> price_quantity;
+    bool over_rating_tier = false;
     void validate() const {
         auto pos = [](double v, const char* n) {
             if (!(v > 0)) throw InvalidOptions(std::string("MosfetConstraints.") + n +

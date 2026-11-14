@@ -1,4 +1,6 @@
+#include "CrossRef.hpp"  // kGrossOverRatingFactor (one rule with the cross-reference)
 #include "MfrPolicy.hpp"
+#include "MosfetLoss.hpp"
 #include "Select.hpp"
 
 #include <algorithm>
@@ -49,6 +51,80 @@ json base_candidate(const Row* r, RecordFetcher* fetcher) {
     return c;
 }
 
+// Board area of a MOSFET (owner 2026-11-14): the land the cross-reference resolves for it —
+// the record's drawn L x W, else the case table's outline for its case code — in mm^2, with
+// where it came from. Not resolvable -> mm2 null, "not stated".
+json board_area_json(const MosfetRow& m) {
+    json p = json::object();
+    if (present(m.length_m)) p["length_m"] = m.length_m;
+    if (present(m.width_m)) p["width_m"] = m.width_m;
+    if (present(m.height_m)) p["height_m"] = m.height_m;
+    if (!m.case_code.empty()) p["case_code"] = m.case_code;
+    if (!m.mount.empty()) p["mount"] = m.mount;
+    const auto d = crossref::dims_of(p, "mosfet");
+    if (!d || !crossref::has_land(*d))
+        return {{"mm2", nullptr},
+                {"basis", "not stated: no drawn L x W and no resolvable case code" +
+                              (m.case_code.empty() ? std::string() : " ('" + m.case_code + "')")}};
+    return {{"mm2", *d->length * *d->width * 1e6},
+            {"basis", d->land_from_table ? d->land_source
+                                         : std::string("the record's drawn length x width")}};
+}
+
+// Price (owner 2026-11-14): the record's distributor unit costs. The schema holds no price
+// breaks, so the price AT the asked quantity is not stated; the unit costs are shown as such.
+json price_json(const MosfetRow& m, std::optional<double> quantity) {
+    json p;
+    p["quantity"] = quantity ? json(*quantity) : json(nullptr);
+    p["atQuantity"] = nullptr;
+    p["quotes"] = m.price_quotes.empty() ? json::array() : json::parse(m.price_quotes);
+    p["basis"] = m.price_quotes.empty()
+                     ? "not stated: the record carries no distributor cost"
+                     : "unit cost as the distributor states it; the record carries no price "
+                       "breaks, so the price at a given quantity is not stated";
+    return p;
+}
+
+json loss_term_json(const LossTerm& t) {
+    json j;
+    j["watts"] = t.watts ? json(*t.watts) : json(nullptr);
+    if (t.watts) j["basis"] = t.basis;
+    else j["missing"] = t.missing;
+    return j;
+}
+
+// One candidate's operating-point loss: every term (watts + basis, or null + what is
+// missing), the total (null while any term is UNVERIFIED), and the notes.
+json loss_json(const LossBreakdown& lb, const LossOperatingPoint& op) {
+    json loss;
+    loss["position"] = to_string(op.position);
+    loss["dutyCycle"] = lb.duty;
+    loss["dutyBasis"] = lb.duty_basis;
+    loss["irms"] = lb.irms;
+    loss["terms"] = {{"conduction", loss_term_json(lb.conduction)},
+                     {"switching", loss_term_json(lb.switching)},
+                     {"gateDrive", loss_term_json(lb.gate_drive)},
+                     {"coss", loss_term_json(lb.coss)}};
+    const auto tot = lb.total();
+    loss["total"] = tot ? json(*tot) : json(nullptr);
+    loss["computedSum"] = lb.computed_sum();
+    loss["unverified"] = lb.unverified();
+    loss["notes"] = lb.notes;
+    return loss;
+}
+
+json loss_op_json(const LossOperatingPoint& op) {
+    json o = {{"position", to_string(op.position)}, {"inputVoltage", op.vin},
+              {"outputCurrent", op.iout}, {"switchingFrequency", op.fsw},
+              {"dutyCycle", op.duty_value()}};
+    if (op.vout) o["outputVoltage"] = *op.vout;
+    if (op.ripple_pp) o["inductorRippleCurrent"] = *op.ripple_pp;
+    if (op.vdrive) o["gateDriveVoltage"] = *op.vdrive;
+    if (op.idrive) o["gateDriveCurrent"] = *op.idrive;
+    if (op.tj) o["junctionTemperature"] = *op.tj;
+    return o;
+}
+
 }  // namespace
 
 json select_mosfet(const Shard<MosfetRow>& shard, const MosfetConstraints& c, MosfetTiebreaker tb,
@@ -89,6 +165,17 @@ json select_mosfet(const Shard<MosfetRow>& shard, const MosfetConstraints& c, Mo
                 "LOWEST_TOTAL_LOSS requires op_i_rms/op_vds/op_duty/op_fsw on MosfetConstraints");
         op_i = *c.op_i_rms; op_v = *c.op_vds; op_d = *c.op_duty; op_f = *c.op_fsw;
     }
+    // LOWEST_OPERATING_POINT_LOSS (owner 2026-11-14): the caller's operating point, required.
+    const bool op_loss_mode = tb == MosfetTiebreaker::LowestOperatingPointLoss;
+    std::map<const MosfetRow*, LossBreakdown> op_loss;
+    if (op_loss_mode) {
+        if (!c.loss_op)
+            throw InvalidOptions("lowest_operating_point_loss requires a lossOperatingPoint "
+                                 "(position, inputVoltage, outputCurrent, switchingFrequency, "
+                                 "dutyCycle or outputVoltage)");
+        c.loss_op->validate();
+        for (const MosfetRow* m : passing) op_loss.emplace(m, switch_loss(*m, *c.loss_op));
+    }
     constexpr double kIg = 1.0;  // gate-drive current proxy
     auto total_loss = [&](const MosfetRow* m) {
         double p_cond = op_d * op_i * op_i * m->rds_on;
@@ -108,21 +195,59 @@ json select_mosfet(const Shard<MosfetRow>& shard, const MosfetConstraints& c, Mo
             case MosfetTiebreaker::HighestVdsMargin: return -m->vds_rated / c.vds_min;
             case MosfetTiebreaker::HighestIdMargin: return -m->id_continuous / c.id_min;
             case MosfetTiebreaker::LowestTotalLoss: return total_loss(m);
+            case MosfetTiebreaker::LowestOperatingPointLoss: return op_loss.at(m).computed_sum();
         }
         return 0;
     };
+    // Operating-point loss: a candidate with an UNVERIFIED term ranks after every fully
+    // computed one (owner 2026-11-14) — first key, ahead of the evidence tiers; among the
+    // incomplete ones, fewer unverified terms first, then the sum of the terms that were
+    // computed.
+    auto unverified_terms = [&](const MosfetRow* m) -> size_t {
+        return op_loss_mode ? op_loss.at(m).unverified().size() : 0;
+    };
+    // Gross over-rating (owner 2026-11-14): Vds or Id more than kGrossOverRatingFactor (3x)
+    // the requirement. Each such axis is one step of a tier just above the metric, so an
+    // over-rated part sinks below the parts of its evidence tier that are not; it is never
+    // excluded. Same factor as the cross-reference's Y4 rule.
+    auto over_rated_axes = [&](const MosfetRow* m) {
+        std::vector<std::string> axes;
+        if (m->vds_rated > crossref::kGrossOverRatingFactor * c.vds_min) axes.push_back("vds");
+        if (present(m->id_continuous) && m->id_continuous > crossref::kGrossOverRatingFactor * c.id_min)
+            axes.push_back("id");
+        return axes;
+    };
+    // The tier ranks only where the ranking itself does not already weigh the rating (owner
+    // 2026-11-14): under the operating-point loss the loss decides (over-rating is a flag and a
+    // note), and under highest_vds_margin / highest_id_margin a higher rating is what was asked
+    // for. Everywhere else it stays a tier.
+    const bool over_rating_ranks = c.over_rating_tier && !op_loss_mode &&
+                                   tb != MosfetTiebreaker::HighestVdsMargin &&
+                                   tb != MosfetTiebreaker::HighestIdMargin;
+    auto over_rated = [&](const MosfetRow* m) -> size_t {
+        return over_rating_ranks ? over_rated_axes(m).size() : 0;
+    };
+    // Under the operating-point loss, total loss alone sets the order after the UNVERIFIED key
+    // (owner 2026-11-14): the evidence / thermal tiers do not reorder it.
+    auto evidence_tier = [&](const MosfetRow* m) -> int {
+        return !op_loss_mode && m->evidence_incomplete() ? 1 : 0;
+    };
+    auto thermal_tier = [&](const MosfetRow* m) -> int {
+        return !op_loss_mode && m->no_thermal() ? 1 : 0;
+    };
     // tuple (evidence_incomplete, no_thermal, metric, lineno) ascending — mirrors Python min().
     std::sort(passing.begin(), passing.end(), [&](const MosfetRow* a, const MosfetRow* b) {
-        auto ka = std::make_tuple(a->evidence_incomplete() ? 1 : 0, a->no_thermal() ? 1 : 0,
-                                  metric(a), a->lineno);
-        auto kb = std::make_tuple(b->evidence_incomplete() ? 1 : 0, b->no_thermal() ? 1 : 0,
-                                  metric(b), b->lineno);
+        auto ka = std::make_tuple(unverified_terms(a), evidence_tier(a), thermal_tier(a),
+                                  over_rated(a), metric(a), a->lineno);
+        auto kb = std::make_tuple(unverified_terms(b), evidence_tier(b), thermal_tier(b),
+                                  over_rated(b), metric(b), b->lineno);
         return ka < kb;
     });
 
     json result;
     result["category"] = "mosfet";
     result["tiebreaker"] = to_string(tb);
+    if (op_loss_mode) result["lossOperatingPoint"] = loss_op_json(*c.loss_op);
     result["totalRowsConsidered"] = shard.meta.source_line_count;
     result["alternativesConsidered"] = passing.size();
     result["rejections"] = emit_rejections(rej);
@@ -141,6 +266,35 @@ json select_mosfet(const Shard<MosfetRow>& shard, const MosfetConstraints& c, Mo
         cd["evidence"] = {{"datasheetUsable", m->datasheet_usable},
                           {"thermalPresent", !m->no_thermal()},
                           {"qgPresent", m->qg_total > 0}};
+        cd["boardArea"] = board_area_json(*m);
+        cd["price"] = price_json(*m, c.price_quantity);
+        cd["ratings"] = {{"vds", m->vds_rated},
+                         {"id", num_or_null(m->id_continuous)},
+                         {"rdsOn", m->rds_on}};
+        if (c.over_rating_tier) {
+            json orj = {{"axes", json::array()}, {"notes", json::array()}};
+            for (const std::string& ax : over_rated_axes(m)) {
+                const bool v = ax == "vds";
+                const double have = v ? m->vds_rated : m->id_continuous;
+                const double need = v ? c.vds_min : c.id_min;
+                char b[400];
+                std::snprintf(b, sizeof b,
+                              "%s %g %s is %.3gx the requirement's %g %s — more than %gx: a "
+                              "bigger body, higher cost and more capacitance are likely; %s",
+                              v ? "drain-source voltage rating" : "continuous drain current rating",
+                              have, v ? "V" : "A", have / need, need, v ? "V" : "A",
+                              crossref::kGrossOverRatingFactor,
+                              over_rating_ranks
+                                  ? "ranked after closer-rated parts"
+                                  : (op_loss_mode ? "flagged only: the operating-point loss "
+                                                    "alone sets the order"
+                                                  : "flagged only: this ranking does not "
+                                                    "demote it"));
+                orj["axes"].push_back(ax);
+                orj["notes"].push_back(b);
+            }
+            cd["overRating"] = std::move(orj);
+        }
         // A dual / complementary package stays offered, LABELLED (owner 2026-11-13, V3): its
         // ratings are per die and its pinout is not a single die's. Only stated values are
         // emitted; a record that states no configuration carries neither key.
@@ -154,6 +308,11 @@ json select_mosfet(const Shard<MosfetRow>& shard, const MosfetConstraints& c, Mo
             double p_coss = m->coss > 0 ? 0.5 * m->coss * op_v * op_v * op_f : 0.0;
             cd["sortKey"] = {{"metric", "total_loss"}, {"pCond", p_cond}, {"pSw", p_sw},
                              {"pCoss", p_coss}, {"total", p_cond + p_sw + p_coss}};
+        } else if (op_loss_mode) {
+            cd["loss"] = loss_json(op_loss.at(m), *c.loss_op);
+            const LossBreakdown& lb = op_loss.at(m);
+            cd["sortKey"] = {{"metric", to_string(tb)}, {"value", lb.computed_sum()},
+                             {"unverifiedTerms", lb.unverified().size()}};
         } else {
             cd["sortKey"] = {{"metric", to_string(tb)}, {"value", metric(m)}};
         }
