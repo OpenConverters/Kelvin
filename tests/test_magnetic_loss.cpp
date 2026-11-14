@@ -617,6 +617,11 @@ TEST_CASE("magnetic curves: the L(I) curve read is the one at the ambient, else 
     // 1229AS-H-2R0M (Coilcraft 2 uH): its 20 degC curve states two inductances at one current.
     const auto d = magnetic_loss(crow("1229AS-H-2R0M"), op, 1e-9);
     CHECK(has(d.inductance_basis, "its L(I) curve at 20 degC states two inductances at one current"));
+    // LQH2HPN3R3MDR (Murata 3.3 uH): its 20 degC curve states two inductances at one current
+    // (not carried) while its 105 degC curve is carried: the 20 degC one is named, not the
+    // 105 degC one offered as the only temperature.
+    const auto q = magnetic_loss(crow("LQH2HPN3R3MDR"), op, 1e-9);
+    CHECK(has(q.inductance_basis, "its L(I) curve at 20 degC states two inductances at one current"));
 }
 
 TEST_CASE("magnetic curves: Isat at the operating ambient, else room temperature",

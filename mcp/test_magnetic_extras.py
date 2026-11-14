@@ -44,9 +44,10 @@ def test_gates_and_the_line_carry_every_term_and_check():
     # Power inductors only, and both current checks are hard gates with their own counts.
     assert rej.get("subtype_transformer", 0) > 0
     assert rej.get("saturation_current_below_peak", 0) > 0
-    # Owner 2026-11-14 (decision 4): the rated current at a 40 K rise is not carried by this index
-    # yet, so no record fails the thermal gate (was: > 0).
-    assert rej.get("rated_current_below_rms", 0) == 0
+    # The rated currents per rise are wired in (MagneticRow::rated_points, owner 2026-11-14): the
+    # thermal gate rejects catalogue rows again (MSS1583-224KED, DRQ127-221-R; was == 0 while the
+    # index carried no rise).
+    assert rej.get("rated_current_below_rms", 0) > 0
     assert rej.get("inductance_below_required", 0) > 0
     for c in cands:
         loss = c["_loss"]
@@ -84,7 +85,8 @@ def test_conduction_mode_is_required_and_dcm_gates_on_the_boundary():
     bad = {k: v for k, v in POINT.items() if k != "conductionMode"}
     with pytest.raises(S.kelvin.InvalidOptions, match="conductionMode is required"):
         S.recommend_parts("magnetic", REQ, {"lossOperatingPoint": bad}, 5)
-    # DCM, Vin 24-36 V: L_max = 12 * (1 - 12/24) / (2 * 80 kHz * 2 A) = 18.75 uH; every candidate
+    # DCM, Vin 24-36 V: L_crit = 12 * (1 - 12/24) / (2 * 2 A * 80 kHz) = 18.75 uH and the gate is
+    # 0.9 x L_crit = 16.875 uH (owner 2026-11-14: a 10 % margin; was L_crit); every candidate
     # stays at or below it and the gate has its own rejection count.
     dcm = dict(POINT, conductionMode="dcm", minimumInputVoltage=24)
     r = S.recommend_parts("magnetic", {}, {"lossOperatingPoint": dcm}, 10)
@@ -92,7 +94,7 @@ def test_conduction_mode_is_required_and_dcm_gates_on_the_boundary():
     assert sc["rejections"].get("inductance_above_dcm_maximum", 0) > 0
     assert sc["candidates"]
     for c in sc["candidates"]:
-        assert c["_ratings"]["inductance"] <= 18.75e-6
+        assert c["_ratings"]["inductance"] <= 0.9 * 18.75e-6 * (1 + 1e-12)
         assert c["_loss"]["conductionMode"] == "dcm"
         assert c["_loss"]["checks"]["inductance"]["status"] != "fail"
     assert "| DCM" in r.content[0].text
