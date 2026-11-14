@@ -291,6 +291,13 @@ struct DiodeRow : RowBase {
     // 7,010 of 50,987 records in TAS 6bd04c7). Vf rises with current, so 0.5 V at 1.5 A and
     // 0.5 V at 3 A are not the same part (owner 2026-11-13, Y5). NaN = not stated. v22.
     double vf_test_current = kNaN();
+    // v22 (owner 2026-11-14, operating-point loss) — electrical.reverseLeakageCurrent (A), NaN
+    // when not stated. SAS states neither the reverse voltage nor the temperature it is
+    // specified at, so the loss term names both as not stated.
+    double reverse_leakage = kNaN();
+    // v22 (owner 2026-11-14, price) — the record's distributor unit-cost quotes, as on
+    // MosfetRow::price_quotes ("" when none).
+    std::string price_quotes;
     std::string clamping_waveform, peak_pulse_power_waveform, peak_pulse_current_waveform;
     // part.qualification verbatim ("Automotive (AEC-Q101)", 5,352 of 47,193 diode records);
     // empty = the record states none. Not carried, an AEC-Q101 original (ROHM

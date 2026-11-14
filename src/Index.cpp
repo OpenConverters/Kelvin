@@ -418,6 +418,8 @@ void row_io(Ar& ar, DiodeRow& r) {
     ar.dbl(r.junction_capacitance_vr); // v21
     ar.dbl(r.number_of_elements);      // v22 (SAS bcc7a93)
     ar.dbl(r.vf_test_current);         // v22
+    ar.dbl(r.reverse_leakage);         // v22 (owner 2026-11-14, operating-point loss)
+    ar.str(r.price_quotes);            // v22 (owner 2026-11-14, price)
     ar.boolean(r.is_production);
 }
 

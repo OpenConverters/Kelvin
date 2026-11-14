@@ -920,6 +920,27 @@ std::optional<DiodeRow> extract_diode(const json& env) {
         r.junction_capacitance_vr = *v;
     // The Vf test current (v22): a current, so only a positive value is a basis.
     if (auto v = get_num(*elec, "forwardVoltageAt"); pos(v)) r.vf_test_current = *v;
+    // Reverse leakage (owner 2026-11-14, operating-point loss): a stated positive current only.
+    if (auto v = get_num(*elec, "reverseLeakageCurrent"); pos(v)) r.reverse_leakage = *v;
+    // Distributor unit costs (owner 2026-11-14), read exactly as extract_mosfet reads them:
+    // only a stated positive value with a currency.
+    if (const json* dis = obj_get(*d, "distributorsInfo"); dis && dis->is_array()) {
+        json quotes = json::array();
+        for (const json& q0 : *dis) {
+            if (!q0.is_object()) continue;
+            const json* cost = obj_get(q0, "cost");
+            if (!cost || !cost->is_object()) continue;
+            auto v = get_num(*cost, "value");
+            auto cur = get_str(*cost, "currency");
+            if (!pos(v) || !cur || cur->empty()) continue;
+            json q = {{"distributor", get_str(q0, "name").value_or("")},
+                      {"unitCost", *v},
+                      {"currency", *cur}};
+            if (auto moq = get_num(q0, "moq"); pos(moq)) q["moq"] = *moq;
+            quotes.push_back(std::move(q));
+        }
+        if (!quotes.empty()) r.price_quotes = quotes.dump();
+    }
     r.clamping_waveform = get_str(*elec, "clampingWaveform").value_or("");
     r.peak_pulse_power_waveform = get_str(*elec, "peakPulsePowerWaveform").value_or("");
     r.peak_pulse_current_waveform = get_str(*elec, "peakPulseCurrentWaveform").value_or("");
