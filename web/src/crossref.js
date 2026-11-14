@@ -42,6 +42,9 @@ export const XREF = [
     // compared as a basis-unknown value.
     // srf: the self-resonant frequency, compared like the bead's (Qarlos 2026-11-09).
     spec: (r) => ({ ...base(r), value_si: nz(r.inductance), saturation_current: nz(r.saturation_current),
+      // The device type (inductor / transformer / ...): the both-unknown primary cap (owner
+      // 2026-11-14, both_unknown_cap_applies) applies Isat / rated current to inductors only.
+      device_type: r.device_type ?? '',
       saturation_points: Array.isArray(r.saturation_points) && r.saturation_points.length
         ? r.saturation_points : null,
       rated_current: nz(r.rated_current), dcr: nz(r.dcr), srf: nz(r.srf),

@@ -390,6 +390,61 @@ inline bool is_primary_rating(const std::string& cat, const std::string& key) {
     const auto it = k.find(cat);
     return it != k.end() && it->second.count(key);
 }
+// Both-unknown primary cap (owner decision 2026-11-14; both_unstated_primary in
+// score_candidate): a primary axis stated by NEITHER record caps the grade at minor_review —
+// but only where that axis is a real datasheet rating for the ORIGINAL's technology. A rating
+// the technology does not publish (ripple current on an MLCC, If(AV) on a TVS) is missing from
+// every record of that kind, so its absence says nothing about the pair. The one table:
+//
+//   category   axis (key)                       technologies it applies to
+//   ---------  -------------------------------  -------------------------------------------
+//   capacitor  ripple current (ripple_current)  aluminium electrolytic (wet, hybrid, polymer)
+//                                               and tantalum polymer; NOT ceramic (MLCC),
+//                                               film, tantalum MnO2, others
+//   diode      If(AV) (if_avg)                  rectifier, schottky, sicSchottky,
+//                                               fastRecovery, ultrafast; NOT tvs/esd/zener/
+//                                               switching/pin
+//   diode      Ppk, Ipp (peak_pulse_power,      tvs, esd
+//              peak_pulse_current)
+//   diode      Pd (power_dissipation)           zener, tvs, esd, switching, pin; NOT the
+//                                               rectifiers (rectifier, schottky, sicSchottky,
+//                                               fastRecovery, ultrafast)
+//   magnetic   Isat, rated current              inductor, coupledInductor (device_type);
+//              (saturation_current,             NOT transformer, commonModeChoke, cableCore
+//              rated_current)
+//   mosfet     Vds, Id, Rds(on)                 every MOSFET
+//   connector  rated current (rated_current_A)  every connector; NOT rated voltage
+//
+// Every other primary axis (capacitor rated voltage, diode Vrrm, IGBT, chip bead, varistor,
+// resistor power, connector rated voltage) has no both-unknown cap. An original whose
+// technology is not stated gives no cap on a technology-scoped axis: whether the rating exists
+// for it is unknown, and no technology is assumed.
+inline bool both_unknown_cap_applies(const std::string& cat, const std::string& key,
+                                     const std::string& original_technology) {
+    const std::string& t = original_technology;
+    if (cat == "mosfet") return key == "vds" || key == "id" || key == "rds_on";
+    if (cat == "connector") return key == "rated_current_A";
+    if (cat == "magnetic")
+        return (key == "saturation_current" || key == "rated_current") &&
+               (t == "inductor" || t == "coupledInductor");
+    if (cat == "capacitor") {
+        if (key != "ripple_current") return false;
+        const CapFamily f = cap_family(t);
+        return f == CapFamily::AluminiumWet || f == CapFamily::AluminiumHybrid ||
+               f == CapFamily::AluminiumPolymer || f == CapFamily::TantalumPolymer;
+    }
+    if (cat == "diode") {
+        static const std::set<std::string> rectifiers{"rectifier", "schottky", "sicSchottky",
+                                                      "fastRecovery", "ultrafast"};
+        static const std::set<std::string> pd{"zener", "tvs", "esd", "switching", "pin"};
+        if (key == "if_avg") return rectifiers.count(t) > 0;
+        if (key == "peak_pulse_power" || key == "peak_pulse_current")
+            return t == "tvs" || t == "esd";
+        if (key == "power_dissipation") return pd.count(t) > 0;
+        return false;
+    }
+    return false;
+}
 inline std::string primary_rating_label(const std::string& key) {
     static const std::map<std::string, std::string> k = {
         {"vds", "drain-source voltage rating (Vds)"},
@@ -1150,6 +1205,27 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         if (std::find(orig_unstated_primary.begin(), orig_unstated_primary.end(), l) ==
             orig_unstated_primary.end())
             orig_unstated_primary.push_back(l);
+    };
+    // Primary ratings stated by NEITHER record (owner decision 2026-11-14): each candidate is
+    // capped at minor_review with a note naming the axes. This reverses, for primary axes
+    // only, the 2026-11-12 rule "missing data on both sides is not capped": a drop_in claims
+    // the axis the match turns on was compared, and here it never was. Scoped (owner
+    // 2026-11-14) to the axes that are a real datasheet rating for the original's technology:
+    // both_unknown_cap_applies holds the one table. Secondary axes stay uncapped, and the
+    // footprint keeps its own owner rules (N1b: neither side states a land -> uncapped).
+    std::vector<std::string> both_unstated_primary;
+    auto both_unstated = [&](const std::string& key) {
+        static const std::map<std::string, std::string> kCurrent = {
+            {"id", "continuous drain current (Id)"},
+            {"if_avg", "average forward current (If(AV))"}};
+        const std::string tech =
+            cat == "magnetic" ? str(original, "device_type") : str(original, "technology");
+        if (!both_unknown_cap_applies(cat, key, tech)) return;
+        const auto c = kCurrent.find(key);
+        const std::string l = c != kCurrent.end() ? c->second : primary_rating_label(key);
+        if (std::find(both_unstated_primary.begin(), both_unstated_primary.end(), l) ==
+            both_unstated_primary.end())
+            both_unstated_primary.push_back(l);
     };
     // Y4: one note and one small penalty per grossly over-rated primary V / A rating.
     auto gross_over_rating = [&](const std::string& key, std::optional<double> o,
@@ -2146,12 +2222,14 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // A magnetic's saturation current stated on NEITHER record (Qarlos bench 20269028
         // IHSM5832ER151L -> B82477G2154M000, r16 26859036 LSQCA201616T680M -> LQH2MCN680K02):
         // the axis was skipped without a row, so a part came back drop_in / 'upgrade' with
-        // nothing saying Isat was never compared. Missing on both sides is not capped and not
-        // penalised (owner 2026-11-12: identical for every candidate, it cannot skew one against
+        // nothing saying Isat was never compared. Missing on both sides is not penalised, and
+        // since 2026-11-14 (owner) it caps at minor_review like every primary axis stated by
+        // neither record (both_unstated_primary); before that it was not capped (owner 2026-11-12: identical for every candidate, it cannot skew one against
         // another), but the gap is shown as an UNVERIFIED row with a note (owner, 2026-11-13;
         // test_crossref_ranking_golden ABT #545 was narrowed to "no footprint/package note"
         // with the owner's approval). The direction becomes 'unknown' for 'upgrade' and
         // 'equivalent' (owner 2026-11-13; see out["direction"] below).
+        if (!has_data) both_unstated(spec.key);  // owner 2026-11-14
         if (!has_data && cat == "magnetic" && spec.key == "saturation_current") {
             params.push_back({{"name", spec.key}, {"verdict", UNVERIFIED}});
             isat_unstated_both = true;
@@ -3128,7 +3206,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                   const char* label, const char* unit, bool cap,
                                   const char* consequence) {
             const auto o = num(original, key), s = num(cand, key);
-            if (!o && !s) return;
+            if (!o && !s) {
+                both_unstated(key);  // owner 2026-11-14
+                return;
+            }
             const std::string ow = str(original, wf_key), sw = str(cand, wf_key);
             if (!o) {  // the original states nothing to hold the substitute to
                 params.push_back({{"name", key}, {"verdict", UNVERIFIED}});
@@ -3672,7 +3753,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // ── critical ratings (Vds / Vrrm / rated voltage / Id / If) ──────────────
     for (const auto& r : critical_ratings(cat)) {
         auto o = num(original, r.key), s = num(cand, r.key);
-        if (!o && !s) continue;
+        if (!o && !s) {
+            both_unstated(r.key);  // owner 2026-11-14
+            continue;
+        }
         if (!o && s && is_primary_rating(cat, r.key)) orig_unstated(r.key);
         if (!current_basis_note.empty() && std::string(r.key) == "if_avg") {
             params.push_back({{"name", r.key}, {"verdict", UNVERIFIED}});
@@ -5494,6 +5578,16 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                         "requirement there — capped below drop_in; confirm the original's "
                         "rating from its datasheet before this swap");
     }
+    if (!both_unstated_primary.empty()) {
+        std::string axes;
+        for (size_t i = 0; i < both_unstated_primary.size(); ++i)
+            axes += (i ? ", " : "") + both_unstated_primary[i];
+        demote();
+        notes.push_back("neither record states the " + axes +
+                        " — a primary rating the match turns on was not compared, so the grade "
+                        "is capped below drop_in; confirm it from both datasheets before this "
+                        "swap");
+    }
     out["status"] = status;
     out["penalty"] = penalty;
     out["params"] = params;
@@ -5582,7 +5676,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //                                                                    no cap
     //   magnetic Isat stated by NEITHER record (owner
     //     2026-11-13)                                         both-unst. UNVERIFIED row + note,
-    //                                                                    no cap, no penalty
+    //                                                                    no penalty; capped
+    //                                                                    minor_review since
+    //                                                                    2026-11-14 (below)
     //   Id / If(AV) / Ic stated by one record only (owner
     //     2026-11-13, Y1; current_rating_one_sided)           primary    note, cap minor_review
     //   chip-bead rated current, connector rated voltage,
@@ -5590,6 +5686,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //   a primary RATING stated by the substitute and NOT by
     //     the original (owner 2026-11-13, Y2; axes listed in
     //     is_primary_rating; orig_unstated_primary)            primary    note, cap minor_review
+    //   a primary RATING real for the original's technology
+    //     (both_unknown_cap_applies) stated by NEITHER record
+    //     (owner 2026-11-14; both_unstated_primary)           primary    note, cap minor_review
     //   height-only clearance (height_fit unknown)            secondary  note only
     //   operating-temperature range (resistor, magnetic)      secondary  note only
     //   resistor TCR                                          secondary  note only
@@ -5627,7 +5726,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                     resistor_connection_unverified || resistor_count_one_sided ||
                                     mount_unverified || timebase_pin_unverified ||
                                     timebase_prog_order || current_rating_one_sided ||
-                                    !orig_unstated_primary.empty();
+                                    !orig_unstated_primary.empty() ||
+                                    !both_unstated_primary.empty();
     out["grade"] = grade_for(status, tier, any_warn, any_fail, primary_unverified,
                              missing_required_data || connector_identity_gaps_major ||
                                  timebase_tech_major,
