@@ -194,6 +194,11 @@ struct MosfetRow : RowBase {
     // measured at qg_curve_vds.
     CurvePts qg_curve;
     double qg_curve_vds = kNaN();
+    // v22 (owner 2026-11-14) — the record's distributor unit-cost quotes, as a compact JSON
+    // array [{distributor, unitCost, currency, moq?}] ("" when none). PEAS distributorInfo
+    // carries ONE unit `cost` per distributor and no price breaks, so a price AT a quantity
+    // is never on record; a cost <= 0 is not a price and is not kept.
+    std::string price_quotes;
     std::string qualification;     // AEC-Q101 etc., when the datasheet states it
     double rth_ja = kNaN(), rth_jc = kNaN(), tj_max = kNaN();
     std::string technology;   // Si / SiC / GaN (part.technology)

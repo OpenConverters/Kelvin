@@ -51,6 +51,40 @@ json base_candidate(const Row* r, RecordFetcher* fetcher) {
     return c;
 }
 
+// Board area of a MOSFET (owner 2026-11-14): the land the cross-reference resolves for it —
+// the record's drawn L x W, else the case table's outline for its case code — in mm^2, with
+// where it came from. Not resolvable -> mm2 null, "not stated".
+json board_area_json(const MosfetRow& m) {
+    json p = json::object();
+    if (present(m.length_m)) p["length_m"] = m.length_m;
+    if (present(m.width_m)) p["width_m"] = m.width_m;
+    if (present(m.height_m)) p["height_m"] = m.height_m;
+    if (!m.case_code.empty()) p["case_code"] = m.case_code;
+    if (!m.mount.empty()) p["mount"] = m.mount;
+    const auto d = crossref::dims_of(p, "mosfet");
+    if (!d || !crossref::has_land(*d))
+        return {{"mm2", nullptr},
+                {"basis", "not stated: no drawn L x W and no resolvable case code" +
+                              (m.case_code.empty() ? std::string() : " ('" + m.case_code + "')")}};
+    return {{"mm2", *d->length * *d->width * 1e6},
+            {"basis", d->land_from_table ? d->land_source
+                                         : std::string("the record's drawn length x width")}};
+}
+
+// Price (owner 2026-11-14): the record's distributor unit costs. The schema holds no price
+// breaks, so the price AT the asked quantity is not stated; the unit costs are shown as such.
+json price_json(const MosfetRow& m, std::optional<double> quantity) {
+    json p;
+    p["quantity"] = quantity ? json(*quantity) : json(nullptr);
+    p["atQuantity"] = nullptr;
+    p["quotes"] = m.price_quotes.empty() ? json::array() : json::parse(m.price_quotes);
+    p["basis"] = m.price_quotes.empty()
+                     ? "not stated: the record carries no distributor cost"
+                     : "unit cost as the distributor states it; the record carries no price "
+                       "breaks, so the price at a given quantity is not stated";
+    return p;
+}
+
 json loss_term_json(const LossTerm& t) {
     json j;
     j["watts"] = t.watts ? json(*t.watts) : json(nullptr);
@@ -217,6 +251,8 @@ json select_mosfet(const Shard<MosfetRow>& shard, const MosfetConstraints& c, Mo
         cd["evidence"] = {{"datasheetUsable", m->datasheet_usable},
                           {"thermalPresent", !m->no_thermal()},
                           {"qgPresent", m->qg_total > 0}};
+        cd["boardArea"] = board_area_json(*m);
+        cd["price"] = price_json(*m, c.price_quantity);
         cd["ratings"] = {{"vds", m->vds_rated},
                          {"id", num_or_null(m->id_continuous)},
                          {"rdsOn", m->rds_on}};

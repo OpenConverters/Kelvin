@@ -291,3 +291,42 @@ TEST_CASE("mosfet over-rating: on for every Engine recommendation", "[mosfet_ove
     CHECK(r.at("candidates")[1].at("overRating").at("axes").size() == 2);
     fs::remove_all(dir);
 }
+
+TEST_CASE("mosfet board area and price: resolved land, stated unit cost, no invented price",
+          "[mosfet_area_price]") {
+    namespace fs = std::filesystem;
+    json a = json::parse(record("TO247_PRICED", 600, 77.5, 0.041, {{"totalGateCharge", 170e-9}}));
+    json& mi = a["semiconductor"]["mosfet"];
+    mi["manufacturerInfo"]["datasheetInfo"]["part"]["case"] = "TO247";
+    mi["distributorsInfo"] = json::array(
+        {{{"name", "Digi-Key"}, {"cost", {{"value", 0.0}, {"currency", "USD"}}}},  // not a price
+         {{"name", "Infineon"}, {"moq", 1}, {"cost", {{"value", 2.45}, {"currency", "USD"}}}}});
+    const std::string bare = record("NO_CASE", 60, 5, 0.020, {{"totalGateCharge", 20e-9}});
+    const fs::path dir = fs::path(KELVIN_TEST_DIR) / "_mosfet_area_price";
+    fs::create_directories(dir);
+    {
+        std::ofstream f(dir / "mosfets.ndjson", std::ios::binary | std::ios::trunc);
+        f << a.dump() << "\n" << bare << "\n";
+    }
+    api::Engine eng(dir.string(), "", /*quiet=*/true);
+    const json req = {{"ratedDrainSourceVoltage", 43.2},
+                      {"ratedContinuousDrainCurrent", 2},
+                      {"maximumOnResistance", 1}};
+    json r = eng.select("mosfet", req, {{"includeEnvelope", false}, {"priceQuantity", 1000}});
+    json to247, nocase;
+    for (const auto& c : r.at("candidates")) (c.at("mpn") == "NO_CASE" ? nocase : to247) = c;
+    REQUIRE(to247.at("boardArea").at("mm2").is_number());
+    CHECK(to247.at("boardArea").at("mm2").get<double>() > 50);
+    CHECK(to247.at("boardArea").at("basis").get<std::string>().find("'TO247'") != std::string::npos);
+    CHECK(nocase.at("boardArea").at("mm2").is_null());
+    CHECK(nocase.at("boardArea").at("basis").get<std::string>().rfind("not stated", 0) == 0);
+    const json& p = to247.at("price");
+    CHECK(p.at("quantity").get<double>() == 1000);
+    CHECK(p.at("atQuantity").is_null());  // the record has no price breaks
+    REQUIRE(p.at("quotes").size() == 1);   // the 0.0 quote is not a price
+    CHECK(p.at("quotes")[0].at("distributor") == "Infineon");
+    CHECK(p.at("quotes")[0].at("unitCost").get<double>() == Approx(2.45));
+    CHECK(nocase.at("price").at("quotes").empty());
+    CHECK_THROWS_AS(eng.select("mosfet", req, {{"priceQuantity", "1000"}}), InvalidOptions);
+    fs::remove_all(dir);
+}

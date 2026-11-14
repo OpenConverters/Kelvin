@@ -105,6 +105,8 @@ struct MosfetConstraints {
     // sinks below the candidates of its evidence tier that are not, with a note; never
     // excluded. On for every recommendation the Engine serves; the Python-parity harness
     // (selector.py has no such rule) runs the core with it off.
+    // Price at this quantity (options.priceQuantity), echoed per candidate; nullopt = none asked.
+    std::optional<double> price_quantity;
     bool over_rating_tier = false;
     void validate() const {
         auto pos = [](double v, const char* n) {

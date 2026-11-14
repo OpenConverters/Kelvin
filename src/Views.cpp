@@ -592,6 +592,24 @@ std::optional<MosfetRow> extract_mosfet(const json& env) {
     if (pos(qg)) r.qg_total = *qg;
     if (pos(coss_o)) r.coss = *coss_o;
     if (auto v = get_num(*elec, "capacitanceMeasurementVds"); pos(v)) r.coss_vds = *v;
+    // Distributor unit costs (owner 2026-11-14): only a stated positive value with a currency.
+    if (const json* dis = obj_get(*m, "distributorsInfo"); dis && dis->is_array()) {
+        json quotes = json::array();
+        for (const json& d : *dis) {
+            if (!d.is_object()) continue;
+            const json* cost = obj_get(d, "cost");
+            if (!cost || !cost->is_object()) continue;
+            auto v = get_num(*cost, "value");
+            auto cur = get_str(*cost, "currency");
+            if (!pos(v) || !cur || cur->empty()) continue;
+            json q = {{"distributor", get_str(d, "name").value_or("")},
+                      {"unitCost", *v},
+                      {"currency", *cur}};
+            if (auto moq = get_num(d, "moq"); pos(moq)) q["moq"] = *moq;
+            quotes.push_back(std::move(q));
+        }
+        if (!quotes.empty()) r.price_quotes = quotes.dump();
+    }
     // Operating-point loss inputs (owner 2026-11-14): stated values only, absent stays NaN.
     if (auto v = get_num(*elec, "gateSourceCharge"); pos(v)) r.qgs = *v;
     if (auto v = get_num(*elec, "gateDrainCharge"); pos(v)) r.qgd = *v;

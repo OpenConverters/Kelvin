@@ -383,6 +383,7 @@ void row_io(Ar& ar, MosfetRow& r) {
     ar.dbl(r.rds_on_tj_curve_vgs);
     ar.curve(r.qg_curve);
     ar.dbl(r.qg_curve_vds);
+    ar.str(r.price_quotes);       // v22 (owner 2026-11-14, price)
     ar.boolean(r.is_production);
     ar.boolean(r.datasheet_usable);
 }

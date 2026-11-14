@@ -414,6 +414,12 @@ json Engine::select(const std::string& category, const json& req, const json& op
             lo.validate();
             c.loss_op = lo;
         }
+        if (options.contains("priceQuantity") && !options.at("priceQuantity").is_null()) {
+            const json& q = options.at("priceQuantity");
+            if (!q.is_number() || !(q.get<double>() > 0))
+                throw InvalidOptions("priceQuantity must be a positive number");
+            c.price_quantity = q.get<double>();
+        }
         MosfetTiebreaker tb;
         if (auto s = opt_str(options, "tiebreaker")) tb = mosfet_tiebreaker_from_string(*s);
         else if (c.loss_op) tb = MosfetTiebreaker::LowestOperatingPointLoss;
