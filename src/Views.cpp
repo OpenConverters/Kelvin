@@ -165,6 +165,43 @@ CurvePts read_curve_xy(const json* c, const char* x_unit, std::initializer_list<
     return out;
 }
 
+// CAS capacitanceBiasPoints ([{voltage, capacitance, temperature?, acVoltage?}]) as a curve:
+// DC bias V -> effective capacitance F, absolute, as the records state it (34,110 records,
+// none states a ratio). Put in voltage order; NOT kept when it is not one curve: fewer than
+// two points, a non-numeric / negative voltage or a capacitance <= 0, two points at one
+// voltage, or points at more than one temperature (one curve per temperature is not what a
+// single row carries). The temperature, when stated, is the curve's condition.
+CurvePts read_bias_curve(const json* b) {
+    CurvePts out;
+    if (!b || !b->is_array() || b->size() < 2) return out;
+    std::vector<std::pair<double, double>> pts;
+    std::optional<double> temp;
+    bool first = true;
+    for (const json& p : *b) {
+        if (!p.is_object()) return out;
+        const auto v = get_num(p, "voltage"), c = get_num(p, "capacitance");
+        if (!v || !c || !std::isfinite(*v) || !std::isfinite(*c) || *v < 0 || !(*c > 0)) return out;
+        const auto t = get_num(p, "temperature");
+        if (first) temp = t;
+        else if (t.has_value() != temp.has_value() || (t && *t != *temp)) return out;
+        first = false;
+        pts.emplace_back(*v, *c);
+    }
+    std::sort(pts.begin(), pts.end());
+    auto x = std::make_shared<std::vector<float>>();
+    auto y = std::make_shared<std::vector<float>>();
+    for (const auto& [xi, yi] : pts) {
+        const float xf = static_cast<float>(xi);
+        if (!x->empty() && !(xf > x->back())) return out;
+        x->push_back(xf);
+        y->push_back(static_cast<float>(yi));
+    }
+    out.x = std::move(x);
+    out.y = std::move(y);
+    if (temp) out.temperature = *temp;
+    return out;
+}
+
 // Physical body size + case code, shared by every family extractor: the
 // cross-reference footprint check needs a real size, because a substitute that
 // does not fit the board is not a substitute. Dimensions are
@@ -1145,6 +1182,7 @@ std::optional<CapacitorRow> extract_capacitor(const json& env) {
     // on their overlap and reads one at the other side's stated ESR frequency.
     r.esr_curve = read_curve_xy(obj_get(*elec, "esrPoints"), "[Hz]", {"Ohm", "\u03a9"},
                                 /*positive_y=*/true);
+    r.bias_curve = read_bias_curve(obj_get(*elec, "capacitanceBiasPoints"));
     if (!present(r.esr)) {
         if (auto v = curve_at(obj_get(*elec, "esrPoints"), 1e5, "[Hz]", "Ohm"); v) {
             r.esr = *v;

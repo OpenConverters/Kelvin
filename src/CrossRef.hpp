@@ -2703,6 +2703,73 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             orig_unstated(spec.key);
     }
 
+    // ── capacitor curves with no scalar of their own (owner 2026-11-14) ─────────
+    // Each is compared on the overlap of the two measured ranges with the bands and direction of
+    // the closest scalar spec (named in its note), the worst point deciding. Booked exactly like
+    // a table parameter: a WARN demotes and costs its depth-scaled warn, a FAIL demotes and
+    // costs the FAIL penalty (any_warn / any_fail then set the grade), both count as a
+    // regression. Both records stating the curve under different conditions, or no overlap ->
+    // UNVERIFIED with a note: no penalty, no cap, no direction. A curve on one side only is not
+    // a comparison and adds nothing.
+    auto curve_param = [&](const char* key, const char* name, const char* what, const char* unit,
+                           const char* x_what, const char* x_unit, const ParamSpec& spec,
+                           const char* spec_named, Interp interp) {
+        const auto oc = curve_from_spec(original, key), sc = curve_from_spec(cand, key);
+        if (!oc || !sc) return;
+        char buf[400];
+        const std::string cond = conditions_differ(*oc, *sc);
+        if (!cond.empty()) {
+            params.push_back({{"name", name}, {"verdict", UNVERIFIED}});
+            notes.push_back(std::string(what) + " curves measured under different conditions (" +
+                            cond + ") — not compared");
+            return;
+        }
+        const CurveVerdict v = compare_curves(oc->curve, sc->curve, spec, interp);
+        params.push_back({{"name", name}, {"verdict", v.verdict}});
+        if (v.verdict == std::string(UNVERIFIED)) {
+            std::snprintf(buf, sizeof buf,
+                          "%s curves do not overlap (original %g to %g %s, substitute %g to %g "
+                          "%s) — not compared",
+                          what, oc->curve.x.front(), oc->curve.x.back(), x_unit,
+                          sc->curve.x.front(), sc->curve.x.back(), x_unit);
+            notes.push_back(buf);
+            return;
+        }
+        const bool ok = v.verdict == std::string(PASS);
+        std::snprintf(buf, sizeof buf,
+                      "%s compared on both curves over %s %g to %g %s (%zu points, %s, bands of "
+                      "the %s): %s at %g %s, substitute %.4g %s vs original %.4g %s",
+                      what, x_what, v.range->first, v.range->second, x_unit, v.points,
+                      interp == Interp::LogLog ? "log-log" : "linear", spec_named,
+                      ok ? "closest at" : "worst", v.worst_x, x_unit, v.sub_y, unit, v.orig_y,
+                      unit);
+        notes.push_back(buf);
+        if (v.verdict == std::string(FAIL)) {
+            demote();
+            penalty += opt.gate_weight * kVerdictFailPenalty;
+            ++worse;
+        } else if (v.verdict == std::string(WARN)) {
+            demote();
+            penalty += opt.gate_weight * warn_penalty(v.warn_depth);
+            ++worse;
+        } else {
+            note_direction(spec.dir, v.orig_y, v.sub_y);
+        }
+    };
+    if (cat == "capacitor") {
+        // (b) DC bias (owner 2026-11-14, "compare when both state curves"): effective
+        // capacitance at each common bias voltage, absolute farads as the records state them,
+        // linear in V (the bias axis is linear and starts at 0 V). Bands from the capacitance
+        // spec's lower side (primary_value_spec("capacitor"): PASS down to 0.90x, accept down
+        // to 0.80x): PASS >= 0.90x the original's C_eff, WARN down to 0.80x, FAIL below. More
+        // capacitance is never a regression here; the nominal window still bounds the top.
+        static const ParamSpec kBiasSpec{"capacitance_bias", Dir::Higher, 0.80, std::nullopt,
+                                         false, false, nullptr, 0.90};
+        curve_param("capacitance_bias_curve", "capacitance_bias",
+                    "effective capacitance under DC bias", "F", "DC bias", "V", kBiasSpec,
+                    "capacitance spec", Interp::Linear);
+    }
+
     // ── transformer turns ratio (owner 2026-11-13, R2; W4) ───────────────────
     // MagneticRow carried the ratio but the ranker never compared it, so a 1:1.2 part and a
     // 1:2 part were the same candidate. Owner: "turns ratio can be +-15%, but with care".

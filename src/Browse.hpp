@@ -365,6 +365,7 @@ inline json curve_json(const CurvePts& c) {
 }
 inline void extra_row_json(const CapacitorRow& r, json& o) {
     o["esr_curve"] = curve_json(r.esr_curve);
+    o["capacitance_bias_curve"] = curve_json(r.bias_curve);
 }
 
 // A magnetic's whole saturation table (v20) as the ranker's saturation_points shape:

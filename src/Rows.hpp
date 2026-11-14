@@ -363,6 +363,10 @@ struct CapacitorRow : RowBase {
     // Hz -> ohm), read whole. Compared curve-vs-curve on the overlap and read at the other
     // side's stated ESR frequency to resolve a basis mismatch.
     CurvePts esr_curve;
+    // v22 (owner 2026-11-14): effective capacitance vs DC bias (CAS electrical.capacitanceBiasPoints,
+    // V -> F, absolute farads as every record states them), with the one measurement
+    // temperature the record states. Compared on the overlap of the two bias ranges.
+    CurvePts bias_curve;
     bool no_thermal() const { return !present(rth); }
 };
 

@@ -107,3 +107,26 @@ TEST_CASE("ESR basis: the substitute's curve is read at the original's frequency
                       "0.199 ohm there (its record quotes 0.09 ohm at 20000 Hz) against the "
                       "original's 0.18 ohm"));
 }
+
+TEST_CASE("DC-bias curves: effective capacitance compared on the common bias range",
+          "[curves][capacitor][bias-curve]") {
+    // Murata ZRB157R6YA225ME11 (2.2 uF 35 V X5R 0402; 201 points 0-35 V at 25 degC) vs TDK
+    // C1005X5R1V225K050BC (2.2 uF 35 V X5R 0402; 14 points 0-35 V, no temperature stated):
+    // the same nominal, rating, dielectric and case, so it ranked a clean drop_in. Under bias
+    // the TDK part keeps far less capacitance (0.54 uF at 5 V against Murata's ~1.2 uF).
+    const auto o = row("ZRB157R6YA225ME11");
+    const auto s = row("C1005X5R1V225K050BC");
+    REQUIRE_FALSE(o.bias_curve.empty());
+    REQUIRE_FALSE(s.bias_curve.empty());
+    CHECK(o.bias_curve.temperature == 25.0);
+    CHECK(std::isnan(s.bias_curve.temperature));
+    const json c = rank_one("ZRB157R6YA225ME11", "C1005X5R1V225K050BC");
+    INFO(notes_of(c));
+    CHECK(verdict_of(c, "capacitance_bias") == "fail");
+    CHECK(has_note(c, "effective capacitance under DC bias compared on both curves over DC "
+                      "bias 0 to 35 V"));
+    CHECK(c["grade"] != "drop_in");
+    // The same part against itself: every point equal -> pass.
+    const json same = rank_one("ZRB157R6YA225ME11", "ZRB157R6YA225ME11");
+    CHECK(verdict_of(same, "capacitance_bias") == "pass");
+}
