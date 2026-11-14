@@ -11,7 +11,8 @@
 //   * the worst point decides the verdict and is reported (x, both y, warn depth);
 //   * no overlap -> UNVERIFIED (the caller adds the note; no cap).
 //
-// Different measurement conditions (temperature, bias, winding mode, mounting) are the
+// Different measurement conditions (temperature, bias, winding mode, mounting; a condition
+// stated by one side only counts as different — conditions_differ below) are the
 // caller's to detect before calling: this header compares numbers, it does not know what a
 // curve was measured under. Program-only, no I/O.
 #pragma once
@@ -96,20 +97,42 @@ struct CurveVerdict {
 };
 
 // orig vs sub on their overlap, each point judged with `spec` (Dir::Lower or Dir::Higher;
-// anything else throws — a curve is a numeric quantity).
+// anything else throws — a curve is a numeric quantity). `band`, when given, is the only x
+// range that is graded (owner 2026-11-14: impedance-type curves are judged only in their
+// useful band): the points judged are those inside the overlap AND the band, `range` is that
+// intersection, and an empty intersection is UNVERIFIED like no overlap (the caller tells the
+// two apart with overlap()). A band with lo > hi throws (the caller built it wrong).
 inline CurveVerdict compare_curves(const Curve& orig, const Curve& sub, const ParamSpec& spec,
-                                   Interp interp) {
+                                   Interp interp,
+                                   std::optional<std::pair<double, double>> band = std::nullopt) {
     if (spec.dir != Dir::Lower && spec.dir != Dir::Higher)
         throw std::invalid_argument("compare_curves: spec '" + spec.key +
                                     "' is not a numeric (Lower/Higher) spec");
+    if (band && !(band->first <= band->second))
+        throw std::invalid_argument("compare_curves: band lower end above its upper end");
     CurveVerdict out;
     out.range = overlap(orig, sub);
     if (!out.range) return out;
+    if (band) {
+        const double blo = std::max(out.range->first, band->first);
+        const double bhi = std::min(out.range->second, band->second);
+        if (blo > bhi) {
+            out.range.reset();
+            return out;
+        }
+        out.range = std::make_pair(blo, bhi);
+    }
     const auto [lo, hi] = *out.range;
     std::vector<double> xs;
     for (const Curve* c : {&orig, &sub})
         for (double x : c->x)
             if (x >= lo && x <= hi) xs.push_back(x);
+    // A band's edges (the rating frequency, the self-resonance) are judged too, read off both
+    // curves (they lie inside both measured ranges); without a band lo / hi are sample x already.
+    if (band) {
+        xs.push_back(lo);
+        xs.push_back(hi);
+    }
     std::sort(xs.begin(), xs.end());
     xs.erase(std::unique(xs.begin(), xs.end()), xs.end());
     auto rank = [](const char* v) {
@@ -171,17 +194,31 @@ inline std::optional<SpecCurve> curve_from_spec(const nlohmann::json& s, const s
     out.frequency = cond("frequency");
     return out;
 }
-// The measurement conditions BOTH curves state and that differ, e.g. "temperature 20 vs
-// 25 degC" (original first); empty when none differs. A condition stated on one side only is
-// not a difference on record and does not block the comparison.
+// The measurement conditions the two curves do not share, e.g. "temperature 20 vs 25 degC" or
+// "temperature 25 degC vs unstated" (original first); empty when every condition is the same
+// on both sides or stated by neither. Owner 2026-11-14: a condition stated by ONE side only is
+// a DIFFERENT condition (Murata states its curves at 25 degC, TDK states none: nothing on
+// record says the TDK curve was taken at 25 degC), so it blocks the comparison like a stated
+// difference does.
 inline std::string conditions_differ(const SpecCurve& o, const SpecCurve& s) {
     std::string out;
     auto one = [&](const std::optional<double>& a, const std::optional<double>& b,
                    const char* what, const char* unit) {
-        if (!a || !b || same_stated_value(*a, *b)) return;
-        char buf[96];
-        std::snprintf(buf, sizeof buf, "%s%s %g vs %g %s", out.empty() ? "" : ", ", what, *a,
-                      *b, unit);
+        if (!a && !b) return;
+        if (a && b && same_stated_value(*a, *b)) return;
+        char buf[128];
+        auto side = [&](const std::optional<double>& v) {
+            char t[48];
+            if (v) std::snprintf(t, sizeof t, "%g %s", *v, unit);
+            else std::snprintf(t, sizeof t, "unstated");
+            return std::string(t);
+        };
+        if (a && b)
+            std::snprintf(buf, sizeof buf, "%s%s %g vs %g %s", out.empty() ? "" : ", ", what, *a,
+                          *b, unit);
+        else
+            std::snprintf(buf, sizeof buf, "%s%s %s vs %s", out.empty() ? "" : ", ", what,
+                          side(a).c_str(), side(b).c_str());
         out += buf;
     };
     one(o.temperature, s.temperature, "temperature", "degC");
