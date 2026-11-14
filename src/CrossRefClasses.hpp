@@ -750,6 +750,30 @@ inline TvsPolarity tvs_polarity_from_mpn(const std::string& mpn) {
                                           "15KPA",   "1.5KE",  "P4SMA",  "P6SMB", "P4KE",
                                           "P6KE",    "SMAJ",   "SMBJ",   "SMCJ",  "SMDJ",
                                           "SMLJ",    "15KP",   "5KP",    "3KP",   "SA"};
+    // SMF (Qarlos r29 seed 33561692: SMF26AH's polarity was "unreadable" though its record
+    // calls it Unidirectional). Read with the STRICT grade grammar only — 'A' uni, 'CA' bi,
+    // anything else UNKNOWN — because the prefix is shared: onsemi's SMF05CT1G / SMF12CT1G /
+    // SMF15CT1G are ESD arrays whose 'C' is not the TVS grade, and they stay unknown (as do
+    // SMF05T1G, ROHM's SMF10VTR, Eaton's SMFE*, and every SMF4L*). Catalogue count (data
+    // 524a699): Taiwan Semiconductor 80 SMF<standoff>A[H] records, every one described
+    // "Unidirectional"; Littelfuse 28 ...A and 38 ...CA, which state no polarity in words.
+    {
+        static const std::string strict = "SMF";
+        if (u.compare(0, strict.size(), strict) == 0) {
+            size_t i = strict.size();
+            const size_t digits_at = i;
+            while (i < u.size() && std::isdigit(static_cast<unsigned char>(u[i]))) ++i;
+            if (i == digits_at) return TvsPolarity::Unknown;
+            if (i + 1 < u.size() && u[i] == '.' &&
+                std::isdigit(static_cast<unsigned char>(u[i + 1]))) {
+                ++i;
+                while (i < u.size() && std::isdigit(static_cast<unsigned char>(u[i]))) ++i;
+            }
+            if (i < u.size() && u[i] == 'A') return TvsPolarity::Uni;
+            if (i + 1 < u.size() && u[i] == 'C' && u[i + 1] == 'A') return TvsPolarity::Bi;
+            return TvsPolarity::Unknown;
+        }
+    }
     for (const char* series : kSeries) {
         const std::string p(series);
         if (u.compare(0, p.size(), p) != 0) continue;

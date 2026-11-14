@@ -417,6 +417,33 @@ TEST_CASE("qarlos r23: 1V5KE polarity decodes; bi 1V5KE fails a unidirectional o
     CHECK(c["grade"] == "major_review");
 }
 
+// Qarlos r29 (seed 33561692): Taiwan Semiconductor's SMF26AH (record: "Unidirectional", standoff
+// 26 V) came back with its polarity unreadable. SMF decodes with the strict grade grammar
+// (A uni, CA bi); onsemi's SMF05CT1G ESD array (an 'esd' record, SC-88) is NOT read as 'C' = bi.
+TEST_CASE("qarlos r29: SMF polarity decodes strictly; Littelfuse SMF26CA fails TSC SMF26AH",
+          "[qarlos][crossref]") {
+    using kelvin::crossref::TvsPolarity;
+    using kelvin::crossref::tvs_polarity_from_mpn;
+    CHECK(tvs_polarity_from_mpn("SMF26AH") == TvsPolarity::Uni);
+    CHECK(tvs_polarity_from_mpn("SMF26A") == TvsPolarity::Uni);
+    CHECK(tvs_polarity_from_mpn("SMF26CA") == TvsPolarity::Bi);
+    CHECK(tvs_polarity_from_mpn("SMF05CT1G") == TvsPolarity::Unknown);
+    CHECK(tvs_polarity_from_mpn("SMF05T1G") == TvsPolarity::Unknown);
+    CHECK(tvs_polarity_from_mpn("SMF10VTR") == TvsPolarity::Unknown);
+    CHECK(tvs_polarity_from_mpn("SMF4L10A") == TvsPolarity::Unknown);
+    CHECK(tvs_polarity_from_mpn("SMFE100CA") == TvsPolarity::Unknown);
+    auto r = kelvin::crossref::cross_reference(
+        "diode", tvs("SMF26AH", 26.0), json::array({tvs("SMF26CA", 26.0), tvs("SMF26A", 26.0)}));
+    for (const auto& c : r["candidates"]) {
+        if (c["mpn"] == "SMF26CA") {
+            CHECK(verdict_of(c, "polarity") == "fail");
+            CHECK(c["grade"] == "major_review");
+        } else {
+            CHECK(verdict_of(c, "polarity") == "pass");
+        }
+    }
+}
+
 // #2035: a record whose every provenance entry is retracted verifies nothing.
 TEST_CASE("qarlos #2035: all-retracted provenance is flagged and verifies nothing",
           "[qarlos][views][crossref]") {
