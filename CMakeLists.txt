@@ -131,6 +131,7 @@ if (KELVIN_BUILD_TESTS AND NOT EMSCRIPTEN AND KELVIN_TOP)
         tests/test_browse.cpp
         tests/test_spice_model.cpp
         tests/test_qarlos_fixes.cpp
+        tests/test_magnetic_curves.cpp
         tests/test_mosfet_loss.cpp
         tests/test_diode_loss.cpp)
     target_compile_definitions(test_kelvin PRIVATE

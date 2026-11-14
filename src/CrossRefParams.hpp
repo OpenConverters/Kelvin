@@ -9,7 +9,9 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -38,6 +40,10 @@ struct ParamSpec {
     // is a +/-25 % figure, measured differently on each side), a few percent
     // short is bookkeeping, not a regression.
     std::optional<double> pass_factor = std::nullopt;
+    // abs_tol specs only: the substitute still PASSES within this additive margin the wrong way
+    // (an insertion-loss curve within 1 dB of the original's, owner 2026-11-14), the abs_tol
+    // band beyond it is the WARN band. Either direction.
+    std::optional<double> pass_abs = std::nullopt;
 };
 
 // ── Class-rank maps (mirror param_check.py) ──────────────────────────────────
@@ -165,6 +171,23 @@ inline bool same_stated_value(double a, double b) {
     if (a == b) return true;
     return std::abs(a - b) <= kRepresentationEpsilon * std::max(std::abs(a), std::abs(b));
 }
+// Room temperature (owner 2026-11-14): 20 degC and 25 degC are the same measurement
+// condition, in every family — datasheets quote "room temperature" at either (Würth states
+// 20 degC where Coilcraft states 25 degC for the same bench measurement). One definition for
+// every caller: curve conditions (conditions_differ), a magnetic's L(I) / Isat curve
+// temperatures and its rated-current ambient. Two stated temperatures name the same condition
+// when they are the same stated value or both room temperature. Both values must be stated:
+// a temperature stated on one side only is a different condition, and case vs ambient is the
+// caller's to tell apart — the one exception is a magnetic's rated-current ambient, where an
+// unstated ambient is read as room temperature (owner 2026-11-14,
+// magcurve::rated_at_common_rise).
+inline bool is_room_temperature(double t) {
+    return same_stated_value(t, 20.0) || same_stated_value(t, 25.0);
+}
+inline bool same_room_temperature(double a, double b) {
+    if (same_stated_value(a, b)) return true;
+    return is_room_temperature(a) && is_room_temperature(b);
+}
 
 // Mirrors _compare_numeric: LOWER/HIGHER with abs_tol (additive) or tol_factor.
 // Equal (within the representation epsilon above) always passes, in either direction.
@@ -175,15 +198,20 @@ inline ParamOutcome compare_numeric(const ParamSpec& spec, std::optional<double>
     if (!o) return UNVERIFIED;
     double ov = *o, sv = *s;
     if (same_stated_value(sv, ov)) return PASS;
+    if (spec.pass_abs && !spec.abs_tol)
+        throw std::logic_error("compare_numeric: spec '" + spec.key +
+                               "' has an additive pass margin but no additive band");
     if (spec.dir == Dir::Lower) {
-        if (sv <= ov) return PASS;
+        const double pass_ceiling = spec.pass_abs ? ov + *spec.pass_abs : ov;
+        if (sv <= pass_ceiling) return PASS;
         double ceiling = spec.abs_tol ? ov + *spec.abs_tol : ov * spec.tol_factor;
         if (sv > ceiling) return FAIL;
         ParamOutcome warn(WARN);
-        warn.warn_depth = warn_depth_between(sv, ov, ceiling);
+        warn.warn_depth = warn_depth_between(sv, pass_ceiling, ceiling);
         return warn;
     }
-    const double pass_floor = ov * spec.pass_factor.value_or(1.0);
+    const double pass_floor =
+        spec.pass_abs ? ov - *spec.pass_abs : ov * spec.pass_factor.value_or(1.0);
     if (sv >= pass_floor) return PASS;  // Higher
     double floor = spec.abs_tol ? ov - *spec.abs_tol : ov * spec.tol_factor;
     if (sv < floor) return FAIL;
@@ -432,6 +460,7 @@ inline Verdict compare(const std::vector<Point>& op, const std::vector<Point>& s
 // Worst: FAIL, then UNVERIFIED, then PASS.
 struct BiasCurve {
     std::vector<double> current, ratio;
+    std::optional<double> temperature;  // degC the curve is stated at (owner 2026-11-14)
 };
 inline std::optional<BiasCurve> bias_curve(const nlohmann::json& s) {
     if (!s.is_object()) return std::nullopt;
@@ -450,6 +479,8 @@ inline std::optional<BiasCurve> bias_curve(const nlohmann::json& s) {
         c.ratio.push_back(b.get<double>());
     }
     if (c.current.front() != 0.0) return std::nullopt;  // no small-signal reference
+    if (auto t = it->find("temperature"); t != it->end() && t->is_number())
+        c.temperature = t->get<double>();
     return c;
 }
 inline std::optional<double> curve_current_at_drop(const BiasCurve& c, double drop_pct) {
@@ -474,12 +505,30 @@ struct CurveCompare {
     std::vector<CurveCriterion> rows;
     const char* verdict = PASS;
     std::optional<size_t> decisive;  // the worst criterion with both currents read
+    // Both records state a curve but at different temperatures (or only one states its
+    // temperature): the curves are not read against each other (owner 2026-11-14) and this
+    // says why; the stated Isat figures are compared instead.
+    std::string not_applied_note;
 };
 inline CurveCompare compare_curves(const nlohmann::json& orig, const nlohmann::json& sub,
                                    double margin) {
     CurveCompare out;
     const auto oc = bias_curve(orig), sc = bias_curve(sub);
     if (!oc || !sc) return out;
+    if (oc->temperature.has_value() != sc->temperature.has_value() ||
+        (oc->temperature && !same_room_temperature(*oc->temperature, *sc->temperature))) {
+        auto t = [](const std::optional<double>& v) {
+            if (!v) return std::string("no stated temperature");
+            char b[32];
+            std::snprintf(b, sizeof b, "%g degC", *v);
+            return std::string(b);
+        };
+        out.not_applied_note = "L(I) curves stated at different temperatures (original " +
+                               t(oc->temperature) + ", substitute " + t(sc->temperature) +
+                               ") — Isat not read off the two curves; the stated figures are "
+                               "compared instead";
+        return out;
+    }
     out.applies = true;
     std::vector<double> drops;
     const bool from_curve = orig.is_object() && orig.value("saturation_from_curve", false);

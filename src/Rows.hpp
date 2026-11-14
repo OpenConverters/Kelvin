@@ -573,7 +573,20 @@ struct MagneticRow : RowBase {
     // above was READ OFF this curve (the record states no Isat), not stated.
     std::vector<double> bias_curve_current;
     std::vector<double> bias_curve_ratio;
+    // The temperature (degC) the picked curve is stated at; NaN = not stated (owner
+    // 2026-11-14: two curves are read against each other only at one temperature).
+    double bias_curve_temperature = kNaN();
     bool sat_table_from_curve = false;
+    // v22 (owner 2026-11-14, "compare ALL existing graphs"): EVERY L(I) curve the record states
+    // (inductancePoints, one per stated temperature; an untemperatured set is its own curve),
+    // in henries vs amperes, with or without a 0 A point, in the shared curve storage (the
+    // CurvePts temperature is the curve's). Ascending temperature, the unstated one last.
+    std::vector<CurvePts> l_curves;
+    // v22 (owner 2026-11-14): the rated currents qualified by their temperature rise
+    // (ratedCurrentPoints): x = rise (K), y = current (A), temperature = ambient (degC, NaN =
+    // not stated). May hold ONE point (a single rating at its rise). Empty when not stated or
+    // not readable as one rating per rise (Views.cpp magnetic_rated_points).
+    CurvePts rated_points;
     // Winding structure: bit n set when some electrical[] wiring configuration has n windings besides
     // the primary (a single-winding inductor/chip bead sets bit 0; a transformer or coupled inductor sets
     // bit turnsRatios.size()). 0 means no configuration states its structure (e.g. a transformer entry
@@ -588,6 +601,27 @@ struct MagneticRow : RowBase {
     double impedance_100mhz = kNaN();     // ohm
     double impedance_peak = kNaN();       // ohm
     double impedance_peak_freq = kNaN();  // Hz
+    // A common-mode choke's differential-mode readings (v22, owner 2026-11-14): the same three
+    // readings off its DM |Z|(f) curve (differentialModeImpedancePoints, or the impedancePoints
+    // tagged winding "differential"); the three above are then its common-mode readings.
+    double dm_impedance_100mhz = kNaN();     // ohm
+    double dm_impedance_peak = kNaN();       // ohm
+    double dm_impedance_peak_freq = kNaN();  // Hz
+    // A cable core's fit and configuration (v22, owner 2026-11-14): the largest cable / bundle
+    // outer diameter that passes through it (maximumCableOuterDiameter, m) and the number of
+    // cable passes its |Z| is stated for (numberTurns). NaN = not stated.
+    double cable_max_diameter = kNaN();  // m
+    double number_turns = kNaN();
+    // Measured curves (v22, owner 2026-11-14: "compare ALL existing graphs") in the shared
+    // curve storage (CurvePts, as the capacitor's), empty when the record states fewer than
+    // two usable samples. The ranker compares them curve vs curve (CrossRefMagneticCurves.hpp).
+    CurvePts z_curve;  // |Z|(f), Hz -> ohm (a CMC's: common mode)
+    CurvePts r_curve;  // R(f), Hz -> ohm (resistancePoints)
+    CurvePts x_curve;  // X(f), Hz -> ohm, signed (reactancePoints)
+    // A common-mode choke's other curves (v22, owner 2026-11-14): its differential-mode |Z|(f)
+    // (the curve dm_impedance_* are read off) and its common- / differential-mode insertion
+    // loss, Hz -> dB (commonModeInsertionLossPoints / differentialModeInsertionLossPoints).
+    CurvePts dm_z_curve, cm_il_curve, dm_il_curve;
     std::string device_type;              // electrical[0].subtype (inductor/transformer/…): annotated, never gated
     std::string family;                   // manufacturerInfo.family or part.family (series, for context)
     // v20: the operating-temperature range (PEAS thermal.operatingTemperature, degC), which the
