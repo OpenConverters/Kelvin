@@ -4,15 +4,20 @@
 // The operating point states the converter position (buckInductor) and its conduction mode
 // (ccm / dcm / crm, required). Per mode:
 //   inductance gate  ccm  nominal >= the required L (L_min)
-//                    dcm  the guaranteed maximum nominal x (1 + tol+) <= L_max, the CCM/DCM
-//                         boundary at the minimum Vin and full load; no tolerance stated ->
-//                         UNVERIFIED (a nominal above L_max fails regardless)
+//                    dcm  the guaranteed maximum nominal x (1 + tol+) <= 0.9 x L_crit, with
+//                         L_crit = Vout*(1 - Vout/Vin_min)/(2*Iout*fs) the CCM/DCM boundary at
+//                         the minimum Vin and full load: a 10 % margin so the mode does not
+//                         flip at the boundary (owner 2026-11-14); no tolerance stated ->
+//                         UNVERIFIED (a nominal above 0.9 x L_crit fails regardless). The
+//                         requested L is no floor in dcm / crm: its distance goes in a note.
 //                    crm  the tolerance band [nominal x (1 - tol-), nominal x (1 + tol+)] inside
 //                         the operating point's window; no tolerance -> UNVERIFIED (a nominal
 //                         outside the window fails regardless)
 //   L used           the tolerance's MINIMUM L (nominal x (1 - tol-)), else the nominal with a
-//                    note; read at Ipk off the record's L(I) curve when it states one
-//                    (L(Ipk) = L_used x L/L(0) at Ipk, never extrapolated)
+//                    note; read at Ipk off the record's L(I) curve when it states one at the
+//                    operating ambient, else at room temperature (20 / 25 degC) or unstated
+//                    (L(Ipk) = L_used x L/L(0) at Ipk, never extrapolated; a curve with no 0 A
+//                    point states no L(0) and is not read)
 //   waveform (buck)  ccm  D = Vout/Vin, dI = (Vin-Vout) D / (fs L), Ipk = Iout + dI/2,
 //                         Irms = sqrt(Iout^2 + dI^2/12)
 //                    dcm  D = sqrt(2 L fs Iout Vout / (Vin (Vin-Vout))), Ipk = (Vin-Vout) D/(L fs),
@@ -29,10 +34,15 @@
 //               L at Ipk >= 0.8 x L(0). Otherwise the record's stated Isat points: interpolated
 //               between the points that bracket 20 %, never extrapolated; points only above 20 %
 //               are an upper bound (can fail, cannot pass), points only below 20 % a lower bound
-//               (can pass, cannot fail); else UNVERIFIED.
+//               (can pass, cannot fail); else UNVERIFIED. Temperature: the points at the
+//               operating ambient, else at room temperature (20 / 25 degC) or unstated, else
+//               UNVERIFIED (never read at another temperature); a criterion stated twice at
+//               one temperature keeps the lower current.
 //   thermal     the rated current at a 40 K rise, from the record's rated-current points per
-//               rise: interpolated, never extrapolated; only lower-rise points -> a lower bound
-//               (can pass); else UNVERIFIED. An unstated ambient is room temperature (noted).
+//               rise (MagneticRow::rated_points): interpolated, never extrapolated; only
+//               lower-rise points -> a lower bound (can pass, cannot fail); only higher-rise
+//               points -> an upper bound (fails when already below Irms, else UNVERIFIED). An
+//               unstated ambient is room temperature (noted).
 // Every datasheet value is the record's, every operating-point value the caller's.
 #pragma once
 #include <algorithm>
@@ -46,6 +56,7 @@
 
 #include "Constraints.hpp"
 #include "CrossRefCurves.hpp"
+#include "CrossRefParams.hpp"  // is_room_temperature, same_room_temperature
 #include "MosfetLoss.hpp"  // LossTerm
 #include "Rows.hpp"
 
@@ -124,8 +135,12 @@ inline std::string fmt(const char* f, double a) {
     return b;
 }
 
-// 20 degC and 25 degC count as the same room temperature (owner 2026-11-14).
-inline bool room_temperature(double t) { return t >= 20.0 - 1e-9 && t <= 25.0 + 1e-9; }
+// 20 degC and 25 degC count as the same room temperature (owner 2026-11-14): the shared rule.
+inline bool room_temperature(double t) { return crossref::is_room_temperature(t); }
+// A stated temperature at the operating ambient (equal, or both room temperature).
+inline bool at_ambient(double t, double ambient) {
+    return present(t) && crossref::same_room_temperature(t, ambient);
+}
 
 }  // namespace magnetic_loss_detail
 
@@ -202,8 +217,10 @@ inline InductorWaveform inductor_waveform(const InductorOperatingPoint& op, doub
 }
 
 // The DCM limit: the largest L that keeps the converter discontinuous over the stated range.
+// l_crit: the boundary itself; l_max = kDcmBoundaryMargin x l_crit, the gate (owner 2026-11-14).
+inline constexpr double kDcmBoundaryMargin = 0.9;
 struct DcmBoundary {
-    double l_max = 0;
+    double l_crit = 0, l_max = 0;
     std::string basis;
 };
 
@@ -215,10 +232,14 @@ inline DcmBoundary dcm_maximum_inductance(const InductorOperatingPoint& op) {
             // smallest is at the minimum Vin, at full load.
             const double vmin = *op.vin_min, fs = *op.fsw;
             DcmBoundary d;
-            d.l_max = op.vout * (1.0 - op.vout / vmin) / (2.0 * fs * op.iout);
-            d.basis = "L_max = Vout*(1 - Vout/Vin_min)/(2*fs*Iout) = " +
-                      fmt("%.4g uH", d.l_max * 1e6) + " (the buck's CCM/DCM boundary at Vin_min " +
-                      fmt("%g V", vmin) + fmt(" and full load %g A)", op.iout);
+            d.l_crit = op.vout * (1.0 - op.vout / vmin) / (2.0 * fs * op.iout);
+            d.l_max = kDcmBoundaryMargin * d.l_crit;
+            d.basis = "L_max = 0.9 x L_crit = " + fmt("%.4g uH", d.l_max * 1e6) +
+                      ", L_crit = Vout*(1 - Vout/Vin_min)/(2*Iout*fs) = " +
+                      fmt("%.4g uH", d.l_crit * 1e6) + " (the buck's CCM/DCM boundary at Vin_min " +
+                      fmt("%g V", vmin) + fmt(" and full load %g A", op.iout) +
+                      "; the 10 % margin keeps the mode from flipping at the boundary: UT Austin "
+                      "EE462L buck notes, arXiv 1607.01669, TI LMZ13608 datasheet)";
             return d;
         }
     }
@@ -250,8 +271,8 @@ inline MagneticCheck saturation_from_points(const MagneticRow& m, double ipk, bo
                                     all.front().i));
         return s;
     }
-    // One temperature: the operating ambient when the record states points there, else room
-    // temperature (20-25 degC, or unstated), else the single other temperature it states.
+    // One temperature (owner 2026-11-14): the operating ambient when the record states points
+    // there, else room temperature (20 / 25 degC) or unstated; never another temperature.
     auto at = [&](auto pred) {
         std::vector<P> v;
         for (const P& p : crit)
@@ -261,7 +282,7 @@ inline MagneticCheck saturation_from_points(const MagneticRow& m, double ipk, bo
     std::vector<P> pts;
     std::string temp_basis;
     if (ambient && !room_temperature(*ambient)) {
-        pts = at([&](double t) { return present(t) && std::fabs(t - *ambient) < 0.5; });
+        pts = at([&](double t) { return magnetic_loss_detail::at_ambient(t, *ambient); });
         if (!pts.empty()) temp_basis = fmt(" at %g degC (the operating ambient)", *ambient);
     }
     if (pts.empty()) {
@@ -276,17 +297,18 @@ inline MagneticCheck saturation_from_points(const MagneticRow& m, double ipk, bo
         }
     }
     if (pts.empty()) {
-        std::vector<double> temps;
+        std::string temps;
+        std::vector<double> seen;
         for (const P& p : crit)
-            if (std::find(temps.begin(), temps.end(), p.t) == temps.end()) temps.push_back(p.t);
-        if (temps.size() == 1) {
-            pts = crit;
-            temp_basis = fmt(" at %g degC (the only temperature the record states)", temps[0]);
-        } else {
-            s.missing.push_back("the record states Isat only at temperatures other than room "
-                                "temperature and the operating ambient");
-            return s;
-        }
+            if (std::find(seen.begin(), seen.end(), p.t) == seen.end()) {
+                seen.push_back(p.t);
+                temps += (temps.empty() ? "" : ", ") + fmt("%g degC", p.t);
+            }
+        s.missing.push_back("the record states Isat only at " + temps +
+                            ": not at the operating ambient" +
+                            (ambient ? fmt(" %g degC", *ambient) : std::string(" (not stated)")) +
+                            " nor at room temperature, and it is not read at another temperature");
+        return s;
     }
     // One current per criterion: a criterion stated twice at one temperature keeps the lower.
     std::sort(pts.begin(), pts.end(), [](const P& a, const P& b) {
@@ -378,8 +400,7 @@ inline MagneticCheck thermal_check(const CurvePts& rated_points, double irms,
     bool same_ambient = true;
     if (ambient) {
         const double rt = rated_points.temperature;
-        same_ambient = present(rt) ? (std::fabs(*ambient - rt) < 0.5 ||
-                                      (room_temperature(*ambient) && room_temperature(rt)))
+        same_ambient = present(rt) ? magnetic_loss_detail::at_ambient(rt, *ambient)
                                    : room_temperature(*ambient);
     }
     if (!same_ambient)
@@ -393,6 +414,8 @@ inline MagneticCheck thermal_check(const CurvePts& rated_points, double irms,
     }
     double i40 = 0;
     bool lower_bound = false;
+    // Only higher-rise points: the current at 40 K is at most the lowest-rise one stated (an
+    // upper bound, owner 2026-11-14): it fails a part already below Irms, never passes one.
     std::string basis;
     if (below && below == above) {
         i40 = below->i;
@@ -409,9 +432,17 @@ inline MagneticCheck thermal_check(const CurvePts& rated_points, double irms,
         basis = fmt("rated current %.4g A", i40) + fmt(" at a %g K rise", below->rise) +
                 " (no 40 K point: a lower bound of the 40 K current, not extrapolated)";
     } else {
-        t.missing.push_back(fmt("the record rates its current only above a 40 K rise (%.4g A", above->i) +
-                            fmt(" at %g K", above->rise) + amb +
-                            "); the 40 K current is not stated and not extrapolated");
+        const std::string ub = fmt("rated current %.4g A", above->i) +
+                               fmt(" at a %g K rise", above->rise) + amb +
+                               " (the record rates its current only above a 40 K rise: an upper "
+                               "bound of the 40 K current, not extrapolated)";
+        if (above->i < irms) {
+            t.status = MagneticCheck::Status::Fail;
+            t.basis = fmt("Irms %.4g A exceeds the ", irms) + ub;
+        } else {
+            t.missing.push_back(fmt("Irms %.4g A is within the ", irms) + ub +
+                                ": the 40 K current is not known to cover it");
+        }
         return t;
     }
     basis += amb;
@@ -428,24 +459,129 @@ inline MagneticCheck thermal_check(const CurvePts& rated_points, double irms,
     return t;
 }
 
-// The record's rated currents per temperature rise are not carried by this index yet (they
-// arrive with the rated_points field of the curves work, owner 2026-11-14): no thermal verdict.
+// The record's rated currents per temperature rise (MagneticRow::rated_points, Views.cpp
+// magnetic_rated_points). Empty: the record states no rated current, or none readable as one
+// rating per rise under one ambient -> no thermal verdict.
 inline MagneticCheck thermal_check_of(const MagneticRow& m, double irms,
                                       std::optional<double> ambient) {
     using magnetic_loss_detail::fmt;
-    static const CurvePts none;
     const std::string why =
         present(m.rated_current)
             ? fmt("the rated current %.4g A", m.rated_current) +
-                  " (the largest the record states) is not carried with its temperature rise, "
-                  "so the current at a 40 K rise is not known (the rated currents per rise are "
-                  "not in this index yet)"
+                  " (the largest the record states) is not stated with its temperature rise "
+                  "(or its rated-current points are not readable as one rating per rise), so "
+                  "the current at a 40 K rise is not known"
             : std::string("no rated current stated in the record");
-    return thermal_check(none, irms, ambient, why);
+    return thermal_check(m.rated_points, irms, ambient, why);
+}
+
+// ---- the L(I) curve the operating point reads (owner 2026-11-14) ----------------------------
+// MagneticRow::l_curves holds every stated L(I) curve (henries vs amperes, one per temperature).
+// The one read: at the operating ambient, else at room temperature (20 / 25 degC) or unstated;
+// exactly one such curve, starting at 0 A (its L(0)). Anything else is not read, and `why` says
+// so: two candidate curves (not chosen between), only other temperatures, no 0 A point.
+struct LCurvePick {
+    std::optional<crossref::Curve> ratio;  // current (A) -> L / L(0)
+    bool stated = false;                   // the record states some L(I) curve
+    std::string why;                       // not read: why
+    std::string temp_basis;                // read: its temperature
+};
+inline LCurvePick pick_l_curve(const MagneticRow& m, std::optional<double> ambient) {
+    using magnetic_loss_detail::fmt;
+    using magnetic_loss_detail::room_temperature;
+    LCurvePick k;
+    auto temp_s = [](double t) {
+        return present(t) ? fmt("%g degC", t) : std::string("no stated temperature");
+    };
+    if (m.l_curves.empty()) {
+        // The extractor keeps the picked curve as it is stated (bias_curve_*); l_curves drops a
+        // curve stating two inductances at one current (Views.cpp store_curve).
+        if (m.bias_curve_current.size() >= 2) {
+            k.stated = true;
+            k.why = "its L(I) curve at " + temp_s(m.bias_curve_temperature) +
+                    " states two inductances at one current, so it cannot be read at a point";
+        }
+        return k;
+    }
+    k.stated = true;
+    // The curve the extractor picked (bias_curve_*, nearest 25 degC) but l_curves dropped: it
+    // states two inductances at one current. It still counts where its temperature qualifies.
+    const double bt = m.bias_curve_temperature;
+    const bool dropped =
+        m.bias_curve_current.size() >= 2 &&
+        std::none_of(m.l_curves.begin(), m.l_curves.end(), [&](const CurvePts& c) {
+            return present(bt) ? (present(c.temperature) && c.temperature == bt)
+                               : !present(c.temperature);
+        });
+    const std::string dropped_why =
+        "its L(I) curve at " + temp_s(bt) +
+        " states two inductances at one current, so it cannot be read at a point";
+    std::vector<const CurvePts*> pick;
+    if (ambient && !room_temperature(*ambient)) {
+        if (dropped && magnetic_loss_detail::at_ambient(bt, *ambient)) {
+            k.why = dropped_why;
+            return k;
+        }
+        for (const CurvePts& c : m.l_curves)
+            if (magnetic_loss_detail::at_ambient(c.temperature, *ambient)) pick.push_back(&c);
+    }
+    const bool at_amb = !pick.empty();
+    if (!at_amb) {
+        if (dropped && (!present(bt) || room_temperature(bt))) {
+            k.why = dropped_why;
+            return k;
+        }
+        for (const CurvePts& c : m.l_curves)
+            if (!present(c.temperature) || room_temperature(c.temperature)) pick.push_back(&c);
+    }
+    std::string all;
+    for (const CurvePts& c : m.l_curves) all += (all.empty() ? "" : ", ") + temp_s(c.temperature);
+    if (pick.empty()) {
+        k.why = "its L(I) curves are stated only at " + all + ": not at the operating ambient" +
+                (ambient ? fmt(" %g degC", *ambient) : std::string(" (not stated)")) +
+                " nor at room temperature, and a curve is not read at another temperature";
+        return k;
+    }
+    if (pick.size() > 1) {
+        std::string w;
+        for (const CurvePts* c : pick) w += (w.empty() ? "" : ", ") + temp_s(c->temperature);
+        k.why = "it states " + std::to_string(pick.size()) + " L(I) curves that qualify (" + w +
+                "), and which one applies is not stated";
+        return k;
+    }
+    const CurvePts& c = *pick.front();
+    if (!(c.x->front() == 0.0f) || !(c.y->front() > 0.0f)) {
+        k.why = "its L(I) curve at " + temp_s(c.temperature) + fmt(" starts at %.4g A", c.x->front()) +
+                ", not at 0 A, so L(0) is not stated and L/L(0) is not known";
+        return k;
+    }
+    const double l0 = c.y->front();
+    std::vector<double> x, y;
+    for (std::size_t i = 0; i < c.x->size(); ++i) {
+        x.push_back((*c.x)[i]);
+        y.push_back((*c.y)[i] / l0);
+    }
+    try {
+        k.ratio.emplace(std::move(x), std::move(y));
+    } catch (const std::invalid_argument& e) {
+        k.why = std::string("its L(I) curve is not readable: ") + e.what();
+        return k;
+    }
+    if (at_amb)
+        k.temp_basis = fmt(" at %g degC (the operating ambient)", c.temperature);
+    else
+        k.temp_basis = (present(c.temperature) ? fmt(" at %g degC (room temperature)", c.temperature)
+                                               : std::string(" (temperature not stated: read as room "
+                                                             "temperature)")) +
+                       (ambient && !room_temperature(*ambient)
+                            ? fmt(", not at the operating ambient %g degC (not rescaled)", *ambient)
+                            : std::string());
+    return k;
 }
 
 // ---- the breakdown ---------------------------------------------------------------------------
-// l_required: the required (minimum) inductance; read in ccm only.
+// l_required: the required (minimum) inductance; the gate in ccm. In dcm / crm it is no floor
+// (owner 2026-11-14): its distance from the nominal goes in a note.
 inline MagneticLossBreakdown inductor_loss(const MagneticRow& m, const InductorOperatingPoint& op,
                                            std::optional<double> l_required) {
     using magnetic_loss_detail::fmt;
@@ -534,6 +670,11 @@ inline MagneticLossBreakdown inductor_loss(const MagneticRow& m, const InductorO
             break;
         }
     }
+    if (op.mode != ConductionMode::Ccm && l_required && *l_required > 0)
+        b.notes.push_back(std::string(op.mode == ConductionMode::Dcm ? "DCM" : "CrM") + ": " +
+                          nominal_s + fmt(" is %+.3g %%", (L0 / *l_required - 1.0) * 100) +
+                          " from the requested " + fmt("%.4g uH", *l_required * 1e6) +
+                          " (not a gate in this mode: the operating point's own limits are)");
     if (g.failed()) {
         const std::string why = "not evaluated: the inductance gate failed";
         b.dcr.missing.push_back(why);
@@ -561,17 +702,11 @@ inline MagneticLossBreakdown inductor_loss(const MagneticRow& m, const InductorO
     enum class Read { NoCurve, Unreadable, InRange, Beyond } read = Read::NoCurve;
     double curve_end = 0, ratio_at = 1;
     std::string unreadable_why;
-    std::optional<crossref::Curve> curve;
-    if (m.bias_curve_current.size() >= 2 &&
-        m.bias_curve_current.size() == m.bias_curve_ratio.size()) {
-        // A record whose curve repeats a current (two readings at one bias) cannot be read at
-        // a point without choosing between them: it is not read, and the basis says why.
-        try {
-            curve.emplace(m.bias_curve_current, m.bias_curve_ratio);
-        } catch (const std::invalid_argument& e) {
-            read = Read::Unreadable;
-            unreadable_why = e.what();
-        }
+    LCurvePick pick = pick_l_curve(m, op.ambient);
+    std::optional<crossref::Curve>& curve = pick.ratio;
+    if (!curve && pick.stated) {
+        read = Read::Unreadable;
+        unreadable_why = pick.why;
     }
     const InductorWaveform w_base = inductor_waveform(op, l_base);
     InductorWaveform w = w_base;
@@ -610,8 +745,8 @@ inline MagneticLossBreakdown inductor_loss(const MagneticRow& m, const InductorO
         b.inductance_basis = "L " + fmt("%.4g uH", b.inductance * 1e6) +
                              fmt(" at Ipk %.4g A: ", w.ipk) + base_s +
                              fmt(" x L/L(0) %.4g", ratio_at) +
-                             " read off the record's L(I) curve (linear; Ipk and the L it is read "
-                             "at solved together)";
+                             " read off the record's L(I) curve" + pick.temp_basis +
+                             " (linear; Ipk and the L it is read at solved together)";
     } else {
         b.inductance = l_base;
         b.inductance_basis = base_s;
@@ -622,7 +757,8 @@ inline MagneticLossBreakdown inductor_loss(const MagneticRow& m, const InductorO
             b.inductance_basis += " (the record's L(I) curve is not read: " + unreadable_why +
                                   "; any roll-off below Isat is not in the waveform)";
         else
-            b.inductance_basis += "; Ipk lies beyond the record's L(I) curve (measured to " +
+            b.inductance_basis += "; Ipk lies beyond the record's L(I) curve" + pick.temp_basis +
+                                  " (measured to " +
                                   fmt("%.4g A", curve_end) +
                                   "), so L at Ipk is not read and not extrapolated: the ripple, "
                                   "Ipk and Irms are lower bounds";
@@ -675,7 +811,8 @@ inline MagneticLossBreakdown inductor_loss(const MagneticRow& m, const InductorO
         MagneticCheck& s = b.saturation;
         if (read == Read::InRange) {
             // The curve decides directly: L at Ipk >= 0.8 x L(0).
-            const std::string r = fmt("the record's L(I) curve: at Ipk %.4g A", b.ipk) +
+            const std::string r = "the record's L(I) curve" + pick.temp_basis +
+                                  fmt(": at Ipk %.4g A", b.ipk) +
                                   fmt(" L is %.3g %% of L(0)", ratio_at * 100);
             if (ratio_at >= 0.8) {
                 s.status = MagneticCheck::Status::Pass;
@@ -694,8 +831,8 @@ inline MagneticLossBreakdown inductor_loss(const MagneticRow& m, const InductorO
                 for (std::size_t k = 0; k < c.x.size(); ++k)
                     if (c.y[k] < 0.8) {
                         s.status = MagneticCheck::Status::Fail;
-                        s.basis = fmt("the record's L(I) curve falls to %.3g %% of L(0)",
-                                      c.y[k] * 100) +
+                        s.basis = "the record's L(I) curve" + pick.temp_basis +
+                                  fmt(" falls to %.3g %% of L(0)", c.y[k] * 100) +
                                   fmt(" at %.4g A, and Ipk lies beyond the curve", c.x[k]) +
                                   fmt(" (measured to %.4g A)", curve_end);
                         decided = true;
@@ -716,8 +853,9 @@ inline MagneticLossBreakdown inductor_loss(const MagneticRow& m, const InductorO
     // ---- thermal: Irms against the rated current at a 40 K rise ------------------------------
     b.thermal = thermal_check_of(m, b.irms, op.ambient);
     if (op.ambient)
-        b.notes.push_back(fmt("ambient %g degC: the L(I) curve, DCR and rated current are read at "
-                              "the record's own condition, not rescaled to it",
+        b.notes.push_back(fmt("ambient %g degC: the DCR is read at the record's own condition, not "
+                              "rescaled to it (the L(I) curve, Isat and rated current state their "
+                              "temperature in their basis)",
                               *op.ambient));
     return b;
 }

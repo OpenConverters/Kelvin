@@ -1340,6 +1340,12 @@ json mag_volume_json(const MagneticRow& m) {
             {"basis", "the record's drawn length x width x height (bounding box)"}};
 }
 
+// Size counts toward UNVERIFIED (owner 2026-11-14): the board area or the volume cannot be
+// determined from the record.
+bool mag_size_unverified(const MagneticRow& m) {
+    return mag_board_area_json(m).at("mm2").is_null() || mag_volume_json(m).at("mm3").is_null();
+}
+
 json mag_price_json(const MagneticRow& m, std::optional<double> quantity) {
     json p;
     p["quantity"] = quantity ? json(*quantity) : json(nullptr);
@@ -1395,7 +1401,8 @@ json select_magnetic_op_loss(const Shard<MagneticRow>& shard, const MagneticCons
             continue;
         }
         if (!present(m.inductance) || !(m.inductance > 0)) { rej["inductance_unstated"]++; continue; }
-        MagneticLossBreakdown lb = magnetic_loss(m, op, L_req);
+        // ccm gates on the required L; dcm / crm only note the distance from it.
+        MagneticLossBreakdown lb = magnetic_loss(m, op, L_req ? L_req : c.target_inductance);
         if (lb.inductance_gate.failed()) { rej[gate_rej]++; continue; }
         if (lb.saturation.failed()) { rej["saturation_current_below_peak"]++; continue; }
         if (lb.thermal.failed()) { rej["rated_current_below_rms"]++; continue; }
@@ -1407,12 +1414,16 @@ json select_magnetic_op_loss(const Shard<MagneticRow>& shard, const MagneticCons
                            shard.meta.source_line_count);
 
     // Total loss alone orders, after the UNVERIFIED key (owner 2026-11-14). The core-loss term
-    // is UNVERIFIED for every record and is left out of both keys (interim owner rule).
+    // is UNVERIFIED for every record and is left out of both keys (interim owner rule). A
+    // candidate whose board area or volume cannot be determined counts one more UNVERIFIED
+    // item (owner 2026-11-14, every family; implemented here locally: main has no shared
+    // helper for it yet).
+    std::map<const MagneticRow*, std::size_t> unv;
+    for (const MagneticRow* m : passing)
+        unv[m] = loss.at(m).rank_unverified() + (mag_size_unverified(*m) ? 1 : 0);
     std::sort(passing.begin(), passing.end(), [&](const MagneticRow* a, const MagneticRow* b) {
-        const auto& la = loss.at(a);
-        const auto& lb = loss.at(b);
-        return std::make_tuple(la.rank_unverified(), la.computed_sum(), a->lineno) <
-               std::make_tuple(lb.rank_unverified(), lb.computed_sum(), b->lineno);
+        return std::make_tuple(unv.at(a), loss.at(a).computed_sum(), a->lineno) <
+               std::make_tuple(unv.at(b), loss.at(b).computed_sum(), b->lineno);
     });
 
     json result;
@@ -1478,7 +1489,8 @@ json select_magnetic_op_loss(const Shard<MagneticRow>& shard, const MagneticCons
                           {"hasBiasCurve", !m->bias_curve_current.empty()}};
         cd["sortKey"] = {{"metric", "lowest_operating_point_loss"},
                          {"value", lb.computed_sum()},
-                         {"unverifiedChecksOrTerms", lb.rank_unverified()}};
+                         {"unverifiedChecksOrTerms", unv.at(m)},
+                         {"sizeUnverified", mag_size_unverified(*m)}};
         cands.push_back(std::move(cd));
     }
     result["candidates"] = std::move(cands);

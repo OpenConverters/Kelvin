@@ -1607,15 +1607,19 @@ def recommend_parts(family: str, requirements: dict, options: dict | None = None
             'crm' (required, no default), inputVoltage, outputVoltage, outputCurrent,
             ambientTemperature?; ccm: switchingFrequency and the required inductance
             (requirements.magnetizingInductance, nominal >= it); dcm: switchingFrequency and
-            minimumInputVoltage (the part's nominal x (1 + tol+) must not exceed the CCM/DCM
-            boundary at that Vin and full load); crm: minimumInductance and maximumInductance
-            (the tolerance band must lie inside; no switchingFrequency)} ranks power inductors by
-            loss at that point (tiebreaker lowest_operating_point_loss). The waveform uses the
-            part's tolerance-minimum L, read at Ipk off its L(I) curve when it has one.
-            Saturation: the current at a 20 % L drop (the L(I) curve decides when present, else
-            the stated Isat points, interpolated, never extrapolated) must exceed Ipk. Thermal:
-            the rated current at a 40 K rise must cover Irms. Both are hard gates; a check the
-            record cannot settle is UNVERIFIED and ranks after. The DCR loss Irms^2*DCR orders;
+            minimumInputVoltage (the part's nominal x (1 + tol+) must not exceed 0.9 x L_crit,
+            L_crit = Vout*(1 - Vout/Vin_min)/(2*Iout*fs), the CCM/DCM boundary at full load; the
+            requested L is no floor, its distance is a note); crm: minimumInductance and
+            maximumInductance (the tolerance band must lie inside; no switchingFrequency)} ranks
+            power inductors by loss at that point (tiebreaker lowest_operating_point_loss). The
+            waveform uses the part's tolerance-minimum L, read at Ipk off its L(I) curve at the
+            ambient (else at 20/25 degC or unstated) when it has one. Saturation: the current at
+            a 20 % L drop (that L(I) curve decides when present, else the stated Isat points at
+            the ambient, else at 20/25 degC or unstated, interpolated, never extrapolated) must
+            exceed Ipk. Thermal: the rated current at a 40 K rise (from the record's
+            rated-current points per rise) must cover Irms. Both are hard gates; a check the
+            record cannot settle is UNVERIFIED and ranks after, as does a part whose board area
+            or volume is not stated (one more UNVERIFIED item). The DCR loss Irms^2*DCR orders;
             core loss is UNVERIFIED (no catalogue model; not counted in the order). Each
             candidate carries ratings, overRating (Isat or rated current > 3x the need; ccm: L
             above 2x the required: flag only), boardArea, volume and price.

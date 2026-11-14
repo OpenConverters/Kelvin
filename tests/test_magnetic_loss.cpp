@@ -85,6 +85,7 @@ TEST_CASE("magnetic loss: no L(I) curve -> nominal L, DCR loss on the stated max
     // Owner 2026-11-14 (decision 3): its only Isat point is at 30 % drop, an upper bound of
     // the 20 % current, which cannot pass the gate (was: pass on 43 A @30 %).
     CHECK(b.saturation.unverified());
+    REQUIRE(!b.saturation.missing.empty());  // .front() below
     CHECK(b.saturation.missing.front().find("43 A at 30 % drop") != std::string::npos);
     // Decision 4: its rated current carries no temperature rise in this index (was: pass).
     CHECK(b.thermal.unverified());
@@ -100,7 +101,10 @@ TEST_CASE("magnetic loss: L at Ipk read off the record's L(I) curve, solved with
     const MagneticRow m = row("74437529203221");  // a copy: the fixture shard is static
     REQUIRE(m.bias_curve_current.size() == 18);
     const auto b = magnetic_loss(m, su36(), 166.7e-6);
-    const double r22 = 0.0002166 / 0.00022, r282 = 0.0002136 / 0.00022;
+    // The curve is read from the shared curve storage (MagneticRow::l_curves, float samples;
+    // owner 2026-11-14 wiring), so the expected ratio is formed from the stored samples.
+    const double r22 = double(0.0002166f) / double(0.00022f),
+                 r282 = double(0.0002136f) / double(0.00022f);
     const double ratio = r22 + (b.ipk - 2.2) / (2.82 - 2.2) * (r282 - r22);
     CHECK(b.ipk > 2.2);
     CHECK(b.ipk < 2.82);
@@ -127,17 +131,19 @@ TEST_CASE("magnetic loss: an operating point beyond the measured L(I) curve is n
 
 TEST_CASE("magnetic loss: an L(I) curve that repeats a current is not read, and does not throw",
           "[magnetic_loss]") {
-    // 784771331 (Wuerth 330 uH): its 20 degC L(I) curve states two readings at one current, so
-    // it cannot be read at a point. The demo on the frozen catalogue threw "Curve: x not
-    // strictly increasing" out of the whole selection before this was handled.
+    // 784771331 (Wuerth 330 uH): its 20 degC L(I) curve states the SAME reading twice (1.23 A,
+    // 141.6 uH). The demo on the frozen catalogue threw "Curve: x not strictly increasing" out of
+    // the whole selection before this was handled. Read from MagneticRow::l_curves (owner
+    // 2026-11-14 wiring) the shared curve storage keeps one copy of an identical repeat, so the
+    // curve IS read now (was: not read, Isat UNVERIFIED): it falls to 74 % of L(0) at 0.932 A
+    // and Ipk lies beyond its end (1.36 A) -> saturation FAIL. A curve stating two DIFFERENT
+    // inductances at one current is the "not read" case now (1229AS-H-2R0M, below).
     const auto b = magnetic_loss(row("784771331"), su36(), 166.7e-6);
     CHECK(b.inductance == Approx(330e-6));
-    CHECK(b.inductance_basis.find("L(I) curve is not read: Curve: x not strictly increasing") !=
+    CHECK(b.inductance_basis.find("Ipk lies beyond the record's L(I) curve at 20 degC") !=
           std::string::npos);
-    // The stated Isat points still decide: 0.9 A @10 % is only a lower bound of the 20 %
-    // current (owner 2026-11-14, decision 3), so below Ipk ~2.15 A it is UNVERIFIED (was FAIL).
-    CHECK(b.saturation.unverified());
-    CHECK(b.saturation.missing.front().find("L(I) curve is not readable") != std::string::npos);
+    CHECK(b.saturation.failed());
+    CHECK(b.saturation.basis.find("falls to 74.3 % of L(0) at 0.932 A") != std::string::npos);
 }
 
 TEST_CASE("magnetic loss: saturation and rated current checks", "[magnetic_loss]") {
@@ -167,17 +173,18 @@ TEST_CASE("magnetic op-loss selector: power inductors only, hard gates counted, 
     const json& rej = r.at("rejections");
     CHECK(rej.value("subtype_transformer", 0) == 1);               // 750811351
     CHECK(rej.value("inductance_below_required", 0) == 1);         // 750315320 (160 uH)
-    // Owner 2026-11-14 (decisions 3, 4): 744115 and 784771331 state only a 10 % Isat (a lower
-    // bound: UNVERIFIED, no longer rejected; was 2), and no rated current carries its rise
-    // (760804110 UNVERIFIED, no longer rejected; was 1).
-    CHECK(rej.value("saturation_current_below_peak", 0) == 0);
+    // Owner 2026-11-14 (decisions 3, 4): 744115 states only a 10 % Isat (a lower bound:
+    // UNVERIFIED, no longer rejected), and no rated current here carries its rise (760804110
+    // UNVERIFIED, no longer rejected; was 1). 784771331 is rejected by its L(I) curve (read
+    // from l_curves since the curves wiring; was 0 after decision 3, 2 before it).
+    CHECK(rej.value("saturation_current_below_peak", 0) == 1);
     CHECK(rej.value("rated_current_below_rms", 0) == 0);
     // Thermal is UNVERIFIED for all. One UNVERIFIED check, by DCR loss: 74437529203221,
     // MSS1812T-224, 760804110 (saturation passes); then two, by DCR loss.
     // (was: 760800301, 74437529203221, MSS1812T-224, 1130-181K-RC, PE-51516NL)
     CHECK(mpns(r) == std::vector<std::string>{"74437529203221", "MSS1812T-224", "760804110",
                                               "1130-181K-RC", "760800301", "PE-51516NL",
-                                              "744115", "784771331"});
+                                              "744115"});
     const json& top = r.at("candidates").at(0);
     CHECK(top.at("loss").at("checks").at("saturation").at("status") == "pass");
     CHECK(top.at("loss").at("terms").at("coreLoss").at("watts").is_null());
@@ -277,7 +284,10 @@ TEST_CASE("magnetic modes: CCM ripple and Ipk use the tolerance's minimum L", "[
     // 74437529203221: 220 uH, 176-264 uH stated -> 176 uH x L/L(0) at Ipk.
     const auto b = magnetic_loss(mrow("74437529203221"), su36(), 166.7e-6);
     CHECK(b.inductance_gate.str() == std::string("pass"));
-    const double r22 = 0.0002166 / 0.00022, r282 = 0.0002136 / 0.00022;
+    // The curve is read from the shared curve storage (MagneticRow::l_curves, float samples;
+    // owner 2026-11-14 wiring), so the expected ratio is formed from the stored samples.
+    const double r22 = double(0.0002166f) / double(0.00022f),
+                 r282 = double(0.0002136f) / double(0.00022f);
     const double ratio = r22 + (b.ipk - 2.2) / (2.82 - 2.2) * (r282 - r22);
     CHECK(b.inductance == Approx(176e-6 * ratio).epsilon(1e-9));
     CHECK(b.ipk == Approx(2 + 0.5 * 1e-4 / b.inductance).epsilon(1e-9));
@@ -321,27 +331,24 @@ TEST_CASE("magnetic modes: CCM over-size above 2x the required L is a flag, not 
 
 TEST_CASE("magnetic modes: DCM guaranteed maximum against the boundary at min Vin",
           "[magnetic_loss]") {
-    // L_max = 12 * (1 - 12/24) / (2 * 80 kHz * 2 A) = 18.75 uH.
+    // L_crit = 12 * (1 - 12/24) / (2 * 80 kHz * 2 A) = 18.75 uH; the gate is 0.9 x L_crit =
+    // 16.875 uH (owner 2026-11-14: a 10 % margin; was L_crit itself).
     const auto d = dcm_maximum_inductance(su_dcm());
-    CHECK(d.l_max == Approx(18.75e-6));
-    CHECK(has(d.basis, "Vout*(1 - Vout/Vin_min)/(2*fs*Iout)"));
-    // 74457115: 15 uH, 12-18 uH -> max 18 <= 18.75 pass.
+    CHECK(d.l_crit == Approx(18.75e-6));
+    CHECK(d.l_max == Approx(16.875e-6));  // was 18.75e-6
+    CHECK(has(d.basis, "Vout*(1 - Vout/Vin_min)/(2*Iout*fs)"));  // was "(2*fs*Iout)"
+    CHECK(has(d.basis, "0.9 x L_crit"));
+    // 74457115: 15 uH, 12-18 uH -> max 18 uH > 16.875 uH: FAIL under the margin (was: pass
+    // against 18.75 uH, with its DCM waveform checked here; the DCM pass path and waveform are
+    // now checked on 74457112, "magnetic curves: DCM ..." below).
     const auto p = magnetic_loss(mrow("74457115"), su_dcm(), std::nullopt);
-    CHECK(p.inductance_gate.str() == std::string("pass"));
-    // Ipk at the minimum L 12 uH: D = sqrt(2 L fs Iout Vout / (Vin (Vin-Vout))).
-    const double L = 12e-6, D = std::sqrt(2 * L * 80e3 * 2 * 12 / (36.0 * 24));
-    CHECK(p.inductance == Approx(L));
-    CHECK(p.duty == Approx(D));
-    CHECK(p.ipk == Approx(24 * D / (L * 80e3)));
-    const double d2 = p.ipk * L * 80e3 / 12;
-    CHECK(p.irms == Approx(p.ipk * std::sqrt((D + d2) / 3)));
-    // Its only Isat point (9 A at 10 %) is a lower bound of the 20 % current, above Ipk: pass.
-    CHECK(p.saturation.str() == std::string("pass"));
-    CHECK(has(p.saturation.basis, "a lower bound of the 20 % current"));
-    // 74457118: 18 uH nominal is inside, but its 21.6 uH maximum is not: FAIL.
+    CHECK(p.inductance_gate.failed());
+    CHECK(has(p.inductance_gate.basis, "guaranteed maximum 18 uH"));
+    // 74457118: 18 uH nominal already above 16.875 uH: FAIL regardless of its tolerance (was:
+    // nominal inside 18.75 uH, guaranteed maximum 21.6 uH above it).
     const auto f = magnetic_loss(mrow("74457118"), su_dcm(), std::nullopt);
     CHECK(f.inductance_gate.failed());
-    CHECK(has(f.inductance_gate.basis, "guaranteed maximum 21.6 uH"));
+    CHECK(has(f.inductance_gate.basis, "nominal 18 uH is above L_max = 0.9 x L_crit"));
     // 7447704150: 15 uH, no tolerance stated -> UNVERIFIED (ranks after), not rejected.
     const auto u = magnetic_loss(mrow("7447704150"), su_dcm(), std::nullopt);
     CHECK(u.inductance_gate.unverified());
@@ -352,13 +359,17 @@ TEST_CASE("magnetic modes: DCM guaranteed maximum against the boundary at min Vi
     c.loss_op = su_dcm();
     const json r = select_magnetic_op_loss(modes_shard(), c, 30);
     CHECK(r.at("rejections").value("inductance_above_dcm_maximum", 0) >= 2);
-    CHECK(r.at("lossOperatingPoint").at("dcmMaximumInductance").get<double>() == Approx(18.75e-6));
+    CHECK(r.at("lossOperatingPoint").at("dcmMaximumInductance").get<double>() ==
+          Approx(16.875e-6));  // was 18.75e-6
     const auto ms = mpns(r);
     const auto pos = [&](const std::string& m) {
         return std::find(ms.begin(), ms.end(), m) - ms.begin();
     };
     CHECK(pos("74457118") == static_cast<long>(ms.size()));
-    CHECK(pos("74457115") < pos("7447704150"));  // the unverified one ranks after
+    // 74457115 is rejected under the margin now (was: ranked before 7447704150, the unverified
+    // one); the pass-before-unverified order is checked on 74457112 below.
+    CHECK(pos("74457115") == static_cast<long>(ms.size()));
+    CHECK(pos("7447704150") < static_cast<long>(ms.size()));
 }
 
 TEST_CASE("magnetic modes: CrM tolerance band inside the window", "[magnetic_loss]") {
@@ -442,10 +453,12 @@ TEST_CASE("magnetic modes: thermal at a 40 K rise from the rated-current points"
     const auto l = thermal_check(rated_points_of("LPS4018-333MRC"), 0.7, 20.0, none);
     CHECK(l.str() == std::string("pass"));
     CHECK_FALSE(has(l.basis, "not at the operating ambient"));
-    // On this index the rated currents carry no rise: every record is UNVERIFIED, with why.
+    // The index carries the rated currents per rise (MagneticRow::rated_points, owner
+    // 2026-11-14 wiring; was: no rise carried, UNVERIFIED for every record): XAL5030-122MEC
+    // (1.2 uH) at the Su point carries a ripple of ~100 A, far above its 10.4 A at 40 K.
     const auto t = magnetic_loss(mrow("XAL5030-122MEC"), su36(), 1e-9).thermal;
-    CHECK(t.unverified());
-    CHECK(has(t.missing.front(), "not carried with its temperature rise"));
+    CHECK(t.failed());  // was unverified
+    CHECK(has(t.basis, "exceeds the rated current 10.4 A at a 40 K rise"));
 }
 
 TEST_CASE("magnetic modes: volume beside board area", "[magnetic_loss]") {
@@ -494,4 +507,154 @@ TEST_CASE("magnetic modes: the API requires conductionMode and its own inputs",
     CHECK(rc.at("lossOperatingPoint").at("conductionMode") == "crm");
     CHECK(rc.at("target").at("inductance").is_null());
     fs::remove_all(dir);
+}
+
+// ---- Owner decisions 2026-11-14, round 3: the L(I) curves and rated-current points of the
+// index wired in (MagneticRow::l_curves, rated_points), the DCM margin, the bounds and the size
+// rule. Every record is a REAL catalogue line (tests/fixtures/magnetics_op_curves.ndjson,
+// copied verbatim from the frozen TAS data 524a699).
+namespace {
+
+const Shard<MagneticRow>& curves_shard() {
+    static const Shard<MagneticRow> s = build_magnetic_shard(
+        std::string(KELVIN_TEST_DIR) + "/fixtures/magnetics_op_curves.ndjson");
+    return s;
+}
+
+const MagneticRow& crow(const std::string& mpn) {
+    for (const auto& r : curves_shard().rows)
+        if (r.mpn == mpn) return r;
+    throw std::runtime_error("fixture row missing: " + mpn);
+}
+
+long pos_in(const json& r, const std::string& mpn) {
+    const auto ms = mpns(r);
+    return std::find(ms.begin(), ms.end(), mpn) - ms.begin();
+}
+
+}  // namespace
+
+TEST_CASE("magnetic curves: thermal FAIL from the record's rated-current points",
+          "[magnetic_loss][magnetic_curves_op]") {
+    // MSS1583-224KED (Coilcraft 220 uH): 1.3 A at 20 K, 1.8 A at 40 K; Irms ~2.0 A at the Su
+    // point -> FAIL. DRQ127-221-R (Eaton 221.5 uH): 1.29 A at 40 K -> FAIL. Both are counted
+    // as rejections of the selector (the FAIL path is reachable from catalogue rows again).
+    const auto t = magnetic_loss(crow("MSS1583-224KED"), su36(), 166.7e-6);
+    CHECK(t.saturation.str() != std::string("fail"));
+    CHECK(t.thermal.failed());
+    CHECK(has(t.thermal.basis, "rated current 1.8 A at a 40 K rise"));
+    CHECK(has(t.thermal.basis, "ambient not stated: read as room temperature"));
+    CHECK(magnetic_loss(crow("DRQ127-221-R"), su36(), 166.7e-6).thermal.failed());
+    const json r = select_magnetic_op_loss(curves_shard(), su_constraints(), 30);
+    CHECK(r.at("rejections").value("rated_current_below_rms", 0) == 2);
+    CHECK(pos_in(r, "MSS1583-224KED") == static_cast<long>(mpns(r).size()));
+    CHECK(pos_in(r, "DRQ127-221-R") == static_cast<long>(mpns(r).size()));
+}
+
+TEST_CASE("magnetic curves: a rated current only above a 40 K rise is an upper bound",
+          "[magnetic_loss][magnetic_curves_op]") {
+    // 1110-221K (Bourns 220 uH): only 1.6 A at 50 K. The 40 K current is at most 1.6 A, below
+    // the Su Irms ~2.0 A -> FAIL (owner 2026-11-14: an upper bound fails a part already below
+    // Irms). Against 1.0 A it cannot pass -> UNVERIFIED.
+    const auto t = magnetic_loss(crow("1110-221K"), su36(), 166.7e-6).thermal;
+    CHECK(t.failed());
+    CHECK(has(t.basis, "rated current 1.6 A at a 50 K rise"));
+    CHECK(has(t.basis, "an upper bound of the 40 K current"));
+    const auto u = thermal_check(crow("1110-221K").rated_points, 1.0, std::nullopt, "none");
+    CHECK(u.unverified());
+}
+
+TEST_CASE("magnetic curves: DCM pass under the 10 % margin, waveform, requested L as a note",
+          "[magnetic_loss][magnetic_curves_op]") {
+    // 74457112 (Wuerth 12 uH, 9.6-14.4 uH): 14.4 uH <= 0.9 x 18.75 uH = 16.875 uH -> pass.
+    const auto p = magnetic_loss(crow("74457112"), su_dcm(), 15e-6);
+    CHECK(p.inductance_gate.str() == std::string("pass"));
+    CHECK(has(p.inductance_gate.basis, "guaranteed maximum 14.4 uH"));
+    CHECK(has(p.inductance_gate.basis, "0.9 x L_crit"));
+    // Ipk at the minimum L 9.6 uH: D = sqrt(2 L fs Iout Vout / (Vin (Vin-Vout))).
+    const double L = 9.6e-6, D = std::sqrt(2 * L * 80e3 * 2 * 12 / (36.0 * 24));
+    CHECK(p.inductance == Approx(L));
+    CHECK(p.duty == Approx(D));
+    CHECK(p.ipk == Approx(24 * D / (L * 80e3)));
+    const double d2 = p.ipk * L * 80e3 / 12;
+    CHECK(p.irms == Approx(p.ipk * std::sqrt((D + d2) / 3)));
+    // The requested 15 uH is no floor in DCM: its distance is a note.
+    CHECK(std::any_of(p.notes.begin(), p.notes.end(), [](const std::string& n) {
+        return has(n, "DCM: nominal 12 uH is -20 % from the requested 15 uH (not a gate");
+    }));
+    // 7447704150 (15 uH, no tolerance): UNVERIFIED, ranks after the passing 74457112.
+    MagneticConstraints c;
+    c.target_inductance = 15e-6;
+    c.loss_op = su_dcm();
+    const json r = select_magnetic_op_loss(curves_shard(), c, 30);
+    CHECK(pos_in(r, "74457112") < pos_in(r, "7447704150"));
+    CHECK(pos_in(r, "7447704150") < static_cast<long>(mpns(r).size()));
+}
+
+TEST_CASE("magnetic curves: the L(I) curve read is the one at the ambient, else room temperature",
+          "[magnetic_loss][magnetic_curves_op]") {
+    // LQM2HPZR56ME0 (Murata 0.56 uH) states curves at -55, -30, 20, 25, 85 and 125 degC.
+    InductorOperatingPoint op;
+    op.mode = ConductionMode::Ccm;
+    op.vin = 5;
+    op.vout = 1.8;
+    op.iout = 0.5;
+    op.fsw = 2e6;
+    // No ambient: two room-temperature curves (20 and 25 degC) qualify; neither is chosen.
+    const auto n = magnetic_loss(crow("LQM2HPZR56ME0"), op, 1e-9);
+    CHECK(has(n.inductance_basis, "it states 2 L(I) curves that qualify (20 degC, 25 degC)"));
+    // At 85 degC: the 85 degC curve.
+    op.ambient = 85;
+    const auto a = magnetic_loss(crow("LQM2HPZR56ME0"), op, 1e-9);
+    CHECK(has(a.inductance_basis, "read off the record's L(I) curve at 85 degC (the operating ambient)"));
+    // VLS5045EX-1R0N (TDK 1 uH): its only curve is at -20 degC -> not read; its Isat decides.
+    op.ambient.reset();
+    const auto v = magnetic_loss(crow("VLS5045EX-1R0N"), op, 1e-9);
+    CHECK(has(v.inductance_basis, "its L(I) curves are stated only at -20 degC"));
+    // 7443310470 (Wuerth 4.7 uH): its 20 degC curve starts above 0 A -> no L(0), not read.
+    const auto z = magnetic_loss(crow("7443310470"), op, 1e-9);
+    CHECK(has(z.inductance_basis, "not at 0 A, so L(0) is not stated"));
+    // 1229AS-H-2R0M (Coilcraft 2 uH): its 20 degC curve states two inductances at one current.
+    const auto d = magnetic_loss(crow("1229AS-H-2R0M"), op, 1e-9);
+    CHECK(has(d.inductance_basis, "its L(I) curve at 20 degC states two inductances at one current"));
+}
+
+TEST_CASE("magnetic curves: Isat at the operating ambient, else room temperature",
+          "[magnetic_loss][magnetic_curves_op]") {
+    // FP1005R4-R12-R (Eaton 0.12 uH): 60 A at 20 % (25 degC), 48 A at 20 % (125 degC). At
+    // Vin 5 V, Vout 1 V, fs 1 MHz, Iout 50 A: Ipk = 50 + 0.5 x 0.8 / (1 MHz x 0.12 uH) = 53.3 A.
+    InductorOperatingPoint op;
+    op.mode = ConductionMode::Ccm;
+    op.vin = 5;
+    op.vout = 1;
+    op.iout = 50;
+    op.fsw = 1e6;
+    const auto room = magnetic_loss(crow("FP1005R4-R12-R"), op, 1e-9);
+    CHECK(room.ipk == Approx(50 + 0.5 * 0.8 / (1e6 * 0.12e-6)));
+    CHECK(room.saturation.str() == std::string("pass"));
+    CHECK(has(room.saturation.basis, "Isat 60 A at 20 % inductance drop at room temperature"));
+    op.ambient = 125;
+    const auto hot = magnetic_loss(crow("FP1005R4-R12-R"), op, 1e-9);
+    CHECK(hot.saturation.failed());
+    CHECK(has(hot.saturation.basis, "Isat 48 A at 20 % inductance drop at 125 degC (the operating ambient)"));
+    op.ambient = 85;  // no points at 85 degC: room temperature, stated as such
+    const auto mid = magnetic_loss(crow("FP1005R4-R12-R"), op, 1e-9);
+    CHECK(mid.saturation.str() == std::string("pass"));
+    CHECK(has(mid.saturation.basis, "not at the operating ambient 85 degC"));
+}
+
+TEST_CASE("magnetic curves: a size that cannot be determined counts one more UNVERIFIED",
+          "[magnetic_loss][magnetic_curves_op]") {
+    // MBH6045C-471MB=P3 (Murata 470 uH) draws no length x width x height: with the same two
+    // UNVERIFIED checks as 760800301 (saturation, thermal) and a far lower DCR loss, it ranks
+    // AFTER 760800301 under the size rule (owner 2026-11-14).
+    const json r = select_magnetic_op_loss(curves_shard(), su_constraints(), 30);
+    const json* mbh = nullptr;
+    for (const auto& cd : r.at("candidates"))
+        if (cd.at("mpn") == "MBH6045C-471MB=P3") mbh = &cd;
+    REQUIRE(mbh);
+    CHECK(mbh->at("sortKey").at("sizeUnverified") == true);
+    CHECK(mbh->at("sortKey").at("unverifiedChecksOrTerms") == 3);
+    CHECK(mbh->at("boardArea").at("mm2").is_null());
+    CHECK(pos_in(r, "760800301") < pos_in(r, "MBH6045C-471MB=P3"));
 }

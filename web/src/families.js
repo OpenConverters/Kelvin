@@ -32,8 +32,9 @@ export const FAMILIES = [
       tiebreakers: ['best_fit', 'lowest_operating_point_loss'],
       // Operating-point ranking of power inductors (owner 2026-11-14): options.lossOperatingPoint
       // with its conduction mode (required, never defaulted). CCM: the Inductance above is the
-      // required minimum; DCM: the part's guaranteed maximum must stay below the CCM/DCM
-      // boundary at the minimum Vin; CrM: its tolerance band must lie inside the window.
+      // required minimum; DCM: the part's guaranteed maximum must stay below 0.9x the CCM/DCM
+      // boundary at the minimum Vin (a 10 % margin); CrM: its tolerance band must lie inside the
+      // window.
       // Saturation (20 % drop) and thermal (40 K rise) are hard gates; the DCR loss orders; core
       // loss is UNVERIFIED (no catalogue model). Nothing here is defaulted.
       lossPoint: {
