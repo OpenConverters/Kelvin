@@ -358,6 +358,9 @@ inline void extra_row_json(const ResistorRow& r, json& o) {
 // measurement conditions the record states (temperature degC, dc_bias V, frequency Hz; absent
 // when not stated). null when the record carries no usable curve.
 inline json curve_json(const CurvePts& c) {
+    // A stated curve whose axes carry no units: no points, only the marker
+    // (curve_checks::view_curve reads it as "stated, not readable").
+    if (c.unit_unstated) return json{{"unit_unstated", true}};
     if (c.empty()) return nullptr;
     json o{{"x", *c.x}, {"y", *c.y}};
     if (!std::isnan(c.temperature)) o["temperature"] = c.temperature;

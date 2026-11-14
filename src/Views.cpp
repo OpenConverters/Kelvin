@@ -134,6 +134,16 @@ CurvePts read_named_curve(const json& di, const char* name, const std::string& m
     const json* c = curves ? obj_get(*curves, name) : nullptr;
     if (!c) return {};
     if (!c->is_object()) throw std::runtime_error(mpn + ": curves." + name + " is not an object");
+    // The labels carry the units (PEAS curve: "label for the X axis, including unit"); the
+    // schema does not say an unlabelled axis is SI. A curve missing either label has no scale
+    // on record: not read, never assumed SI — marked, so the comparison says why it is
+    // UNVERIFIED (6 records in data 524a699: IPB017N10N5 cossVsVds / rdsOnVsTj, STPS30L60CT,
+    // C3D10065A and C4D10120A forwardVoltageVsCurrent / capacitanceVsVoltage).
+    if (!get_str(*c, "xLabel") || !get_str(*c, "yLabel")) {
+        CurvePts out;
+        out.unit_unstated = true;
+        return out;
+    }
     return read_xy_curve(*c, mpn + ": curves." + name);
 }
 

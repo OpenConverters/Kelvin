@@ -69,6 +69,75 @@ json mosfet_spec(const json& r) {
         s[k] = raw(r[k]);
     return s;
 }
+json raw_or_null(const json& r, const char* k) {
+    return r.contains(k) && !r[k].is_null() ? r[k] : json(nullptr);
+}
+json str_or_null_json(const json& r, const char* k) {
+    const std::string v = r.contains(k) && r[k].is_string() ? r[k].get<std::string>() : "";
+    return v.empty() ? json(nullptr) : json(v);
+}
+// web/src/crossref.js diode spec, curves included (v22).
+json diode_spec(const json& r) {
+    json s = base(r);
+    s["vrrm"] = nz(r["vrrm_rated"]);
+    s["if_avg"] = nz(r["if_avg_rated"]);
+    s["vf"] = nz(r["vf_typ"]);
+    s["power_dissipation"] = nz(r["power_dissipation"]);
+    s["qrr"] = raw_or_null(r, "qrr");
+    s["trr"] = raw_or_null(r, "trr");
+    s["technology"] = r.value("technology", "");
+    s["die_configuration"] = str_or_null_json(r, "die_configuration");
+    s["internal_connection"] = str_or_null_json(r, "internal_connection");
+    s["number_of_elements"] = nz(r["number_of_elements"]);
+    s["vz_min_V"] = nz(r["vz_min"]);
+    s["vz_max_V"] = nz(r["vz_max"]);
+    s["vz_tolerance_pct"] = r.contains("vz_tolerance") && r["vz_tolerance"].is_number()
+                                ? json(r["vz_tolerance"].get<double>() * 100)
+                                : json(nullptr);
+    s["clamping_voltage"] = nz(r["clamping_voltage"]);
+    s["clamping_current"] = nz(r["clamping_current"]);
+    s["peak_pulse_power"] = nz(r["peak_pulse_power"]);
+    s["peak_pulse_current"] = nz(r["peak_pulse_current"]);
+    s["junction_capacitance"] = nz(r["junction_capacitance"]);
+    s["junction_capacitance_vr"] = raw_or_null(r, "junction_capacitance_vr");
+    s["vf_test_current"] = nz(r["vf_test_current"]);
+    for (const char* k : {"vf_curve", "ir_curve", "cj_curve"}) s[k] = raw(r[k]);
+    s["clamping_waveform"] = r.value("clamping_waveform", "");
+    s["peak_pulse_power_waveform"] = r.value("peak_pulse_power_waveform", "");
+    s["peak_pulse_current_waveform"] = r.value("peak_pulse_current_waveform", "");
+    s["tj_max"] = raw_or_null(r, "tj_max");
+    s["qualification"] = r.value("qualification", "");
+    return s;
+}
+// web/src/crossref.js connector spec, the derating curve included (v22).
+json connector_spec(const json& r) {
+    json s = base(r);
+    s["family"] = r.value("family", "");
+    s["positions"] = nz(r["positions"]);
+    s["polarity"] = str_or_null_json(r, "polarity");
+    s["interface_standard"] = str_or_null_json(r, "interface_standard");
+    s["pitch_mm"] = r.contains("pitch") && r["pitch"].is_number() && r["pitch"].get<double>() > 0
+                        ? json(r["pitch"].get<double>() * 1e3)
+                        : json(nullptr);
+    s["rows"] = nz(r["rows"]);
+    s["rated_current_A"] = nz(r["rated_current"]);
+    s["rated_voltage_V"] = nz(r["rated_voltage"]);
+    s["current_ambient_curve"] = raw(r["current_ambient_curve"]);
+    s["temp_min_C"] = raw_or_null(r, "temp_min_c");
+    s["temp_max_C"] = raw_or_null(r, "temp_max_c");
+    s["contact_plating"] = str_or_null_json(r, "contact_plating");
+    s["termination"] = str_or_null_json(r, "termination");
+    s["mounting"] = str_or_null_json(r, "mount");
+    s["orientation"] = str_or_null_json(r, "orientation");
+    const std::string pl = r.value("pluggable", "");
+    s["pluggable"] = pl == "true" ? json(true) : pl == "false" ? json(false) : json(nullptr);
+    s["actuator_type"] = str_or_null_json(r, "actuator_type");
+    s["shell_size"] = str_or_null_json(r, "shell_size");
+    s["coding"] = str_or_null_json(r, "coding");
+    s["coupling_type"] = str_or_null_json(r, "coupling_type");
+    s["mating_cycles"] = nz(r["mating_cycles"]);
+    return s;
+}
 std::string fixture(const char* f) {
     return std::string(KELVIN_TEST_DIR) + "/fixtures/curves_ff_" + f;
 }
@@ -77,13 +146,22 @@ const json& row(const std::string& family, const std::string& mpn) {
         auto sh = kelvin::build_mosfet_shard(fixture("mosfets.ndjson"));
         return kelvin::browse::browse_rows(sh, json{{"limit", 1000}})["rows"];
     }();
-    const json* rows = &mos;
-    (void)family;
+    static const json dio = [] {
+        auto sh = kelvin::build_diode_shard(fixture("diodes.ndjson"));
+        return kelvin::browse::browse_rows(sh, json{{"limit", 1000}})["rows"];
+    }();
+    static const json con = [] {
+        auto sh = kelvin::build_connector_shard(fixture("connectors.ndjson"));
+        return kelvin::browse::browse_rows(sh, json{{"limit", 1000}})["rows"];
+    }();
+    const json* rows = family == "mosfet" ? &mos : family == "diode" ? &dio : &con;
     for (const auto& r : *rows)
         if (r.value("mpn", "") == mpn) return r;
     throw std::runtime_error("fixture has no " + family + " record " + mpn);
 }
 json spec(const std::string& family, const std::string& mpn) {
+    if (family == "diode") return diode_spec(row(family, mpn));
+    if (family == "connector") return connector_spec(row(family, mpn));
     return mosfet_spec(row(family, mpn));
 }
 json rank(const std::string& family, const std::string& orig,
@@ -159,4 +237,170 @@ TEST_CASE("curves ff 2: MOSFET Rds(on)(Id) and Rds(on)(Tj) curves compared",
     REQUIRE(!better.is_null());
     CHECK(verdict_of(better, "rds_on_vs_id") == "pass");
     CHECK(verdict_of(better, "rds_on_vs_tj") == "pass");
+}
+
+// 3. MOSFET gate-charge curve, read as the charge to reach each Vgs. BSC066N06NS (17.6 nC to
+// ~10 V) against BSC034N06NS (33.9 nC): ~1.9x more charge below and above the Miller plateau,
+// but BSC034N06NS's plateau sits at 4.71 V and BSC066N06NS's at 5.17 V, so at 4.737 V the
+// substitute must first pass its whole plateau (17.95 nC) where the original is still on its
+// rise (6.08 nC): 2.95x, beyond the Qg spec's 2x -> fail (the worst point decides). BSC012N06NS's curve starts at 21.7 nC / 2.6 V (~6x the charge
+// BSC066N06NS needs there -> fail): the charges are compared only at the gate voltages both
+// curves reach.
+TEST_CASE("curves ff 3: MOSFET gate-charge curves compared as charge to reach Vgs",
+          "[crossref][curves][curves-ff]") {
+    const json r = rank("mosfet", "BSC066N06NS", {"BSC034N06NS", "BSC012N06NS"});
+    const json more = find(r, "BSC034N06NS");
+    REQUIRE(!more.is_null());
+    CHECK(verdict_of(more, "qg_vs_vgs") == "fail");
+    CHECK(has_note(more, "gate charge to reach Vgs (Qg(Vgs), from the gate-charge curve): "
+                         "compared on both curves over 0.06103 V to 9.988 V"));
+    CHECK(has_note(more, "worst at 4.737 V: substitute 17.95 nC against the original's 6.084 nC"));
+    const json big = find(r, "BSC012N06NS");
+    REQUIRE(!big.is_null());
+    CHECK(verdict_of(big, "qg_vs_vgs") == "fail");
+    const json less = find(rank("mosfet", "BSC034N06NS", {"BSC066N06NS"}), "BSC066N06NS");
+    REQUIRE(!less.is_null());
+    CHECK(verdict_of(less, "qg_vs_vgs") == "pass");
+}
+
+// 4. MOSFET drain-current ratings against ambient temperature (electrical.ambientRatings), one
+// curve per mounting / time base / Vgs, compared only under the same conditions and judged with
+// the Id rating's bands (higher is better, WARN down to 0.7x). Nexperia NX7002BKS (0.24 A at
+// 25 degC, 0.15 A at 100 degC) and NX138BKS (0.21 A / 0.135 A), both 0.33 A as scalar Id and
+// both stated on "...Printed-Circuit Board (PCB), single-sided copper, tin-plated and mounting
+// pad for drain 1 cm2": NX138BKS for NX7002BKS is 0.875x at 25 degC -> warn, the reverse passes.
+// NX138BK states its rating on "...FR4 PCB, ..." — a different free-text condition ->
+// UNVERIFIED. The AOS duals (ABT #2388) state their per-die Id only as ambient ratings: AO4832
+// (10 A / 8 A) against AO4822 (8 A / 6.5 A) -> warn; the curve never stands in for the scalar Id.
+TEST_CASE("curves ff 4: MOSFET Id against ambient temperature compared under common conditions",
+          "[crossref][curves][curves-ff]") {
+    const json r = rank("mosfet", "NX7002BKS", {"NX138BKS", "NX138BK"});
+    const json lower = find(r, "NX138BKS");
+    REQUIRE(!lower.is_null());
+    CHECK(verdict_of(lower, "id_vs_ambient") == "warn");
+    CHECK(verdict_of(lower, "id") == "pass");
+    CHECK(has_note(lower, "drain current rating against ambient temperature (Id(Ta)): compared on "
+                          "both curves over 25 degC to 100 degC"));
+    const json higher = find(rank("mosfet", "NX138BKS", {"NX7002BKS"}), "NX7002BKS");
+    REQUIRE(!higher.is_null());
+    CHECK(verdict_of(higher, "id_vs_ambient") == "pass");
+    const json other = find(r, "NX138BK");
+    REQUIRE(!other.is_null());
+    CHECK(verdict_of(other, "id_vs_ambient") == "unverified");
+    CHECK(has_note(other, "drain current rating against ambient temperature (Id(Ta)): no rating "
+                          "of the substitute is stated under the conditions of one of the "
+                          "original's"));
+    const json dual = find(rank("mosfet", "AO4832", {"AO4822"}), "AO4822");
+    REQUIRE(!dual.is_null());
+    CHECK(verdict_of(dual, "id_vs_ambient") == "warn");
+    CHECK(verdict_of(dual, "id") != "warn");  // the scalar Id is not read off the curve
+    CHECK(verdict_of(dual, "id") != "pass");
+}
+
+// 5. Diode Vf(If) curves (log-log, judged with the Vf spec: lower is better, 1.2x), and the Vf
+// basis resolved on a 25 degC curve. Vishay 60 V Schottkys, every curve at 25 degC unless named:
+//  * VT30L60C-M3/4W -> V30D60CLHM3_A/I: up to 1.10x at 40.9 A -> warn; the reverse passes.
+//  * V30D60CLHM3_A/I (0.61 V at 15 A) -> V40PW60C-M3/I (0.68 V at 20 A): its curve reads
+//    0.5565 V at 15 A -> the scalar Vf passes on the original's current (no vf_basis row).
+//  * -> V40DM60C-M3/I (0.65 V at 20 A, its curve at 125 degC): the curves are UNVERIFIED
+//    (different temperature); the basis is settled on the ORIGINAL's 25 degC curve, 0.5791 V at
+//    20 A, against 0.65 V (1.12x) -> warn.
+//  * -> STPS30L60CT: its curves carry no axis labels, so their scale is not on record: not read.
+TEST_CASE("curves ff 5: diode Vf(If) curves compared; a 25 degC curve resolves the Vf basis",
+          "[crossref][curves][curves-ff]") {
+    const json up = find(rank("diode", "VT30L60C-M3/4W", {"V30D60CLHM3_A/I"}), "V30D60CLHM3_A/I");
+    REQUIRE(!up.is_null());
+    CHECK(verdict_of(up, "vf_vs_if") == "warn");
+    CHECK(has_note(up, "forward voltage against forward current (Vf(If)): compared on both curves "
+                       "over 0.1028 A to 51.16 A"));
+    const json r = rank("diode", "V30D60CLHM3_A/I",
+                        {"VT30L60C-M3/4W", "V40PW60C-M3/I", "V40DM60C-M3/I", "STPS30L60CT"});
+    const json down = find(r, "VT30L60C-M3/4W");
+    REQUIRE(!down.is_null());
+    CHECK(verdict_of(down, "vf_vs_if") == "pass");
+    const json pw = find(r, "V40PW60C-M3/I");
+    REQUIRE(!pw.is_null());
+    CHECK(verdict_of(pw, "vf") == "pass");
+    CHECK(verdict_of(pw, "vf_basis") == "");
+    CHECK(has_note(pw, "forward voltage compared at the original's 15 A: the substitute's 25 degC "
+                       "Vf(If) curve reads 0.5565 V there"));
+    const json dm = find(r, "V40DM60C-M3/I");
+    REQUIRE(!dm.is_null());
+    CHECK(verdict_of(dm, "vf_vs_if") == "unverified");
+    CHECK(verdict_of(dm, "vf") == "warn");
+    CHECK(verdict_of(dm, "vf_basis") == "");
+    CHECK(has_note(dm, "forward voltage compared at the substitute's 20 A: the original's 25 degC "
+                       "Vf(If) curve reads 0.5791 V there"));
+    const json st = find(r, "STPS30L60CT");
+    REQUIRE(!st.is_null());
+    CHECK(verdict_of(st, "vf_vs_if") == "unverified");
+    CHECK(has_note(st, "forward voltage against forward current (Vf(If)): the substitute's curve "
+                       "states no axis units"));
+}
+
+// 6. Diode Ir(Vr) curves (judged with the quiescent-current spec, borrowed: lower is better, 3x)
+// and Cj(Vr) curves (the junction-capacitance spec, 2x), both linear in Vr.
+//  * SS10P4CHM3_A/H -> SS8P3CLHM3_A/H (25 degC both): up to 1.76x -> warn; -> SS12P3LHM3_A/H:
+//    5.5x at 30 V -> fail; -> SS6P4CHM3_A/H (its curve at 125 degC) -> UNVERIFIED.
+//  * VS-3C40CP07L-M3 -> VS-3C20ET07T-M3: the same Cj(Vr) curve digitised twice, never above the
+//    original's -> pass. The other way round the substitute is 1001 pF against 1000 pF at
+//    0.31 V: above the original's, inside 2x -> warn (the rule has no digitisation tolerance).
+//  * Cj basis: STPS30L60CT (1.5 nF at 5 V) -> VS-3C20ET07T-M3 (240 pF at no stated bias): its
+//    Cj(Vr) curve reads 537.9 pF at 5 V -> pass. C3D10065A (280 pF at 0 V) -> VS-3C20ET07T-M3:
+//    its curve starts at 0.1 V, so 0 V is outside it -> never extrapolated, the basis stays
+//    UNVERIFIED.
+TEST_CASE("curves ff 6: diode Ir(Vr) and Cj(Vr) curves compared; a Cj curve resolves the bias",
+          "[crossref][curves][curves-ff]") {
+    const json r = rank("diode", "SS10P4CHM3_A/H",
+                        {"SS8P3CLHM3_A/H", "SS12P3LHM3_A/H", "SS6P4CHM3_A/H"});
+    const json a = find(r, "SS8P3CLHM3_A/H");
+    REQUIRE(!a.is_null());
+    CHECK(verdict_of(a, "ir_vs_vr") == "warn");
+    CHECK(has_note(a, "reverse current against reverse voltage (Ir(Vr)): compared on both curves "
+                      "over 4.013 V to 30.01 V"));
+    const json b = find(r, "SS12P3LHM3_A/H");
+    REQUIRE(!b.is_null());
+    CHECK(verdict_of(b, "ir_vs_vr") == "fail");
+    const json hot = find(r, "SS6P4CHM3_A/H");
+    REQUIRE(!hot.is_null());
+    CHECK(verdict_of(hot, "ir_vs_vr") == "unverified");
+    CHECK(has_note(hot, "measured under different conditions (original: T 25 degC; substitute: "
+                        "T 125 degC)"));
+    const json cj = find(rank("diode", "VS-3C40CP07L-M3", {"VS-3C20ET07T-M3"}), "VS-3C20ET07T-M3");
+    REQUIRE(!cj.is_null());
+    CHECK(verdict_of(cj, "cj_vs_vr") == "pass");
+    const json cj2 = find(rank("diode", "VS-3C20ET07T-M3", {"VS-3C40CP07L-M3"}), "VS-3C40CP07L-M3");
+    REQUIRE(!cj2.is_null());
+    CHECK(verdict_of(cj2, "cj_vs_vr") == "warn");
+    CHECK(has_note(cj2, "worst at 0.3093 V: substitute 1001 pF against the original's 1000 pF"));
+    const json bias = find(rank("diode", "STPS30L60CT", {"VS-3C20ET07T-M3"}), "VS-3C20ET07T-M3");
+    REQUIRE(!bias.is_null());
+    CHECK(verdict_of(bias, "junction_capacitance") == "pass");
+    CHECK(verdict_of(bias, "junction_capacitance_basis") == "");
+    CHECK(has_note(bias, "junction capacitance compared at the original's 5 V: the substitute's "
+                         "Cj(Vr) curve reads 537.9 pF there"));
+    const json zero = find(rank("diode", "C3D10065A", {"VS-3C20ET07T-M3"}), "VS-3C20ET07T-M3");
+    REQUIRE(!zero.is_null());
+    CHECK(verdict_of(zero, "junction_capacitance_basis") == "unverified");
+}
+
+// 7. Connector per-contact current derating (derating.currentVsAmbient, a FRACTION of the rated
+// current): each side's curve scaled by its own rated current, judged with the rated-current
+// spec (higher is better, WARN down to 0.9x). TE Economy Power 2.5 PCB headers, 4 positions,
+// all on the same derating shape at a 30 K contact rise: right-angle 1744426-4 (4.5 A) ->
+// 1744446-4 (4.2 A) 0.93x -> warn; vertical 1744439-4 (4.2 A) -> 1744418-4 (3.0 A) 0.71x ->
+// fail; the reverse passes.
+TEST_CASE("curves ff 7: connector current derating curves compared in amperes",
+          "[crossref][curves][curves-ff]") {
+    const json w = find(rank("connector", "1744426-4", {"1744446-4"}), "1744446-4");
+    REQUIRE(!w.is_null());
+    CHECK(verdict_of(w, "current_vs_ambient") == "warn");
+    CHECK(has_note(w, "per-contact current rating against ambient temperature (derating curve x "
+                      "rated current): compared on both curves over 0 degC to 106.5 degC"));
+    const json f = find(rank("connector", "1744439-4", {"1744418-4"}), "1744418-4");
+    REQUIRE(!f.is_null());
+    CHECK(verdict_of(f, "current_vs_ambient") == "fail");
+    const json p = find(rank("connector", "1744418-4", {"1744439-4"}), "1744439-4");
+    REQUIRE(!p.is_null());
+    CHECK(verdict_of(p, "current_vs_ambient") == "pass");
 }

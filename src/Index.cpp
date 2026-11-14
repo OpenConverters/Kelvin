@@ -250,6 +250,7 @@ struct WriteAr {
         strvec(c.cond_keys);  // further conditions (MOSFET / diode / connector curves)
         dblvec(c.cond_vals);
         str(c.cond_text);
+        boolean(c.unit_unstated);
     }
 };
 
@@ -338,6 +339,7 @@ struct ReadAr {
         strvec(c.cond_keys);  // further conditions (MOSFET / diode / connector curves)
         dblvec(c.cond_vals);
         str(c.cond_text);
+        boolean(c.unit_unstated);
     }
 };
 

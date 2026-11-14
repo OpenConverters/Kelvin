@@ -38,8 +38,16 @@ namespace kelvin::crossref::curve_checks {
 
 using json = nlohmann::json;
 
-// view[key] as one curve (the shared spec shape, curve_from_spec); nullopt when absent / null.
+// A curve the record states but whose axes carry no units (the row's {"unit_unstated": true},
+// Browse curve_json): stated, never read.
+inline bool unit_unstated(const json& view, const char* key) {
+    const auto it = view.find(key);
+    return it != view.end() && it->is_object() && it->value("unit_unstated", false);
+}
+// view[key] as one curve (the shared spec shape, curve_from_spec); nullopt when absent / null
+// or stated without units (unit_unstated).
 inline std::optional<SpecCurve> view_curve(const json& view, const char* key) {
+    if (unit_unstated(view, key)) return std::nullopt;
     return curve_from_spec(view, key);
 }
 // view[key] as a list of curves (ambient ratings); empty when absent / null.
@@ -62,7 +70,7 @@ inline std::vector<SpecCurve> view_curves(const json& view, const char* key) {
 // samples in Qg order, keeping each one whose Vgs exceeds every earlier one (the Miller plateau
 // and digitisation wobble do not raise Vgs, so they are not points of this function; nothing is
 // invented — every kept point is a stated sample, x and y swapped). nullopt when fewer than two
-// such points remain.
+// such points remain (the caller reports that curve UNVERIFIED with a note).
 inline std::optional<SpecCurve> charge_to_reach_vgs(const SpecCurve& vgs_of_qg) {
     std::vector<double> x, y;
     double max_v = -HUGE_VAL;
@@ -249,7 +257,9 @@ inline std::optional<double> condition(const SpecCurve& c, const char* key) {
 // the quiescent-current spec's (the closest: an unwanted current drawn, lower is better); the
 // ambient drain current takes the Id rating's bands (critical_ratings: WARN down to 0.7x).
 // Interpolation: linear where the axis the data is stated on is linear (Vds from 0 V, Id,
-// temperature, Qg); log-log for Vf(If) and Ir(Vr) / Cj(Vr), whose samples are spaced in decades.
+// temperature, Vgs, reverse voltage — the Ir(Vr) and Cj(Vr) samples run linearly in Vr, and a
+// Cj(Vr) curve may start at 0 V, which no logarithmic axis holds); log-log for Vf(If), whose
+// current samples are spaced in decades.
 inline const std::vector<std::pair<const char*, Quantity>>& mosfet_quantities() {
     static const std::vector<std::pair<const char*, Quantity>> q = {
         {"ciss_curve",
@@ -276,6 +286,78 @@ inline const std::vector<std::pair<const char*, Quantity>>& mosfet_quantities() 
     return q;
 }
 
+// The gate-charge curve, read as the charge to reach each Vgs (charge_to_reach_vgs) and judged
+// with the Qg spec's bands at the gate voltages both curves reach.
+inline const Quantity& gate_charge_quantity() {
+    static const Quantity q{"qg_vs_vgs",
+                            "gate charge to reach Vgs (Qg(Vgs), from the gate-charge curve)",
+                            "V", 1.0, "nC", 1e9,
+                            {"qg", Dir::Lower, 2.0, std::nullopt, false, false, nullptr},
+                            "the Qg spec", Interp::Linear};
+    return q;
+}
+// The ambient drain-current ratings (a set per record: one per mounting / time base / Vgs),
+// judged with the Id rating's bands (critical_ratings: higher is better, WARN down to 0.7x).
+// Compared only curve against curve: a rating read off them never stands in for the scalar Id.
+inline const Quantity& id_ambient_quantity() {
+    static const Quantity q{"id_vs_ambient",
+                            "drain current rating against ambient temperature (Id(Ta))", "degC",
+                            1.0, "A", 1.0,
+                            {"id", Dir::Higher, 0.7, std::nullopt, false, false, nullptr},
+                            "the Id rating", Interp::Linear};
+    return q;
+}
+inline const std::vector<std::pair<const char*, Quantity>>& diode_quantities() {
+    static const std::vector<std::pair<const char*, Quantity>> q = {
+        {"vf_curve",
+         {"vf_vs_if", "forward voltage against forward current (Vf(If))", "A", 1.0, "V", 1.0,
+          {"vf", Dir::Lower, 1.2, std::nullopt, false, false, nullptr}, "the Vf spec",
+          Interp::LogLog}},
+        // No reverse-current spec exists: the quiescent-current spec's bands are borrowed (the
+        // closest: an unwanted current drawn, lower is better, 3x).
+        {"ir_curve",
+         {"ir_vs_vr", "reverse current against reverse voltage (Ir(Vr))", "V", 1.0, "uA", 1e6,
+          {"quiescent_current", Dir::Lower, 3.0, std::nullopt, false, false, nullptr},
+          "the quiescent-current spec (borrowed: no reverse-current spec exists)",
+          Interp::Linear}},
+        {"cj_curve",
+         {"cj_vs_vr", "junction capacitance against reverse voltage (Cj(Vr))", "V", 1.0, "pF",
+          1e12, {"junction_capacitance", Dir::Lower, 2.0, std::nullopt, false, false, nullptr},
+          "the junction-capacitance spec", Interp::Linear}},
+    };
+    return q;
+}
+// A connector's derating curve is a FRACTION of the per-contact rated current; in amperes it is
+// that fraction times the record's own rated current, judged with the rated-current spec.
+inline const Quantity& connector_current_quantity() {
+    static const Quantity q{
+        "current_vs_ambient",
+        "per-contact current rating against ambient temperature (derating curve x rated current)",
+        "degC", 1.0, "A", 1.0,
+        {"rated_current_A", Dir::Higher, 0.9, std::nullopt, false, false, nullptr},
+        "the rated-current spec", Interp::Linear};
+    return q;
+}
+
+// Why a curve both records state cannot be compared before any value is read, or nullopt:
+// one stated without axis units (unit_unstated) has no scale on record.
+inline std::optional<Result> unscaled(const json& orig, const json& cand, const char* key,
+                                      const Quantity& q) {
+    const bool o = unit_unstated(orig, key), s = unit_unstated(cand, key);
+    if (!o && !s) return std::nullopt;
+    Result r;
+    r.note = std::string(q.what) + ": the " +
+             (o && s ? "original's and the substitute's curves state"
+                     : o ? "original's curve states" : "substitute's curve states") +
+             " no axis units (no xLabel / yLabel on record), so the scale is not known — not "
+             "compared; confirm from the datasheet";
+    return r;
+}
+inline bool states(const json& view, const char* key) {
+    const auto it = view.find(key);
+    return it != view.end() && !it->is_null();
+}
+
 // Every curve comparison for one candidate, in a fixed order: (row, result). Only curves BOTH
 // records state produce a row.
 struct CurveRow {
@@ -284,11 +366,72 @@ struct CurveRow {
 };
 inline std::vector<CurveRow> run(const std::string& cat, const json& orig, const json& cand) {
     std::vector<CurveRow> out;
+    auto one = [&](const char* key, const Quantity& q) {
+        if (!states(orig, key) || !states(cand, key)) return;
+        if (auto u = unscaled(orig, cand, key, q)) {
+            out.push_back({q.row, *u});
+            return;
+        }
+        out.push_back({q.row, compare_pair(*view_curve(orig, key), *view_curve(cand, key), q)});
+    };
     if (cat == "mosfet") {
-        for (const auto& [key, q] : mosfet_quantities()) {
-            const auto o = view_curve(orig, key), s = view_curve(cand, key);
-            if (!o || !s) continue;
-            out.push_back({q.row, compare_pair(*o, *s, q)});
+        for (const auto& [key, q] : mosfet_quantities()) one(key, q);
+        const Quantity& qg = gate_charge_quantity();
+        if (states(orig, "qg_curve") && states(cand, "qg_curve")) {
+            if (auto u = unscaled(orig, cand, "qg_curve", qg)) {
+                out.push_back({qg.row, *u});
+            } else {
+                const auto o = charge_to_reach_vgs(*view_curve(orig, "qg_curve"));
+                const auto s = charge_to_reach_vgs(*view_curve(cand, "qg_curve"));
+                if (o && s) {
+                    out.push_back({qg.row, compare_pair(*o, *s, qg)});
+                } else {
+                    Result r;
+                    r.note = std::string(qg.what) + ": the " +
+                             (!o && !s ? "original's and the substitute's gate-charge curves do"
+                                       : !o ? "original's gate-charge curve does"
+                                            : "substitute's gate-charge curve does") +
+                             " not rise through two gate voltages, so no charge-to-reach-Vgs "
+                             "curve can be read off it — not compared; confirm from the datasheet";
+                    out.push_back({qg.row, r});
+                }
+            }
+        }
+        const auto os = view_curves(orig, "id_ambient_curves");
+        const auto ss = view_curves(cand, "id_ambient_curves");
+        if (!os.empty() && !ss.empty())
+            out.push_back({id_ambient_quantity().row, compare_sets(os, ss, id_ambient_quantity())});
+    } else if (cat == "diode") {
+        for (const auto& [key, q] : diode_quantities()) one(key, q);
+    } else if (cat == "connector") {
+        const Quantity& q = connector_current_quantity();
+        const char* key = "current_ambient_curve";
+        if (states(orig, key) && states(cand, key)) {
+            auto rated = [](const json& v) -> std::optional<double> {
+                const auto it = v.find("rated_current_A");
+                if (it == v.end() || !it->is_number() || !(it->get<double>() > 0))
+                    return std::nullopt;
+                return it->get<double>();
+            };
+            const auto oa = rated(orig), sa = rated(cand);
+            if (!oa || !sa) {
+                Result r;
+                r.note = std::string(q.what) + ": the " +
+                         (!oa && !sa ? "original and the substitute state"
+                                     : !oa ? "original states" : "substitute states") +
+                         " no per-contact rated current, so the derating fraction has no "
+                         "amperes to scale — not compared; confirm from the datasheet";
+                out.push_back({q.row, r});
+            } else {
+                auto in_amps = [](SpecCurve c, double rated) {
+                    std::vector<double> y = c.curve.y;
+                    for (double& v : y) v *= rated;
+                    c.curve = Curve(c.curve.x, std::move(y));
+                    return c;
+                };
+                out.push_back({q.row, compare_pair(in_amps(*view_curve(orig, key), *oa),
+                                                   in_amps(*view_curve(cand, key), *sa), q)});
+            }
         }
     }
     return out;

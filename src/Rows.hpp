@@ -97,6 +97,11 @@ struct CurvePts {
     std::vector<std::string> cond_keys;
     std::vector<double> cond_vals;
     std::string cond_text;
+    // A datasheetInfo.curves entry stating no axis label (xLabel / yLabel, which carry the
+    // units): its scale is not on record, so its points are NOT read (x / y stay empty) and this
+    // marks that the record states the curve all the same — the comparison reports it
+    // UNVERIFIED with a note instead of taking the numbers as SI on trust.
+    bool unit_unstated = false;
     bool empty() const { return !x || x->empty(); }
 };
 
