@@ -153,3 +153,21 @@ TEST_CASE("curves: a bead's R(f) and X(f) are compared with the other's",
     CHECK(xn.find("inductive band X > 0 only") != std::string::npos);
     CHECK(c["status"] == "partial");
 }
+
+// 4. Owner 2026-11-14: impedance-type curves are judged only in the useful band — from the
+// original's rating frequency (none is stated on a magnetic record: 1 MHz) up to its
+// self-resonance / impedance peak. Two Murata 4.7 uH 1210 wirewound inductors, neither
+// stating an SRF, both swept to GHz: LQW32FT4R7M0H peaks at 258 MHz; above its resonance it
+// is a capacitor, and there LQW32FT4R7M8H's |Z| is 0.43x (1.35 GHz). Those points are shown
+// in the note but not graded; below the peak the substitute stays above 0.85x (PASS).
+TEST_CASE("curves: |Z|(f) is graded only up to the original's impedance peak",
+          "[magcurves][crossref][impedance][band]") {
+    const auto o = row_of("LQW32FT4R7M0H"), s = row_of("LQW32FT4R7M8H");
+    REQUIRE(std::isnan(o.srf));
+    const json c = rank("magnetic", spec_of(o), spec_of(s));
+    INFO(c.dump());
+    CHECK(verdict_of(c, "impedance_curve") == "pass");
+    const std::string note = note_with(c, "|Z|(f) compared on both curves");
+    CHECK(note.find("useful band 1 MHz-258 MHz") != std::string::npos);
+    CHECK(note.find("to the original's |Z| peak") != std::string::npos);
+}
