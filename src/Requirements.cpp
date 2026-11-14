@@ -256,6 +256,23 @@ const char* to_string(SwitchPosition p) {
     return "";
 }
 
+// ---- diode position <-> string (owner 2026-11-14) -------------------------
+DiodePosition diode_position_from_string(const std::string& s) {
+    if (s == "buckFreewheel") return DiodePosition::BuckFreewheel;
+    if (s == "boostOutput" || s == "flybackRectifier" || s == "forwardRectifier" ||
+        s == "forwardFreewheel" || s == "buckHighSide" || s == "buckLowSide" ||
+        s == "synchronousRectifier")
+        throw InvalidOptions("lossOperatingPoint.position '" + s +
+                             "' is not modelled for a diode (only buckFreewheel)");
+    throw InvalidOptions("unknown diode lossOperatingPoint.position: " + s);
+}
+const char* to_string(DiodePosition p) {
+    switch (p) {
+        case DiodePosition::BuckFreewheel: return "buckFreewheel";
+    }
+    return "";
+}
+
 // ---- original tiebreaker <-> string ----------------------------------------
 const char* to_string(MosfetTiebreaker t) {
     switch (t) {
@@ -274,6 +291,7 @@ const char* to_string(DiodeTiebreaker t) {
         case DiodeTiebreaker::LowestQrr: return "lowest_qrr";
         case DiodeTiebreaker::HighestVrrmMargin: return "highest_vrrm_margin";
         case DiodeTiebreaker::HighestIfMargin: return "highest_if_margin";
+        case DiodeTiebreaker::LowestOperatingPointLoss: return "lowest_operating_point_loss";
     }
     return "";
 }
@@ -301,6 +319,7 @@ DiodeTiebreaker diode_tiebreaker_from_string(const std::string& s) {
     if (s == "lowest_qrr") return DiodeTiebreaker::LowestQrr;
     if (s == "highest_vrrm_margin") return DiodeTiebreaker::HighestVrrmMargin;
     if (s == "highest_if_margin") return DiodeTiebreaker::HighestIfMargin;
+    if (s == "lowest_operating_point_loss") return DiodeTiebreaker::LowestOperatingPointLoss;
     throw InvalidOptions("unknown diode tiebreaker: " + s);
 }
 CapacitorTiebreaker capacitor_tiebreaker_from_string(const std::string& s) {

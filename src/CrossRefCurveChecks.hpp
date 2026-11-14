@@ -72,17 +72,7 @@ inline std::optional<SpecCurve> view_curve(const json& view, const char* key) {
 }
 // view[key] as a list of curves (ambient ratings); empty when absent / null.
 inline std::vector<SpecCurve> view_curves(const json& view, const char* key) {
-    std::vector<SpecCurve> out;
-    const auto it = view.find(key);
-    if (it == view.end() || it->is_null()) return out;
-    if (!it->is_array())
-        throw std::invalid_argument(std::string("'") + view.value("mpn", "") + "' " + key +
-                                    " must be an array of curves");
-    for (const auto& c : *it) {
-        const json one{{"c", c}};
-        out.push_back(*curve_from_spec(one, "c"));
-    }
-    return out;
+    return curves_from_spec(view, key);  // the shared list reader (CrossRefCurves.hpp)
 }
 
 // The gate-charge curve is stated as Vgs against Qg; the Qg spec judges CHARGE, at the gate

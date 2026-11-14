@@ -1,6 +1,8 @@
 #include "MfrPolicy.hpp"
 #include "KelvinApi.hpp"
 
+#include <set>
+
 #include <sys/stat.h>
 
 #include <cstdio>
@@ -435,7 +437,55 @@ json Engine::select(const std::string& category, const json& req, const json& op
         DiodeConstraints c = diode_constraints(req);
         c.exclude_discontinued = opt_bool(options, "excludeDiscontinued", true);
         if (auto q = opt_num(options, "qrrMax")) c.qrr_max = q;
-        DiodeTiebreaker tb = DiodeTiebreaker::LowestVf;
+        // Gross over-rating: flagged on every recommendation served, ranked as a tier except
+        // under the operating-point loss and the Vrrm / If margin rankings (owner 2026-11-14).
+        c.over_rating_tier = true;
+        // The converter operating point for lowest_operating_point_loss (owner 2026-11-14).
+        // Every value is the caller's, nothing defaulted. A key that belongs to another
+        // family's operating point (gateDriveVoltage ...) is refused, not ignored.
+        if (options.contains("lossOperatingPoint")) {
+            const json& op = options.at("lossOperatingPoint");
+            if (!op.is_object()) throw InvalidOptions("lossOperatingPoint must be an object");
+            static const std::set<std::string> kKeys = {
+                "position",           "inputVoltage",          "outputVoltage", "dutyCycle",
+                "outputCurrent",      "switchingFrequency",    "inductorRippleCurrent",
+                "junctionTemperature"};
+            for (const auto& [k, v] : op.items())
+                if (!kKeys.count(k))
+                    throw InvalidOptions("lossOperatingPoint." + k + " does not apply to a diode");
+            DiodeLossOperatingPoint lo;
+            auto pos = opt_str(op, "position");
+            if (!pos) throw InvalidOptions("lossOperatingPoint.position is required (buckFreewheel)");
+            lo.position = diode_position_from_string(*pos);
+            auto num = [&](const char* k) -> std::optional<double> {
+                if (!op.contains(k) || op.at(k).is_null()) return std::nullopt;
+                if (!op.at(k).is_number())
+                    throw InvalidOptions(std::string("lossOperatingPoint.") + k + " must be a number");
+                return op.at(k).get<double>();
+            };
+            auto need = [&](const char* k) {
+                auto v = num(k);
+                if (!v) throw InvalidOptions(std::string("lossOperatingPoint.") + k + " is required");
+                return *v;
+            };
+            lo.vin = need("inputVoltage");
+            lo.iout = need("outputCurrent");
+            lo.fsw = need("switchingFrequency");
+            lo.duty = num("dutyCycle");
+            lo.vout = num("outputVoltage");
+            lo.ripple_pp = num("inductorRippleCurrent");
+            lo.tj = num("junctionTemperature");
+            lo.validate();
+            c.loss_op = lo;
+        }
+        if (options.contains("priceQuantity") && !options.at("priceQuantity").is_null()) {
+            const json& q = options.at("priceQuantity");
+            if (!q.is_number() || !(q.get<double>() > 0))
+                throw InvalidOptions("priceQuantity must be a positive number");
+            c.price_quantity = q.get<double>();
+        }
+        DiodeTiebreaker tb = c.loss_op ? DiodeTiebreaker::LowestOperatingPointLoss
+                                       : DiodeTiebreaker::LowestVf;
         if (auto s = opt_str(options, "tiebreaker")) tb = diode_tiebreaker_from_string(*s);
         const Shard<DiodeRow>& sh = diode_shard();
         std::optional<FileRecordFetcher> fetch;

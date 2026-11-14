@@ -250,6 +250,9 @@ const LOSS_TERMS = [
   ['coss', 'Coss'],
   ['esrLoss', 'ESR loss'],
 ]
+// A family states its own loss terms and ratings row (families.js); the MOSFET ones otherwise.
+const lossTerms = computed(() => fam.value.recommend?.lossTerms ?? LOSS_TERMS)
+const ratingsRow = computed(() => fam.value.recommend?.ratingsRow ?? { label: 'Vds / Id', keys: [['vds', 'V'], ['id', 'A']] })
 function termCell(c, key) {
   const t = c.loss?.terms?.[key]
   if (!t) return { text: '—', title: '' }
@@ -490,8 +493,8 @@ function priceCell(c) {
             </thead>
             <tbody>
               <tr v-if="fam.key !== 'capacitor'">
-                <th>Vds / Id</th>
-                <td v-for="c in compareCands" :key="c.mpn">{{ si(c.ratings?.vds, 'V') }} / {{ si(c.ratings?.id, 'A') }}</td>
+                <th>{{ ratingsRow.label }}</th>
+                <td v-for="c in compareCands" :key="c.mpn">{{ ratingsRow.keys.map(([k, u]) => si(c.ratings?.[k], u)).join(' / ') }}</td>
               </tr>
               <tr v-if="fam.key === 'capacitor'">
                 <th>C / V rated</th>
@@ -504,7 +507,7 @@ function priceCell(c) {
                 </td>
               </tr>
               <template v-if="compareCands.some((c) => c.loss)">
-                <tr v-for="[k, label] in LOSS_TERMS.filter(([t]) => compareCands.some((c) => c.loss?.terms?.[t]))" :key="k">
+                <tr v-for="[k, label] in lossTerms.filter(([t]) => compareCands.some((c) => c.loss?.terms?.[t]))" :key="k">
                   <th>{{ label }}</th>
                   <td v-for="c in compareCands" :key="c.mpn" :title="termCell(c, k).title" :class="{ warnc: termCell(c, k).unverified }">{{ termCell(c, k).text }}</td>
                 </tr>

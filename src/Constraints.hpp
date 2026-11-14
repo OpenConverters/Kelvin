@@ -34,6 +34,10 @@ enum class DiodeTiebreaker {
     LowestQrr,
     HighestVrrmMargin,
     HighestIfMargin,
+    // Owner 2026-11-14: datasheet-value loss of the diode at a stated converter operating
+    // point (DiodeConstraints::loss_op, DiodeLoss.hpp): conduction, switching (recovery or
+    // capacitive charge) and leakage. A missing input makes its term UNVERIFIED.
+    LowestOperatingPointLoss,
 };
 enum class CapacitorTiebreaker {
     LowestEsr,
@@ -133,10 +137,60 @@ struct MosfetConstraints {
     }
 };
 
+// Where the diode sits in the converter. Only the buck freewheel (catch) diode is modelled;
+// a boost output diode or a flyback rectifier is a further value here and a further branch in
+// DiodeLoss.hpp, not a new path.
+enum class DiodePosition { BuckFreewheel };
+DiodePosition diode_position_from_string(const std::string& s);
+const char* to_string(DiodePosition p);
+
+// The converter operating point the diode is ranked at (owner 2026-11-14). SI units.
+// Required: position, vin, iout, fsw and the duty of the SWITCH (stated, or Vout/Vin — the
+// ideal CCM buck — when only vout is given); the diode conducts for 1-D. Optional:
+// ripple_pp (inductor peak-to-peak ripple: the conduction term then follows the current ramp
+// on the Vf(If) curve) and tj (junction temperature: compared with the conditions the
+// record's curves state, in the basis).
+struct DiodeLossOperatingPoint {
+    DiodePosition position = DiodePosition::BuckFreewheel;
+    double vin = 0, iout = 0, fsw = 0;
+    std::optional<double> duty, vout, ripple_pp, tj;
+    void validate() const {
+        auto pos = [](double v, const char* n) {
+            if (!(v > 0)) throw InvalidOptions(std::string("lossOperatingPoint.") + n +
+                                               " must be a positive number");
+        };
+        pos(vin, "inputVoltage");
+        pos(iout, "outputCurrent");
+        pos(fsw, "switchingFrequency");
+        if (!duty && !vout)
+            throw InvalidOptions("lossOperatingPoint needs dutyCycle or outputVoltage");
+        if (duty && !(*duty > 0 && *duty < 1))
+            throw InvalidOptions("lossOperatingPoint.dutyCycle must be in (0, 1)");
+        if (!duty && !(*vout > 0 && *vout < vin))
+            throw InvalidOptions("lossOperatingPoint.outputVoltage must be in (0, inputVoltage) "
+                                 "for a buck");
+        if (ripple_pp && !(*ripple_pp >= 0))
+            throw InvalidOptions("lossOperatingPoint.inductorRippleCurrent must be >= 0");
+        // The freewheel current ramps from Iout + dIpp/2 down to Iout - dIpp/2; below zero
+        // the converter is in DCM, which this model does not describe.
+        if (ripple_pp && *ripple_pp > 2 * iout)
+            throw InvalidOptions("lossOperatingPoint.inductorRippleCurrent above 2 x outputCurrent "
+                                 "is discontinuous conduction, which is not modelled");
+    }
+    double duty_value() const { return duty ? *duty : *vout / vin; }
+};
+
 struct DiodeConstraints {
     double vrrm_min = 0, if_avg_min = 0;
     std::optional<double> qrr_max;  // absent = no Qrr filter
     bool exclude_discontinued = true;
+    std::optional<DiodeLossOperatingPoint> loss_op;  // LowestOperatingPointLoss's point
+    // Gross over-rating (owner 2026-11-14, as MosfetConstraints): Vrrm or If(avg) more than
+    // 3x the requirement. On for every Engine recommendation; a tier under lowest_vf /
+    // lowest_qrr, a flag and a note under lowest_operating_point_loss and the margin rankings.
+    // Off in the core default (selector.py parity).
+    bool over_rating_tier = false;
+    std::optional<double> price_quantity;  // options.priceQuantity, echoed per candidate
     void validate() const {
         if (!(vrrm_min > 0)) throw InvalidOptions("DiodeConstraints.vrrm_min must be positive");
         if (!(if_avg_min > 0)) throw InvalidOptions("DiodeConstraints.if_avg_min must be positive");

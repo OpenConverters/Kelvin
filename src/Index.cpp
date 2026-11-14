@@ -349,7 +349,8 @@ struct ReadAr {
     }
 };
 
-// A list of curves (a MOSFET's ambient ratings: one per mounting / time base / Vgs).
+// A list of curves (v22): a MOSFET's ambient ratings (one per mounting / time base / Vgs), a
+// magnetic's L(I) curves (one per stated temperature).
 template <class Ar>
 void curves(Ar& ar, std::vector<CurvePts>& v) {
     uint32_t n = static_cast<uint32_t>(v.size());
@@ -446,6 +447,8 @@ void row_io(Ar& ar, DiodeRow& r) {
     ar.dbl(r.junction_capacitance_vr); // v21
     ar.dbl(r.number_of_elements);      // v22 (SAS bcc7a93)
     ar.dbl(r.vf_test_current);         // v22
+    ar.dbl(r.reverse_leakage);         // v22 (owner 2026-11-14, operating-point loss)
+    ar.str(r.price_quotes);            // v22 (owner 2026-11-14, price)
     ar.curve(r.vf_curve);          // v22 (owner curve rule 2026-11-14)
     ar.curve(r.ir_curve);          // v22
     ar.curve(r.cj_curve);          // v22
@@ -577,7 +580,21 @@ void row_io(Ar& ar, MagneticRow& r) {
     ar.dbl(r.inductance_tol_plus_pct);     // v22
     ar.dblvec(r.bias_curve_current);       // v22 (Z5)
     ar.dblvec(r.bias_curve_ratio);         // v22 (Z5)
+    ar.dbl(r.bias_curve_temperature);      // v22 (curves)
+    curves(ar, r.l_curves);            // v22 (curves)
+    ar.curve(r.rated_points);              // v22 (curves, rated current per rise)
     ar.boolean(r.sat_table_from_curve);    // v22 (Z5)
+    ar.dbl(r.dm_impedance_100mhz);         // v22 (curves, CMC DM mode)
+    ar.dbl(r.dm_impedance_peak);           // v22
+    ar.dbl(r.dm_impedance_peak_freq);      // v22
+    ar.dbl(r.cable_max_diameter);          // v22 (cable cores, owner 2026-11-14)
+    ar.dbl(r.number_turns);                // v22
+    ar.curve(r.z_curve);                   // v22 curves (shared CurvePts storage)
+    ar.curve(r.r_curve);
+    ar.curve(r.x_curve);
+    ar.curve(r.dm_z_curve);                // v22 curves (CMC)
+    ar.curve(r.cm_il_curve);
+    ar.curve(r.dm_il_curve);
     ar.boolean(r.is_production);
 }
 
