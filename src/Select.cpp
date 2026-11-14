@@ -1,3 +1,4 @@
+#include "CrossRef.hpp"  // kGrossOverRatingFactor (one rule with the cross-reference)
 #include "MfrPolicy.hpp"
 #include "MosfetLoss.hpp"
 #include "Select.hpp"
@@ -171,12 +172,26 @@ json select_mosfet(const Shard<MosfetRow>& shard, const MosfetConstraints& c, Mo
     auto unverified_terms = [&](const MosfetRow* m) -> size_t {
         return op_loss_mode ? op_loss.at(m).unverified().size() : 0;
     };
+    // Gross over-rating (owner 2026-11-14): Vds or Id more than kGrossOverRatingFactor (3x)
+    // the requirement. Each such axis is one step of a tier just above the metric, so an
+    // over-rated part sinks below the parts of its evidence tier that are not; it is never
+    // excluded. Same factor as the cross-reference's Y4 rule.
+    auto over_rated_axes = [&](const MosfetRow* m) {
+        std::vector<std::string> axes;
+        if (m->vds_rated > crossref::kGrossOverRatingFactor * c.vds_min) axes.push_back("vds");
+        if (present(m->id_continuous) && m->id_continuous > crossref::kGrossOverRatingFactor * c.id_min)
+            axes.push_back("id");
+        return axes;
+    };
+    auto over_rated = [&](const MosfetRow* m) -> size_t {
+        return c.over_rating_tier ? over_rated_axes(m).size() : 0;
+    };
     // tuple (evidence_incomplete, no_thermal, metric, lineno) ascending — mirrors Python min().
     std::sort(passing.begin(), passing.end(), [&](const MosfetRow* a, const MosfetRow* b) {
         auto ka = std::make_tuple(unverified_terms(a), a->evidence_incomplete() ? 1 : 0,
-                                  a->no_thermal() ? 1 : 0, metric(a), a->lineno);
+                                  a->no_thermal() ? 1 : 0, over_rated(a), metric(a), a->lineno);
         auto kb = std::make_tuple(unverified_terms(b), b->evidence_incomplete() ? 1 : 0,
-                                  b->no_thermal() ? 1 : 0, metric(b), b->lineno);
+                                  b->no_thermal() ? 1 : 0, over_rated(b), metric(b), b->lineno);
         return ka < kb;
     });
 
@@ -202,6 +217,28 @@ json select_mosfet(const Shard<MosfetRow>& shard, const MosfetConstraints& c, Mo
         cd["evidence"] = {{"datasheetUsable", m->datasheet_usable},
                           {"thermalPresent", !m->no_thermal()},
                           {"qgPresent", m->qg_total > 0}};
+        cd["ratings"] = {{"vds", m->vds_rated},
+                         {"id", num_or_null(m->id_continuous)},
+                         {"rdsOn", m->rds_on}};
+        if (c.over_rating_tier) {
+            json orj = {{"axes", json::array()}, {"notes", json::array()}};
+            for (const std::string& ax : over_rated_axes(m)) {
+                const bool v = ax == "vds";
+                const double have = v ? m->vds_rated : m->id_continuous;
+                const double need = v ? c.vds_min : c.id_min;
+                char b[320];
+                std::snprintf(b, sizeof b,
+                              "%s %g %s is %.3gx the requirement's %g %s — more than %gx: a "
+                              "bigger body, higher cost and more capacitance are likely; ranked "
+                              "after closer-rated parts",
+                              v ? "drain-source voltage rating" : "continuous drain current rating",
+                              have, v ? "V" : "A", have / need, need, v ? "V" : "A",
+                              crossref::kGrossOverRatingFactor);
+                orj["axes"].push_back(ax);
+                orj["notes"].push_back(b);
+            }
+            cd["overRating"] = std::move(orj);
+        }
         // A dual / complementary package stays offered, LABELLED (owner 2026-11-13, V3): its
         // ratings are per die and its pinout is not a single die's. Only stated values are
         // emitted; a record that states no configuration carries neither key.

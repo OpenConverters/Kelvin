@@ -100,6 +100,12 @@ struct MosfetConstraints {
     bool exclude_discontinued = true;
     std::optional<double> op_i_rms, op_vds, op_duty, op_fsw;
     std::optional<LossOperatingPoint> loss_op;  // LowestOperatingPointLoss's operating point
+    // Gross over-rating (owner 2026-11-14, the cross-reference's kGrossOverRatingFactor rule
+    // applied to recommendations): a candidate whose Vds or Id is more than 3x the requirement
+    // sinks below the candidates of its evidence tier that are not, with a note; never
+    // excluded. On for every recommendation the Engine serves; the Python-parity harness
+    // (selector.py has no such rule) runs the core with it off.
+    bool over_rating_tier = false;
     void validate() const {
         auto pos = [](double v, const char* n) {
             if (!(v > 0)) throw InvalidOptions(std::string("MosfetConstraints.") + n +

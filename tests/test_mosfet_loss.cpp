@@ -243,3 +243,51 @@ TEST_CASE("mosfet loss: the API reads lossOperatingPoint strictly", "[mosfet_los
         InvalidOptions);
     fs::remove_all(dir);
 }
+
+TEST_CASE("mosfet over-rating: Vds or Id > 3x the requirement sinks, noted, never excluded",
+          "[mosfet_overrating]") {
+    const std::vector<std::string> lines = {
+        record("HV_HIGH_ID", 600, 77.5, 0.005, {{"totalGateCharge", 20e-9}}),   // both axes
+        record("HIGH_ID", 60, 100, 0.008, {{"totalGateCharge", 20e-9}}),        // Id 50x
+        record("CLOSE", 60, 5, 0.020, {{"totalGateCharge", 20e-9}}),            // 1.39x / 2.5x
+    };
+    auto s = shard_of(lines);
+    MosfetConstraints c = loose();
+    // Off (the Python-parity core): pure lowest Rds(on).
+    json off = select_mosfet(s, c, MosfetTiebreaker::LowestRdsOn);
+    CHECK(off.at("candidates")[0].at("mpn") == "HV_HIGH_ID");
+    CHECK_FALSE(off.at("candidates")[0].contains("overRating"));
+    // On: one step per over-rated axis, all three still offered.
+    c.over_rating_tier = true;
+    json on = select_mosfet(s, c, MosfetTiebreaker::LowestRdsOn);
+    const json& k = on.at("candidates");
+    REQUIRE(k.size() == 3);
+    CHECK(k[0].at("mpn") == "CLOSE");
+    CHECK(k[1].at("mpn") == "HIGH_ID");
+    CHECK(k[2].at("mpn") == "HV_HIGH_ID");
+    CHECK(k[0].at("overRating").at("axes").empty());
+    CHECK(k[2].at("overRating").at("axes") == json::array({"vds", "id"}));
+    const std::string note = k[2].at("overRating").at("notes")[0].get<std::string>();
+    CHECK(note.find("drain-source voltage rating 600 V is 13.9x the requirement's 43.2 V") !=
+          std::string::npos);
+    CHECK(k[2].at("ratings").at("vds").get<double>() == 600);
+}
+
+TEST_CASE("mosfet over-rating: on for every Engine recommendation", "[mosfet_overrating]") {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::path(KELVIN_TEST_DIR) / "_mosfet_overrating_api";
+    fs::create_directories(dir);
+    {
+        std::ofstream f(dir / "mosfets.ndjson", std::ios::binary | std::ios::trunc);
+        f << record("HV", 600, 77.5, 0.005, {{"totalGateCharge", 20e-9}}) << "\n"
+          << record("CLOSE", 60, 5, 0.020, {{"totalGateCharge", 20e-9}}) << "\n";
+    }
+    api::Engine eng(dir.string(), "", /*quiet=*/true);
+    const json req = {{"ratedDrainSourceVoltage", 43.2},
+                      {"ratedContinuousDrainCurrent", 2},
+                      {"maximumOnResistance", 1}};
+    json r = eng.select("mosfet", req, {{"includeEnvelope", false}});
+    CHECK(r.at("candidates")[0].at("mpn") == "CLOSE");
+    CHECK(r.at("candidates")[1].at("overRating").at("axes").size() == 2);
+    fs::remove_all(dir);
+}
