@@ -9,6 +9,7 @@
 #endif
 #include <fstream>
 #include <functional>
+#include <memory>
 #include <unordered_map>
 
 #include <nlohmann/json.hpp>
@@ -233,6 +234,20 @@ struct WriteAr {
         u32(n);
         for (auto& x : v) dblvec(x);
     }
+    // A float vector as a pooled blob (v22, curves): identical vectors are stored once.
+    void fltvec(std::shared_ptr<const std::vector<float>>& v) {
+        std::string blob;
+        if (v && !v->empty())
+            blob.assign(reinterpret_cast<const char*>(v->data()), v->size() * sizeof(float));
+        str(blob);
+    }
+    void curve(CurvePts& c) {  // v22 (owner 2026-11-14)
+        fltvec(c.x);
+        fltvec(c.y);
+        dbl(c.temperature);
+        dbl(c.dc_bias);
+        dbl(c.frequency);
+    }
 };
 
 struct ReadAr {
@@ -289,6 +304,34 @@ struct ReadAr {
         need(static_cast<size_t>(n) * 4);  // each inner array carries at least its count
         v.resize(n);
         for (auto& x : v) dblvec(x);
+    }
+    // Pooled float vectors decoded once per pool ref and shared between rows.
+    std::unordered_map<uint32_t, std::shared_ptr<const std::vector<float>>> flt_cache{};
+    void fltvec(std::shared_ptr<const std::vector<float>>& v) {
+        uint32_t ref;
+        u32(ref);
+        if (ref == 0) {  // "" (ref 0): no curve
+            v.reset();
+            return;
+        }
+        if (auto it = flt_cache.find(ref); it != flt_cache.end()) {
+            v = it->second;
+            return;
+        }
+        const std::string blob = pool_read(pool_base, pool_size, ref);
+        if (blob.size() % sizeof(float) != 0)
+            throw std::runtime_error("kelvin: corrupt shard (float vector size)");
+        auto out = std::make_shared<std::vector<float>>(blob.size() / sizeof(float));
+        std::memcpy(out->data(), blob.data(), blob.size());
+        v = out;
+        flt_cache.emplace(ref, v);
+    }
+    void curve(CurvePts& c) {  // v22 (owner 2026-11-14)
+        fltvec(c.x);
+        fltvec(c.y);
+        dbl(c.temperature);
+        dbl(c.dc_bias);
+        dbl(c.frequency);
     }
 };
 
@@ -395,6 +438,7 @@ void row_io(Ar& ar, CapacitorRow& r) {
     ar.dbl(r.qualified_failure_rate);    // v20
     ar.boolean(r.is_production);
     ar.dbl(r.ripple_current_temperature);  // v22 (Qarlos r26)
+    ar.curve(r.esr_curve);                 // v22 (owner 2026-11-14, curves)
 }
 
 template <class Ar>

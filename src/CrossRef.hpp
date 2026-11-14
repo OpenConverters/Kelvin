@@ -40,6 +40,7 @@
 #include <nlohmann/json.hpp>
 
 #include "CrossRefClasses.hpp"
+#include "CrossRefCurves.hpp"
 #include "CrossRefDecode.hpp"
 #include "CrossRefDimensions.hpp"
 #include "CrossRefParams.hpp"
@@ -1951,9 +1952,103 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         demote();
         return true;
     }();
+    // ── capacitor curves (owner 2026-11-14: "compare ALL existing graphs") ──────
+    // A curve's verdict replaces the scalar comparison of its quantity (curve_override, read
+    // in the parameter loop below): the outcome, and the two values it was decided on (they
+    // carry the direction and the over-dimensioning tie-breaker like stated scalars do).
+    struct CurveOverride {
+        ParamOutcome outcome{UNVERIFIED};
+        std::optional<double> o, s;
+    };
+    std::map<std::string, CurveOverride> curve_override;
+    auto spec_for = [&](const char* key) -> const ParamSpec& {
+        for (const ParamSpec& p : params_for(cat))
+            if (p.key == key) return p;
+        throw std::logic_error(std::string("no ParamSpec '") + key + "' for " + cat);
+    };
+    auto hz = [](double f) {
+        char b[32];
+        std::snprintf(b, sizeof b, "%g Hz", f);
+        return std::string(b);
+    };
+    // ESR (a): both records carry an ESR-vs-frequency curve -> compared on the overlap of the
+    // two measured ranges, log-log (ESR curves are plotted on log axes), with the ESR spec's
+    // bands at each point; the worst point decides. Different stated conditions or no overlap
+    // -> a note, and the scalars keep their own (basis) rule. Otherwise, when the two scalars
+    // are quoted at different frequencies, a curve resolves the basis: the substitute's ESR is
+    // read from its curve at the original's frequency (or the original's from its curve at the
+    // substitute's), inside the measured range only.
+    if (cat == "capacitor") {
+        const auto oc = curve_from_spec(original, "esr_curve"),
+                   sc = curve_from_spec(cand, "esr_curve");
+        const ParamSpec& esr_spec = spec_for("esr");
+        bool decided = false;
+        if (oc && sc) {
+            const std::string cond = conditions_differ(*oc, *sc);
+            if (!cond.empty()) {
+                notes.push_back("ESR curves measured under different conditions (" + cond +
+                                ") — the curves were not compared");
+            } else {
+                const CurveVerdict v = compare_curves(oc->curve, sc->curve, esr_spec,
+                                                      Interp::LogLog);
+                if (v.verdict == std::string(UNVERIFIED)) {
+                    notes.push_back("ESR curves do not overlap (original " +
+                                    hz(oc->curve.x.front()) + " to " + hz(oc->curve.x.back()) +
+                                    ", substitute " + hz(sc->curve.x.front()) + " to " +
+                                    hz(sc->curve.x.back()) + ") — the curves were not compared");
+                } else {
+                    char buf[320];
+                    std::snprintf(buf, sizeof buf,
+                                  "ESR compared on both curves from %g to %g Hz (%zu points, "
+                                  "log-log): %s at %g Hz, substitute %.4g ohm vs original "
+                                  "%.4g ohm",
+                                  v.range->first, v.range->second, v.points,
+                                  v.verdict == std::string(PASS) ? "closest at" : "worst",
+                                  v.worst_x, v.sub_y, v.orig_y);
+                    notes.push_back(buf);
+                    CurveOverride ov;
+                    ov.outcome = ParamOutcome(v.verdict);
+                    ov.outcome.warn_depth = v.warn_depth;
+                    ov.o = v.orig_y;
+                    ov.s = v.sub_y;
+                    curve_override["esr"] = ov;
+                    decided = true;
+                }
+            }
+        }
+        const auto o_v = num(original, "esr"), s_v = num(cand, "esr");
+        const auto o_f = num(original, "esr_frequency"), s_f = num(cand, "esr_frequency");
+        auto same_f = [](double a, double b) { return std::fabs(a - b) <= 1e-9 * std::max(a, b); };
+        auto mains = [&](double f) { return same_f(f, 100.0) || same_f(f, 120.0); };
+        const bool basis_differs =
+            o_v && s_v && o_f && !(s_f && (same_f(*o_f, *s_f) || (mains(*o_f) && mains(*s_f))));
+        if (!decided && basis_differs) {
+            char buf[320];
+            const auto s_at = sc ? curve_at(sc->curve, *o_f, Interp::LogLog) : std::nullopt;
+            const auto o_at =
+                !s_at && oc && s_f ? curve_at(oc->curve, *s_f, Interp::LogLog) : std::nullopt;
+            if (s_at) {
+                std::snprintf(buf, sizeof buf,
+                              "ESR compared at the original's %g Hz: the substitute's curve "
+                              "reads %.4g ohm there (its record quotes %g ohm at %s) against "
+                              "the original's %g ohm",
+                              *o_f, *s_at, *s_v, s_f ? hz(*s_f).c_str() : "no frequency", *o_v);
+                notes.push_back(buf);
+                curve_override["esr"] = {compare_numeric(esr_spec, o_v, s_at), o_v, s_at};
+            } else if (o_at) {
+                std::snprintf(buf, sizeof buf,
+                              "ESR compared at the substitute's %g Hz: the original's curve "
+                              "reads %.4g ohm there (its record quotes %g ohm at %g Hz) "
+                              "against the substitute's %g ohm",
+                              *s_f, *o_at, *o_v, *o_f, *s_v);
+                notes.push_back(buf);
+                curve_override["esr"] = {compare_numeric(esr_spec, o_at, s_v), o_at, s_v};
+            }
+        }
+    }
     const bool esr_basis_unverified =
-        cat == "capacitor" && basis_unverified("esr", "esr_frequency", "ESR", "ohm",
-                                              /*primary=*/false);
+        cat == "capacitor" && !curve_override.count("esr") &&
+        basis_unverified("esr", "esr_frequency", "ESR", "ohm", /*primary=*/false);
     if (esr_basis_unverified) params.push_back({{"name", "esr_basis"}, {"verdict", UNVERIFIED}});
 
     // ── MOSFET Coss basis (the Vds the capacitances are stated at) ───────────
@@ -2140,6 +2235,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         }
         if (cat == "capacitor" && spec.key == "tolerance_pct" && cap_tol_judged) continue;
         bool has_data = detail::present(original, spec.key) || detail::present(cand, spec.key);
+        const auto curve_ov = curve_override.find(spec.key);
+        if (curve_ov != curve_override.end()) has_data = true;
         if (spec.key == "saturation_current")
             has_data = has_data || detail::present(original, "saturation_points") ||
                        detail::present(cand, "saturation_points");
@@ -2189,6 +2286,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         }();
         const ParamOutcome outcome =
             pin_field             ? ParamOutcome(connector_pitch.verdict)
+            : curve_ov != curve_override.end() ? curve_ov->second.outcome
             : vz_grade_same       ? ParamOutcome(PASS)
             : ripple_blind        ? ParamOutcome(UNVERIFIED)
             : coss_blind          ? ParamOutcome(UNVERIFIED)
@@ -2422,6 +2520,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                                          : std::nullopt;
         auto s = numeric && !ripple_blind && !coss_blind ? detail::jnum(cand, spec.key)
                                                          : std::nullopt;
+        if (curve_ov != curve_override.end()) {  // decided on a curve: its two values
+            o = curve_ov->second.o;
+            s = curve_ov->second.s;
+        }
         if (power_at_t) {
             using power_detail::celsius;
             using power_detail::watts;

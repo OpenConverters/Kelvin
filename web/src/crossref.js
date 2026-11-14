@@ -100,6 +100,9 @@ export const XREF = [
       ripple_current_frequency: nz(r.ripple_current_frequency),
       // v22 (Qarlos r26): the temperature the ripple rating is stated at (85 vs 105 degC).
       ripple_current_temperature: r.ripple_current_temperature ?? null, safety_class: r.safety_class || null,
+      // v22 (owner 2026-11-14): the measured curves, {x, y, temperature?, dc_bias?, frequency?} or
+      // null — compared curve-vs-curve on their overlap (src/CrossRefCurves.hpp).
+      esr_curve: r.esr_curve ?? null,
       // v20 (Qarlos 2026-11-09): the guaranteed capacitance band in farads, as the record states
       // its two ends (compared as farads, never turned into a percentage); the leaded form
       // (axial / radial, a land-pattern identity); and the qualified reliability level

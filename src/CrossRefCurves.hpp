@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdio>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -141,6 +142,51 @@ inline CurveVerdict compare_curves(const Curve& orig, const Curve& sub, const Pa
             out.warn_depth = r.warn_depth;
         }
     }
+    return out;
+}
+
+// ── Curves in a ranker spec ─────────────────────────────────────────────────
+// The spec shape (crossref.js, from a row's CurvePts): {x: [...], y: [...], temperature?,
+// dc_bias?, frequency?}; null / absent = no curve. The spec is built by Kelvin's own row
+// code, so a malformed curve is a bug and throws (Curve's constructor).
+struct SpecCurve {
+    Curve curve;
+    std::optional<double> temperature, dc_bias, frequency;  // stated measurement conditions
+};
+inline std::optional<SpecCurve> curve_from_spec(const nlohmann::json& s, const std::string& key) {
+    auto it = s.find(key);
+    if (it == s.end() || it->is_null()) return std::nullopt;
+    if (!it->is_object() || !it->contains("x") || !it->contains("y"))
+        throw std::invalid_argument("curve_from_spec: '" + key + "' is not {x, y}");
+    SpecCurve out{Curve(it->at("x").get<std::vector<double>>(),
+                        it->at("y").get<std::vector<double>>()),
+                  std::nullopt, std::nullopt, std::nullopt};
+    auto cond = [&](const char* k) -> std::optional<double> {
+        auto c = it->find(k);
+        if (c == it->end() || c->is_null()) return std::nullopt;
+        return c->get<double>();
+    };
+    out.temperature = cond("temperature");
+    out.dc_bias = cond("dc_bias");
+    out.frequency = cond("frequency");
+    return out;
+}
+// The measurement conditions BOTH curves state and that differ, e.g. "temperature 20 vs
+// 25 degC" (original first); empty when none differs. A condition stated on one side only is
+// not a difference on record and does not block the comparison.
+inline std::string conditions_differ(const SpecCurve& o, const SpecCurve& s) {
+    std::string out;
+    auto one = [&](const std::optional<double>& a, const std::optional<double>& b,
+                   const char* what, const char* unit) {
+        if (!a || !b || same_stated_value(*a, *b)) return;
+        char buf[96];
+        std::snprintf(buf, sizeof buf, "%s%s %g vs %g %s", out.empty() ? "" : ", ", what, *a,
+                      *b, unit);
+        out += buf;
+    };
+    one(o.temperature, s.temperature, "temperature", "degC");
+    one(o.dc_bias, s.dc_bias, "DC bias", "V");
+    one(o.frequency, s.frequency, "frequency", "Hz");
     return out;
 }
 

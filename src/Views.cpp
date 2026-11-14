@@ -108,6 +108,63 @@ std::optional<double> curve_at(const json* c, double x, const char* x_unit, cons
     return std::exp(std::log(ylo) + t * (std::log(yhi) - std::log(ylo)));
 }
 
+// A PEAS `curve` ({xData, yData, xLabel?, yLabel?, conditions?}) read WHOLE onto a row
+// (v22, owner 2026-11-14). The samples are put in x order (the order a record lists them in
+// carries no meaning); nothing else is changed. The curve is NOT kept (empty, counted by the
+// caller's statistics as "no curve") when it is not one: fewer than two samples, x and y of
+// different lengths, a non-numeric or non-finite sample, a label naming a different unit
+// than the caller's (any of `y_units`; a milli-prefixed one is a different unit), two
+// samples at one x (which of the two is the curve is not on record), or — when
+// `positive_y` — a sample <= 0 on a quantity read on log axes. Every x must be > 0 (all
+// the capacitor curves are frequencies or voltages from 0: `nonneg_x` admits x = 0).
+// `conditions` {temperature, dcBias, frequency} are kept when numeric.
+CurvePts read_curve_xy(const json* c, const char* x_unit, std::initializer_list<const char*> y_units,
+                       bool positive_y, bool nonneg_x = false) {
+    CurvePts out;
+    if (!c || !c->is_object()) return out;
+    if (auto xl = get_str(*c, "xLabel"); xl && xl->find(x_unit) == std::string::npos) return out;
+    if (auto yl = get_str(*c, "yLabel")) {
+        bool ok = false;
+        for (const char* u : y_units)
+            if (yl->find(u) != std::string::npos && yl->find(std::string("m") + u) == std::string::npos)
+                ok = true;
+        if (!ok) return out;
+    }
+    const json* xs = obj_get(*c, "xData");
+    const json* ys = obj_get(*c, "yData");
+    if (!xs || !ys || !xs->is_array() || !ys->is_array() || xs->size() != ys->size() ||
+        xs->size() < 2)
+        return out;
+    std::vector<std::pair<double, double>> pts;
+    for (size_t i = 0; i < xs->size(); ++i) {
+        const json& xv = (*xs)[i];
+        const json& yv = (*ys)[i];
+        if (!xv.is_number() || !yv.is_number()) return out;
+        const double xi = xv.get<double>(), yi = yv.get<double>();
+        if (!std::isfinite(xi) || !std::isfinite(yi)) return out;
+        if (nonneg_x ? xi < 0 : !(xi > 0)) return out;
+        if (positive_y && !(yi > 0)) return out;
+        pts.emplace_back(xi, yi);
+    }
+    std::sort(pts.begin(), pts.end());
+    auto x = std::make_shared<std::vector<float>>();
+    auto y = std::make_shared<std::vector<float>>();
+    for (const auto& [xi, yi] : pts) {
+        const float xf = static_cast<float>(xi);
+        if (!x->empty() && !(xf > x->back())) return out;  // duplicate x (or one float apart)
+        x->push_back(xf);
+        y->push_back(static_cast<float>(yi));
+    }
+    out.x = std::move(x);
+    out.y = std::move(y);
+    if (const json* cond = obj_get(*c, "conditions"); cond && cond->is_object()) {
+        if (auto v = get_num(*cond, "temperature")) out.temperature = *v;
+        if (auto v = get_num(*cond, "dcBias")) out.dc_bias = *v;
+        if (auto v = get_num(*cond, "frequency")) out.frequency = *v;
+    }
+    return out;
+}
+
 // Physical body size + case code, shared by every family extractor: the
 // cross-reference footprint check needs a real size, because a substitute that
 // does not fit the board is not a substitute. Dimensions are
@@ -1084,6 +1141,10 @@ std::optional<CapacitorRow> extract_capacitor(const json& env) {
     // the ranker with "no ESR" while its record carried 325 measured points (ABT #2031).
     // Only an INTERPOLATION between two samples that bracket 100 kHz is taken — never an
     // extrapolation — and only from a curve whose labels, when present, say Hz and ohm.
+    // The whole curve is kept too (v22, owner 2026-11-14): the ranker compares two ESR curves
+    // on their overlap and reads one at the other side's stated ESR frequency.
+    r.esr_curve = read_curve_xy(obj_get(*elec, "esrPoints"), "[Hz]", {"Ohm", "\u03a9"},
+                                /*positive_y=*/true);
     if (!present(r.esr)) {
         if (auto v = curve_at(obj_get(*elec, "esrPoints"), 1e5, "[Hz]", "Ohm"); v) {
             r.esr = *v;
