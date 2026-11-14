@@ -523,6 +523,13 @@ json Engine::select(const std::string& category, const json& req, const json& op
             auto pos = opt_str(op, "position");
             if (!pos) throw InvalidOptions("lossOperatingPoint.position is required (buckInductor)");
             lo.position = inductor_position_from_string(*pos);
+            // The conduction mode decides the inductance gate (owner 2026-11-14): required,
+            // never defaulted.
+            auto mode = opt_str(op, "conductionMode");
+            if (!mode)
+                throw InvalidOptions("lossOperatingPoint.conductionMode is required (ccm, dcm or "
+                                     "crm)");
+            lo.mode = conduction_mode_from_string(*mode);
             // A key that is present must be a number (null = not given).
             auto num = [&](const char* k) -> std::optional<double> {
                 if (!op.contains(k) || op.at(k).is_null()) return std::nullopt;
@@ -538,7 +545,10 @@ json Engine::select(const std::string& category, const json& req, const json& op
             lo.vin = need("inputVoltage");
             lo.vout = need("outputVoltage");
             lo.iout = need("outputCurrent");
-            lo.fsw = need("switchingFrequency");
+            lo.fsw = num("switchingFrequency");
+            lo.vin_min = num("minimumInputVoltage");
+            lo.window_min_l = num("minimumInductance");
+            lo.window_max_l = num("maximumInductance");
             lo.ambient = num("ambientTemperature");
             lo.validate();
             c.loss_op = lo;

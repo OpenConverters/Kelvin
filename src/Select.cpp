@@ -1112,6 +1112,7 @@ json mag_check_json(const MagneticCheck& k) {
 json mag_loss_json(const MagneticLossBreakdown& lb, const InductorOperatingPoint& op) {
     json loss;
     loss["position"] = to_string(op.position);
+    loss["conductionMode"] = to_string(op.mode);
     loss["dutyCycle"] = lb.duty;
     loss["dutyBasis"] = lb.duty_basis;
     loss["inductanceAtPeak"] = lb.inductance;
@@ -1121,8 +1122,13 @@ json mag_loss_json(const MagneticLossBreakdown& lb, const InductorOperatingPoint
     loss["peakCurrentBasis"] = lb.ipk_basis;
     loss["rmsCurrent"] = lb.irms;
     loss["rmsCurrentBasis"] = lb.irms_basis;
+    if (lb.frequency) {
+        loss["switchingFrequency"] = *lb.frequency;
+        loss["switchingFrequencyBasis"] = lb.frequency_basis;
+    }
     loss["terms"] = {{"dcr", loss_term_json(lb.dcr)}, {"coreLoss", loss_term_json(lb.core)}};
-    loss["checks"] = {{"saturation", mag_check_json(lb.saturation)},
+    loss["checks"] = {{"inductance", mag_check_json(lb.inductance_gate)},
+                      {"saturation", mag_check_json(lb.saturation)},
                       {"thermal", mag_check_json(lb.thermal)}};
     const auto tot = lb.total();
     loss["total"] = tot ? json(*tot) : json(nullptr);
@@ -1133,9 +1139,17 @@ json mag_loss_json(const MagneticLossBreakdown& lb, const InductorOperatingPoint
 }
 
 json mag_loss_op_json(const InductorOperatingPoint& op) {
-    json o = {{"position", to_string(op.position)}, {"inputVoltage", op.vin},
-              {"outputVoltage", op.vout}, {"outputCurrent", op.iout},
-              {"switchingFrequency", op.fsw}, {"dutyCycle", op.duty()}};
+    json o = {{"position", to_string(op.position)}, {"conductionMode", to_string(op.mode)},
+              {"inputVoltage", op.vin}, {"outputVoltage", op.vout}, {"outputCurrent", op.iout}};
+    if (op.fsw) o["switchingFrequency"] = *op.fsw;
+    if (op.vin_min) o["minimumInputVoltage"] = *op.vin_min;
+    if (op.window_min_l) o["minimumInductance"] = *op.window_min_l;
+    if (op.window_max_l) o["maximumInductance"] = *op.window_max_l;
+    if (op.mode == ConductionMode::Dcm) {
+        const DcmBoundary d = dcm_maximum_inductance(op);
+        o["dcmMaximumInductance"] = d.l_max;
+        o["dcmMaximumInductanceBasis"] = d.basis;
+    }
     if (op.ambient) o["ambientTemperature"] = *op.ambient;
     return o;
 }
@@ -1156,6 +1170,24 @@ json mag_board_area_json(const MagneticRow& m) {
                           "sized from its case code)"}};
     return {{"mm2", *d->length * *d->width * 1e6},
             {"basis", "the record's drawn length x width"}};
+}
+
+// Volume of a magnetic (owner 2026-11-14: equal billing with the board area): its record's
+// DRAWN length x width x height, the bounding box, mm^3.
+json mag_volume_json(const MagneticRow& m) {
+    std::vector<std::string> miss;
+    if (!present(m.length_m)) miss.push_back("length");
+    if (!present(m.width_m)) miss.push_back("width");
+    if (!present(m.height_m)) miss.push_back("height");
+    if (!miss.empty()) {
+        std::string w;
+        for (const auto& x : miss) w += (w.empty() ? "" : ", ") + x;
+        return {{"mm3", nullptr},
+                {"basis", "not stated: the record draws no " + w +
+                              " (a magnetic is never sized from its case code)"}};
+    }
+    return {{"mm3", m.length_m * m.width_m * m.height_m * 1e9},
+            {"basis", "the record's drawn length x width x height (bounding box)"}};
 }
 
 json mag_price_json(const MagneticRow& m, std::optional<double> quantity) {
@@ -1179,11 +1211,20 @@ json select_magnetic_op_loss(const Shard<MagneticRow>& shard, const MagneticCons
                              "(position, inputVoltage, outputVoltage, outputCurrent, "
                              "switchingFrequency)");
     c.loss_op->validate();
-    if (!c.target_inductance || !(*c.target_inductance > 0))
-        throw InvalidOptions("lowest_operating_point_loss requires the required inductance "
-                             "(designRequirements.magnetizingInductance)");
     const InductorOperatingPoint& op = *c.loss_op;
-    const double L_req = *c.target_inductance;
+    // ccm gates on the required (minimum) inductance; dcm and crm gate on the operating
+    // point's own limits and do not read it.
+    std::optional<double> L_req;
+    if (op.mode == ConductionMode::Ccm) {
+        if (!c.target_inductance || !(*c.target_inductance > 0))
+            throw InvalidOptions("lowest_operating_point_loss in conductionMode ccm requires the "
+                                 "required inductance (designRequirements.magnetizingInductance)");
+        L_req = c.target_inductance;
+    }
+    // The rejection count of each mode's inductance gate.
+    const char* gate_rej = op.mode == ConductionMode::Ccm   ? "inductance_below_required"
+                           : op.mode == ConductionMode::Dcm ? "inductance_above_dcm_maximum"
+                                                            : "inductance_outside_crm_window";
 
     std::map<std::string, uint64_t> rej;
     rej["unreadable_row"] = shard.meta.unreadable_row_count;
@@ -1204,8 +1245,8 @@ json select_magnetic_op_loss(const Shard<MagneticRow>& shard, const MagneticCons
             continue;
         }
         if (!present(m.inductance) || !(m.inductance > 0)) { rej["inductance_unstated"]++; continue; }
-        if (m.inductance < L_req) { rej["inductance_below_required"]++; continue; }
-        MagneticLossBreakdown lb = magnetic_loss(m, op);
+        MagneticLossBreakdown lb = magnetic_loss(m, op, L_req);
+        if (lb.inductance_gate.failed()) { rej[gate_rej]++; continue; }
         if (lb.saturation.failed()) { rej["saturation_current_below_peak"]++; continue; }
         if (lb.thermal.failed()) { rej["rated_current_below_rms"]++; continue; }
         loss.emplace(&m, std::move(lb));
@@ -1228,7 +1269,12 @@ json select_magnetic_op_loss(const Shard<MagneticRow>& shard, const MagneticCons
     result["category"] = "magnetic";
     result["tiebreaker"] = to_string(MagneticTiebreaker::LowestOperatingPointLoss);
     result["lossOperatingPoint"] = mag_loss_op_json(op);
-    result["target"] = {{"inductance", L_req}};
+    result["target"] = {{"inductance", L_req ? json(*L_req) : json(nullptr)}};
+    if (op.mode != ConductionMode::Ccm && c.target_inductance)
+        result["notes"] = json::array(
+            {std::string("the required inductance stated in the requirements is not a gate in "
+                         "conductionMode ") +
+             to_string(op.mode) + ": the operating point's own limits are"});
     result["totalRowsConsidered"] = shard.meta.source_line_count;
     result["alternativesConsidered"] = passing.size();
     result["rejections"] = emit_rejections(rej);
@@ -1240,6 +1286,11 @@ json select_magnetic_op_loss(const Shard<MagneticRow>& shard, const MagneticCons
         json cd = base_candidate(m, fetcher);
         cd["loss"] = mag_loss_json(lb, op);
         cd["ratings"] = {{"inductance", m->inductance},
+                         {"inductanceTolerance",
+                          present(m->inductance_tol_minus_pct)
+                              ? json{{"minusPercent", m->inductance_tol_minus_pct},
+                                     {"plusPercent", m->inductance_tol_plus_pct}}
+                              : json(nullptr)},
                          {"saturationCurrent", num_or_null(m->saturation_current)},
                          {"saturationPercentDrop", num_or_null(m->saturation_percent_drop)},
                          {"ratedCurrent", num_or_null(m->rated_current)},
@@ -1263,8 +1314,13 @@ json select_magnetic_op_loss(const Shard<MagneticRow>& shard, const MagneticCons
         };
         flag("isat", "saturation current", m->saturation_current, lb.ipk, "Ipk");
         flag("ratedCurrent", "rated current", m->rated_current, lb.irms, "Irms");
+        if (lb.over_sized) {
+            orj["axes"].push_back("inductance");
+            orj["notes"].push_back(lb.over_sized_note);
+        }
         cd["overRating"] = std::move(orj);
         cd["boardArea"] = mag_board_area_json(*m);
+        cd["volume"] = mag_volume_json(*m);
         cd["price"] = mag_price_json(*m, c.price_quantity);
         cd["evidence"] = {{"deviceType", m->device_type},
                           {"family", m->family},

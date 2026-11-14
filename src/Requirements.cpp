@@ -280,6 +280,21 @@ const char* to_string(InductorPosition p) {
     }
     return "";
 }
+ConductionMode conduction_mode_from_string(const std::string& s) {
+    if (s == "ccm") return ConductionMode::Ccm;
+    if (s == "dcm") return ConductionMode::Dcm;
+    if (s == "crm") return ConductionMode::Crm;
+    throw InvalidOptions("unknown magnetic lossOperatingPoint.conductionMode: " + s +
+                         " (ccm, dcm or crm)");
+}
+const char* to_string(ConductionMode m) {
+    switch (m) {
+        case ConductionMode::Ccm: return "ccm";
+        case ConductionMode::Dcm: return "dcm";
+        case ConductionMode::Crm: return "crm";
+    }
+    return "";
+}
 
 // ---- original tiebreaker <-> string ----------------------------------------
 const char* to_string(MosfetTiebreaker t) {

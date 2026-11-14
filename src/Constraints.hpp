@@ -262,31 +262,79 @@ MagneticTiebreaker magnetic_tiebreaker_from_string(const std::string& s);
 
 // Where the magnetic sits in the converter. Only the buck output inductor is modelled; another
 // position (boost inductor, flyback transformer) is a further value and a further branch in
-// MagneticLoss.hpp, not a new path.
+// MagneticLoss.hpp (its waveform per conduction mode and its DCM boundary), not a new path.
 enum class InductorPosition { BuckInductor };
 InductorPosition inductor_position_from_string(const std::string& s);
 const char* to_string(InductorPosition p);
 
+// The conduction mode the converter is designed for (owner 2026-11-14). It decides the
+// inductance gate and the current waveform: CCM (nominal >= the required L), DCM (the
+// guaranteed maximum L at or below the CCM/DCM boundary), CrM / quasi-resonant (the tolerance
+// band inside a stated window). Required: nothing defaults.
+enum class ConductionMode { Ccm, Dcm, Crm };
+ConductionMode conduction_mode_from_string(const std::string& s);
+const char* to_string(ConductionMode m);
+
 // The converter operating point a magnetic is ranked at (SI units). Every value is the
-// caller's; nothing is defaulted. The duty is the ideal CCM buck's Vout/Vin.
+// caller's; nothing is defaulted.
+//   ccm  inputVoltage, outputVoltage, outputCurrent, switchingFrequency
+//   dcm  the same plus minimumInputVoltage (the DCM boundary is taken there, at full load)
+//   crm  inputVoltage, outputVoltage, outputCurrent and the window {minimumInductance,
+//        maximumInductance}; the switching frequency follows from L and is not an input
 struct InductorOperatingPoint {
     InductorPosition position = InductorPosition::BuckInductor;
-    double vin = 0, vout = 0, iout = 0, fsw = 0;
+    ConductionMode mode = ConductionMode::Ccm;
+    double vin = 0, vout = 0, iout = 0;
+    std::optional<double> fsw;             // Hz: ccm / dcm
+    std::optional<double> vin_min;         // V: dcm
+    std::optional<double> window_min_l;    // H: crm
+    std::optional<double> window_max_l;    // H: crm
     std::optional<double> ambient;  // degC; stated in the basis, never assumed
     void validate() const {
-        auto pos = [](double v, const char* n) {
-            if (!(v > 0)) throw InvalidOptions(std::string("lossOperatingPoint.") + n +
-                                               " must be a positive number");
+        auto pos = [&](std::optional<double> v, const char* n) {
+            if (!v)
+                throw InvalidOptions(std::string("lossOperatingPoint.") + n +
+                                     " is required in conductionMode " + to_string(mode));
+            if (!(*v > 0)) throw InvalidOptions(std::string("lossOperatingPoint.") + n +
+                                                " must be a positive number");
+        };
+        auto none = [&](const std::optional<double>& v, const char* n) {
+            if (v) throw InvalidOptions(std::string("lossOperatingPoint.") + n +
+                                        " is not an input in conductionMode " + to_string(mode));
         };
         pos(vin, "inputVoltage");
         pos(vout, "outputVoltage");
         pos(iout, "outputCurrent");
-        pos(fsw, "switchingFrequency");
         if (!(vout < vin))
             throw InvalidOptions("lossOperatingPoint.outputVoltage must be below inputVoltage "
                                  "for a buck");
+        switch (mode) {
+            case ConductionMode::Ccm:
+                pos(fsw, "switchingFrequency");
+                none(vin_min, "minimumInputVoltage");
+                none(window_min_l, "minimumInductance");
+                none(window_max_l, "maximumInductance");
+                break;
+            case ConductionMode::Dcm:
+                pos(fsw, "switchingFrequency");
+                pos(vin_min, "minimumInputVoltage");
+                if (!(*vin_min <= vin && *vin_min > vout))
+                    throw InvalidOptions("lossOperatingPoint.minimumInputVoltage must lie above "
+                                         "outputVoltage and at or below inputVoltage");
+                none(window_min_l, "minimumInductance");
+                none(window_max_l, "maximumInductance");
+                break;
+            case ConductionMode::Crm:
+                none(fsw, "switchingFrequency");
+                none(vin_min, "minimumInputVoltage");
+                pos(window_min_l, "minimumInductance");
+                pos(window_max_l, "maximumInductance");
+                if (!(*window_min_l < *window_max_l))
+                    throw InvalidOptions("lossOperatingPoint.minimumInductance must be below "
+                                         "maximumInductance");
+                break;
+        }
     }
-    double duty() const { return vout / vin; }
 };
 
 // Magnetic constraints — deliberately ALL-OPTIONAL and never-throwing. The magnetic selector
