@@ -538,6 +538,9 @@ void row_io(Ar& ar, MagneticRow& r) {
     ar.curve(r.z_curve);                   // v22 curves (shared CurvePts storage)
     ar.curve(r.r_curve);
     ar.curve(r.x_curve);
+    ar.curve(r.dm_z_curve);                // v22 curves (CMC)
+    ar.curve(r.cm_il_curve);
+    ar.curve(r.dm_il_curve);
     ar.boolean(r.is_production);
 }
 

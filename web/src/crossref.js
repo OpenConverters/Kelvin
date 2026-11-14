@@ -431,7 +431,8 @@ const ZENER_VARIANT = {
 // graphs"), passed to the ranker as they come off the row (the shared curve shape {x, y,
 // conditions...} as the capacitor's, plus mode on a CMC's |Z|; null when the record states none). The ranker compares each one both records carry, curve vs curve
 // (src/CrossRefMagneticCurves.hpp). Shared by the inductor and the impedance (bead) models.
-const MAGNETIC_CURVE_KEYS = ['impedance_curve', 'resistance_curve', 'reactance_curve']
+const MAGNETIC_CURVE_KEYS = ['impedance_curve', 'resistance_curve', 'reactance_curve',
+  'dm_impedance_curve', 'cm_insertion_loss_curve', 'dm_insertion_loss_curve']
 export function magneticCurves(r) {
   const out = {}
   for (const k of MAGNETIC_CURVE_KEYS) out[k] = r[k] ?? null

@@ -534,6 +534,10 @@ struct MagneticRow : RowBase {
     CurvePts z_curve;  // |Z|(f), Hz -> ohm (a CMC's: common mode)
     CurvePts r_curve;  // R(f), Hz -> ohm (resistancePoints)
     CurvePts x_curve;  // X(f), Hz -> ohm, signed (reactancePoints)
+    // A common-mode choke's other curves (v22, owner 2026-11-14): its differential-mode |Z|(f)
+    // (the curve dm_impedance_* are read off) and its common- / differential-mode insertion
+    // loss, Hz -> dB (commonModeInsertionLossPoints / differentialModeInsertionLossPoints).
+    CurvePts dm_z_curve, cm_il_curve, dm_il_curve;
     std::string device_type;              // electrical[0].subtype (inductor/transformer/…): annotated, never gated
     std::string family;                   // manufacturerInfo.family or part.family (series, for context)
     // v20: the operating-temperature range (PEAS thermal.operatingTemperature, degC), which the

@@ -90,15 +90,19 @@ inline const ParamSpec& scalar_spec(const std::string& cat, const std::string& k
     throw std::logic_error("magcurve: no scalar spec " + cat + "." + key);
 }
 
-// Differential-mode curves of a common-mode choke. The DM path is the path the wanted signal
-// or supply current takes, so a DM impedance or insertion loss that RISES is the regression
-// (a signal CMC's datasheet bounds its DM insertion loss from above). No scalar spec states a
-// DM quantity:
-//   * DM |Z|(f) takes the DCR spec's bands (Lower, 1.3x): the series impedance in the wanted
-//     path, of which the DCR is the DC end.
-//   * DM insertion loss takes the one dB spec Kelvin has, the op-amp CMRR's 6 dB additive
-//     band, with the direction of a loss in the wanted path (Lower).
-// Both directions are owner-to-confirm (a power-line CMC may use its leakage as a DM filter).
+// The curves of a common-mode choke beyond its CM |Z|. Owner 2026-11-14: "CMC differential-mode
+// impedance and insertion loss: lower is better (signal-line selection practice), with a
+// note" — the DM path carries the wanted signal or supply current, so a DM impedance or
+// insertion loss that RISES is the regression (a signal CMC's datasheet bounds its DM
+// insertion loss from above); a power-line CMC that relies on its leakage as a DM filter is
+// the exception the note points at. CM impedance and CM insertion loss: higher is better (the
+// noise the choke is there to block). No scalar spec states a DM quantity or an insertion
+// loss; the closest are named:
+//   * DM |Z|(f) takes the DCR spec's bands (Lower, PASS <= 1x, WARN to 1.3x): the series
+//     impedance in the wanted path, of which the DCR is the DC end.
+//   * insertion loss takes the one dB spec Kelvin has, the op-amp CMRR's 6 dB additive band:
+//     CM as it is (Higher, a rejection), DM with the direction of a loss in the wanted path
+//     (Lower).
 inline ParamSpec dm_impedance_spec() {
     ParamSpec p = scalar_spec("magnetic", "dcr");
     p.key = "dm_impedance_curve";
@@ -111,6 +115,16 @@ inline ParamSpec dm_insertion_loss_spec() {
     p.dir = Dir::Lower;
     return p;
 }
+inline ParamSpec cm_insertion_loss_spec() {
+    ParamSpec p = scalar_spec("analog", "cmrr_db");
+    p.key = "cm_insertion_loss_curve";
+    return p;
+}
+// Said with every DM curve verdict (owner 2026-11-14).
+inline constexpr const char* kDmLowerNote =
+    "; lower DM impedance / insertion loss is ranked better (signal-line selection practice: "
+    "the DM path carries the wanted signal) — a power-line choke relying on its DM leakage as "
+    "a filter needs the opposite, check the application";
 // The bead impedance spec (chipBead impedance_100mhz: Higher, PASS down to 0.85x, WARN to
 // 0.8x), without its exclude-if-missing flag: a curve on one side only yields no row at all.
 inline ParamSpec impedance_spec(const char* key) {
@@ -140,6 +154,18 @@ inline const std::vector<Def>& defs() {
         {"reactance_curve", "reactance_curve", "X(f)", impedance_spec("reactance_curve"),
          "the chip-bead impedance spec (PASS >= 0.85x, WARN >= 0.8x)", Axis::SemiLogX, "Hz",
          "ohm", true},
+        // A CMC's differential-mode |Z|(f), its band closed by its own DM resonance.
+        {"dm_impedance_curve", "dm_impedance_curve", "DM |Z|(f)", dm_impedance_spec(),
+         "the DCR spec (lower is better: PASS <= 1x, WARN <= 1.3x)", Axis::LogLog, "Hz", "ohm",
+         false, "dm_impedance_curve"},
+        // Insertion loss in dB (50 ohm), linear dB over log frequency; each mode's band closed
+        // by the original's |Z| peak of that mode.
+        {"cm_insertion_loss_curve", "cm_insertion_loss_curve", "CM insertion loss(f)",
+         cm_insertion_loss_spec(), "the CMRR spec (higher is better: WARN within 6 dB)",
+         Axis::SemiLogX, "Hz", "dB", false, "impedance_curve"},
+        {"dm_insertion_loss_curve", "dm_insertion_loss_curve", "DM insertion loss(f)",
+         dm_insertion_loss_spec(), "the CMRR spec's 6 dB band, lower is better",
+         Axis::SemiLogX, "Hz", "dB", false, "dm_impedance_curve"},
     };
     return d;
 }
@@ -330,7 +356,8 @@ inline Result compare_pair(const Def& d, const Curve& orig, const Curve& sub,
              fmt(hi, d.xunit) + " (" + pts + " points, " + axis_word + ", " + d.spec_name +
              (d.inductive_only ? ", inductive band X > 0 only" : "") + band_txt + "): " + what +
              " — worst at " + fmt(wx, d.xunit) + ", substitute " + fmt(v.sub_y, d.yunit) +
-             " vs original " + fmt(v.orig_y, d.yunit);
+             " vs original " + fmt(v.orig_y, d.yunit) +
+             (std::string(d.peak_key) == "dm_impedance_curve" ? kDmLowerNote : "");
     return r;
 }
 

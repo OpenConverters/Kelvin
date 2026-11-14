@@ -974,6 +974,19 @@ int unstate_retracted_ratings(MagneticRow& r) {
         r.dm_impedance_100mhz = r.dm_impedance_peak = r.dm_impedance_peak_freq = kNaN();
         ++n;
     }
+    if (!r.dm_z_curve.empty() &&
+        (field_retracted(r, "electrical.impedancePoints") ||
+         field_retracted(r, "electrical.differentialModeImpedancePoints"))) {
+        r.dm_z_curve = CurvePts{};
+        ++n;
+    }
+    for (auto [path, c] :
+         {std::pair{"electrical.commonModeInsertionLossPoints", &r.cm_il_curve},
+          std::pair{"electrical.differentialModeInsertionLossPoints", &r.dm_il_curve}})
+        if (!c->empty() && field_retracted(r, path)) {
+            *c = CurvePts{};
+            ++n;
+        }
     return n;
 }
 
@@ -2016,6 +2029,7 @@ std::optional<MagneticRow> extract_magnetic(const json& env) {
                         : impedance_curve_points(*pts, ImpedanceMode::Differential);
                 impedance_readings(dm, r.dm_impedance_100mhz, r.dm_impedance_peak,
                                    r.dm_impedance_peak_freq);
+                store_curve(dm, r.dm_z_curve);
             }
         }
         // R(f) and X(f) (v22 curves): the dissipative and the reactive part of a bead's
@@ -2024,6 +2038,12 @@ std::optional<MagneticRow> extract_magnetic(const json& env) {
             store_curve(sweep_points(*rp, "resistance"), r.r_curve);
         if (const json* xp = obj_get(elec, "reactancePoints"))
             store_curve(sweep_points(*xp, "reactance"), r.x_curve);
+        // A CMC's insertion loss per mode (dB, positive = attenuation, as all 310 / 264 records
+        // state it), compared curve vs curve by the ranker.
+        if (const json* p = obj_get(elec, "commonModeInsertionLossPoints"))
+            store_curve(sweep_points(*p, "insertionLoss"), r.cm_il_curve);
+        if (const json* p = obj_get(elec, "differentialModeInsertionLossPoints"))
+            store_curve(sweep_points(*p, "insertionLoss"), r.dm_il_curve);
         // Transformer turns ratio (primary:secondary): electrical[0].turnsRatios[0] (a dimWithTol). Lets
         // select_magnetic rank a catalog transformer by how close its ratio is to the design's required
         // ratio — the meaningful match for flyback/isolated transformers (TAS has no per-winding structure).

@@ -21,7 +21,9 @@ using nlohmann::json;
 
 namespace {
 // MAGNETIC_CURVE_KEYS in web/src/crossref.js.
-const char* const kCurveKeys[] = {"impedance_curve", "resistance_curve", "reactance_curve"};
+const char* const kCurveKeys[] = {"impedance_curve",         "resistance_curve",
+                                  "reactance_curve",         "dm_impedance_curve",
+                                  "cm_insertion_loss_curve", "dm_insertion_loss_curve"};
 // The real record whose manufacturerInfo.reference is `mpn`; throws when the fixture lacks it.
 json real_record(const std::string& mpn) {
     std::ifstream in(std::string(KELVIN_TEST_DIR) + "/fixtures/magnetic_curves.ndjson");
@@ -170,4 +172,38 @@ TEST_CASE("curves: |Z|(f) is graded only up to the original's impedance peak",
     const std::string note = note_with(c, "|Z|(f) compared on both curves");
     CHECK(note.find("useful band 1 MHz-258 MHz") != std::string::npos);
     CHECK(note.find("to the original's |Z| peak") != std::string::npos);
+}
+
+// 5. A common-mode choke's other curves (owner 2026-11-14): differential-mode |Z|(f) (397
+// records) and CM / DM insertion loss (310 / 264 records) were never compared. CM: higher is
+// better. DM: LOWER is better (signal-line selection practice; the note says so and names the
+// power-line exception). Each is graded only in the original's useful band, closed by its
+// |Z| peak of the same mode. Two Würth 47 uH THT power-line CMCs: the 2 A WE-CMB NiZn
+// 744841247 (CM |Z| peaking near 29 MHz) and the 15 A WE-ExB 744844470.
+TEST_CASE("curves: a CMC's DM impedance and CM / DM insertion loss are compared",
+          "[magcurves][crossref][cmc]") {
+    const auto o = row_of("744841247"), s = row_of("744844470");
+    REQUIRE_FALSE(o.dm_z_curve.empty());
+    REQUIRE_FALSE(s.cm_il_curve.empty());
+    REQUIRE_FALSE(s.dm_il_curve.empty());
+    const json c = rank("magnetic", spec_of(o), spec_of(s));
+    INFO(c.dump());
+    // CM |Z| (bead impedance bands) and CM insertion loss (the CMRR spec, higher is better):
+    // at the original's 29 MHz CM peak the substitute blocks 13.7 dB against 36.6 dB.
+    CHECK(verdict_of(c, "impedance_curve") == "fail");
+    CHECK(verdict_of(c, "cm_insertion_loss_curve") == "fail");
+    const std::string cm = note_with(c, "CM insertion loss(f) compared on both curves");
+    CHECK(cm.find("useful band 1 MHz-29 MHz") != std::string::npos);
+    CHECK(cm.find("worst at 29 MHz, substitute 13.7 dB vs original 36.6 dB") !=
+          std::string::npos);
+    // DM |Z|: the substitute's is lower everywhere in band (6.21 vs 20.8 ohm at 1 MHz): PASS.
+    CHECK(verdict_of(c, "dm_impedance_curve") == "pass");
+    const std::string dz = note_with(c, "DM |Z|(f) compared on both curves");
+    CHECK(dz.find("to the original's differential-mode |Z| peak") != std::string::npos);
+    CHECK(dz.find("lower DM impedance / insertion loss is ranked better") != std::string::npos);
+    // DM insertion loss: the substitute's is higher at 1 MHz (0.13 vs 0.118 dB): WARN.
+    CHECK(verdict_of(c, "dm_insertion_loss_curve") == "warn");
+    CHECK(note_with(c, "DM insertion loss(f) compared on both curves")
+              .find("worst at 1 MHz, substitute 0.13 dB vs original 0.118 dB") !=
+          std::string::npos);
 }

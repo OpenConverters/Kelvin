@@ -397,6 +397,9 @@ inline void extra_row_json(const MagneticRow& r, json& o) {
         o["impedance_curve"]["mode"] = "common";
     o["resistance_curve"] = curve_json(r.r_curve);
     o["reactance_curve"] = curve_json(r.x_curve);
+    o["dm_impedance_curve"] = curve_json(r.dm_z_curve);
+    o["cm_insertion_loss_curve"] = curve_json(r.cm_il_curve);
+    o["dm_insertion_loss_curve"] = curve_json(r.dm_il_curve);
     if (r.sat_table_current.empty()) {
         o["saturation_points"] = nullptr;
         return;
