@@ -61,6 +61,11 @@ json spec_of(const kelvin::MagneticRow& r, bool bead = false) {
         s["impedance_100mhz"] = nz(r.impedance_100mhz);
         s["impedance_peak"] = nz(r.impedance_peak);
         s["impedance_peak_freq"] = nz(r.impedance_peak_freq);
+        // CABLE_CORE_VARIANT (owner 2026-11-14): a cable core's opening and pass count.
+        if (r.device_type == "cableCore") {
+            s["cable_max_diameter_m"] = nz(r.cable_max_diameter);
+            s["number_turns"] = nz(r.number_turns);
+        }
     } else {
         s["value_si"] = nz(r.inductance);
         s["saturation_current"] = nz(r.saturation_current);
@@ -345,11 +350,14 @@ TEST_CASE("curves: rated currents at different rises are not compared",
                        "(original 370 mA at 15 K; substitute 1.4 A at 20 K, 2 A at 40 K)") != "");
 }
 
-// 13. Ambient (owner 2026-11-14): 20 and 25 degC are the same room temperature; an ambient
-// stated by one side only is a different condition. Sumida CDMC60D28L150NP-1R0MC is rated
-// 12.8 A at 40 K, 20 degC ambient: against Sumida CY0630AT150DS-1R0MC (13.5 A at 40 K, 25 degC)
-// it is compared, against Coilcraft DO3316H-102MLD (10 A at 40 K, no stated ambient) it is not.
-TEST_CASE("curves: rated current ambient — room temperature matches, one-sided does not",
+// 13. Ambient (owner 2026-11-14): 20 and 25 degC are the same room temperature, and an
+// UNSTATED ambient is read as room temperature (the datasheet convention; rated current only),
+// with a note saying so. Sumida CDMC60D28L150NP-1R0MC is rated 12.8 A at 40 K, 20 degC
+// ambient: against Sumida CY0630AT150DS-1R0MC (13.5 A at 40 K, 25 degC) it is compared; against
+// Coilcraft DO3316H-102MLD (10 A at 40 K, no stated ambient) it is now compared too, 10 A
+// against 12.8 A (0.78x, below the rated-current spec's 0.9x) -> FAIL. (Until 2026-11-14 the
+// one-sided ambient left it UNVERIFIED.)
+TEST_CASE("curves: rated current ambient — room temperature matches, unstated is room",
           "[magcurves][crossref][rated][room]") {
     const auto o = spec_of(row_of("CDMC60D28L150NP-1R0MC"));
     const json room = rank("magnetic", o, spec_of(row_of("CY0630AT150DS-1R0MC")));
@@ -359,8 +367,89 @@ TEST_CASE("curves: rated current ambient — room temperature matches, one-sided
           "");
     const json one = rank("magnetic", o, spec_of(row_of("DO3316H-102MLD")));
     INFO(one.dump());
-    CHECK(verdict_of(one, "rated_current") == "unverified");
-    CHECK(note_with(one, "rated current not compared: rated under different ambient conditions "
-                         "(original 20 degC ambient, substitute no stated ambient)") != "");
+    CHECK(verdict_of(one, "rated_current") == "fail");
+    CHECK(note_with(one, "rated current compared at 20 degC ambient: the substitute's record "
+                         "states no ambient for its rated current; read as room temperature "
+                         "(20-25 degC), the datasheet convention (assumed)") != "");
+    CHECK(note_with(one, "rated current not compared") == "");
+    // The other way round: the original's unstated ambient is the one assumed.
+    const json rev = rank("magnetic", spec_of(row_of("DO3316H-102MLD")), o);
+    INFO(rev.dump());
+    CHECK(verdict_of(rev, "rated_current") == "pass");
+    CHECK(note_with(rev, "the original's record states no ambient for its rated current; read "
+                         "as room temperature") != "");
 }
 
+// 14. A cable core's opening (owner 2026-11-14): the substitute must take at least the
+// original's largest cable. Kitagawa RFC-13-A takes 13.5 mm: RFC-9-A (9.5 mm) FAILS, RFC-H13-A
+// (13.5 mm) passes. RFC-8-A (8.5 mm) as the original: RFC-13-A (13.5 mm, 1.59x) passes with a
+// note that the cable fits loosely.
+TEST_CASE("curves: a cable core must take the original's cable", "[magcurves][crossref][cable]") {
+    const auto o = spec_of(row_of("RFC-13-A"), true);
+    REQUIRE(o["cable_max_diameter_m"].get<double>() == Approx(0.0135));
+    REQUIRE(o["number_turns"].get<double>() == 1.0);
+    const json small = rank("chipBead", o, spec_of(row_of("RFC-9-A"), true));
+    INFO(small.dump());
+    CHECK(verdict_of(small, "cable_max_diameter_m") == "fail");
+    CHECK(note_with(small, "cable opening 9.5 mm against the original's 13.5 mm — the original's "
+                           "largest cable does not pass through the substitute") != "");
+    const json same = rank("chipBead", o, spec_of(row_of("RFC-H13-A"), true));
+    INFO(same.dump());
+    CHECK(verdict_of(same, "cable_max_diameter_m") == "pass");
+    CHECK(verdict_of(same, "number_turns") == "pass");
+    CHECK(note_with(same, "cable opening") == "");
+    const json loose =
+        rank("chipBead", spec_of(row_of("RFC-8-A"), true), spec_of(row_of("RFC-13-A"), true));
+    INFO(loose.dump());
+    CHECK(verdict_of(loose, "cable_max_diameter_m") == "pass");
+    CHECK(note_with(loose, "cable opening 13.5 mm against the original's 8.5 mm — more than "
+                           "1.5x larger, so the original's cable fits loosely") != "");
+}
+
+// 15. A cable core's pass count must match: Kitagawa TRM-16-8-16E-WE states its |Z| for 2
+// passes, GTFC-16-8-16 for 1 (its 7.2 mm opening takes the original's 7.1 mm cable).
+TEST_CASE("curves: a cable core's pass count must match", "[magcurves][crossref][cable]") {
+    const json c = rank("chipBead", spec_of(row_of("TRM-16-8-16E-WE"), true),
+                        spec_of(row_of("GTFC-16-8-16"), true));
+    INFO(c.dump());
+    CHECK(verdict_of(c, "number_turns") == "fail");
+    CHECK(verdict_of(c, "cable_max_diameter_m") == "pass");
+    CHECK(note_with(c, "impedance stated for 1 pass of the cable against the original's 2 "
+                       "passes") != "");
+}
+
+// 16. A cable opening the substitute does not state (Fair-Rite 2643251002 states none) against
+// an original that does (RFC-13-A, 13.5 mm): UNVERIFIED + note, capped at minor_review. The
+// other way round (the original states none) it is UNVERIFIED + note, no cap.
+TEST_CASE("curves: a cable opening the substitute does not state caps the grade",
+          "[magcurves][crossref][cable]") {
+    const json c = rank("chipBead", spec_of(row_of("RFC-13-A"), true),
+                        spec_of(row_of("2643251002"), true));
+    INFO(c.dump());
+    CHECK(verdict_of(c, "cable_max_diameter_m") == "unverified");
+    CHECK(note_with(c, "the original's maximum cable outer diameter is 13.5 mm; the "
+                       "substitute's record states none") != "");
+    CHECK(c.value("grade", "") == "minor_review");
+    const json r = rank("chipBead", spec_of(row_of("2643251002"), true),
+                        spec_of(row_of("RFC-13-A"), true));
+    INFO(r.dump());
+    CHECK(verdict_of(r, "cable_max_diameter_m") == "unverified");
+    CHECK(note_with(r, "the substitute's maximum cable outer diameter is 13.5 mm; the "
+                       "original's record states none") != "");
+}
+
+// 17. L(I) bands (owner 2026-11-14): WARN from the tolerance PASS floor down to 0.9x that
+// floor, so every part has a WARN band. Würth 74404063047 (4.7 uH +/-20 %) PASSES to 0.8x and
+// WARNs to 0.72x; TDK SPM4015T-4R7M-LR holds 3.23 uH against its 4.24 uH at 2.23 A, 20 degC
+// (0.76x, the worst common point): WARN. Under the old bands (WARN floor 0.8x = the PASS floor
+// of a +/-20 % part, so no WARN band) it was a FAIL.
+TEST_CASE("curves: an L(I) curve has a WARN band below the tolerance floor",
+          "[magcurves][crossref][lcurve]") {
+    const json c = rank("magnetic", spec_of(row_of("74404063047")),
+                        spec_of(row_of("SPM4015T-4R7M-LR")));
+    INFO(c.dump());
+    CHECK(verdict_of(c, "inductance_curve") == "warn");
+    CHECK(note_with(c, "L(I) compared on both curves")
+              .find("PASS >= 0.8x, WARN >= 0.72x): holds less inductance — worst at 2.23 A, "
+                    "20 degC, substitute 3.23 uH vs original 4.24 uH") != std::string::npos);
+}

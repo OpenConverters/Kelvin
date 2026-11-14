@@ -553,6 +553,8 @@ void row_io(Ar& ar, MagneticRow& r) {
     ar.dbl(r.dm_impedance_100mhz);         // v22 (curves, CMC DM mode)
     ar.dbl(r.dm_impedance_peak);           // v22
     ar.dbl(r.dm_impedance_peak_freq);      // v22
+    ar.dbl(r.cable_max_diameter);          // v22 (cable cores, owner 2026-11-14)
+    ar.dbl(r.number_turns);                // v22
     ar.curve(r.z_curve);                   // v22 curves (shared CurvePts storage)
     ar.curve(r.r_curve);
     ar.curve(r.x_curve);

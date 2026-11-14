@@ -88,6 +88,9 @@ inline std::string signed_pct(double v) { return (v >= 0 ? "+" : "") + plain_pct
 //: 15 % off warns ("turns ratio can be +-15%, but with care"), beyond that fails.
 inline constexpr double kTurnsRatioPassRel = 0.01;
 inline constexpr double kTurnsRatioWarnRel = 0.15;
+// A cable core whose opening is more than this many times the original's fits the original's
+// cable loosely (owner 2026-11-14): a PASS with a note.
+inline constexpr double kCableLooseFitRatio = 1.5;
 
 // A resistance as an engineer writes it: SI prefix, up to six significant digits,
 // no trailing zeros ("14.7 kΩ", "15 kΩ", "0.5 Ω").
@@ -1220,6 +1223,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // A primary current rating (MOSFET Id, diode If(AV), IGBT Ic) stated by one record only
     // (owner 2026-11-13, Y1): UNVERIFIED with a note, capped at minor_review.
     bool current_rating_one_sided = false;
+    // A cable core's cable diameter or pass count the substitute does not state while the
+    // original does (owner 2026-11-14): UNVERIFIED, capped at minor_review.
+    bool cable_core_unverified = false;
     // Primary ratings the ORIGINAL does not state and the substitute does (owner 2026-11-13,
     // Y2; is_primary_rating): each candidate is capped at minor_review with a note.
     std::vector<std::string> orig_unstated_primary;
@@ -3288,6 +3294,80 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                 : "the substitute's turns ratio is " + lists(s_cf) +
                                       "; the original's record states none — confirm both "
                                       "ratios match from the datasheets");
+        }
+    }
+
+    // ── cable cores: cable fit and pass count (owner 2026-11-14) ─────────────
+    // A cable core (MAS subtype cableCore) is chosen for the cable it must pass and is rated
+    // per pass count; ranked by the impedance model (chipBead), two of its axes are its own:
+    //   cable_max_diameter (maximumCableOuterDiameter, m): the substitute must accept at least
+    //     the original's largest cable — smaller -> FAIL; equal or larger -> PASS, and more than
+    //     1.5x the original's opening -> PASS with a note that the cable fits loosely;
+    //   number_turns (numberTurns, the cable passes its |Z| is stated for): must match -> FAIL.
+    // Not stated by the substitute while the original states it -> UNVERIFIED + note, capped
+    // at minor_review. Stated by the substitute only -> UNVERIFIED + note, no cap (the owner's
+    // rule covers the substitute-missing case only). Stated by neither -> nothing (no cap).
+    if ((cat == "chipBead" || cat == "magnetic") && str(original, "device_type") == "cableCore") {
+        auto mm = [](double m) {
+            char b[32];
+            std::snprintf(b, sizeof b, "%.3g mm", m * 1e3);
+            return std::string(b);
+        };
+        auto passes = [](double n) {
+            char b[32];
+            std::snprintf(b, sizeof b, "%g", n);
+            return std::string(b) + (n == 1.0 ? " pass" : " passes");
+        };
+        auto one_sided = [&](const char* key, const char* what, const std::optional<double>& o,
+                             const std::string& shown) {
+            params.push_back({{"name", key}, {"verdict", UNVERIFIED}});
+            if (o) {
+                cable_core_unverified = true;
+                demote();
+                notes.push_back(std::string("the original's ") + what + " is " + shown +
+                                "; the substitute's record states none — confirm it from the "
+                                "datasheet before this swap");
+            } else {
+                notes.push_back(std::string("the substitute's ") + what + " is " + shown +
+                                "; the original's record states none — confirm the original's "
+                                "from its datasheet");
+            }
+        };
+        const auto od = num(original, "cable_max_diameter_m"), sd = num(cand, "cable_max_diameter_m");
+        if (od && sd) {
+            const char* v = PASS;
+            if (*sd < *od && !same_stated_value(*sd, *od)) {
+                v = FAIL;
+                notes.push_back("cable opening " + mm(*sd) + " against the original's " + mm(*od) +
+                                " — the original's largest cable does not pass through the "
+                                "substitute");
+                demote();
+                penalty += opt.gate_weight * kVerdictFailPenalty;
+                ++worse;
+            } else if (*sd > kCableLooseFitRatio * *od) {
+                notes.push_back("cable opening " + mm(*sd) + " against the original's " + mm(*od) +
+                                " — more than 1.5x larger, so the original's cable fits loosely "
+                                "(less of the core's impedance couples to a thin cable; check "
+                                "the fit)");
+            }
+            params.push_back({{"name", "cable_max_diameter_m"}, {"verdict", v}});
+        } else if (od || sd) {
+            one_sided("cable_max_diameter_m", "maximum cable outer diameter", od, mm(od ? *od : *sd));
+        }
+        const auto on = num(original, "number_turns"), sn = num(cand, "number_turns");
+        if (on && sn) {
+            const bool same = same_stated_value(*on, *sn);
+            params.push_back({{"name", "number_turns"}, {"verdict", same ? PASS : FAIL}});
+            if (!same) {
+                notes.push_back("impedance stated for " + passes(*sn) + " of the cable against "
+                                "the original's " + passes(*on) +
+                                " — a different configuration, its |Z| is not the original's");
+                demote();
+                penalty += opt.gate_weight * kVerdictFailPenalty;
+                ++worse;
+            }
+        } else if (on || sn) {
+            one_sided("number_turns", "number of cable passes", on, passes(on ? *on : *sn));
         }
     }
 
@@ -6152,6 +6232,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //     (connector_identity_gaps; owner 2026-11-13 W1)    primary    cap major_review
     //   connector orientation (connector_orientation_unv.)    primary    cap minor_review
     //   connector pluggable vs fixed (pluggable_unverified)   primary    cap minor_review
+    //   cable-core cable diameter / pass count not stated by
+    //     the substitute (owner 2026-11-14; cable_core_unv.)  primary    cap minor_review
     //   diode / MOSFET die configuration, internal connection primary  cap minor_review
     //   oscillator control-pin function (timebase_pin_unv.)   primary    cap minor_review
     //   resistor power at rating temp (power_basis_unverif.)  primary    cap minor_review
@@ -6225,6 +6307,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                     resistor_connection_unverified || resistor_count_one_sided ||
                                     mount_unverified || timebase_pin_unverified ||
                                     timebase_prog_order || current_rating_one_sided ||
+                                    cable_core_unverified ||
                                     !orig_unstated_primary.empty() ||
                                     !both_unstated_primary.empty() || cand_no_physical_data;
     out["grade"] = grade_for(status, tier, any_warn, any_fail, primary_unverified,

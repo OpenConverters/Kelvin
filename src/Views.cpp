@@ -2265,6 +2265,13 @@ std::optional<MagneticRow> extract_magnetic(const json& env) {
             if (ok) r.turns_ratios = std::move(all);
         }
         r.device_type = get_str(elec, "subtype").value_or("");
+        // A cable core's fit and pass count (v22, owner 2026-11-14), as stated; a value that is
+        // not positive (a diameter) or negative (a pass count) is not a statement of either.
+        if (r.device_type == "cableCore") {
+            if (const auto d = get_num(elec, "maximumCableOuterDiameter"); d && *d > 0)
+                r.cable_max_diameter = *d;
+            if (const auto n = get_num(elec, "numberTurns"); n && *n > 0) r.number_turns = *n;
+        }
 
         // Winding structure across EVERY wiring configuration (a transformer with an auxiliary winding
         // files both "all windings" and "auxiliary windings open"): the set of secondary-winding counts

@@ -395,8 +395,10 @@ inline Result compare_pair(const Def& d, const Curve& orig, const Curve& sub,
 // like any other (no L(0) is needed to compare two L(I) curves). Bands: the inductance spec's
 // lower side (primary_value_spec "magnetic", Higher — more inductance held under bias is
 // never a regression): PASS down to the original's stated tolerance floor (owner 2026-11-13
-// R1) or 0.85x when it states none, WARN down to 0.8x, FAIL below. The worst point over every
+// R1) or 0.85x when it states none, WARN down to 0.9x that PASS floor (owner 2026-11-14:
+// every part gets a WARN band; a +/-20 % part 0.8x -> 0.72x), FAIL below. The worst point over every
 // common temperature decides. No common temperature -> UNVERIFIED + note, no cap.
+constexpr double kInductanceCurveWarnOfPass = 0.9;
 inline ParamSpec inductance_curve_spec(const nlohmann::json& orig) {
     PrimaryValueSpec pv{};
     if (!primary_value_spec("magnetic", pv))
@@ -407,8 +409,10 @@ inline ParamSpec inductance_curve_spec(const nlohmann::json& orig) {
         if (t != orig.end() && t->is_number() && t->get<double>() >= 0)
             pass = std::max(pv.accept_lo, 1.0 - t->get<double>() / 100.0);
     }
-    return ParamSpec{"inductance_curve", Dir::Higher, pv.accept_lo, std::nullopt, false, false,
-                     nullptr, pass};
+    // WARN from the PASS floor down to 0.9x that floor, FAIL below (owner 2026-11-14): every
+    // part gets a WARN band — a +/-20 % part PASSES to 0.8x, WARNs to 0.72x.
+    return ParamSpec{"inductance_curve", Dir::Higher, kInductanceCurveWarnOfPass * pass,
+                     std::nullopt, false, false, nullptr, pass};
 }
 inline std::string temp_word(const std::optional<double>& t) {
     if (!t) return "no stated temperature";
@@ -518,9 +522,12 @@ inline std::optional<Result> compare_inductance_curves(const nlohmann::json& ori
 // record states that lies inside both records' stated rises, each side read there exactly or
 // linearly between its two bracketing rises (never extrapolated), judged with the
 // rated_current spec; the worst rise decides. Ambient: 20 and 25 degC are the same room
-// temperature (owner 2026-11-14, same_room_temperature); an ambient stated by one side only,
-// or two different ones, is a different condition -> UNVERIFIED + note, no cap; so is a pair
-// with no common rise.
+// temperature (owner 2026-11-14, same_room_temperature). An UNSTATED ambient is read as room
+// temperature (20-25 degC), the datasheet convention for a self-heating rating (owner
+// 2026-11-14, rated current only — every other one-sided condition stays a different one):
+// against a stated room ambient it is compared, with a note saying the ambient was assumed;
+// against any other stated ambient it is a different condition. Two different stated
+// ambients, likewise -> UNVERIFIED + note, no cap; so is a pair with no common rise.
 struct RatedPoints {
     std::vector<double> rise, current;
     std::optional<double> ambient;
@@ -576,10 +583,19 @@ inline RatedBasis rated_at_common_rise(const nlohmann::json& orig, const nlohman
     auto amb = [](const std::optional<double>& t) {
         return t ? fmt(*t, "degC") + " ambient" : std::string("no stated ambient");
     };
-    if (o->ambient.has_value() != s->ambient.has_value() ||
-        (o->ambient && !same_room_temperature(*o->ambient, *s->ambient))) {
+    // One side states its ambient, the other does not: the unstated one is room temperature.
+    const bool one_sided = o->ambient.has_value() != s->ambient.has_value();
+    const std::optional<double> stated = o->ambient ? o->ambient : s->ambient;
+    std::string assumed;  // the note when an unstated ambient was read as room temperature
+    if (one_sided)
+        assumed = std::string("the ") + (o->ambient ? "substitute's" : "original's") +
+                  " record states no ambient for its rated current; read as room temperature "
+                  "(20-25 degC), the datasheet convention (assumed)";
+    if ((one_sided && !is_room_temperature(*stated)) ||
+        (!one_sided && o->ambient && !same_room_temperature(*o->ambient, *s->ambient))) {
         b.note = "rated current not compared: rated under different ambient conditions "
                  "(original " + amb(o->ambient) + ", substitute " + amb(s->ambient) +
+                 (one_sided ? "; " + assumed + ", not " + fmt(*stated, "degC") : std::string()) +
                  ") — confirm the substitute's rating at the original's ambient from its "
                  "datasheet";
         return b;
@@ -616,10 +632,14 @@ inline RatedBasis rated_at_common_rise(const nlohmann::json& orig, const nlohman
     }
     // Said only when it changes what is compared: several rises, different ones, or a
     // room-temperature pair (20 against 25 degC).
-    const bool room_pair = o->ambient && !same_stated_value(*o->ambient, *s->ambient);
+    const bool room_pair =
+        o->ambient && s->ambient && !same_stated_value(*o->ambient, *s->ambient);
+    if (one_sided)
+        b.note = "rated current compared at " + fmt(*stated, "degC") + " ambient: " + assumed;
     if (o->rise.size() > 1 || s->rise.size() > 1 ||
         !same_stated_value(o->rise.front(), s->rise.front()) || room_pair)
-        b.note = "rated current compared at a common temperature rise: at " +
+        b.note = (b.note.empty() ? std::string() : b.note + "; ") +
+                 "rated current compared at a common temperature rise: at " +
                  fmt(best_rise, "K") + " the substitute carries " + fmt(*b.sub_at, "A") +
                  " against the original's " + fmt(*b.orig_at, "A") + " (original " +
                  rises(*o) + "; substitute " + rises(*s) +

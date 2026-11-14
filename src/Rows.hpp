@@ -554,6 +554,11 @@ struct MagneticRow : RowBase {
     double dm_impedance_100mhz = kNaN();     // ohm
     double dm_impedance_peak = kNaN();       // ohm
     double dm_impedance_peak_freq = kNaN();  // Hz
+    // A cable core's fit and configuration (v22, owner 2026-11-14): the largest cable / bundle
+    // outer diameter that passes through it (maximumCableOuterDiameter, m) and the number of
+    // cable passes its |Z| is stated for (numberTurns). NaN = not stated.
+    double cable_max_diameter = kNaN();  // m
+    double number_turns = kNaN();
     // Measured curves (v22, owner 2026-11-14: "compare ALL existing graphs") in the shared
     // curve storage (CurvePts, as the capacitor's), empty when the record states fewer than
     // two usable samples. The ranker compares them curve vs curve (CrossRefMagneticCurves.hpp).

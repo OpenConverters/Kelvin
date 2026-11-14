@@ -177,10 +177,13 @@ inline bool same_stated_value(double a, double b) {
 // Coilcraft states 25 degC for the same bench measurement). Otherwise only the same stated
 // value matches. Case vs ambient, and a temperature stated by one side only, are the caller's
 // to tell apart (they are different conditions).
+// A stated room temperature: 20 or 25 degC (owner 2026-11-14).
+inline bool is_room_temperature(double t) {
+    return same_stated_value(t, 20.0) || same_stated_value(t, 25.0);
+}
 inline bool same_room_temperature(double a, double b) {
     if (same_stated_value(a, b)) return true;
-    auto room = [](double t) { return same_stated_value(t, 20.0) || same_stated_value(t, 25.0); };
-    return room(a) && room(b);
+    return is_room_temperature(a) && is_room_temperature(b);
 }
 
 // Mirrors _compare_numeric: LOWER/HIGHER with abs_tol (additive) or tol_factor.

@@ -505,7 +505,20 @@ const CMC_IMPEDANCE_VARIANT = { ...BEAD_VARIANT }
 // samples near 100 MHz, and its |Z|(f) curve against the other's in the useful band. A cable
 // core with no |Z| on record at all (no 100 MHz value, no curve of two samples) stays on the
 // inductor model and is refused for the missing L, as a bare CMC is.
-const CABLE_CORE_VARIANT = { ...BEAD_VARIANT }
+// Two axes of its own (owner 2026-11-14): the largest cable that passes through it
+// (maximumCableOuterDiameter; the substitute must take at least the original's) and the
+// number of cable passes its |Z| is stated for (numberTurns; must match). Not stated by the
+// substitute while the original states it -> UNVERIFIED, capped at minor_review (ranker).
+const CABLE_CORE_VARIANT = {
+  ...BEAD_VARIANT,
+  spec: (r) => ({ ...BEAD_VARIANT.spec(r),
+    cable_max_diameter_m: nz(r.cable_max_diameter), number_turns: nz(r.number_turns) }),
+  params: [
+    { key: 'cable_max_diameter_m', label: 'cable Ø max', row: 'cable_max_diameter', unit: 'm' },
+    { key: 'number_turns', label: 'passes', row: 'number_turns', unit: '' },
+    ...BEAD_VARIANT.params,
+  ],
+}
 
 export function magneticVariantFor(orig) {
   if (orig?.device_type === 'chipBead') return BEAD_VARIANT

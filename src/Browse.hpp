@@ -234,6 +234,8 @@ inline const FieldTable<MagneticRow>& fields<MagneticRow>() {
          {"dm_impedance_100mhz", &MagneticRow::dm_impedance_100mhz},
          {"dm_impedance_peak", &MagneticRow::dm_impedance_peak},
          {"dm_impedance_peak_freq", &MagneticRow::dm_impedance_peak_freq},
+         {"cable_max_diameter", &MagneticRow::cable_max_diameter},
+         {"number_turns", &MagneticRow::number_turns},
          {"temp_min_c", &MagneticRow::temp_min_c},
          {"temp_max_c", &MagneticRow::temp_max_c}},
         {{"device_type", &MagneticRow::device_type}, {"family", &MagneticRow::family}},

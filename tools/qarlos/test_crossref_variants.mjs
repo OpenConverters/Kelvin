@@ -59,11 +59,21 @@ assert.equal(famFor('magnetic', { device_type: 'inductor', inductance: 1e-5 }).c
 //     Würth 74271338 (|Z| curve of 429 samples, 140 ohm at 101 MHz), Würth 782114096080 (curve
 //     1-7.4 MHz only, no 100 MHz value), Kitagawa RFC-8MA (one sample, 20 ohm at 10 MHz).
 const core = { mpn: '74271338', manufacturer: 'Würth Elektronik', device_type: 'cableCore',
-  inductance: null, impedance_100mhz: 140, impedance_curve: { x: [1e6, 1e8], y: [10, 140] } }
+  inductance: null, impedance_100mhz: 140, impedance_curve: { x: [1e6, 1e8], y: [10, 140] },
+  cable_max_diameter: 0.0158, number_turns: 1 }
 const cf = famFor('magnetic', core)
 assert.equal(cf.category, 'chipBead', 'cable core must take the impedance model')
 assert.deepEqual(cf.sameFacet, { f: 'device_type', label: 'device type' })
 assert.equal(cf.spec(core).device_type, 'cableCore')
+// Its own axes (owner 2026-11-14): the cable opening (74271338 maximumCableOuterDiameter
+// 15.8 mm) and the pass count (numberTurns 1) reach the ranker; not stated -> null.
+assert.equal(cf.spec(core).cable_max_diameter_m, 0.0158)
+assert.equal(cf.spec(core).number_turns, 1)
+assert.equal(cf.spec({ ...core, cable_max_diameter: null }).cable_max_diameter_m, null)
+assert.ok(cf.params.some((p) => p.key === 'cable_max_diameter_m'))
+assert.ok(cf.params.some((p) => p.key === 'number_turns'))
+// A bead's spec does not grow the cable axes.
+assert.equal(famFor('magnetic', { device_type: 'chipBead' }).spec(core).number_turns, undefined)
 let coreSeen = null
 await runCrossRef({ family: 'magnetic', original: core, manufacturers: ['Fair-Rite'], engine: {
   async browse(family, q) { coreSeen = q; return { total: 0, rows: [] } },
