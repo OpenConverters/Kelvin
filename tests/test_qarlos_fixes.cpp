@@ -9080,3 +9080,29 @@ TEST_CASE("qarlos r28: a DSN0603 package is not the imperial 0603 chip",
     CHECK_FALSE(has_note(c, "0603 chip"));
 }
 
+// Qarlos r28 (data-524a699 records, verbatim in tests/fixtures/qarlos_r28_timing.ndjson): Abracon
+// ABM13N-48.0000MHZ-8-D1X-T5 (-40..85 degC) took Wurth 830108049101 (-30..85 degC) with only a
+// temp_min WARN. Owner 2026-11-14: timing and connectors drop the 15 degC band; a substitute that
+// does not cover the original's operating range FAILs at that end, as in the other families.
+TEST_CASE("qarlos r28: a timing substitute not covering the original's cold end fails",
+          "[qarlos][crossref][timing][r28-temp]") {
+    std::ifstream in(std::string(KELVIN_TEST_DIR) + "/fixtures/qarlos_r28_timing.ndjson");
+    std::string line, orig_line, cand_line;
+    while (std::getline(in, line)) {
+        if (line.find("ABM13N-48.0000MHZ-8-D1X-T5") != std::string::npos) orig_line = line;
+        if (line.find("\"830108049101\"") != std::string::npos) cand_line = line;
+    }
+    REQUIRE(!orig_line.empty());
+    REQUIRE(!cand_line.empty());
+    const json o = timing_tech::spec(orig_line.c_str()), s = timing_tech::spec(cand_line.c_str());
+    REQUIRE(o["temp_min_C"] == -40.0);
+    REQUIRE(s["temp_min_C"] == -30.0);
+    auto r = kelvin::crossref::cross_reference("timeBase", o, json::array({s}));
+    REQUIRE(r["candidates"].size() == 1);
+    const json c = r["candidates"][0];
+    CHECK(verdict_of(c, "temp_min_C") == "fail");
+    CHECK(has_note(c, "does not cover the original's cold end"));
+    CHECK(c["status"] != "recommended");
+    CHECK(c["grade"] != "minor_review");
+    CHECK(c["grade"] != "drop_in");
+}
