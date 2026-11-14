@@ -8970,3 +8970,70 @@ TEST_CASE("owner 2026-11-14: a candidate stating no physical data ranks after kn
           s["penalty"].get<double>() + 0.9 * kelvin::crossref::kNoPhysicalDataPenalty);
     CHECK(r["candidates"][0]["mpn"] == "D2TO020_WITH_CASE");
 }
+
+// Qarlos r28 seed 33352234 (data-524a699 records, verbatim in
+// tests/fixtures/qarlos_r28_capacitors.ndjson): Vishay MKP1847H61525JP4 (500 V DC, 250 V AC, no
+// safety class) took WIMA's DCP4H151506G4LJS00 (500 V DC, no AC rating) with no AC verdict or
+// note. An original's AC rating is compared even without a safety class.
+namespace r28_cap {
+json spec(const std::string& mpn) {
+    std::ifstream in(std::string(KELVIN_TEST_DIR) + "/fixtures/qarlos_r28_capacitors.ndjson");
+    std::string line;
+    while (std::getline(in, line))
+        if (line.find("\"reference\":\"" + mpn + "\"") != std::string::npos ||
+            line.find("\"reference\": \"" + mpn + "\"") != std::string::npos) {
+            auto r = kelvin::extract_capacitor(json::parse(line));
+            REQUIRE(r.has_value());
+            json s = cap_spec(*r);
+            s["voltage_ac"] =
+                std::isnan(r->v_rated_ac) ? json(nullptr) : json(r->v_rated_ac);
+            return s;
+        }
+    throw std::runtime_error("fixture has no capacitor record " + mpn);
+}
+}  // namespace r28_cap
+
+TEST_CASE("qarlos r28: an original's AC rating is compared without a safety class",
+          "[qarlos][crossref][capacitor][r28-ac]") {
+    const json orig = r28_cap::spec("MKP1847H61525JP4");
+    const json dc = r28_cap::spec("DCP4H151506G4LJS00");
+    REQUIRE(orig["voltage_ac"] == 250.0);
+    REQUIRE(dc["voltage_ac"].is_null());
+    kelvin::crossref::Options opt;
+    opt.max_results = 10;
+    auto r = kelvin::crossref::cross_reference("capacitor", orig, json::array({dc}), opt);
+    REQUIRE(r["candidates"].size() == 1);
+    const json c = r["candidates"][0];
+    CHECK(verdict_of(c, "voltage_ac") == "unverified");
+    CHECK(has_note(c, "the original is rated 250 V AC"));
+    // Both stated: compared like the rated voltage (the original's own record against an AC
+    // rating 5 % and 20 % lower).
+    json warm = orig, low = orig;
+    warm["mpn"] = "AC_237V";
+    warm["voltage_ac"] = 237.5 - 1.0;
+    low["mpn"] = "AC_200V";
+    low["voltage_ac"] = 200.0;
+    auto r2 = kelvin::crossref::cross_reference("capacitor", orig,
+                                                json::array({orig, warm, low}), opt);
+    bool seen_same = false, seen_warm = false, seen_low = false;
+    for (const auto& x : r2["candidates"]) {
+        if (x["mpn"] == "MKP1847H61525JP4") {
+            seen_same = true;
+            CHECK(verdict_of(x, "voltage_ac") == "pass");
+        }
+        if (x["mpn"] == "AC_237V") {
+            seen_warm = true;
+            CHECK(verdict_of(x, "voltage_ac") == "warn");
+            CHECK(has_note(x, "AC rating below the original's"));
+        }
+        if (x["mpn"] == "AC_200V") {  // below 0.9x: rejected like the rated voltage
+            seen_low = true;
+            CHECK(verdict_of(x, "voltage_ac") == "fail");
+            CHECK(x["status"] == "no_substitute");
+        }
+    }
+    CHECK(seen_same);
+    CHECK(seen_warm);
+    CHECK(seen_low);
+}
+

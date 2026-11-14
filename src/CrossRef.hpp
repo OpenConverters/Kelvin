@@ -1632,6 +1632,41 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 penalty += opt.gate_weight * kVerdictFailPenalty;
                 missing_required_data = true;
             }
+        } else if (const auto o_ac = num(original, "voltage_ac")) {
+            // An original with no safety class that still states an AC rating (a film
+            // capacitor rated 500 V DC / 250 V AC): the AC rating is a rating of its own, and
+            // the DC one is not it. Qarlos r28 seed 33352234: Vishay MKP1847H61525JP4 (250 V
+            // AC) took WIMA DC-LINK parts whose records state no AC rating, with no AC verdict
+            // or note. Rule (owner 2026-11-14):
+            //   * both stated -> compared like the rated voltage (the capacitor "voltage"
+            //     critical rating: HigherBetter, WARN below 0.95x, FAIL below 0.9x rejects);
+            //   * the substitute states none -> UNVERIFIED with a note (no cap, no penalty);
+            //   * the original states none -> nothing is compared.
+            const auto s_ac = num(cand, "voltage_ac");
+            char buf[160];
+            if (!s_ac) {
+                params.push_back({{"name", "voltage_ac"}, {"verdict", UNVERIFIED}});
+                std::snprintf(buf, sizeof buf, "%g V AC", *o_ac);
+                notes.push_back(std::string("the original is rated ") + buf +
+                                "; the substitute's record states no AC rating, so its AC "
+                                "rating could not be compared (its DC rating is not that "
+                                "rating) — confirm it on the datasheet before an AC duty");
+            } else {
+                const auto v =
+                    score_directional(o_ac, s_ac, Mode::HigherBetter, 0.95, 0.9);
+                params.push_back({{"name", "voltage_ac"}, {"verdict", v.verdict}});
+                if (v.verdict == FAIL || v.verdict == WARN) {
+                    std::snprintf(buf, sizeof buf, "%g V AC against the original's %g V AC",
+                                  *s_ac, *o_ac);
+                    notes.push_back(std::string("AC rating below the original's: ") + buf +
+                                    " — less margin to the circuit's AC voltage; confirm the "
+                                    "application's worst-case AC voltage is covered");
+                    if (v.verdict == FAIL)
+                        return reject("AC voltage rating falls far below the original's");
+                    demote();
+                    penalty += opt.gate_weight * v.penalty;
+                }
+            }
         }
     }
     // A chip resistor ARRAY is not a discrete resistor: same body outline, a
