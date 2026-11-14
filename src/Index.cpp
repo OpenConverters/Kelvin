@@ -247,6 +247,9 @@ struct WriteAr {
         dbl(c.temperature);
         dbl(c.dc_bias);
         dbl(c.frequency);
+        strvec(c.cond_keys);  // further conditions (MOSFET / diode / connector curves)
+        dblvec(c.cond_vals);
+        str(c.cond_text);
     }
 };
 
@@ -332,8 +335,23 @@ struct ReadAr {
         dbl(c.temperature);
         dbl(c.dc_bias);
         dbl(c.frequency);
+        strvec(c.cond_keys);  // further conditions (MOSFET / diode / connector curves)
+        dblvec(c.cond_vals);
+        str(c.cond_text);
     }
 };
+
+// A list of curves (a MOSFET's ambient ratings: one per mounting / time base / Vgs).
+template <class Ar>
+void curves(Ar& ar, std::vector<CurvePts>& v) {
+    uint32_t n = static_cast<uint32_t>(v.size());
+    ar.u32(n);
+    if constexpr (!Ar::writing) {
+        ar.need(static_cast<size_t>(n) * 4);  // each curve carries at least one pool ref
+        v.resize(n);
+    }
+    for (auto& c : v) ar.curve(c);
+}
 
 template <class Ar>
 void io_base(Ar& ar, RowBase& r) {
@@ -375,6 +393,13 @@ void row_io(Ar& ar, MosfetRow& r) {
     ar.dbl(r.coss_vds);           // v21
     ar.str(r.die_configuration);  // v22
     ar.str(r.internal_connection);  // v22 (owner 2026-11-13, V2)
+    ar.curve(r.ciss_curve);       // v22 (owner curve rule 2026-11-14)
+    ar.curve(r.coss_curve);       // v22
+    ar.curve(r.crss_curve);       // v22
+    ar.curve(r.rds_on_id_curve);  // v22
+    ar.curve(r.rds_on_tj_curve);  // v22
+    ar.curve(r.qg_curve);         // v22
+    curves(ar, r.id_ambient_curves);  // v22
     ar.boolean(r.is_production);
     ar.boolean(r.datasheet_usable);
 }
@@ -409,6 +434,9 @@ void row_io(Ar& ar, DiodeRow& r) {
     ar.dbl(r.junction_capacitance_vr); // v21
     ar.dbl(r.number_of_elements);      // v22 (SAS bcc7a93)
     ar.dbl(r.vf_test_current);         // v22
+    ar.curve(r.vf_curve);          // v22 (owner curve rule 2026-11-14)
+    ar.curve(r.ir_curve);          // v22
+    ar.curve(r.cj_curve);          // v22
     ar.boolean(r.is_production);
 }
 
@@ -603,6 +631,7 @@ void row_io(Ar& ar, ConnectorRow& r) {
     ar.str(r.shell_size);     // v21
     ar.str(r.coding);         // v21
     ar.str(r.coupling_type);  // v21
+    ar.curve(r.current_ambient_curve);  // v22 (owner curve rule 2026-11-14)
     ar.boolean(r.is_production);
 }
 

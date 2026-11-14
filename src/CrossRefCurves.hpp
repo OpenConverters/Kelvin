@@ -16,6 +16,7 @@
 // curve was measured under. Program-only, no I/O.
 #pragma once
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstddef>
 #include <cstdio>
@@ -147,11 +148,16 @@ inline CurveVerdict compare_curves(const Curve& orig, const Curve& sub, const Pa
 
 // ── Curves in a ranker spec ─────────────────────────────────────────────────
 // The spec shape (crossref.js, from a row's CurvePts): {x: [...], y: [...], temperature?,
-// dc_bias?, frequency?}; null / absent = no curve. The spec is built by Kelvin's own row
-// code, so a malformed curve is a bug and throws (Curve's constructor).
+// dc_bias?, frequency?, conditions?: {name: SI value}, condition_text?}; null / absent = no
+// curve. `conditions` / `condition_text` carry what the MOSFET, diode and connector curves
+// state beyond the three named ones (gate-source voltage, duration, a mounting, ...). The spec
+// is built by Kelvin's own row code, so a malformed curve is a bug and throws (Curve's
+// constructor).
 struct SpecCurve {
     Curve curve;
     std::optional<double> temperature, dc_bias, frequency;  // stated measurement conditions
+    std::vector<std::pair<std::string, double>> conditions;  // further ones, sorted by name
+    std::string condition_text;                              // free text, "" = none
 };
 inline std::optional<SpecCurve> curve_from_spec(const nlohmann::json& s, const std::string& key) {
     auto it = s.find(key);
@@ -160,7 +166,7 @@ inline std::optional<SpecCurve> curve_from_spec(const nlohmann::json& s, const s
         throw std::invalid_argument("curve_from_spec: '" + key + "' is not {x, y}");
     SpecCurve out{Curve(it->at("x").get<std::vector<double>>(),
                         it->at("y").get<std::vector<double>>()),
-                  std::nullopt, std::nullopt, std::nullopt};
+                  std::nullopt, std::nullopt, std::nullopt, {}, {}};
     auto cond = [&](const char* k) -> std::optional<double> {
         auto c = it->find(k);
         if (c == it->end() || c->is_null()) return std::nullopt;
@@ -169,24 +175,83 @@ inline std::optional<SpecCurve> curve_from_spec(const nlohmann::json& s, const s
     out.temperature = cond("temperature");
     out.dc_bias = cond("dc_bias");
     out.frequency = cond("frequency");
+    if (auto c = it->find("conditions"); c != it->end() && !c->is_null()) {
+        if (!c->is_object())
+            throw std::invalid_argument("curve_from_spec: '" + key + "' conditions is not an object");
+        for (auto e = c->begin(); e != c->end(); ++e)
+            out.conditions.emplace_back(e.key(), e->get<double>());
+        std::sort(out.conditions.begin(), out.conditions.end());
+    }
+    if (auto t = it->find("condition_text"); t != it->end() && !t->is_null())
+        out.condition_text = t->get<std::string>();
     return out;
 }
-// The measurement conditions BOTH curves state and that differ, e.g. "temperature 20 vs
-// 25 degC" (original first); empty when none differs. A condition stated on one side only is
-// not a difference on record and does not block the comparison.
-inline std::string conditions_differ(const SpecCurve& o, const SpecCurve& s) {
+// The measurement conditions that differ between the two curves, e.g. "temperature 20 vs
+// 25 degC" (original first); empty when none differs. The free-text condition is compared
+// case- and whitespace-insensitively.
+// A condition stated by ONE side only: the owner's curve decision 2026-11-14 makes it a
+// difference ("not stated" on the other side; OneSided::Differs), which the MOSFET, diode and
+// connector curves apply. The capacitor curves (merged before that decision) still call with
+// the default OneSided::Ignore — switching them changes pinned capacitor assertions
+// (test_capacitor_curves.cpp), which is the owner's call, reported, not made here.
+enum class OneSided { Ignore, Differs };
+inline std::string conditions_differ(const SpecCurve& o, const SpecCurve& s,
+                                     OneSided one_sided = OneSided::Ignore) {
     std::string out;
+    auto add = [&](const std::string& what) { out += (out.empty() ? "" : ", ") + what; };
+    auto num = [](const std::optional<double>& v, const char* unit) {
+        if (!v) return std::string("not stated");
+        char buf[48];
+        std::snprintf(buf, sizeof buf, "%g%s%s", *v, *unit ? " " : "", unit);
+        return std::string(buf);
+    };
     auto one = [&](const std::optional<double>& a, const std::optional<double>& b,
-                   const char* what, const char* unit) {
-        if (!a || !b || same_stated_value(*a, *b)) return;
-        char buf[96];
-        std::snprintf(buf, sizeof buf, "%s%s %g vs %g %s", out.empty() ? "" : ", ", what, *a,
-                      *b, unit);
-        out += buf;
+                   const std::string& what, const char* unit) {
+        if (!a && !b) return;
+        if ((!a || !b) && one_sided == OneSided::Ignore) return;
+        if (a && b && same_stated_value(*a, *b)) return;
+        if (a && b) {
+            char buf[96];
+            std::snprintf(buf, sizeof buf, " %g vs %g%s%s", *a, *b, *unit ? " " : "", unit);
+            add(what + buf);
+        } else {
+            add(what + " " + num(a, unit) + " vs " + num(b, unit));
+        }
     };
     one(o.temperature, s.temperature, "temperature", "degC");
     one(o.dc_bias, s.dc_bias, "DC bias", "V");
     one(o.frequency, s.frequency, "frequency", "Hz");
+    auto find = [](const SpecCurve& c, const std::string& k) -> std::optional<double> {
+        for (const auto& [n, v] : c.conditions)
+            if (n == k) return v;
+        return std::nullopt;
+    };
+    std::vector<std::string> names;
+    for (const SpecCurve* c : {&o, &s})
+        for (const auto& [n, v] : c->conditions) names.push_back(n);
+    std::sort(names.begin(), names.end());
+    names.erase(std::unique(names.begin(), names.end()), names.end());
+    for (const auto& n : names) one(find(o, n), find(s, n), n, "");
+    auto norm = [](const std::string& t) {
+        std::string r;
+        bool space = false;
+        for (char ch : t) {
+            if (std::isspace(static_cast<unsigned char>(ch))) {
+                space = !r.empty();
+                continue;
+            }
+            if (space) r += ' ';
+            space = false;
+            r += static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        }
+        return r;
+    };
+    const bool one_text = o.condition_text.empty() != s.condition_text.empty();
+    if (norm(o.condition_text) != norm(s.condition_text) &&
+        !(one_text && one_sided == OneSided::Ignore))
+        add("'" + (o.condition_text.empty() ? std::string("not stated") : o.condition_text) +
+            "' vs '" + (s.condition_text.empty() ? std::string("not stated") : s.condition_text) +
+            "'");
     return out;
 }
 
