@@ -222,6 +222,39 @@ inline const std::map<std::string, LWH>& package_mm() {
         {"SOIC-16", {9.90, 3.90, 1.75}},  {"TSSOP-8", {3.00, 4.40, 1.20}},
         {"TSSOP-14", {5.00, 4.40, 1.20}}, {"TSSOP-16", {5.00, 4.40, 1.20}},
         {"MSOP-8", {3.00, 3.00, 1.10}},   {"MSOP-10", {3.00, 3.00, 1.10}},
+        // Standard diode and power outlines (owner 2026-11-14). The MOLDED BODY, as the rows
+        // above (terminals and leads excluded), L x W in mm; the value is the nominal where the
+        // drawing gives one, else the midpoint of its min / max (the resolve_dimensional_values
+        // rule); H is the maximum seated height, -1 where the outline fixes none (an axial
+        // body's standoff is the lead form's). Each row is the registered outline it names;
+        // the numbers are read from a manufacturer drawing OF that registration, because the
+        // JEDEC outline documents themselves are behind a login (retrieved 2026-11-14):
+        //  DO-214AC (SMA): Vishay doc 95400 "SMA (DO-214AC)", nominal 4.25 x 2.67, H max 2.29
+        //    (AOS's DO-214AC drawing gives the same figures).
+        {"DO-214AC", {4.25, 2.67, 2.29}},
+        //  DO-214AA (SMB): onsemi CASE 403AF, "JEDEC DO-214 variation AA", body 4.05-4.75 x
+        //    3.30-3.95, H max 2.65.
+        {"DO-214AA", {4.40, 3.63, 2.65}},
+        //  DO-214AB (SMC): onsemi CASE 403AG, "JEDEC DO-214 variation AB", body 6.60-7.15 x
+        //    5.55-6.25, H max 2.65.
+        {"DO-214AB", {6.88, 5.90, 2.65}},
+        //  DO-204AL (DO-41): onsemi CASE 59-10, "JEDEC DO-41 outline shall apply", body
+        //    4.10-5.20 long, 2.00-2.70 diameter (Vishay's 1N4001 drawing identical).
+        {"DO-204AL", {4.65, 2.35, -1}},
+        //  DO-204AC (DO-15): Vishay doc 88638 "DO-204AC (DO-15)", body 5.8-7.6 x 2.6-3.6 dia.
+        {"DO-204AC", {6.70, 3.10, -1}},
+        //  DO-201AD: Vishay doc 88516 "DO-201AD", body 7.2-9.5 x 4.8-5.3 dia (onsemi CASE 267-05
+        //    7.30-9.50 x 4.80-5.30).
+        {"DO-201AD", {8.35, 5.05, -1}},
+        //  DO-220AA (SMP): Vishay doc 96547 "SMP (DO-220AA)", body 3.19-3.61 x 1.88-2.18, H max
+        //    1.15.
+        {"DO-220AA", {3.40, 2.03, 1.15}},
+        //  LFPAK56 (Nexperia SOT669, registered as JEDEC MO-235): SOT669 drawing, body
+        //    3.80-4.10 x 4.8-5.0, H max 1.20 (overall with leads 5.8-6.2).
+        {"LFPAK56", {3.95, 4.90, 1.20}},
+        //  Power56 (PQFN 5 x 6, JEDEC MO-240 issue A variation AA): Fairchild FDMS0308S package
+        //    drawing citing MO-240 AA, body 4.90-5.10 x 5.90-6.25, H max 1.10.
+        {"POWER56", {5.00, 6.08, 1.10}},
     };
     return t;
 }
@@ -240,6 +273,11 @@ inline const std::map<std::string, std::string>& package_aliases() {
         {"TO-263AB", "D2PAK"},  {"SO-8", "SOIC-8"},
         {"SOIC8", "SOIC-8"},    {"SO8", "SOIC-8"},      {"SO-14", "SOIC-14"},
         {"SO-16", "SOIC-16"},
+        // The JEDEC TO-220AB is the 3-lead TO-220 row (owner 2026-11-14).
+        {"TO-220AB", "TO-220"},
+        // Nexperia's own two names for SOT669 (its datasheets print "LFPAK56; Power-SO8"), and
+        // the SOT number written beside it. LFPAK56E / LFPAK56D are other outlines and stay out.
+        {"LFPAK56; Power-SO8", "LFPAK56"}, {"LFPAK56 (SOT-669)", "LFPAK56"},
     };
     return t;
 }
@@ -308,7 +346,38 @@ inline std::optional<LWH> resolve_package(const std::string& code) {
     return std::nullopt;
 }
 
+// The body size a leadless package name WRITES OUT (owner 2026-11-14): "SON (3x3)", "DFN 2x2",
+// "QFN 5x6", "WSON 3x3mm", "PQFN 3.3 x 3.3", "DFN5x6-8L" — the generic JEDEC leadless families
+// (SON / DFN / QFN, with the thickness / power prefix letters W V U X T P that the JEDEC MO-229 /
+// MO-220 family names carry: WSON, VSON, USON, XDFN, TDFN, PQFN ...) followed by ONE "L x W"
+// pair in mm and at most a pin-count suffix ("-8L", "-8"). Read as L x W in mm, in the order
+// written; no height (the name fixes none). Unambiguous patterns only: anything else in the
+// string — a variant letter ("DFN3x3A-8L"), a vendor name ("PowerFLAT 5x6", "SuperSO8 5x6"), a
+// second size or a height ("DFNW5 4.90x5.90x1.00, 1.27P"), a parenthesised vendor alias
+// ("DFN-8 5x6 (SO-8FL)") — and the string resolves nothing here. A family name directly before
+// four digits ("DFN1006", "DFN2020MD-6") is that family's own code scheme and is not a size.
+inline std::optional<LWH> leadless_stated_body(const std::string& code) {
+    static const std::regex stated(
+        R"(^\s*[WVUXTP]{0,2}(?:SON|DFN|QFN)(?:-?\d{1,2}L?)?\s*(?:\(\s*)?(\d{1,2}(?:\.\d{1,2})?)\s*[xX]\s*(\d{1,2}(?:\.\d{1,2})?)\s*(?:mm)?\s*\)?\s*(?:-\s*\d{1,2}L?)?\s*$)",
+        std::regex::icase);
+    std::smatch m;
+    if (!std::regex_match(code, m, stated)) return std::nullopt;
+    const double l = std::stod(m[1].str()), w = std::stod(m[2].str());
+    // A pin count fused to the family name must not be read as the size ("SON8 3x3" reads
+    // 3 x 3 through the group above; "SON 83x3" never matches the one-or-two-digit size).
+    if (!(l >= 0.5 && l <= 15.0 && w >= 0.5 && w <= 15.0)) return std::nullopt;
+    return LWH{l, w, -1};
+}
+
 }  // namespace dims_detail
+
+// Defined below: the diode / MOSFET package identity groups, used by resolve_dimensions to
+// size a name the table holds under another member of its group ("SMC (DO-214AB)",
+// "TO252 (DPAK)").
+inline std::string canonical_mosfet_case(const std::string& s);
+inline std::string canonical_diode_case(const std::string& s);
+inline const std::vector<std::vector<std::string>>& mosfet_case_groups();
+inline const std::vector<std::vector<std::string>>& diode_case_groups();
 
 // A capacitor case code that is a single letter: a tantalum case letter, whose meaning is
 // series-specific (see tantalum_series_letter_table).
@@ -364,6 +433,38 @@ inline std::optional<Dims> resolve_dimensions(const std::string& case_code,
 
     // 1) Named packages (SOT/SOD/TO/DPAK/SOIC/...) and their aliases.
     if (auto pkg = resolve_package(raw)) return from_table(*pkg);
+
+    // 1a) Diodes and MOSFETs: a name the table holds under ANOTHER member of its package
+    //     identity group (canonical_diode_case / canonical_mosfet_case), e.g. "SMC (DO-214AB)",
+    //     "DO-214AA (SMB)", "TO252 (DPAK)", "DPAK-3 / TO-252-3". The group is one registered
+    //     outline, so its table row sizes every spelling the identity gate already calls the
+    //     same case. Members that resolve to two different rows would be a table error: thrown,
+    //     never resolved to either.
+    if (cat == "diode" || cat == "mosfet") {
+        const std::string canon = cat == "diode" ? canonical_diode_case(raw) : canonical_mosfet_case(raw);
+        const auto& groups = cat == "diode" ? diode_case_groups() : mosfet_case_groups();
+        for (const auto& g : groups) {
+            if (g.front() != canon) continue;
+            std::optional<LWH> hit;
+            for (const auto& member : g) {
+                auto r = resolve_package(member);
+                if (!r) continue;
+                if (hit && (hit->l != r->l || hit->w != r->w || hit->h != r->h))
+                    throw std::logic_error("resolve_dimensions: package group '" + g.front() +
+                                           "' resolves to two different table outlines");
+                hit = r;
+            }
+            if (hit) return from_table(*hit);
+        }
+    }
+
+    // 1b) A leadless package name that writes its body size out ("SON (3x3)", "QFN 5x6").
+    if (auto stated = leadless_stated_body(raw)) {
+        Dims d = to_metres(*stated);
+        d.land_from_table = true;
+        d.land_source = "the body size its case string states ('" + raw + "')";
+        return d;
+    }
 
     // 2) Molded tantalum EIA letter (single A-D), capacitors only. This lookup has no series
     //    to go on; the ranker (CrossRef.hpp dims_of) never reaches it for a letter code — it
@@ -889,7 +990,7 @@ inline std::string canonical_case_in(const std::vector<std::vector<std::string>>
 // asymmetric-lead 'TO247 4-pin (asymmetric leads)', 'TO-247-4 HC 8.8mm', Toshiba's
 // TO-247-4L(X), ST's HiP247-4, sTOLL, DPAK+, ThinDPAK, TO-220SIS each normalise to
 // themselves.
-inline std::string canonical_mosfet_case(const std::string& s) {
+inline const std::vector<std::vector<std::string>>& mosfet_case_groups() {
     static const std::vector<std::vector<std::string>> kGroups = {
         {"DPAK", "TO252", "TO252AA", "DPAK3", "TO2523", "PGTO2523"},
         {"D2PAK", "TO263", "TO263AB", "D2PAK3", "TO2633", "TO2632", "PGTO2633"},
@@ -904,6 +1005,10 @@ inline std::string canonical_mosfet_case(const std::string& s) {
         {"SO8", "SOIC8"},
         {"SC70", "SOT323"},
         {"TOLL", "TOLL8L", "HSOF8", "PGHSOF8"}};
+    return kGroups;
+}
+inline std::string canonical_mosfet_case(const std::string& s) {
+    const auto& kGroups = mosfet_case_groups();
     // A '+' names a different outline ("DPAK+", "D2PAK+"), but the alnum normaliser drops it,
     // which made DPAK+ compare equal to DPAK. Keep it: such a name matches no group and
     // compares equal only to the same '+' name.
@@ -926,7 +1031,7 @@ inline std::string canonical_mosfet_case(const std::string& s) {
 // the registered outline's table body (dims_detail::package_mm); anything else is left as
 // written. SZMMBZ5228BLT1G was "different_case" against BZX84-A3V9 'SOT-23' with identical
 // pads (r15 seed 26544849).
-inline std::string canonical_diode_case(const std::string& s) {
+inline const std::vector<std::vector<std::string>>& diode_case_groups() {
     static const std::vector<std::vector<std::string>> kGroups = {
         {"DO214AC", "SMA", "SMA2"}, {"DO214AA", "SMB", "SMB2"}, {"DO214AB", "SMC"},
         {"SOT23", "TO236", "TO236AB", "SOT233"},
@@ -935,6 +1040,10 @@ inline std::string canonical_diode_case(const std::string& s) {
         {"DO219AC", "MICROSMF"}, {"DO219AD", "MICROSMP"}, {"DO220AA", "SMP"},
         {"DO215AA", "SMBG"},     {"DO215AB", "SMCG"},    {"DO221AC", "SLIMSMA"},
         {"DO221BC", "SMPA"},     {"TO277A", "SMPC"},     {"TO263AC", "SMPD"}};
+    return kGroups;
+}
+inline std::string canonical_diode_case(const std::string& s) {
+    const auto& kGroups = diode_case_groups();
     const std::string plain = canonical_case_in(kGroups, s);
     // onsemi's "<name> LxW[xH][, pitchP]" form (see above).
     static const std::regex onsemi_body(

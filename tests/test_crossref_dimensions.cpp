@@ -538,3 +538,124 @@ TEST_CASE("a string where a numeric parameter belongs is rejected loudly",
     json bad = json::array({{{"mpn", "C"}, {"vds", 60.0}, {"id", "Vendor|C"}}});
     CHECK_THROWS_AS(cross_reference("mosfet", original, bad, Options{}), std::invalid_argument);
 }
+
+// ── standard diode / power outlines and stated leadless bodies (owner 2026-11-14) ──
+// Real records from the frozen catalogue (data-524a699), verbatim in
+// tests/fixtures/case_std_outlines.ndjson, none of which draws a body: the land comes from the
+// case string alone, exactly as the selectors' board area reads it (Select.cpp board_area_json
+// builds the same fields and calls dims_of). Under the operating-point rankings a land that
+// does not resolve is one more UNVERIFIED item, so these strings sank: "SMC" (STPS3L60),
+// "SMB (DO-214AA)" (S2T-CT), "DO-201AD" (UF5402), "SON (3x3)" (CSD19537Q3).
+#include <filesystem>
+#include <fstream>
+#include "../src/Views.hpp"
+
+namespace {
+std::map<std::string, json> case_std_rows() {
+    std::map<std::string, json> out;
+    std::ifstream in(std::string(KELVIN_TEST_DIR) + "/fixtures/case_std_outlines.ndjson");
+    std::string line;
+    while (std::getline(in, line)) {
+        const json env = json::parse(line);
+        json p = json::object();
+        std::string mpn;
+        auto fill = [&](const auto& r, const char* cat) {
+            if (kelvin::present(r.length_m)) p["length_m"] = r.length_m;
+            if (kelvin::present(r.width_m)) p["width_m"] = r.width_m;
+            if (!r.case_code.empty()) p["case_code"] = r.case_code;
+            if (!r.mount.empty()) p["mount"] = r.mount;
+            p["_cat"] = cat;
+            mpn = r.mpn;
+        };
+        if (env.at("semiconductor").contains("diode")) {
+            const auto r = kelvin::extract_diode(env);
+            if (!r) throw std::runtime_error("fixture diode record did not extract: " + line.substr(0, 200));
+            fill(*r, "diode");
+        } else {
+            const auto r = kelvin::extract_mosfet(env);
+            if (!r) throw std::runtime_error("fixture mosfet record did not extract: " + line.substr(0, 200));
+            fill(*r, "mosfet");
+        }
+        out[mpn] = p;
+    }
+    return out;
+}
+}  // namespace
+
+TEST_CASE("standard outlines: JEDEC diode and power packages and stated leadless bodies resolve",
+          "[crossref][dims][case-std]") {
+    const auto rows = case_std_rows();
+    REQUIRE(rows.size() == 29);
+    auto land = [&](const std::string& mpn) {
+        const json& p = rows.at(mpn);
+        return dims_of(p, p.at("_cat").get<std::string>());
+    };
+    auto check = [&](const std::string& mpn, double l_mm, double w_mm) {
+        INFO(mpn << " case '" << rows.at(mpn).value("case_code", "") << "'");
+        const auto d = land(mpn);
+        REQUIRE(d.has_value());
+        REQUIRE(has_land(*d));
+        CHECK(d->land_from_table);
+        CHECK_THAT(*d->length, WithinRel(l_mm / 1000.0, 1e-9));
+        CHECK_THAT(*d->width, WithinRel(w_mm / 1000.0, 1e-9));
+    };
+    // JEDEC registrations (body outline: CrossRefDimensions.hpp package_mm cites each).
+    check("STPS3L60", 6.88, 5.90);      // "SMC"             -> DO-214AB
+    check("S2T-CT", 4.40, 3.63);        // "SMB (DO-214AA)"  -> DO-214AA
+    check("SS34-HF", 4.25, 2.67);       // "DO-214AC (SMA)"  -> DO-214AC
+    check("UF5402", 8.35, 5.05);        // "DO-201AD"
+    check("1N4933", 4.65, 2.35);        // "DO-41 (DO-204AL)"
+    check("SB260", 6.70, 3.10);         // "DO-15"           -> DO-204AC
+    check("AU1PD", 3.40, 2.03);         // "SMP (DO-220AA)"
+    check("IRF740PBF", 10.16, 4.57);    // "TO-220AB"        -> the TO-220 row
+    check("DMG4468LK3", 6.10, 6.60);    // "TO252 (DPAK)"    -> DPAK, through its identity group
+    check("IPB024N08N5", 10.00, 9.00);  // "D2PAK (TO-263)"
+    check("FDT4N50NZU", 6.50, 3.50);    // "SOT-223-4 / TO-261-4"
+    check("PH2520U", 3.95, 4.90);       // "LFPAK56; Power-SO8" -> SOT669 / MO-235
+    // A leadless name that writes its body out.
+    check("CSD19537Q3", 3.0, 3.0);      // "SON (3x3)"
+    check("ISZ072N06NM6", 3.3, 3.3);    // "PQFN 3.3 x 3.3"
+    check("AONS30300", 5.0, 6.0);       // "DFN5x6-8L"
+    CHECK(land("CSD19537Q3")->land_source.find("'SON (3x3)'") != std::string::npos);
+    CHECK(land("STPS3L60")->land_source.find("'SMC'") != std::string::npos);
+    // Unchanged rows still resolve as before.
+    check("SBAT54T1G", 2.70, 1.60);     // "SOD-123"
+    check("2N7002NXAK", 2.90, 1.30);    // "SOT23"
+    check("IRF7341", 4.90, 3.90);       // "SO-8"
+    check("Si7461DP", 6.15, 5.15);      // "PowerPAK SO-8"
+    // Vendor names and outlines no standard registers stay unresolved — never a guess.
+    for (const char* mpn : {"NTMFD016N06CT1G",  // "SO-8FL Dual / DFN-8"
+                            "MBR2045MFST1G",    // "SO-8FL / DFN-5"
+                            "BSC007N04LS6",     // "SuperSO8 5x6"
+                            "BSC010N08NS",      // "TDSON-8" (no JEDEC registration sourced)
+                            "SQJ110EP",         // "PowerPAK SO-8L"
+                            "AON3419",          // "DFN3x3A-8L": a variant letter after the size
+                            "FDMC007N08LC",     // "PQFN-8": no size written
+                            "BAS70H",           // "SOD123F": no registration sourced
+                            "DFLZ10",           // "PowerDI123": Diodes Inc's own outline
+                            "SS34AF"}) {        // "SMAF": no registration
+        INFO(mpn << " case '" << rows.at(mpn).value("case_code", "") << "'");
+        const auto d = land(mpn);
+        CHECK_FALSE((d && has_land(*d)));
+    }
+}
+
+TEST_CASE("standard outlines: a stated leadless body is read only from an unambiguous name",
+          "[crossref][dims][case-std]") {
+    for (const char* s : {"SON (3x3)", "DFN 2x2", "QFN 5x6", "WSON 3x3mm", "PQFN 3.3 x 3.3",
+                          "DFN5x6-8L", "VSON (3.3x3.3)", "DFN8 4.9x5.8"}) {
+        INFO(s);
+        CHECK(resolve_dimensions(s, "mosfet").has_value());
+    }
+    for (const char* s : {"DFN3x3A-8L", "PowerFLAT 5x6", "SuperSO8 5x6", "DFN-8 5x6 (SO-8FL)",
+                          "DFNW5 4.90x5.90x1.00, 1.27P", "DFN1006-2", "DFN2020MD-6",
+                          "QFN 5x6x7", "SON 20x3"}) {
+        INFO(s);
+        CHECK_FALSE(resolve_dimensions(s, "mosfet").has_value());
+    }
+    const auto d = resolve_dimensions("QFN (6x5)", "mosfet");
+    REQUIRE(d.has_value());
+    CHECK_THAT(*d->length, WithinRel(6.0e-3, 1e-9));  // in the order written
+    CHECK_THAT(*d->width, WithinRel(5.0e-3, 1e-9));
+    CHECK_FALSE(d->height.has_value());
+}
