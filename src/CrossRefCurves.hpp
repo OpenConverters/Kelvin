@@ -11,7 +11,8 @@
 //   * the worst point decides the verdict and is reported (x, both y, warn depth);
 //   * no overlap -> UNVERIFIED (the caller adds the note; no cap).
 //
-// Different measurement conditions (temperature, bias, winding mode, mounting) are the
+// Different measurement conditions (temperature, bias, winding mode, mounting; a condition
+// stated by one side only counts as different — conditions_differ below) are the
 // caller's to detect before calling: this header compares numbers, it does not know what a
 // curve was measured under. Program-only, no I/O.
 #pragma once
@@ -97,20 +98,42 @@ struct CurveVerdict {
 };
 
 // orig vs sub on their overlap, each point judged with `spec` (Dir::Lower or Dir::Higher;
-// anything else throws — a curve is a numeric quantity).
+// anything else throws — a curve is a numeric quantity). `band`, when given, is the only x
+// range that is graded (owner 2026-11-14: impedance-type curves are judged only in their
+// useful band): the points judged are those inside the overlap AND the band, `range` is that
+// intersection, and an empty intersection is UNVERIFIED like no overlap (the caller tells the
+// two apart with overlap()). A band with lo > hi throws (the caller built it wrong).
 inline CurveVerdict compare_curves(const Curve& orig, const Curve& sub, const ParamSpec& spec,
-                                   Interp interp) {
+                                   Interp interp,
+                                   std::optional<std::pair<double, double>> band = std::nullopt) {
     if (spec.dir != Dir::Lower && spec.dir != Dir::Higher)
         throw std::invalid_argument("compare_curves: spec '" + spec.key +
                                     "' is not a numeric (Lower/Higher) spec");
+    if (band && !(band->first <= band->second))
+        throw std::invalid_argument("compare_curves: band lower end above its upper end");
     CurveVerdict out;
     out.range = overlap(orig, sub);
     if (!out.range) return out;
+    if (band) {
+        const double blo = std::max(out.range->first, band->first);
+        const double bhi = std::min(out.range->second, band->second);
+        if (blo > bhi) {
+            out.range.reset();
+            return out;
+        }
+        out.range = std::make_pair(blo, bhi);
+    }
     const auto [lo, hi] = *out.range;
     std::vector<double> xs;
     for (const Curve* c : {&orig, &sub})
         for (double x : c->x)
             if (x >= lo && x <= hi) xs.push_back(x);
+    // A band's edges (the rating frequency, the self-resonance) are judged too, read off both
+    // curves (they lie inside both measured ranges); without a band lo / hi are sample x already.
+    if (band) {
+        xs.push_back(lo);
+        xs.push_back(hi);
+    }
     std::sort(xs.begin(), xs.end());
     xs.erase(std::unique(xs.begin(), xs.end()), xs.end());
     auto rank = [](const char* v) {
@@ -186,37 +209,35 @@ inline std::optional<SpecCurve> curve_from_spec(const nlohmann::json& s, const s
         out.condition_text = t->get<std::string>();
     return out;
 }
-// The measurement conditions that differ between the two curves, e.g. "temperature 20 vs
-// 25 degC" (original first); empty when none differs. The free-text condition is compared
-// case- and whitespace-insensitively.
-// A condition stated by ONE side only: the owner's curve decision 2026-11-14 makes it a
-// difference ("not stated" on the other side; OneSided::Differs), which the MOSFET, diode and
-// connector curves apply. The capacitor curves (merged before that decision) still call with
-// the default OneSided::Ignore — switching them changes pinned capacitor assertions
-// (test_capacitor_curves.cpp), which is the owner's call, reported, not made here.
-enum class OneSided { Ignore, Differs };
-inline std::string conditions_differ(const SpecCurve& o, const SpecCurve& s,
-                                     OneSided one_sided = OneSided::Ignore) {
+// The measurement conditions the two curves do not share, e.g. "temperature 20 vs 25 degC" or
+// "temperature 25 degC vs unstated" (original first); empty when every condition is the same
+// on both sides or stated by neither. Owner 2026-11-14: a condition stated by ONE side only is
+// a DIFFERENT condition (Murata states its curves at 25 degC, TDK states none: nothing on
+// record says the TDK curve was taken at 25 degC), so it blocks the comparison like a stated
+// difference does. The same holds for the named conditions a curve carries (`conditions`) and
+// for its free-text condition, compared case- and whitespace-insensitively.
+inline std::string conditions_differ(const SpecCurve& o, const SpecCurve& s) {
     std::string out;
     auto add = [&](const std::string& what) { out += (out.empty() ? "" : ", ") + what; };
-    auto num = [](const std::optional<double>& v, const char* unit) {
-        if (!v) return std::string("not stated");
-        char buf[48];
-        std::snprintf(buf, sizeof buf, "%g%s%s", *v, *unit ? " " : "", unit);
-        return std::string(buf);
-    };
     auto one = [&](const std::optional<double>& a, const std::optional<double>& b,
                    const std::string& what, const char* unit) {
         if (!a && !b) return;
-        if ((!a || !b) && one_sided == OneSided::Ignore) return;
         if (a && b && same_stated_value(*a, *b)) return;
-        if (a && b) {
-            char buf[96];
-            std::snprintf(buf, sizeof buf, " %g vs %g%s%s", *a, *b, *unit ? " " : "", unit);
-            add(what + buf);
-        } else {
-            add(what + " " + num(a, unit) + " vs " + num(b, unit));
-        }
+        const char* sp = *unit ? " " : "";
+        char buf[128];
+        auto side = [&](const std::optional<double>& v) {
+            char t[48];
+            if (v) std::snprintf(t, sizeof t, "%g%s%s", *v, sp, unit);
+            else std::snprintf(t, sizeof t, "unstated");
+            return std::string(t);
+        };
+        if (a && b)
+            std::snprintf(buf, sizeof buf, "%s%s %g vs %g%s%s", out.empty() ? "" : ", ",
+                          what.c_str(), *a, *b, sp, unit);
+        else
+            std::snprintf(buf, sizeof buf, "%s%s %s vs %s", out.empty() ? "" : ", ", what.c_str(),
+                          side(a).c_str(), side(b).c_str());
+        out += buf;
     };
     one(o.temperature, s.temperature, "temperature", "degC");
     one(o.dc_bias, s.dc_bias, "DC bias", "V");
@@ -246,11 +267,9 @@ inline std::string conditions_differ(const SpecCurve& o, const SpecCurve& s,
         }
         return r;
     };
-    const bool one_text = o.condition_text.empty() != s.condition_text.empty();
-    if (norm(o.condition_text) != norm(s.condition_text) &&
-        !(one_text && one_sided == OneSided::Ignore))
-        add("'" + (o.condition_text.empty() ? std::string("not stated") : o.condition_text) +
-            "' vs '" + (s.condition_text.empty() ? std::string("not stated") : s.condition_text) +
+    if (norm(o.condition_text) != norm(s.condition_text))
+        add("'" + (o.condition_text.empty() ? std::string("unstated") : o.condition_text) +
+            "' vs '" + (s.condition_text.empty() ? std::string("unstated") : s.condition_text) +
             "'");
     return out;
 }

@@ -162,7 +162,7 @@ inline Result compare_pair(const SpecCurve& o, const SpecCurve& s, const Quantit
                      ") — not compared; confirm from the datasheet";
             return r;
         }
-    if (const std::string diff = conditions_differ(o, s, OneSided::Differs); !diff.empty()) {
+    if (const std::string diff = conditions_differ(o, s); !diff.empty()) {
         r.note = head + "measured under different conditions (original: " + conditions_text(o) +
                  "; substitute: " + conditions_text(s) +
                  ") — not compared; confirm from the datasheets at the application's conditions";
@@ -212,7 +212,7 @@ inline Result compare_sets(const std::vector<SpecCurve>& os, const std::vector<S
     bool any_same = false;
     for (const auto& o : os)
         for (const auto& s : ss) {
-            if (!conditions_differ(o, s, OneSided::Differs).empty()) continue;
+            if (!conditions_differ(o, s).empty()) continue;
             Result r = compare_pair(o, s, q);
             if (!any_same || (r.compared && (!best.compared || rank(r.verdict) > rank(best.verdict))))
                 best = r;
