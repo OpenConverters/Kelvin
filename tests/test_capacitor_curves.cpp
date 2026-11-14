@@ -211,3 +211,54 @@ TEST_CASE("|Z| useful band: an ESR Kelvin read off the curve is no rating freque
     CHECK(has_note(c, "useful band from 1 MHz (the original states no rating frequency) to "));
     CHECK(has_note(c, "|Z| compared on both curves over frequency 1e+06 to "));
 }
+
+TEST_CASE("Ripple basis: frequency resolved on the substitute's own multiplier table",
+          "[curves][capacitor][ripple-curve]") {
+    // Panasonic ECE-A0JN102UB: 0.43 A at 120 Hz, no temperature stated. Vishay MAL212016102E3:
+    // 2.6 A at 10 kHz, with its "Ripple current multiplier" table 50 Hz - 10 kHz. Different
+    // frequency bases: the substitute's table moves its rating to 120 Hz (log-log), and the
+    // two are compared there instead of leaving the ripple basis UNVERIFIED.
+    const auto s = row("MAL212016102E3");
+    REQUIRE_FALSE(s.ripple_f_curve.empty());
+    const json c = rank_one("ECE-A0JN102UB", "MAL212016102E3");
+    INFO(notes_of(c));
+    CHECK(verdict_of(c, "ripple_current") == "pass");
+    CHECK(has_note(c, "ripple current compared on a common basis (120 Hz)"));
+    CHECK(has_note(c, "the substitute's own ripple-current frequency table"));
+    CHECK_FALSE(has_note(c, "ripple current quoted at different frequencies"));
+}
+
+TEST_CASE("Ripple basis: temperature resolved on a record's own temperature table",
+          "[curves][capacitor][ripple-curve]") {
+    // Nichicon UPW1V102MHD: 1.95 A at 100 kHz / 105 degC, temperature multipliers 60-105 degC
+    // (1.2 at 85 degC). Panasonic EEUEB1V102: 0.9 A at 100 kHz / 85 degC, multipliers
+    // 40-85 degC. The substitute's table does not reach 105 degC, so the original is moved to
+    // the substitute's 85 degC: 1.95 x 1.2 = 2.34 A against 0.9 A -> FAIL.
+    const auto o = row("UPW1V102MHD");
+    REQUIRE_FALSE(o.ripple_t_curve.empty());
+    const json c = rank_one("UPW1V102MHD", "EEUEB1V102");
+    INFO(notes_of(c));
+    CHECK(verdict_of(c, "ripple_current") == "fail");
+    CHECK(has_note(c, "ripple current compared on a common basis (85 degC): substitute 0.9 A "
+                      "(stated 0.9 A) vs original 2.34 A (stated 1.95 A)"));
+    CHECK_FALSE(has_note(c, "ripple current quoted at different temperatures"));
+    // The other way round, the substitute (UPW) is moved to the original's 85 degC first.
+    const json r = rank_one("EEUEB1V102", "UPW1V102MHD");
+    INFO(notes_of(r));
+    CHECK(verdict_of(r, "ripple_current") == "pass");
+    CHECK(has_note(r, "ripple current compared on a common basis (85 degC): substitute 2.34 A "
+                      "(stated 1.95 A) vs original 0.9 A (stated 0.9 A)"));
+}
+
+TEST_CASE("Ripple tables: a case-temperature table is not an ambient rating's table",
+          "[curves][capacitor][ripple-curve]") {
+    // Cornell Dubilier 930C1P22K-F: 2.3 A at 20 kHz / 25 degC, and a "Case temperature [C]" ->
+    // "Ripple current [A]" table stated at the same 20 kHz. Owner 2026-11-14: ripple curves at
+    // CASE temperature are a different condition from an ambient scalar rating, so the table
+    // is not kept.
+    const auto r = row("930C1P22K-F");
+    CHECK(r.ripple_current_rms == 2.3);
+    CHECK(r.ripple_t_curve.empty());
+    // A temperature table the same records would keep (UPW, unlabelled, 1.0 at its 105 degC).
+    CHECK_FALSE(row("UPW1V102MHD").ripple_t_curve.empty());
+}

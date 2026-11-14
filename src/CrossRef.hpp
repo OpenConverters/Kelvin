@@ -1995,8 +1995,99 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         if (primary) demote();
         return true;
     };
+    // ── ripple rating moved to a common basis on a record's own table (owner 2026-11-14) ──
+    // When the two ripple ratings are stated at different frequencies and/or temperatures, a
+    // record's own ripple-current table (ripple_f_curve: frequency, read log-log; ripple_t_curve:
+    // temperature, read linearly — both as Views.cpp read_ripple_table keeps them: labelled
+    // ripple-current tables, or unlabelled ones anchored at the rating's own basis, no
+    // case-temperature table, no table stated under another condition) moves a rating to the
+    // other side's basis: I x y(target) / y(stated), only inside the table's measured range,
+    // never extrapolated. Per differing axis, the substitute is moved to the original's basis
+    // first; when its table does not cover both points, the original is moved to the
+    // substitute's. The two axes are independent factors (each table is stated at the rating's
+    // own basis on the other axis). Every differing axis must be resolved; otherwise nothing is
+    // converted and the basis rules below (ripple_basis_unverified /
+    // ripple_temp_basis_unverified) apply exactly as before. A side stating no basis on a
+    // differing axis cannot be moved (there is no point to read its table from).
+    struct RippleConv {
+        double o = 0, s = 0;
+        std::string note;
+    };
+    const std::optional<RippleConv> ripple_conv = [&]() -> std::optional<RippleConv> {
+        if (cat != "capacitor") return std::nullopt;
+        const auto o_v = num(original, "ripple_current"), s_v = num(cand, "ripple_current");
+        if (!o_v || !s_v) return std::nullopt;
+        const auto o_f = num(original, "ripple_current_frequency"),
+                   s_f = num(cand, "ripple_current_frequency");
+        const auto o_t = num(original, "ripple_current_temperature"),
+                   s_t = num(cand, "ripple_current_temperature");
+        auto same = [](double a, double b) {
+            return std::fabs(a - b) <= 1e-9 * std::max({std::fabs(a), std::fabs(b), 1.0});
+        };
+        auto mains = [&](double f) { return same(f, 100.0) || same(f, 120.0); };
+        const bool f_differs = o_f && !(s_f && (same(*o_f, *s_f) || (mains(*o_f) && mains(*s_f))));
+        const bool t_differs = o_t && !(s_t && same(*o_t, *s_t));
+        if (!f_differs && !t_differs) return std::nullopt;
+        RippleConv out;
+        double mo = 1.0, ms = 1.0;
+        std::string how, basis;
+        auto fmt = [](double v, const char* unit) {
+            char b[48];
+            std::snprintf(b, sizeof b, "%g %s", v, unit);
+            return std::string(b);
+        };
+        // One axis; false when it cannot be resolved.
+        auto axis = [&](bool differs, const std::optional<double>& ob,
+                        const std::optional<double>& sb, const char* key, Interp interp,
+                        const char* table, const char* unit) -> bool {
+            if (!differs) return true;
+            if (!sb) return false;
+            char b[256];
+            if (const auto st = curve_from_spec(cand, key)) {
+                const auto a = curve_at(st->curve, *ob, interp), z = curve_at(st->curve, *sb, interp);
+                if (a && z) {
+                    ms *= *a / *z;
+                    std::snprintf(b, sizeof b, "%sthe substitute's own %s table x%.4g (%s -> %s)",
+                                  how.empty() ? "" : "; ", table, *a / *z, fmt(*sb, unit).c_str(),
+                                  fmt(*ob, unit).c_str());
+                    how += b;
+                    basis += (basis.empty() ? "" : ", ") + fmt(*ob, unit);
+                    return true;
+                }
+            }
+            if (const auto ot = curve_from_spec(original, key)) {
+                const auto a = curve_at(ot->curve, *sb, interp), z = curve_at(ot->curve, *ob, interp);
+                if (a && z) {
+                    mo *= *a / *z;
+                    std::snprintf(b, sizeof b, "%sthe original's own %s table x%.4g (%s -> %s)",
+                                  how.empty() ? "" : "; ", table, *a / *z, fmt(*ob, unit).c_str(),
+                                  fmt(*sb, unit).c_str());
+                    how += b;
+                    basis += (basis.empty() ? "" : ", ") + fmt(*sb, unit);
+                    return true;
+                }
+            }
+            return false;
+        };
+        if (!axis(f_differs, o_f, s_f, "ripple_f_curve", Interp::LogLog,
+                  "ripple-current frequency", "Hz"))
+            return std::nullopt;
+        if (!axis(t_differs, o_t, s_t, "ripple_t_curve", Interp::Linear,
+                  "ripple-current temperature", "degC"))
+            return std::nullopt;
+        out.o = *o_v * mo;
+        out.s = *s_v * ms;
+        char buf[640];
+        std::snprintf(buf, sizeof buf,
+                      "ripple current compared on a common basis (%s): substitute %.4g A "
+                      "(stated %g A) vs original %.4g A (stated %g A), moved by %s "
+                      "(frequency log-log, temperature linear, inside each table's range)",
+                      basis.c_str(), out.s, *s_v, out.o, *o_v, how.c_str());
+        out.note = buf;
+        return out;
+    }();
     const bool ripple_basis_unverified =
-        cat == "capacitor" &&
+        cat == "capacitor" && !ripple_conv &&
         basis_unverified("ripple_current", "ripple_current_frequency", "ripple current", "A",
                          /*primary=*/true);
     // The ripple rating's TEMPERATURE basis (v22, Qarlos r26 32304944): an 85 degC rating
@@ -2009,7 +2100,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // basis rule above is (it was note-only, the Cj / Coss treatment). The original stating no
     // temperature -> compared as stated. No conversion between temperatures is attempted.
     const bool ripple_temp_basis_unverified = [&] {
-        if (cat != "capacitor") return false;
+        if (cat != "capacitor" || ripple_conv) return false;  // resolved on a table (above)
         const auto o_v = num(original, "ripple_current"), s_v = num(cand, "ripple_current");
         const auto o_t = num(original, "ripple_current_temperature"),
                    s_t = num(cand, "ripple_current_temperature");
@@ -2048,6 +2139,14 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             if (p.key == key) return p;
         throw std::logic_error(std::string("no ParamSpec '") + key + "' for " + cat);
     };
+    // The ripple ratings moved to a common basis on a record's own table (ripple_conv above):
+    // compared there with the ripple spec, the converted values carrying the direction.
+    if (ripple_conv) {
+        notes.push_back(ripple_conv->note);
+        curve_override["ripple_current"] = {
+            compare_numeric(spec_for("ripple_current"), ripple_conv->o, ripple_conv->s),
+            ripple_conv->o, ripple_conv->s};
+    }
     auto hz = [](double f) {
         char b[32];
         std::snprintf(b, sizeof b, "%g Hz", f);

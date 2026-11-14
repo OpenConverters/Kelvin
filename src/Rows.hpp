@@ -381,6 +381,14 @@ struct CapacitorRow : RowBase {
     // V -> F, absolute farads as every record states them), with the one measurement
     // temperature the record states. Compared on the overlap of the two bias ranges.
     CurvePts bias_curve;
+    // v22 (owner 2026-11-14): the ripple rating's own tables, as stated (multiplier or amperes;
+    // only the ratio of two readings is ever used): vs frequency (Hz, from
+    // rippleCurrentFrequencyPoints / rippleCurrentPoints) and vs ambient temperature (degC,
+    // rippleCurrentTemperaturePoints; a CASE-temperature table is not kept). Kept only when
+    // evidently this rating's table (Views.cpp read_ripple_table); the ranker moves a ripple
+    // rating to the other side's frequency / temperature basis with them.
+    CurvePts ripple_f_curve;
+    CurvePts ripple_t_curve;
     bool no_thermal() const { return !present(rth); }
 };
 

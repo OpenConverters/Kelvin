@@ -109,6 +109,8 @@ export const XREF = [
       // v22 (owner 2026-11-14): the ESR and its 100 kHz were read by Kelvin off the ESR curve,
       // not stated — the useful band of |Z| / ESL / ESR curves then starts at 1 MHz.
       esr_from_curve: r.esr_from_curve === true,
+      // v22 (owner 2026-11-14): the ripple rating's own frequency / temperature tables, or null.
+      ripple_f_curve: r.ripple_f_curve ?? null, ripple_t_curve: r.ripple_t_curve ?? null,
       // v20 (Qarlos 2026-11-09): the guaranteed capacitance band in farads, as the record states
       // its two ends (compared as farads, never turned into a percentage); the leaded form
       // (axial / radial, a land-pattern identity); and the qualified reliability level

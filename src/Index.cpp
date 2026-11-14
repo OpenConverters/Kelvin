@@ -444,6 +444,8 @@ void row_io(Ar& ar, CapacitorRow& r) {
     ar.curve(r.esl_curve);
     ar.curve(r.bias_curve);
     ar.boolean(r.esr_from_curve);          // v22 (owner 2026-11-14, useful band)
+    ar.curve(r.ripple_f_curve);            // v22 (owner 2026-11-14, ripple tables)
+    ar.curve(r.ripple_t_curve);
 }
 
 template <class Ar>
