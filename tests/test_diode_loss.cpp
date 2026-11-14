@@ -391,23 +391,35 @@ TEST_CASE("diode loss: the selector reads the row's curves", "[diode_loss_curves
 }
 
 // Owner 2026-11-14 (size and voltage, a): a board area that cannot be determined counts one more
-// UNVERIFIED item under the operating-point ranking (op_ranking, every family). STPS3L60 ("SMC")
-// and S2T-CT ("SMB (DO-214AA)") draw no size and their case codes resolve to no land; each has
-// one UNVERIFIED term (switching), as STPS8045 has, but now ranks after VS-40CPQ045 (two
-// UNVERIFIED terms, area resolved from TO-247), whose computed sum 0.72 W is the lower anyway.
+// UNVERIFIED item under the operating-point ranking (op_ranking, every family). The case table
+// now resolves "SMC" and "SMB (DO-214AA)" (STPS3L60, S2T-CT: JEDEC DO-214AB / AA), so the guard
+// uses a real record whose case still resolves to no land (owner 2026-11-14, approved fixture
+// change): diodes_op_size.ndjson is diodes_op_loss_ranking.ndjson plus ES2DAF-T (data-524a699,
+// verbatim), case "SMAF" (no registered outline) and no drawn size. It has one UNVERIFIED term
+// (switching), as S2T-CT has, and the lower computed sum (1.27 W against 2.27 W), but the size
+// item ranks it after S2T-CT and after VS-40CPQ045 (two UNVERIFIED terms, area from TO-247).
 TEST_CASE("diode op loss: a board area that cannot be determined is one more UNVERIFIED item",
           "[diode_loss][op_size]") {
+    static const Shard<DiodeRow> shard =
+        build_diode_shard(std::string(KELVIN_TEST_DIR) + "/fixtures/diodes_op_size.ndjson");
     DiodeConstraints c = su_constraints();
     c.loss_op = paper_point();
-    json r = select_diode(fixture_shard(), c, DiodeTiebreaker::LowestOperatingPointLoss);
+    json r = select_diode(shard, c, DiodeTiebreaker::LowestOperatingPointLoss);
     CHECK(mpns(r) == std::vector<std::string>{"STPS30L60CT", "C3D10065A", "ES3J", "STPS8045",
-                                              "VS-40CPQ045", "STPS3L60", "S2T-CT", "S2A"});
-    const json& st = cand(r, "STPS3L60");
-    CHECK(st.at("boardArea").at("mm2").is_null());
+                                              "STPS3L60", "S2T-CT", "VS-40CPQ045", "ES2DAF-T",
+                                              "S2A"});
+    const json& es = cand(r, "ES2DAF-T");
+    CHECK(es.at("boardArea").at("mm2").is_null());
+    CHECK(es.at("loss").at("unverified") == json::array({"switching"}));
+    CHECK(es.at("sortKey").at("sizeUnverified") == true);
+    CHECK(es.at("sortKey").at("unverifiedItems") == 2);
+    CHECK(has(es.at("loss").at("notes").dump(), "counts one more UNVERIFIED item"));
+    CHECK(has(es.at("loss").at("notes").dump(), "('SMAF')"));
+    // Same UNVERIFIED terms, lower sum, ranked after: only the size item moves it.
+    const json& st = cand(r, "S2T-CT");
     CHECK(st.at("loss").at("unverified") == json::array({"switching"}));
-    CHECK(st.at("sortKey").at("sizeUnverified") == true);
-    CHECK(st.at("sortKey").at("unverifiedItems") == 2);
-    CHECK(has(st.at("loss").at("notes").dump(), "counts one more UNVERIFIED item"));
+    CHECK(st.at("sortKey").at("sizeUnverified") == false);
+    CHECK(es.at("sortKey").at("value").get<double>() < st.at("sortKey").at("value").get<double>());
     CHECK(cand(r, "STPS8045").at("sortKey").at("unverifiedItems") == 1);
     CHECK(cand(r, "S2A").at("sortKey").at("unverifiedItems") == 3);
 }

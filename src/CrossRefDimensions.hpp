@@ -216,7 +216,11 @@ inline const std::map<std::string, LWH>& package_mm() {
         {"SOD-523", {1.20, 0.80, 0.60}},  {"SOD-882", {1.00, 0.60, 0.48}},
         {"SOD-128", {3.80, 2.60, 1.00}},  {"DPAK", {6.10, 6.60, 2.30}},
         {"D2PAK", {10.00, 9.00, 4.50}},   {"TO-220", {10.16, 4.57, 15.70}},
-        {"TO-247", {15.90, 5.30, 20.00}}, {"TO-92", {4.50, 3.80, 5.00}},
+        // TO-247 (owner 2026-11-14): JEDEC TO-247 variation AC, Vishay doc 91360 "TO-247AC"
+        // drawing nominals — body width 15.70, thickness 5.02, body length 20.55 mm (the axis
+        // order of the TO-220 row). Was 15.90 x 5.30 x 20.00, outside variation AC (20.00 is
+        // below its 20.40 mm minimum length).
+        {"TO-247", {15.70, 5.02, 20.55}}, {"TO-92", {4.50, 3.80, 5.00}},
         {"POWERPAK-1212-8", {3.30, 3.30, 1.07}}, {"POWERPAK-SO-8", {6.15, 5.15, 1.00}},
         {"SOIC-8", {4.90, 3.90, 1.75}},   {"SOIC-14", {8.65, 3.90, 1.75}},
         {"SOIC-16", {9.90, 3.90, 1.75}},  {"TSSOP-8", {3.00, 4.40, 1.20}},
@@ -353,14 +357,28 @@ inline std::optional<LWH> resolve_package(const std::string& code) {
 // pair in mm and at most a pin-count suffix ("-8L", "-8"). Read as L x W in mm, in the order
 // written; no height (the name fixes none). Unambiguous patterns only: anything else in the
 // string — a variant letter ("DFN3x3A-8L"), a vendor name ("PowerFLAT 5x6", "SuperSO8 5x6"), a
-// second size or a height ("DFNW5 4.90x5.90x1.00, 1.27P"), a parenthesised vendor alias
-// ("DFN-8 5x6 (SO-8FL)") — and the string resolves nothing here. A family name directly before
+// second size, a parenthesised vendor alias ("DFN-8 5x6 (SO-8FL)") — and the string resolves
+// nothing here. onsemi's "name L x W x H, pitch" form is read too (below). A family name directly before
 // four digits ("DFN1006", "DFN2020MD-6") is that family's own code scheme and is not a size.
 inline std::optional<LWH> leadless_stated_body(const std::string& code) {
     static const std::regex stated(
         R"(^\s*[WVUXTP]{0,2}(?:SON|DFN|QFN)(?:-?\d{1,2}L?)?\s*(?:\(\s*)?(\d{1,2}(?:\.\d{1,2})?)\s*[xX]\s*(\d{1,2}(?:\.\d{1,2})?)\s*(?:mm)?\s*\)?\s*(?:-\s*\d{1,2}L?)?\s*$)",
         std::regex::icase);
+    // onsemi's parametric form (owner 2026-11-14): the family name — optionally with its "W"
+    // (wettable-flank) suffix and a pin count — then the body L x W x H in mm and, optionally,
+    // the pitch: "DFNW5 4.90x5.90x1.00, 1.27P", "TDFN4 8.00x8.00x1.00, 2.00P", "DFN8 4.9x5.8x0.80",
+    // "XDFNW-2 1.00x0.60x0.50, 0.65P". The height is the one the string states. Anything after
+    // the pitch ("WDFNW8 3.3x3.3, 0.65P (Full-Cut 8FL WF)") is a vendor tail: nothing is read.
+    static const std::regex stated_lwh(
+        R"(^\s*[WVUXTP]{0,2}(?:SON|DFN|QFN)W?(?:-?\d{1,2})?\s+(\d{1,2}(?:\.\d{1,2})?)\s*[xX]\s*(\d{1,2}(?:\.\d{1,2})?)\s*[xX]\s*(\d(?:\.\d{1,2})?)(?:\s*,?\s*\d(?:\.\d{1,2})?\s*P)?\s*$)",
+        std::regex::icase);
     std::smatch m;
+    if (std::regex_match(code, m, stated_lwh)) {
+        const double l = std::stod(m[1].str()), w = std::stod(m[2].str()), h = std::stod(m[3].str());
+        if (!(l >= 0.5 && l <= 15.0 && w >= 0.5 && w <= 15.0 && h >= 0.1 && h <= 5.0))
+            return std::nullopt;
+        return LWH{l, w, h};
+    }
     if (!std::regex_match(code, m, stated)) return std::nullopt;
     const double l = std::stod(m[1].str()), w = std::stod(m[2].str());
     // A pin count fused to the family name must not be read as the size ("SON8 3x3" reads
@@ -460,7 +478,7 @@ inline std::optional<Dims> resolve_dimensions(const std::string& case_code,
 
     // 1b) A leadless package name that writes its body size out ("SON (3x3)", "QFN 5x6").
     if (auto stated = leadless_stated_body(raw)) {
-        Dims d = to_metres(*stated);
+        Dims d = to_metres(*stated);  // a stated height is the string's own, not a table's
         d.land_from_table = true;
         d.land_source = "the body size its case string states ('" + raw + "')";
         return d;

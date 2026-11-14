@@ -585,7 +585,7 @@ std::map<std::string, json> case_std_rows() {
 TEST_CASE("standard outlines: JEDEC diode and power packages and stated leadless bodies resolve",
           "[crossref][dims][case-std]") {
     const auto rows = case_std_rows();
-    REQUIRE(rows.size() == 29);
+    REQUIRE(rows.size() == 31);
     auto land = [&](const std::string& mpn) {
         const json& p = rows.at(mpn);
         return dims_of(p, p.at("_cat").get<std::string>());
@@ -616,6 +616,11 @@ TEST_CASE("standard outlines: JEDEC diode and power packages and stated leadless
     check("CSD19537Q3", 3.0, 3.0);      // "SON (3x3)"
     check("ISZ072N06NM6", 3.3, 3.3);    // "PQFN 3.3 x 3.3"
     check("AONS30300", 5.0, 6.0);       // "DFN5x6-8L"
+    check("NTMFWS1D5N08XT1G", 4.90, 5.90);  // "DFNW5 4.90x5.90x1.00, 1.27P" (onsemi L x W x H)
+    REQUIRE(land("NTMFWS1D5N08XT1G")->height.has_value());
+    CHECK_THAT(*land("NTMFWS1D5N08XT1G")->height, WithinRel(1.00e-3, 1e-9));
+    // TO-247: JEDEC TO-247 variation AC, Vishay 91360 nominal (owner 2026-11-14; was 15.90 x 5.30).
+    check("IPW60R040C7", 15.70, 5.02);  // "TO-247"
     CHECK(land("CSD19537Q3")->land_source.find("'SON (3x3)'") != std::string::npos);
     CHECK(land("STPS3L60")->land_source.find("'SMC'") != std::string::npos);
     // Unchanged rows still resolve as before.
@@ -648,8 +653,9 @@ TEST_CASE("standard outlines: a stated leadless body is read only from an unambi
         CHECK(resolve_dimensions(s, "mosfet").has_value());
     }
     for (const char* s : {"DFN3x3A-8L", "PowerFLAT 5x6", "SuperSO8 5x6", "DFN-8 5x6 (SO-8FL)",
-                          "DFNW5 4.90x5.90x1.00, 1.27P", "DFN1006-2", "DFN2020MD-6",
-                          "QFN 5x6x7", "SON 20x3"}) {
+                          "DFN1006-2", "DFN2020MD-6", "QFN 5x6x7", "SON 20x3",
+                          "WDFNW8 3.30x3.30, 0.65P (Full-Cut 8FL WF)", "DFN5x6x1.0",
+                          "DFNA5 4.90x5.90x1.00, 1.27P"}) {
         INFO(s);
         CHECK_FALSE(resolve_dimensions(s, "mosfet").has_value());
     }
@@ -658,4 +664,28 @@ TEST_CASE("standard outlines: a stated leadless body is read only from an unambi
     CHECK_THAT(*d->length, WithinRel(6.0e-3, 1e-9));  // in the order written
     CHECK_THAT(*d->width, WithinRel(5.0e-3, 1e-9));
     CHECK_FALSE(d->height.has_value());
+}
+
+// Owner 2026-11-14: onsemi's "<family> L x W x H[, pitch P]" form is read as the body it states,
+// height included (the string's own height, not a table value). Real data-524a699 strings:
+// "DFNW5 4.90x5.90x1.00, 1.27P" (126 MOSFET records), "TDFN4 8.00x8.00x1.00, 2.00P",
+// "XDFNW-2 1.00x0.60x0.50, 0.65P", "DFN8 4.9x5.8x0.80", "XDFNW3 1.00x1.00x0.38 0.65P".
+TEST_CASE("standard outlines: onsemi's leadless name with L x W x H and pitch",
+          "[crossref][dims][case-std]") {
+    struct Case { const char* s; double l, w, h; };
+    for (const Case& c : {Case{"DFNW5 4.90x5.90x1.00, 1.27P", 4.90, 5.90, 1.00},
+                          Case{"TDFN4 8.00x8.00x1.00, 2.00P", 8.00, 8.00, 1.00},
+                          Case{"XDFNW-2 1.00x0.60x0.50, 0.65P", 1.00, 0.60, 0.50},
+                          Case{"DFN8 4.9x5.8x0.80", 4.9, 5.8, 0.80},
+                          Case{"XDFNW3 1.00x1.00x0.38 0.65P", 1.00, 1.00, 0.38}}) {
+        INFO(c.s);
+        const auto d = resolve_dimensions(c.s, "mosfet");
+        REQUIRE(d.has_value());
+        CHECK(d->land_from_table);
+        CHECK_FALSE(d->height_from_table);
+        CHECK_THAT(*d->length, WithinRel(c.l / 1000.0, 1e-9));
+        CHECK_THAT(*d->width, WithinRel(c.w / 1000.0, 1e-9));
+        REQUIRE(d->height.has_value());
+        CHECK_THAT(*d->height, WithinRel(c.h / 1000.0, 1e-9));
+    }
 }
