@@ -116,6 +116,19 @@ TEST_CASE("magnetic loss: an operating point beyond the measured L(I) curve is n
     CHECK(b.saturation.failed());
 }
 
+TEST_CASE("magnetic loss: an L(I) curve that repeats a current is not read, and does not throw",
+          "[magnetic_loss]") {
+    // 784771331 (Wuerth 330 uH): its 20 degC L(I) curve states two readings at one current, so
+    // it cannot be read at a point. The demo on the frozen catalogue threw "Curve: x not
+    // strictly increasing" out of the whole selection before this was handled.
+    const auto b = magnetic_loss(row("784771331"), su36());
+    CHECK(b.inductance == Approx(330e-6));
+    CHECK(b.inductance_basis.find("L(I) curve is not read: Curve: x not strictly increasing") !=
+          std::string::npos);
+    // Isat 0.9 A @10 % is stated: the gate still decides (below Ipk ~2.15 A -> FAIL).
+    CHECK(b.saturation.failed());
+}
+
 TEST_CASE("magnetic loss: saturation and rated current checks", "[magnetic_loss]") {
     // 744115 (Wuerth 200 uH): Isat 0.9 A @10 % < Ipk ~2.25 A -> FAIL.
     CHECK(magnetic_loss(row("744115"), su36()).saturation.failed());
@@ -141,7 +154,7 @@ TEST_CASE("magnetic op-loss selector: power inductors only, hard gates counted, 
     const json& rej = r.at("rejections");
     CHECK(rej.value("subtype_transformer", 0) == 1);               // 750811351
     CHECK(rej.value("inductance_below_required", 0) == 1);         // 750315320 (160 uH)
-    CHECK(rej.value("saturation_current_below_peak", 0) == 1);     // 744115
+    CHECK(rej.value("saturation_current_below_peak", 0) == 2);     // 744115, 784771331
     CHECK(rej.value("rated_current_below_rms", 0) == 1);           // 760804110
     // Fully verified ones by DCR loss (20 mohm, 40.1 mohm, 98 mohm), then the two whose
     // saturation is UNVERIFIED (5.5 mohm, 48 mohm), however low their DCR loss.

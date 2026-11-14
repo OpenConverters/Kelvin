@@ -115,11 +115,23 @@ inline MagneticLossBreakdown buck_inductor_loss(const MagneticRow& m,
     // depends on L(Ipk), so solve h(I) = Iout + volt_sec / (2 * L0 * ratio(I)) - I = 0 by
     // bisection on [Iout, curve end]: h(Iout) > 0 always; h(end) > 0 means the operating
     // point lies beyond the measured curve (not extrapolated).
-    enum class Read { NoCurve, InRange, Beyond } read = Read::NoCurve;
+    enum class Read { NoCurve, Unreadable, InRange, Beyond } read = Read::NoCurve;
     double curve_end = 0, ratio_at = 1;
+    std::string unreadable_why;
+    std::optional<crossref::Curve> curve;
     if (m.bias_curve_current.size() >= 2 &&
         m.bias_curve_current.size() == m.bias_curve_ratio.size()) {
-        const crossref::Curve c(m.bias_curve_current, m.bias_curve_ratio);
+        // A record whose curve repeats a current (two readings at one bias) cannot be read at
+        // a point without choosing between them: it is not read, and the basis says why.
+        try {
+            curve.emplace(m.bias_curve_current, m.bias_curve_ratio);
+        } catch (const std::invalid_argument& e) {
+            read = Read::Unreadable;
+            unreadable_why = e.what();
+        }
+    }
+    if (curve) {
+        const crossref::Curve& c = *curve;
         curve_end = c.x.back();
         auto h = [&](double i) -> std::optional<double> {
             const auto r = crossref::curve_at(c, i, crossref::Interp::Linear);
@@ -158,6 +170,9 @@ inline MagneticLossBreakdown buck_inductor_loss(const MagneticRow& m,
         if (read == Read::NoCurve)
             b.inductance_basis += " (the record states no L(I) curve: any roll-off below Isat "
                                   "is not in the ripple)";
+        else if (read == Read::Unreadable)
+            b.inductance_basis += " (the record's L(I) curve is not read: " + unreadable_why +
+                                  "; any roll-off below Isat is not in the ripple)";
         else
             b.inductance_basis += "; Ipk lies beyond the record's L(I) curve (measured to " +
                                   fmt("%.4g A", curve_end) +
@@ -227,6 +242,10 @@ inline MagneticLossBreakdown buck_inductor_loss(const MagneticRow& m,
             s.status = MagneticCheck::Status::Unverified;
             s.missing.push_back("no Isat stated, and Ipk lies beyond the record's L(I) curve "
                                 "(measured to " + fmt("%.4g A", curve_end) + ")");
+        } else if (read == Read::Unreadable) {
+            s.status = MagneticCheck::Status::Unverified;
+            s.missing.push_back("no Isat stated, and the record's L(I) curve is not readable (" +
+                                unreadable_why + ")");
         } else {
             s.status = MagneticCheck::Status::Unverified;
             s.missing.push_back("no saturation current and no L(I) curve in the record");
