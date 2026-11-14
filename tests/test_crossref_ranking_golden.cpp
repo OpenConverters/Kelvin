@@ -316,7 +316,11 @@ TEST_CASE("golden: the footprint ladder is monotone — fits < unverified < esta
     CHECK(pos_unverified <= 3);
     // The three established mismatches follow; a body that grossly overhangs the
     // pads stays the worst of them (the continuous term still separates them).
-    CHECK(std::find(o.begin(), o.end(), "SMALLER_BODY") > o.begin() + 1);
+    // owner 2026-11-14: SMALLER_BODY ties the 2.5 rung too, so only the tie and its place
+    // between the fit and the overhang are asserted, not an order among the tied rungs.
+    CHECK(penalty_of("SMALLER_BODY") == penalty_of("DIFFERENT_CASE"));
+    CHECK(std::find(o.begin(), o.end(), "SMALLER_BODY") > o.begin());
+    CHECK(std::find(o.begin(), o.end(), "SMALLER_BODY") < o.begin() + 4);
     // owner 2026-11-13 (Y3): unknown = different case — DIFFERENT_CASE ties UNVERIFIED (above),
     // so it is only held after the fit and ahead of the overhang, not after UNVERIFIED.
     CHECK(std::find(o.begin(), o.end(), "DIFFERENT_CASE") > o.begin());

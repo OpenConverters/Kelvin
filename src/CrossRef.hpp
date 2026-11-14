@@ -1539,6 +1539,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // array-for-array match.
     bool resistor_class_conflict = false;
     bool resistor_connection_unverified = false;
+    bool resistor_count_one_sided = false;  // owner 2026-11-14: one-sided count caps minor_review
     if (cat == "resistor") {
         // Network structure (owner 2026-11-13, AA2; RAS 3ba21f6 electrical.numberOfElements /
         // elements[] / part.internalConnection). A STATED element count declares a network
@@ -1580,19 +1581,23 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             resistor_class_conflict = true;
         } else {
             // Both sides are networks (or neither declares one). Element count is an
-            // identity: different -> rejected; one side unknown -> UNVERIFIED with the
-            // network cap (major_review), as an array<->discrete swap is capped.
+            // identity: different -> rejected; one side unknown -> UNVERIFIED capped at
+            // minor_review (owner 2026-11-14); a record whose stated count contradicts its own
+            // case is a data defect and keeps the network cap (major_review).
             auto n_str = [](double v) {
                 char b[32];
                 std::snprintf(b, sizeof b, "%g", v);
                 return std::string(b);
             };
-            auto count_unverified = [&](const std::string& note) {
+            auto count_unverified = [&](const std::string& note, bool defect) {
                 params.push_back({{"name", "number_of_elements"}, {"verdict", UNVERIFIED}});
                 notes.push_back(note);
                 demote();
                 penalty += opt.gate_weight * kVerdictFailPenalty;
-                missing_required_data = true;
+                if (defect)
+                    missing_required_data = true;
+                else
+                    resistor_count_one_sided = true;
             };
             if (!oc.defect.empty() || !sc.defect.empty()) {
                 std::string note = "data defect: ";
@@ -1600,7 +1605,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 if (!oc.defect.empty() && !sc.defect.empty()) note += "; ";
                 if (!sc.defect.empty()) note += "the substitute's record " + sc.defect;
                 count_unverified(note + " — the element count is not chosen between them; "
-                                        "confirm it on the datasheet");
+                                        "confirm it on the datasheet",
+                                 true);
             } else if (oc.n && sc.n) {
                 if (*oc.n == *sc.n) {
                     params.push_back({{"name", "number_of_elements"}, {"verdict", PASS}});
@@ -1619,7 +1625,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                "datasheet"
                          : "the substitute's record states " + n_str(*sc.n) +
                                " resistor elements and the original's states no count — "
-                               "confirm the original's element count and pinout match");
+                               "confirm the original's element count and pinout match",
+                    false);
             }
             // Internal connection: the MOSFET / diode internal_connection rule, field for
             // field — both stated and different -> rejected; one-sided -> UNVERIFIED, capped
@@ -5577,7 +5584,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                     ripple_basis_unverified || ripple_temp_basis_unverified ||
                                     lead_form_unverified ||
                                     qualification_unverified || topology_unverified ||
-                                    resistor_connection_unverified ||
+                                    resistor_connection_unverified || resistor_count_one_sided ||
                                     mount_unverified || timebase_pin_unverified ||
                                     timebase_prog_order || current_rating_one_sided ||
                                     !orig_unstated_primary.empty();

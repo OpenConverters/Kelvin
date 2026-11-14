@@ -8451,11 +8451,12 @@ TEST_CASE("owner 2026-11-13 AA2: resistor element count and internal connection 
     REQUIRE(four.is_object());
     CHECK(four["status"] == "no_substitute");
     CHECK(verdict_of(four, "number_of_elements") == "fail");
-    // One side uncounted (still a declared array by its family): UNVERIFIED, network cap.
+    // One side uncounted (still a declared array by its family): UNVERIFIED, capped at
+    // minor_review (owner 2026-11-14; a self-contradicting count keeps major_review, below).
     const json unc = res_find(r, "UNCOUNTED");
     REQUIRE(unc.is_object());
     CHECK(verdict_of(unc, "number_of_elements") == "unverified");
-    CHECK(unc["grade"] == "major_review");
+    CHECK(unc["grade"] == "minor_review");
     const json bus = res_find(r, "BUSSED");
     REQUIRE(bus.is_object());
     CHECK(bus["status"] == "no_substitute");
