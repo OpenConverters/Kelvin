@@ -256,6 +256,45 @@ const char* to_string(SwitchPosition p) {
     return "";
 }
 
+// ---- magnetic tiebreaker / inductor position <-> string --------------------
+const char* to_string(MagneticTiebreaker t) {
+    switch (t) {
+        case MagneticTiebreaker::BestFit: return "best_fit";
+        case MagneticTiebreaker::LowestOperatingPointLoss: return "lowest_operating_point_loss";
+    }
+    return "";
+}
+MagneticTiebreaker magnetic_tiebreaker_from_string(const std::string& s) {
+    if (s == "best_fit") return MagneticTiebreaker::BestFit;
+    if (s == "lowest_operating_point_loss") return MagneticTiebreaker::LowestOperatingPointLoss;
+    throw InvalidOptions("unknown magnetic tiebreaker: " + s);
+}
+InductorPosition inductor_position_from_string(const std::string& s) {
+    if (s == "buckInductor") return InductorPosition::BuckInductor;
+    throw InvalidOptions("unknown magnetic lossOperatingPoint.position: " + s +
+                         " (only buckInductor is modelled)");
+}
+const char* to_string(InductorPosition p) {
+    switch (p) {
+        case InductorPosition::BuckInductor: return "buckInductor";
+    }
+    return "";
+}
+ConductionMode conduction_mode_from_string(const std::string& s) {
+    if (s == "ccm") return ConductionMode::Ccm;
+    if (s == "dcm") return ConductionMode::Dcm;
+    if (s == "crm") return ConductionMode::Crm;
+    throw InvalidOptions("unknown magnetic lossOperatingPoint.conductionMode: " + s +
+                         " (ccm, dcm or crm)");
+}
+const char* to_string(ConductionMode m) {
+    switch (m) {
+        case ConductionMode::Ccm: return "ccm";
+        case ConductionMode::Dcm: return "dcm";
+        case ConductionMode::Crm: return "crm";
+    }
+    return "";
+}
 // ---- diode position <-> string (owner 2026-11-14) -------------------------
 DiodePosition diode_position_from_string(const std::string& s) {
     if (s == "buckFreewheel") return DiodePosition::BuckFreewheel;

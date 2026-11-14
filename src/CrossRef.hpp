@@ -3437,7 +3437,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // A cable core (MAS subtype cableCore) is chosen for the cable it must pass and is rated
     // per pass count; ranked by the impedance model (chipBead), two of its axes are its own:
     //   cable_max_diameter (maximumCableOuterDiameter, m): the substitute must accept at least
-    //     the original's largest cable — smaller -> FAIL; equal or larger -> PASS, and more than
+    //     the original's largest cable — smaller -> REJECTED (no substitute: the cable does not
+    //     pass through, owner 2026-11-14); equal or larger -> PASS, and more than
     //     1.5x the original's opening -> PASS with a note that the cable fits loosely;
     //   number_turns (numberTurns, the cable passes its |Z| is stated for): must match -> FAIL.
     // Not stated by the substitute while the original states it -> UNVERIFIED + note, capped
@@ -3473,13 +3474,12 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         if (od && sd) {
             const char* v = PASS;
             if (*sd < *od && !same_stated_value(*sd, *od)) {
-                v = FAIL;
                 notes.push_back("cable opening " + mm(*sd) + " against the original's " + mm(*od) +
                                 " — the original's largest cable does not pass through the "
                                 "substitute");
-                demote();
-                penalty += opt.gate_weight * kVerdictFailPenalty;
-                ++worse;
+                params.push_back({{"name", "cable_max_diameter_m"}, {"verdict", FAIL}});
+                return reject("cable core opening smaller than the original's: the original's "
+                              "cable does not pass through");
             } else if (*sd > kCableLooseFitRatio * *od) {
                 notes.push_back("cable opening " + mm(*sd) + " against the original's " + mm(*od) +
                                 " — more than 1.5x larger, so the original's cable fits loosely "

@@ -134,6 +134,7 @@ if (KELVIN_BUILD_TESTS AND NOT EMSCRIPTEN AND KELVIN_TOP)
         tests/test_magnetic_curves.cpp
         tests/test_mosfet_loss.cpp
         tests/test_diode_loss.cpp
+        tests/test_magnetic_loss.cpp
         tests/test_capacitor_loss.cpp)
     target_compile_definitions(test_kelvin PRIVATE
         KELVIN_TEST_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests")

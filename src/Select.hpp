@@ -73,4 +73,15 @@ json select_magnetic(const Shard<MagneticRow>& shard, const MagneticConstraints&
                      size_t max_candidates = kDefaultMaxCandidates,
                      RecordFetcher* fetcher = nullptr, const MfrPolicy& mfr = {});
 
+// lowest_operating_point_loss (owner 2026-11-14): power inductors (subtype "inductor", a
+// single-winding configuration) whose nominal L meets the required inductance, at the
+// caller's operating point (c.loss_op, required). Saturation (Isat > Ipk) and the rated
+// current (Irms <= Irated) are HARD gates, each with its rejection count; survivors rank by
+// (UNVERIFIED checks/terms other than core loss, then DCR loss). Every candidate carries the
+// loss breakdown, ratings, over-rating flags (Isat or rated current > 3x the need; flag only),
+// board area and price.
+json select_magnetic_op_loss(const Shard<MagneticRow>& shard, const MagneticConstraints& c,
+                             size_t max_candidates = kDefaultMaxCandidates,
+                             RecordFetcher* fetcher = nullptr, const MfrPolicy& mfr = {});
+
 }  // namespace kelvin

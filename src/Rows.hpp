@@ -640,6 +640,13 @@ struct MagneticRow : RowBase {
     // 2026-11-09, seed 20680025). NaN = not stated, never a typical range.
     double temp_min_c = kNaN();
     double temp_max_c = kNaN();
+    // v22 (owner 2026-11-14, operating-point ranking): whether `dcr` is the record's stated
+    // MAXIMUM (true) or its nominal / typical (false: the record states no maximum). The loss
+    // basis names which one the DCR loss rests on.
+    bool dcr_is_maximum = false;
+    // v22 (owner 2026-11-14, price): the record's distributor unit costs as a JSON array of
+    // {distributor, unitCost, currency[, moq]}; empty when the record states none.
+    std::string price_quotes;
     bool is_production = false;
     bool has_inductance() const { return present(inductance); }
 };
