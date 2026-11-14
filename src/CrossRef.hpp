@@ -92,6 +92,9 @@ inline constexpr double kTurnsRatioWarnRel = 0.15;
 // A cable core whose opening is more than this many times the original's fits the original's
 // cable loosely (owner 2026-11-14): a PASS with a note.
 inline constexpr double kCableLooseFitRatio = 1.5;
+// A capacitor's ESL curve is graded from this multiple of the original's self-resonance up
+// (owner 2026-11-14): X/omega = L(1 - 1/k^2), within about 11 % of L from k = 3.
+inline constexpr double kEslBandOfResonance = 3.0;
 
 // A resistance as an engineer writes it: SI prefix, up to six significant digits,
 // no trailing zeros ("14.7 kΩ", "15 kΩ", "0.5 Ω").
@@ -2258,9 +2261,11 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // the curve's end (all that is known to be below resonance). No |Z| curve on the original
     // -> its self-resonance is unknown: the ESR curve is then graded from the band start up to
     // the end of the common range, with a note saying so (owner decision 2026-11-14, 1).
-    // ESL(f) is extracted from the INDUCTIVE region, so it gets its own band: from the
-    // original's self-resonance upward to the end of the common range (owner decision
-    // 2026-11-14, 2). Self-resonance unknown (no |Z| curve, or |Z| still falling at the end
+    // ESL(f) is extracted from the INDUCTIVE region, so it gets its own band: from 3x the
+    // original's self-resonance upward to the end of the common range (owner decisions
+    // 2026-11-14, 2, and 2026-11-14 follow-up: at k = f/f_res the reactance over omega reads
+    // L(1 - 1/k^2), so right above resonance the extracted ESL is far below the true L; from
+    // k = 3 it is within about 11 %). Self-resonance unknown (no |Z| curve, or |Z| still falling at the end
     // of its curve so the resonance lies somewhere above the measured range) -> no ESL band,
     // ESL is not graded (UNVERIFIED + note). (The catalogue states no SRF field for
     // capacitors, and every record with a C(f) curve also carries |Z|, so |Z| is the source.)
@@ -2312,10 +2317,12 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                         ", so its self-resonance (where the inductive region the ESL is "
                         "extracted from begins) lies above the measured range and is unknown";
         } else {
-            u.esl.band = std::make_pair(hi, HUGE_VAL);
-            u.esl.why = "ESL band from the original's self-resonance (|Z| minimum) at " + hz(hi) +
-                        " up to the end of the common range (ESL is extracted from the "
-                        "inductive region); points below it are not graded";
+            u.esl.band = std::make_pair(kEslBandOfResonance * hi, HUGE_VAL);
+            u.esl.why = "ESL band from 3x the original's self-resonance (|Z| minimum at " +
+                        hz(hi) + "), " + hz(kEslBandOfResonance * hi) +
+                        ", up to the end of the common range (ESL is extracted from the "
+                        "inductive region; just above resonance X/w reads L(1 - 1/k^2), within "
+                        "about 11 % from 3x); points below it are not graded";
         }
         if (lo > hi) {
             std::snprintf(buf, sizeof buf,
