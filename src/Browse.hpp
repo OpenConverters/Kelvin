@@ -352,6 +352,25 @@ inline void extra_row_json(const ResistorRow& r, json& o) {
         o["derating_amplitude"] = r.derating_amplitude;
     }
 }
+// A row curve (v22, owner 2026-11-14) as the ranker's spec shape: {x: [...], y: [...]} plus the
+// measurement conditions the record states (temperature degC, dc_bias V, frequency Hz; absent
+// when not stated). null when the record carries no usable curve.
+inline json curve_json(const CurvePts& c) {
+    if (c.empty()) return nullptr;
+    json o{{"x", *c.x}, {"y", *c.y}};
+    if (!std::isnan(c.temperature)) o["temperature"] = c.temperature;
+    if (!std::isnan(c.dc_bias)) o["dc_bias"] = c.dc_bias;
+    if (!std::isnan(c.frequency)) o["frequency"] = c.frequency;
+    return o;
+}
+inline void extra_row_json(const CapacitorRow& r, json& o) {
+    o["esr_curve"] = curve_json(r.esr_curve);
+    o["impedance_curve"] = curve_json(r.z_curve);
+    o["capacitance_frequency_curve"] = curve_json(r.cf_curve);
+    o["esl_curve"] = curve_json(r.esl_curve);
+    o["capacitance_bias_curve"] = curve_json(r.bias_curve);
+}
+
 // A magnetic's whole saturation table (v20) as the ranker's saturation_points shape:
 // [{current, percent_drop, temperature}], a criterion or temperature the record does not state
 // is null. null when the record states no Isat at all — never an empty table.

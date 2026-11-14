@@ -40,6 +40,7 @@
 #include <nlohmann/json.hpp>
 
 #include "CrossRefClasses.hpp"
+#include "CrossRefCurves.hpp"
 #include "CrossRefDecode.hpp"
 #include "CrossRefDimensions.hpp"
 #include "CrossRefParams.hpp"
@@ -2033,9 +2034,103 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         demote();
         return true;
     }();
+    // ── capacitor curves (owner 2026-11-14: "compare ALL existing graphs") ──────
+    // A curve's verdict replaces the scalar comparison of its quantity (curve_override, read
+    // in the parameter loop below): the outcome, and the two values it was decided on (they
+    // carry the direction and the over-dimensioning tie-breaker like stated scalars do).
+    struct CurveOverride {
+        ParamOutcome outcome{UNVERIFIED};
+        std::optional<double> o, s;
+    };
+    std::map<std::string, CurveOverride> curve_override;
+    auto spec_for = [&](const char* key) -> const ParamSpec& {
+        for (const ParamSpec& p : params_for(cat))
+            if (p.key == key) return p;
+        throw std::logic_error(std::string("no ParamSpec '") + key + "' for " + cat);
+    };
+    auto hz = [](double f) {
+        char b[32];
+        std::snprintf(b, sizeof b, "%g Hz", f);
+        return std::string(b);
+    };
+    // ESR (a): both records carry an ESR-vs-frequency curve -> compared on the overlap of the
+    // two measured ranges, log-log (ESR curves are plotted on log axes), with the ESR spec's
+    // bands at each point; the worst point decides. Different stated conditions or no overlap
+    // -> a note, and the scalars keep their own (basis) rule. Otherwise, when the two scalars
+    // are quoted at different frequencies, a curve resolves the basis: the substitute's ESR is
+    // read from its curve at the original's frequency (or the original's from its curve at the
+    // substitute's), inside the measured range only.
+    if (cat == "capacitor") {
+        const auto oc = curve_from_spec(original, "esr_curve"),
+                   sc = curve_from_spec(cand, "esr_curve");
+        const ParamSpec& esr_spec = spec_for("esr");
+        bool decided = false;
+        if (oc && sc) {
+            const std::string cond = conditions_differ(*oc, *sc);
+            if (!cond.empty()) {
+                notes.push_back("ESR curves measured under different conditions (" + cond +
+                                ") — the curves were not compared");
+            } else {
+                const CurveVerdict v = compare_curves(oc->curve, sc->curve, esr_spec,
+                                                      Interp::LogLog);
+                if (v.verdict == std::string(UNVERIFIED)) {
+                    notes.push_back("ESR curves do not overlap (original " +
+                                    hz(oc->curve.x.front()) + " to " + hz(oc->curve.x.back()) +
+                                    ", substitute " + hz(sc->curve.x.front()) + " to " +
+                                    hz(sc->curve.x.back()) + ") — the curves were not compared");
+                } else {
+                    char buf[320];
+                    std::snprintf(buf, sizeof buf,
+                                  "ESR compared on both curves from %g to %g Hz (%zu points, "
+                                  "log-log): %s at %g Hz, substitute %.4g ohm vs original "
+                                  "%.4g ohm",
+                                  v.range->first, v.range->second, v.points,
+                                  v.verdict == std::string(PASS) ? "passes everywhere, tightest" : "worst",
+                                  v.worst_x, v.sub_y, v.orig_y);
+                    notes.push_back(buf);
+                    CurveOverride ov;
+                    ov.outcome = ParamOutcome(v.verdict);
+                    ov.outcome.warn_depth = v.warn_depth;
+                    ov.o = v.orig_y;
+                    ov.s = v.sub_y;
+                    curve_override["esr"] = ov;
+                    decided = true;
+                }
+            }
+        }
+        const auto o_v = num(original, "esr"), s_v = num(cand, "esr");
+        const auto o_f = num(original, "esr_frequency"), s_f = num(cand, "esr_frequency");
+        auto same_f = [](double a, double b) { return std::fabs(a - b) <= 1e-9 * std::max(a, b); };
+        auto mains = [&](double f) { return same_f(f, 100.0) || same_f(f, 120.0); };
+        const bool basis_differs =
+            o_v && s_v && o_f && !(s_f && (same_f(*o_f, *s_f) || (mains(*o_f) && mains(*s_f))));
+        if (!decided && basis_differs) {
+            char buf[320];
+            const auto s_at = sc ? curve_at(sc->curve, *o_f, Interp::LogLog) : std::nullopt;
+            const auto o_at =
+                !s_at && oc && s_f ? curve_at(oc->curve, *s_f, Interp::LogLog) : std::nullopt;
+            if (s_at) {
+                std::snprintf(buf, sizeof buf,
+                              "ESR compared at the original's %g Hz: the substitute's curve "
+                              "reads %.4g ohm there (its record quotes %g ohm at %s) against "
+                              "the original's %g ohm",
+                              *o_f, *s_at, *s_v, s_f ? hz(*s_f).c_str() : "no frequency", *o_v);
+                notes.push_back(buf);
+                curve_override["esr"] = {compare_numeric(esr_spec, o_v, s_at), o_v, s_at};
+            } else if (o_at) {
+                std::snprintf(buf, sizeof buf,
+                              "ESR compared at the substitute's %g Hz: the original's curve "
+                              "reads %.4g ohm there (its record quotes %g ohm at %g Hz) "
+                              "against the substitute's %g ohm",
+                              *s_f, *o_at, *o_v, *o_f, *s_v);
+                notes.push_back(buf);
+                curve_override["esr"] = {compare_numeric(esr_spec, o_at, s_v), o_at, s_v};
+            }
+        }
+    }
     const bool esr_basis_unverified =
-        cat == "capacitor" && basis_unverified("esr", "esr_frequency", "ESR", "ohm",
-                                              /*primary=*/false);
+        cat == "capacitor" && !curve_override.count("esr") &&
+        basis_unverified("esr", "esr_frequency", "ESR", "ohm", /*primary=*/false);
     if (esr_basis_unverified) params.push_back({{"name", "esr_basis"}, {"verdict", UNVERIFIED}});
 
     // ── MOSFET Coss basis (the Vds the capacitances are stated at) ───────────
@@ -2222,6 +2317,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         }
         if (cat == "capacitor" && spec.key == "tolerance_pct" && cap_tol_judged) continue;
         bool has_data = detail::present(original, spec.key) || detail::present(cand, spec.key);
+        const auto curve_ov = curve_override.find(spec.key);
+        if (curve_ov != curve_override.end()) has_data = true;
         if (spec.key == "saturation_current")
             has_data = has_data || detail::present(original, "saturation_points") ||
                        detail::present(cand, "saturation_points");
@@ -2273,6 +2370,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         }();
         const ParamOutcome outcome =
             pin_field             ? ParamOutcome(connector_pitch.verdict)
+            : curve_ov != curve_override.end() ? curve_ov->second.outcome
             : vz_grade_same       ? ParamOutcome(PASS)
             : ripple_blind        ? ParamOutcome(UNVERIFIED)
             : coss_blind          ? ParamOutcome(UNVERIFIED)
@@ -2506,6 +2604,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                                          : std::nullopt;
         auto s = numeric && !ripple_blind && !coss_blind ? detail::jnum(cand, spec.key)
                                                          : std::nullopt;
+        if (curve_ov != curve_override.end()) {  // decided on a curve: its two values
+            o = curve_ov->second.o;
+            s = curve_ov->second.s;
+        }
         if (power_at_t) {
             using power_detail::celsius;
             using power_detail::watts;
@@ -2688,6 +2790,94 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         if (numeric && is_primary_rating(cat, spec.key) && !detail::jnum(original, spec.key) &&
             detail::jnum(cand, spec.key))
             orig_unstated(spec.key);
+    }
+
+    // ── capacitor curves with no scalar of their own (owner 2026-11-14) ─────────
+    // Each is compared on the overlap of the two measured ranges with the bands and direction of
+    // the closest scalar spec (named in its note), the worst point deciding. Booked exactly like
+    // a table parameter: a WARN demotes and costs its depth-scaled warn, a FAIL demotes and
+    // costs the FAIL penalty (any_warn / any_fail then set the grade), both count as a
+    // regression. Both records stating the curve under different conditions, or no overlap ->
+    // UNVERIFIED with a note: no penalty, no cap, no direction. A curve on one side only is not
+    // a comparison and adds nothing.
+    auto curve_param = [&](const char* key, const char* name, const char* what, const char* unit,
+                           const char* x_what, const char* x_unit, const ParamSpec& spec,
+                           const char* spec_named, Interp interp) {
+        const auto oc = curve_from_spec(original, key), sc = curve_from_spec(cand, key);
+        if (!oc || !sc) return;
+        char buf[400];
+        const std::string cond = conditions_differ(*oc, *sc);
+        if (!cond.empty()) {
+            params.push_back({{"name", name}, {"verdict", UNVERIFIED}});
+            notes.push_back(std::string(what) + " curves measured under different conditions (" +
+                            cond + ") — not compared");
+            return;
+        }
+        const CurveVerdict v = compare_curves(oc->curve, sc->curve, spec, interp);
+        params.push_back({{"name", name}, {"verdict", v.verdict}});
+        if (v.verdict == std::string(UNVERIFIED)) {
+            std::snprintf(buf, sizeof buf,
+                          "%s curves do not overlap (original %g to %g %s, substitute %g to %g "
+                          "%s) — not compared",
+                          what, oc->curve.x.front(), oc->curve.x.back(), x_unit,
+                          sc->curve.x.front(), sc->curve.x.back(), x_unit);
+            notes.push_back(buf);
+            return;
+        }
+        const bool ok = v.verdict == std::string(PASS);
+        std::snprintf(buf, sizeof buf,
+                      "%s compared on both curves over %s %g to %g %s (%zu points, %s, bands of "
+                      "the %s): %s at %g %s, substitute %.4g %s vs original %.4g %s",
+                      what, x_what, v.range->first, v.range->second, x_unit, v.points,
+                      interp == Interp::LogLog ? "log-log" : "linear", spec_named,
+                      ok ? "passes everywhere, tightest" : "worst", v.worst_x, x_unit, v.sub_y, unit, v.orig_y,
+                      unit);
+        notes.push_back(buf);
+        if (v.verdict == std::string(FAIL)) {
+            demote();
+            penalty += opt.gate_weight * kVerdictFailPenalty;
+            ++worse;
+        } else if (v.verdict == std::string(WARN)) {
+            demote();
+            penalty += opt.gate_weight * warn_penalty(v.warn_depth);
+            ++worse;
+        } else {
+            note_direction(spec.dir, v.orig_y, v.sub_y);
+        }
+    };
+    if (cat == "capacitor") {
+        // (b) DC bias (owner 2026-11-14, "compare when both state curves"): effective
+        // capacitance at each common bias voltage, absolute farads as the records state them,
+        // linear in V (the bias axis is linear and starts at 0 V). Bands from the capacitance
+        // spec's lower side (primary_value_spec("capacitor"): PASS down to 0.90x, accept down
+        // to 0.80x): PASS >= 0.90x the original's C_eff, WARN down to 0.80x, FAIL below. More
+        // capacitance is never a regression here; the nominal window still bounds the top.
+        static const ParamSpec kBiasSpec{"capacitance_bias", Dir::Higher, 0.80, std::nullopt,
+                                         false, false, nullptr, 0.90};
+        curve_param("capacitance_bias_curve", "capacitance_bias",
+                    "effective capacitance under DC bias", "F", "DC bias", "V", kBiasSpec,
+                    "capacitance spec", Interp::Linear);
+        // (c) The frequency curves, log-log (all three are plotted on log axes), each with the
+        // closest scalar spec, named in its note:
+        //  |Z|(f): the ESR spec (lower is better, PASS <= 1x, WARN to 1.5x, FAIL beyond) — the
+        //          impedance a decoupling or filter capacitor presents is what it is used for;
+        //  C(f):   the capacitance spec's lower bands, as for DC bias (read only below the first
+        //          non-positive sample, see Views.cpp leading_positive);
+        //  ESL(f): the ESR spec's bands (lower is better), the only lower-is-better impedance
+        //          spec the capacitor table has; ESL itself has no scalar spec.
+        static const ParamSpec kImpedanceSpec{"impedance", Dir::Lower, 1.5, std::nullopt,
+                                              false, false, nullptr};
+        static const ParamSpec kCapFreqSpec{"capacitance_frequency", Dir::Higher, 0.80,
+                                            std::nullopt, false, false, nullptr, 0.90};
+        static const ParamSpec kEslSpec{"esl", Dir::Lower, 1.5, std::nullopt, false, false,
+                                        nullptr};
+        curve_param("impedance_curve", "impedance_curve", "|Z|", "ohm", "frequency", "Hz",
+                    kImpedanceSpec, "ESR spec", Interp::LogLog);
+        curve_param("capacitance_frequency_curve", "capacitance_frequency_curve",
+                    "capacitance vs frequency", "F", "frequency", "Hz", kCapFreqSpec,
+                    "capacitance spec", Interp::LogLog);
+        curve_param("esl_curve", "esl_curve", "ESL", "H", "frequency", "Hz", kEslSpec,
+                    "ESR spec", Interp::LogLog);
     }
 
     // ── transformer turns ratio (owner 2026-11-13, R2; W4) ───────────────────

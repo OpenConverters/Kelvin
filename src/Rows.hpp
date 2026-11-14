@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -265,6 +266,21 @@ struct DiodeRow : RowBase {
     bool no_thermal() const { return !present(rth_ja) || !present(tj_max); }
 };
 
+// A measured curve carried on a row (v22, owner 2026-11-14: "compare ALL existing graphs").
+// x ascending, no duplicates, as float (compact: the curve is a measurement read to a few
+// digits). The two vectors are shared: identical grids and curves are stored once in the
+// shard's string pool and once in memory (most frequency grids repeat across a series).
+// Empty (null x) = the record states no usable curve. `temperature` / `dc_bias` /
+// `frequency` are the measurement conditions the record states for the curve (NaN = not
+// stated); two curves whose stated conditions differ are not compared.
+struct CurvePts {
+    std::shared_ptr<const std::vector<float>> x, y;
+    double temperature = std::numeric_limits<double>::quiet_NaN();
+    double dc_bias = std::numeric_limits<double>::quiet_NaN();
+    double frequency = std::numeric_limits<double>::quiet_NaN();
+    bool empty() const { return !x || x->empty(); }
+};
+
 struct CapacitorRow : RowBase {
     double capacitance = 0;
     // DC rating. ABSENT (NaN) on a part rated for AC only (line-safety X/Y and AC film
@@ -343,6 +359,23 @@ struct CapacitorRow : RowBase {
     double temp_min_c = kNaN();
     double temp_max_c = kNaN();
     bool is_production = false;
+    // v22 (owner 2026-11-14): the record's ESR-vs-frequency curve (CAS electrical.esrPoints,
+    // Hz -> ohm), read whole. Compared curve-vs-curve on the overlap and read at the other
+    // side's stated ESR frequency to resolve a basis mismatch.
+    CurvePts esr_curve;
+    // v22 (owner 2026-11-14): |Z| vs frequency (CAS electrical.impedancePoints, Hz -> ohm), with
+    // the conditions the record states (temperature, DC bias).
+    CurvePts z_curve;
+    // v22 (owner 2026-11-14): capacitance vs frequency (CAS electrical.capacitanceFrequencyPoints,
+    // Hz -> F), kept up to the first sample <= 0: past self-resonance the record states the
+    // reactance as a negative "capacitance", which is not a capacitance (|Z| covers it).
+    CurvePts cf_curve;
+    // v22 (owner 2026-11-14): ESL vs frequency (CAS electrical.inductanceFrequencyPoints, Hz -> H).
+    CurvePts esl_curve;
+    // v22 (owner 2026-11-14): effective capacitance vs DC bias (CAS electrical.capacitanceBiasPoints,
+    // V -> F, absolute farads as every record states them), with the one measurement
+    // temperature the record states. Compared on the overlap of the two bias ranges.
+    CurvePts bias_curve;
     bool no_thermal() const { return !present(rth); }
 };
 
