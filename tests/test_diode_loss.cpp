@@ -168,11 +168,12 @@ TEST_CASE("diode loss: a candidate with an UNVERIFIED term ranks after every com
     CHECK(cand(r, "STPS8045").at("loss").at("computedSum").get<double>() <
           cand(r, "ES3J").at("loss").at("total").get<double>());
     CHECK(cand(r, "STPS8045").at("loss").at("total").is_null());
-    // UNVERIFIED-count key first, then the computed sum, ascending.
+    // UNVERIFIED-count key first (the terms plus one for a board area that cannot be
+    // determined, owner 2026-11-14), then the computed sum, ascending.
     size_t prev_u = 0;
     double prev_sum = 0;
     for (const auto& k : r.at("candidates")) {
-        const size_t u = k.at("loss").at("unverified").size();
+        const size_t u = k.at("sortKey").at("unverifiedItems").get<size_t>();
         const double sum = k.at("loss").at("computedSum").get<double>();
         CHECK(u >= prev_u);
         if (u == prev_u) CHECK(sum >= prev_sum);
@@ -387,4 +388,26 @@ TEST_CASE("diode loss: the selector reads the row's curves", "[diode_loss_curves
               "Cj(Vr) curve"));
     CHECK(has(cand(r, "STPS30L60CT").at("loss").at("terms").at("conduction").at("basis")
                   .get<std::string>(), "Vf(If) curve"));
+}
+
+// Owner 2026-11-14 (size and voltage, a): a board area that cannot be determined counts one more
+// UNVERIFIED item under the operating-point ranking (op_ranking, every family). STPS3L60 ("SMC")
+// and S2T-CT ("SMB (DO-214AA)") draw no size and their case codes resolve to no land; each has
+// one UNVERIFIED term (switching), as STPS8045 has, but now ranks after VS-40CPQ045 (two
+// UNVERIFIED terms, area resolved from TO-247), whose computed sum 0.72 W is the lower anyway.
+TEST_CASE("diode op loss: a board area that cannot be determined is one more UNVERIFIED item",
+          "[diode_loss][op_size]") {
+    DiodeConstraints c = su_constraints();
+    c.loss_op = paper_point();
+    json r = select_diode(fixture_shard(), c, DiodeTiebreaker::LowestOperatingPointLoss);
+    CHECK(mpns(r) == std::vector<std::string>{"STPS30L60CT", "C3D10065A", "ES3J", "STPS8045",
+                                              "VS-40CPQ045", "STPS3L60", "S2T-CT", "S2A"});
+    const json& st = cand(r, "STPS3L60");
+    CHECK(st.at("boardArea").at("mm2").is_null());
+    CHECK(st.at("loss").at("unverified") == json::array({"switching"}));
+    CHECK(st.at("sortKey").at("sizeUnverified") == true);
+    CHECK(st.at("sortKey").at("unverifiedItems") == 2);
+    CHECK(has(st.at("loss").at("notes").dump(), "counts one more UNVERIFIED item"));
+    CHECK(cand(r, "STPS8045").at("sortKey").at("unverifiedItems") == 1);
+    CHECK(cand(r, "S2A").at("sortKey").at("unverifiedItems") == 3);
 }

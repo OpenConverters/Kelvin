@@ -6,7 +6,8 @@
 //   input    I_ripple = Iout * sqrt(D * (1 - D))     (the chopped input current, flat-top)
 // Terms and checks:
 //   ESR loss          P = I_ripple^2 * ESR(fs)  — ESR read off the record's ESR(f) curve at fs
-//                     when it covers fs, else the scalar ESR with its stated frequency named;
+//                     when it covers fs, else the scalar ESR with its stated frequency named
+//                     (a scalar ESR with no stated frequency: UNVERIFIED, owner 2026-11-14);
 //                     a record stating only tan(delta): ESR = tan(delta) / (2*pi*f_df*C) at
 //                     tan(delta)'s own frequency f_df, an UPPER BOUND at fs >= f_df (ESR falls
 //                     with frequency; owner 2026-11-14) — fs below f_df or no f_df: UNVERIFIED
@@ -179,7 +180,14 @@ inline CapacitorLossBreakdown capacitor_loss(const CapacitorRow& x, const Capaci
                              fmt(" to %g Hz), not extrapolated", (*x.esr_curve.x).back());
             }
         }
-        if (!b.esr_at_fs && present(x.esr)) {
+        // A stated ESR with no stated frequency is UNVERIFIED (owner 2026-11-14): the frequency is
+        // a condition of the value, and ESR moves with it by orders of magnitude.
+        std::string nofreq_miss;
+        if (!b.esr_at_fs && present(x.esr) && !x.esr_from_curve && !present(x.esr_frequency))
+            nofreq_miss = "; the record states ESR " + fmt("%.4g mohm", x.esr * 1e3) +
+                          " without its frequency (a condition of the value), so it is not "
+                          "read at fs";
+        if (!b.esr_at_fs && present(x.esr) && nofreq_miss.empty()) {
             b.esr_at_fs = x.esr;
             if (x.esr_from_curve)
                 basis = "ESR " + fmt("%.4g mohm", x.esr * 1e3) +
@@ -187,18 +195,15 @@ inline CapacitorLossBreakdown capacitor_loss(const CapacitorRow& x, const Capaci
                         "ESR)" + (same(1e5, fs) ? std::string() : fmt(", not at fs %g Hz", fs));
             else
                 basis = "stated ESR " + fmt("%.4g mohm", x.esr * 1e3) +
-                        (present(x.esr_frequency)
-                             ? fmt(" at %g Hz", x.esr_frequency) +
-                                   (same(x.esr_frequency, fs) ? std::string()
-                                                              : fmt(", not at fs %g Hz", fs))
-                             : std::string(" (frequency not stated)"));
+                        fmt(" at %g Hz", x.esr_frequency) +
+                        (same(x.esr_frequency, fs) ? std::string() : fmt(", not at fs %g Hz", fs));
             basis += curve_miss;
         }
         // Only tan(delta) stated (owner 2026-11-14): ESR = tan(delta) / (2*pi*f_df*C) at
         // tan(delta)'s own frequency, an UPPER BOUND at fs (ESR falls with frequency) — which
         // holds only for fs at or above f_df; below it, or with no f_df, nothing is derived.
         std::string df_miss;
-        if (!b.esr_at_fs && present(x.dissipation_factor)) {
+        if (!b.esr_at_fs && nofreq_miss.empty() && present(x.dissipation_factor)) {
             const double df = x.dissipation_factor, fdf = x.dissipation_factor_frequency;
             if (std::isnan(fdf)) {
                 df_miss = fmt("; the record states tan(delta) %g", df) +
@@ -223,7 +228,10 @@ inline CapacitorLossBreakdown capacitor_loss(const CapacitorRow& x, const Capaci
             }
         }
         if (!b.esr_at_fs) {
-            b.esr_loss.missing.push_back("ESR not stated in the record" + curve_miss + df_miss);
+            b.esr_loss.missing.push_back(
+                (nofreq_miss.empty() ? "ESR not stated in the record"
+                                     : "ESR at fs not stated in the record" + nofreq_miss) +
+                curve_miss + df_miss);
         } else {
             b.esr_loss.watts = b.i_ripple * b.i_ripple * *b.esr_at_fs;
             b.esr_loss.basis = basis + "; " + b.i_ripple_basis + fmt(" = %.4g A", b.i_ripple);

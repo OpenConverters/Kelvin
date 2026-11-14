@@ -85,5 +85,7 @@ def test_input_ripple_voltage_and_unverified_terms_are_named():
             assert f"| ripple {rv['volts'] * 1e3:.3g} mV" in line
         else:
             assert "| ripple UNVERIFIED (" in line
-        if loss["terms"]["esrLoss"].get("watts") is None:
-            assert "| ESR loss UNVERIFIED (ESR not stated in the record" in line
+        t = loss["terms"]["esrLoss"]
+        if t.get("watts") is None:
+            assert f"| ESR loss UNVERIFIED ({'; '.join(t['missing'])})" in line
+            assert "not stated in the record" in t["missing"][0]

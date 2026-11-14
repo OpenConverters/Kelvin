@@ -1591,7 +1591,9 @@ def recommend_parts(family: str, requirements: dict, options: dict | None = None
             gateDriveVoltage?, gateDriveCurrent?, junctionTemperature?} ranks by the switch loss
             at that point (tiebreaker lowest_operating_point_loss): conduction, switching, gate
             drive and Coss terms from datasheet values only, each with its basis; a term whose
-            input is missing is UNVERIFIED (never estimated) and ranks after complete ones.
+            input is missing is UNVERIFIED (never estimated) and ranks after complete ones; a
+            board area that cannot be determined counts one more UNVERIFIED item (mosfet and
+            diode alike).
             mosfet priceQuantity: the quantity the price is asked at. Every mosfet candidate
             carries ratings, overRating (Vds/Id > 3x the requirement: noted; ranked lower except
             under lowest_operating_point_loss and the Vds/Id margin rankings),
@@ -1601,7 +1603,8 @@ def recommend_parts(family: str, requirements: dict, options: dict | None = None
             maxRippleVoltage?, ambientTemperature?} ranks by the ESR loss
             I_ripple^2 * ESR(fs) (tiebreaker lowest_operating_point_loss; I_ripple = dIpp/sqrt(12)
             at the output, Iout*sqrt(D(1-D)) at the input), ESR off the record's ESR(f) curve or
-            the stated ESR with its frequency named; a record stating only tan(delta) gets
+            the stated ESR with its frequency named (a stated ESR with no frequency:
+            UNVERIFIED); a record stating only tan(delta) gets
             ESR = tan(delta)/(2*pi*f*C) at tan(delta)'s own frequency, an upper bound at fs
             (no stated frequency, or fs below it: UNVERIFIED). Checks: effective capacitance at
             the DC voltage (DC-bias curve; a class-II ceramic without one is UNVERIFIED, never
@@ -1609,10 +1612,12 @@ def recommend_parts(family: str, requirements: dict, options: dict | None = None
             input Iout*D*(1-D)/(fs*Ceff) + Iout*ESR) and the ripple-current rating moved to fs /
             the ambient on the record's own tables (never extrapolated; stated at or above the
             ambient with no temperature table: a conservative lower bound). Order: UNVERIFIED
-            count, then over the ripple-voltage limit OR under the ripple-current rating (ranked
-            after those that pass, still listed), then the loss. Every capacitor candidate
-            carries ratings, overRating (voltage or ripple rating > 3x the need), boardArea,
-            volume {mm3, basis} and price.
+            count (a board area or volume that cannot be determined counts one more, as in every
+            family's operating-point ranking), then over the ripple-voltage limit OR under the
+            ripple-current rating (ranked after those that pass, still listed), then a rated
+            voltage > 3x the need (capacitor size and cost scale with voltage), then the loss.
+            Every capacitor candidate carries ratings, overRating (rated voltage > 3x the need),
+            boardArea, volume {mm3, basis} and price.
             diode lossOperatingPoint {position: 'buckFreewheel', inputVoltage, outputCurrent,
             switchingFrequency, dutyCycle | outputVoltage, inductorRippleCurrent?,
             junctionTemperature?} ranks by the freewheel diode's loss at that point (tiebreaker

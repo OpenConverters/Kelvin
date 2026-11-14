@@ -11,6 +11,7 @@
 #include <fstream>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <vector>
 
 #include <catch2/catch_approx.hpp>
@@ -326,18 +327,21 @@ const json& cand_of(const json& r, const std::string& mpn) {
 }
 }  // namespace
 
-// Owner 2026-11-14: under lowest_operating_point_loss over-rating is a flag and a note, the loss
-// alone sets the order (after the UNVERIFIED key and the ripple checks); lowest_esr keeps the
-// over-rating tier. Real records from the frozen catalogue (data-524a699), verbatim in
-// capacitors_op_loss.ndjson. The Su et al. buck output (150 uF, 14.4 V, ripple >= 1.25x):
-//   EFDKS55K187F064DH / EFDKA45J167F044DH  Eaton film 180 / 160 uF, 550 / 450 V (Kelvin's old pick)
+// Owner 2026-11-14: under lowest_operating_point_loss the order is the UNVERIFIED count (loss
+// terms + one for a board area or volume that cannot be determined), the ripple checks, then a
+// rated voltage over 3x the need (capacitor size and cost scale with voltage), then the loss;
+// lowest_esr keeps the over-rating tier. Over-rating is judged on the rated voltage only (the
+// ripple-current axis was dropped, owner 2026-11-14). Real records from the frozen catalogue
+// (data-524a699), verbatim in capacitors_op_loss.ndjson. The Su et al. buck output (150 uF,
+// 14.4 V, ripple >= 1.25x):
+//   EFDKS55K187F064DH / EFDKA45J167F044DH  Eaton film 180 / 160 uF, 550 / 450 V (Kelvin's old pick):
+//                                          ESR with no frequency, no size stated
 //   EKXJ201ELL151MJ50S                     Chemi-Con 150 uF 200 V (the paper's pick; tan(delta) only)
 //   GWC1V151MCO1GS, HHXD160ARA181MF80G,    35 V / 16 V / 35 V polymer and electrolytic parts,
 //   EXV227M035A9PAA                        not voltage over-rated
-//   860040878017                           Wurth 220 uF 100 V electrolytic, 33.7 mohm (6.9x V)
-// Every one is ripple over-rated against the 0.2 A requirement (one axis); the films and the
-// 100 V / 200 V parts add the voltage axis.
-TEST_CASE("capacitor over-rating: a flag under the operating-point loss, a tier under lowest_esr",
+//   860040878017                           Wurth 220 uF 100 V electrolytic, 33.7 mohm with no
+//                                          frequency (6.9x V)
+TEST_CASE("capacitor over-rating: a tier under the operating-point loss and under lowest_esr",
           "[capacitor_overrating]") {
     namespace fs = std::filesystem;
     const fs::path dir = fs::path(KELVIN_TEST_DIR) / "_capacitor_op_loss_out";
@@ -353,36 +357,45 @@ TEST_CASE("capacitor over-rating: a flag under the operating-point loss, a tier 
                      {"inductorRippleCurrent", kDipp}};
     json r = eng.select("capacitor", req, {{"lossOperatingPoint", op}, {"includeEnvelope", false}});
     CHECK(r.at("tiebreaker") == "lowest_operating_point_loss");
-    CHECK(mpns_of(r) == std::vector<std::string>{"EFDKS55K187F064DH", "EFDKA45J167F044DH",
-                                                 "GWC1V151MCO1GS", "HHXD160ARA181MF80G",
-                                                 "860040878017", "EXV227M035A9PAA",
-                                                 "EKXJ201ELL151MJ50S"});
-    double prev = 0;
-    for (const auto& c : r.at("candidates")) {
-        REQUIRE(c.at("loss").at("total").is_number());
-        CHECK(c.at("loss").at("total").get<double>() >= prev);
-        prev = c.at("loss").at("total").get<double>();
-    }
+    CHECK(mpns_of(r) == std::vector<std::string>{"GWC1V151MCO1GS", "HHXD160ARA181MF80G",
+                                                 "EXV227M035A9PAA", "EKXJ201ELL151MJ50S",
+                                                 "860040878017", "EFDKS55K187F064DH",
+                                                 "EFDKA45J167F044DH"});
+    // The key is non-decreasing: (UNVERIFIED items, ripple checks failed, over-rated voltage, loss).
+    auto key = [](const json& c) {
+        const json& k = c.at("sortKey");
+        return std::make_tuple(k.at("unverifiedItems").get<size_t>(),
+                               k.at("overRippleVoltage").get<bool>() ||
+                                   k.at("underRippleCurrentRating").get<bool>(),
+                               k.at("overRatedVoltage").get<bool>(), k.at("value").get<double>());
+    };
+    for (size_t i = 1; i < r.at("candidates").size(); ++i)
+        CHECK_FALSE(key(r.at("candidates")[i]) < key(r.at("candidates")[i - 1]));
     const json& efdk = cand_of(r, "EFDKS55K187F064DH");
-    CHECK(efdk.at("overRating").at("axes").at(0) == "voltage");
+    CHECK(efdk.at("overRating").at("axes") == json::array({"voltage"}));
     CHECK(has(efdk.at("overRating").at("notes").at(0).get<std::string>(),
               "rated voltage 550 V is 38.2x the requirement's 14.4 V"));
     CHECK(has(efdk.at("overRating").at("notes").at(0).get<std::string>(),
-              "flagged only: the operating-point loss alone sets the order"));
+              "ranked after closer-rated parts, ahead of the operating-point loss"));
     CHECK(efdk.at("boardArea").at("mm2").is_null());  // the record states no dimensions
+    CHECK(efdk.at("volume").at("mm3").is_null());
+    CHECK(efdk.at("sortKey").at("sizeUnverified") == true);
+    CHECK(efdk.at("sortKey").at("unverifiedItems") == 2);  // ESR (no frequency) + size
     const json& ekxj = cand_of(r, "EKXJ201ELL151MJ50S");
     CHECK(ekxj.at("loss").at("terms").at("esrLoss").at("upperBound") == true);
 
     // lowest_esr keeps the over-rating tier, below the legacy thermal tier (as for MOSFETs): the
-    // films state a thermal resistance and stay first; among the rest the 100 V part (two axes)
-    // sinks below the 0.12 ohm EXV227M035A9PAA (one axis); EKXJ (no ESR) stays last.
+    // films state a thermal resistance and stay first; among the rest the 100 V part (voltage
+    // axis) sinks below the 0.12 ohm EXV227M035A9PAA (none); EKXJ (no ESR) stays last.
     r = eng.select("capacitor", req, {{"tiebreaker", "lowest_esr"}, {"includeEnvelope", false}});
     CHECK(mpns_of(r) == std::vector<std::string>{"EFDKS55K187F064DH", "EFDKA45J167F044DH",
                                                  "GWC1V151MCO1GS", "HHXD160ARA181MF80G",
                                                  "EXV227M035A9PAA", "860040878017",
                                                  "EKXJ201ELL151MJ50S"});
-    CHECK(cand_of(r, "860040878017").at("overRating").at("axes") ==
-          json::array({"voltage", "rippleCurrent"}));
+    // Voltage only (owner 2026-11-14: the ripple-current axis was dropped): 860040878017's
+    // stated 2.22 A rating, over 3x the 0.2 A need, is not an axis; GWC1V151MCO1GS has none.
+    CHECK(cand_of(r, "860040878017").at("overRating").at("axes") == json::array({"voltage"}));
+    CHECK(cand_of(r, "GWC1V151MCO1GS").at("overRating").at("axes").empty());
     CHECK(has(cand_of(r, "860040878017").at("overRating").at("notes").at(0).get<std::string>(),
               "ranked after closer-rated parts"));
     fs::remove_all(dir);
@@ -393,7 +406,7 @@ TEST_CASE("capacitor over-rating: a flag under the operating-point loss, a tier 
 // stays listed, with a note. The Su et al. input (30 uF, 43.2 V, Iout 2 A, 36 V -> 12 V) at
 // fs 100 kHz, where the 100 kHz ratings these records state compare directly, with a 145 mV
 // input ripple limit and no minimum ripple-current filter:
-//   EFDKA60J356E164DH   Eaton film 35 uF 600 V, 6 mohm          5.3 mW, 139 mV
+//   EFDKA60J356E164DH   Eaton film 35 uF 600 V, 6 mohm at no stated frequency: UNVERIFIED
 //   HHXC630ARA560MJA0G  Chemi-Con hybrid 56 uF 63 V, 30 mohm    26.7 mW, 139 mV, 1.4 A rating
 //   RCHTQ560M4EFH0002X  Taiyo Yuden hybrid 56 uF, 28 mohm       24.9 mW, but rated 0.71 A < 0.943 A
 //   A767KN476M1HLAE029  KEMET polymer 47 uF 50 V, 29 mohm       25.8 mW, but 153 mV > 145 mV
@@ -411,9 +424,11 @@ TEST_CASE("capacitor op loss: ripple-voltage limit and ripple-current shortfall 
                      {"outputCurrent", 2}, {"switchingFrequency", 100e3},
                      {"maxRippleVoltage", 0.145}};
     json r = eng.select("capacitor", req, {{"lossOperatingPoint", op}, {"includeEnvelope", false}});
-    CHECK(mpns_of(r) == std::vector<std::string>{"EFDKA60J356E164DH", "HHXC630ARA560MJA0G",
-                                                 "RCHTQ560M4EFH0002X", "A767KN476M1HLAE029",
-                                                 "C44AHFP5300ZC0J"});
+    // EFDKA60J356E164DH's 6 mohm ESR states no frequency (UNVERIFIED, owner 2026-11-14) and it
+    // states no size: last, after C44AHFP5300ZC0J.
+    CHECK(mpns_of(r) == std::vector<std::string>{"HHXC630ARA560MJA0G", "RCHTQ560M4EFH0002X",
+                                                 "A767KN476M1HLAE029", "C44AHFP5300ZC0J",
+                                                 "EFDKA60J356E164DH"});
     const json& rch = cand_of(r, "RCHTQ560M4EFH0002X");
     CHECK(rch.at("sortKey").at("underRippleCurrentRating") == true);
     CHECK(rch.at("loss").at("checks").at("rippleCurrentRating").at("meets") == false);
@@ -430,4 +445,58 @@ TEST_CASE("capacitor op loss: ripple-voltage limit and ripple-current shortfall 
     CHECK(a767.at("loss").at("total").get<double>() <
           cand_of(r, "HHXC630ARA560MJA0G").at("loss").at("total").get<double>());
     fs::remove_all(dir);
+}
+
+// Owner 2026-11-14 (size and voltage, b): for capacitors a rated voltage over 3x the need is a
+// ranking tier even under the operating-point loss — after the UNVERIFIED and ripple keys, before
+// the loss. A 24 V -> 5 V buck output (150 uF, 6 V, Iout 2 A, fs 80 kHz, L 180 uH) over the real
+// records of capacitors_op_loss.ndjson: GWC1V151MCO1GS (35 V, 5.8x) has the lower ESR loss, but
+// HHXD160ARA181MF80G (16 V, 2.7x) ranks first; both are fully verified and pass the ripple checks.
+TEST_CASE("capacitor op loss: a rated voltage over 3x the need ranks after, before the loss",
+          "[capacitor_overrating][cap_voltage_tier]") {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::path(KELVIN_TEST_DIR) / "_capacitor_voltage_tier";
+    fs::create_directories(dir);
+    fs::copy_file(fs::path(KELVIN_TEST_DIR) / "fixtures" / "capacitors_op_loss.ndjson",
+                  dir / "capacitors.ndjson", fs::copy_options::overwrite_existing);
+    api::Engine eng(dir.string(), "", /*quiet=*/true);
+    const double dipp = (24.0 - 5.0) * (5.0 / 24.0) / (180e-6 * 80e3);
+    const json req = {{"capacitance", 150e-6}, {"ratedVoltage", 6}};
+    const json op = {{"position", "buckOutput"}, {"inputVoltage", 24}, {"outputVoltage", 5},
+                     {"outputCurrent", 2}, {"switchingFrequency", 80e3},
+                     {"inductorRippleCurrent", dipp}};
+    json r = eng.select("capacitor", req, {{"lossOperatingPoint", op}, {"includeEnvelope", false}});
+    const auto order = mpns_of(r);
+    REQUIRE(order.size() >= 2);
+    CHECK(order[0] == "HHXD160ARA181MF80G");
+    CHECK(order[1] == "GWC1V151MCO1GS");
+    const json& hhxd = cand_of(r, "HHXD160ARA181MF80G");
+    const json& gwc = cand_of(r, "GWC1V151MCO1GS");
+    CHECK(gwc.at("loss").at("total").get<double>() < hhxd.at("loss").at("total").get<double>());
+    CHECK(gwc.at("sortKey").at("unverifiedItems") == 0);
+    CHECK(hhxd.at("sortKey").at("unverifiedItems") == 0);
+    CHECK(gwc.at("sortKey").at("overRatedVoltage") == true);
+    CHECK(hhxd.at("sortKey").at("overRatedVoltage") == false);
+    CHECK(gwc.at("overRating").at("axes") == json::array({"voltage"}));
+    CHECK(has(gwc.at("overRating").at("notes").at(0).get<std::string>(),
+              "rated voltage 35 V is 5.83x the requirement's 6 V"));
+    fs::remove_all(dir);
+}
+
+// Owner 2026-11-14: a stated ESR with no stated frequency leaves the ESR loss UNVERIFIED (the
+// frequency is a condition of the value). Wurth 860040878017 (data-524a699) states ESR
+// 33.7 mohm and no esrFrequency; GWC1V151MCO1GS states 18 mohm at 100 kHz and is read.
+TEST_CASE("capacitor loss: an ESR with no stated frequency is UNVERIFIED", "[capacitor_loss]") {
+    const CapacitorOperatingPoint op = out_point();
+    auto b = capacitor_loss(row("860040878017", "capacitors_op_loss.ndjson"), op);
+    CHECK_FALSE(b.esr_loss.watts);
+    CHECK_FALSE(b.esr_at_fs);
+    CHECK(b.unverified() == std::vector<std::string>{"esrLoss"});
+    REQUIRE(b.esr_loss.missing.size() == 1);
+    CHECK(has(b.esr_loss.missing[0], "the record states ESR 33.75 mohm without its frequency (a "
+                                     "condition of the value), so it is not read at fs"));
+    CHECK_FALSE(b.ripple_voltage.value);  // the ripple voltage needs the ESR too
+    auto ok = capacitor_loss(row("GWC1V151MCO1GS", "capacitors_op_loss.ndjson"), op);
+    REQUIRE(ok.esr_loss.watts);
+    CHECK(has(ok.esr_loss.basis, "stated ESR 18 mohm at 100000 Hz"));
 }

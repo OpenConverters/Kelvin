@@ -371,17 +371,28 @@ TEST_CASE("mosfet over-rating: a flag under the loss and margin rankings, a tier
     json r = eng.select("mosfet", req, {{"lossOperatingPoint", op}, {"includeEnvelope", false}});
     REQUIRE(r.at("candidates").size() == 4);
     const std::vector<std::string> by_loss = mpns(r);
-    CHECK(std::vector<std::string>(by_loss.begin(), by_loss.begin() + 3) ==
-          std::vector<std::string>{"CSD19537Q3", "NTMFD5C680NLT1G", "AO4286"});
+    // Owner 2026-11-14 (size and voltage, a): a board area that cannot be determined counts one
+    // more UNVERIFIED item — CSD19537Q3 ("SON (3x3)") and NTMFD5C680NLT1G (no drawn size) rank
+    // after AO4286 and IGLD60R190D1, whose areas resolve.
+    CHECK(by_loss == std::vector<std::string>{"AO4286", "IGLD60R190D1", "CSD19537Q3",
+                                              "NTMFD5C680NLT1G"});
     double prev = 0;
+    size_t prev_items = 0;
     for (const auto& c : r.at("candidates")) {
+        const size_t items = c.at("sortKey").at("unverifiedItems").get<size_t>();
+        if (items != prev_items) prev = 0;  // a new UNVERIFIED group: the loss restarts
+        prev_items = items;
         if (c.at("loss").at("total").is_null()) continue;  // UNVERIFIED ranks after: not here
         CHECK(c.at("loss").at("total").get<double>() >= prev);
         prev = c.at("loss").at("total").get<double>();
     }
-    CHECK(r.at("candidates")[0].at("overRating").at("axes") == json::array({"id"}));
+    const json* csd = nullptr;
+    for (const auto& c : r.at("candidates"))
+        if (c.at("mpn") == "CSD19537Q3") csd = &c;
+    REQUIRE(csd);
+    CHECK(csd->at("overRating").at("axes") == json::array({"id"}));
     // Decision 3: CSD19537Q3's switching term is Qgs+Qgd as stated, named an upper bound.
-    CHECK(r.at("candidates")[0].at("loss").at("terms").at("switching").at("basis")
+    CHECK(csd->at("loss").at("terms").at("switching").at("basis")
               .get<std::string>().find("the record states no Qgs2, so this is an upper bound") !=
           std::string::npos);
     CHECK(note_of(r, "CSD19537Q3").find("flagged only: the operating-point loss alone sets the order") !=
@@ -400,5 +411,50 @@ TEST_CASE("mosfet over-rating: a flag under the loss and margin rankings, a tier
           std::string::npos);
     r = eng.select("mosfet", req, {{"tiebreaker", "highest_id_margin"}, {"includeEnvelope", false}});
     CHECK(mpns(r).front() == "CSD19537Q3");
+    fs::remove_all(dir);
+}
+
+// Owner 2026-11-14 (size and voltage, a): under the operating-point ranking a candidate whose
+// board area cannot be determined counts one more UNVERIFIED item (op_ranking, every family).
+// Real records (data-524a699, mosfets_op_loss_ranking.ndjson): CSD19537Q3 has the lowest loss of
+// the four, but its case "SON (3x3)" resolves to no land and it draws no size; AO4286 (SO8,
+// drawn 4.9 x 3.9 mm) and IGLD60R190D1 (drawn 13 x 7.6 mm) resolve. Only the size item moves it.
+TEST_CASE("mosfet op loss: a board area that cannot be determined is one more UNVERIFIED item",
+          "[mosfet_loss][op_size]") {
+    namespace fs = std::filesystem;
+    const fs::path dir = fs::path(KELVIN_TEST_DIR) / "_mosfet_op_size";
+    fs::create_directories(dir);
+    fs::copy_file(fs::path(KELVIN_TEST_DIR) / "fixtures" / "mosfets_op_loss_ranking.ndjson",
+                  dir / "mosfets.ndjson", fs::copy_options::overwrite_existing);
+    api::Engine eng(dir.string(), "", /*quiet=*/true);
+    const json req = {{"ratedDrainSourceVoltage", 43.2},
+                      {"ratedContinuousDrainCurrent", 2},
+                      {"maximumOnResistance", 1}};
+    const json op = {{"position", "buckHighSide"}, {"inputVoltage", 36}, {"outputVoltage", 12},
+                     {"outputCurrent", 2}, {"switchingFrequency", 80e3},
+                     {"gateDriveVoltage", 10}, {"gateDriveCurrent", 1}};
+    json r = eng.select("mosfet", req, {{"lossOperatingPoint", op}, {"includeEnvelope", false}});
+    auto get = [&](const std::string& mpn) -> const json& {
+        for (const auto& c : r.at("candidates"))
+            if (c.at("mpn") == mpn) return c;
+        throw std::runtime_error("no " + mpn);
+    };
+    const json& csd = get("CSD19537Q3");
+    const json& ao = get("AO4286");
+    CHECK(csd.at("boardArea").at("mm2").is_null());
+    CHECK(csd.at("loss").at("unverified").empty());  // every loss term computed
+    CHECK(csd.at("sortKey").at("sizeUnverified") == true);
+    CHECK(csd.at("sortKey").at("unverifiedItems") == 1);
+    CHECK(csd.at("loss").at("notes").dump().find(
+              "size UNVERIFIED (board area not stated: no drawn L x W and no resolvable case code "
+              "('SON (3x3)')): counts one more UNVERIFIED item in the operating-point ranking") !=
+          std::string::npos);
+    CHECK(ao.at("sortKey").at("sizeUnverified") == false);
+    CHECK(ao.at("sortKey").at("unverifiedItems") == 0);
+    CHECK(csd.at("loss").at("total").get<double>() < ao.at("loss").at("total").get<double>());
+    CHECK(r.at("candidates")[0].at("mpn") == "AO4286");
+    // A legacy ranking has no such key.
+    json legacy = eng.select("mosfet", req, {{"tiebreaker", "lowest_rds_on"}, {"includeEnvelope", false}});
+    CHECK_FALSE(legacy.at("candidates")[0].at("sortKey").contains("unverifiedItems"));
     fs::remove_all(dir);
 }
