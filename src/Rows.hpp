@@ -337,6 +337,11 @@ struct CapacitorRow : RowBase {
     // ESR without its measurement frequency is not comparable — a 120 Hz figure
     // and a 100 kHz figure differ severalfold on the same part.
     double esr_frequency = kNaN();
+    // v22 (owner 2026-11-14): esr / esr_frequency were NOT stated by the record but read by
+    // Kelvin off its ESR curve at 100 kHz (Views.cpp, ABT #2031). The 100 kHz is then not a
+    // rating frequency the record states, so the useful band of the impedance-type curves
+    // starts at 1 MHz for it (CrossRef.hpp useful_band).
+    bool esr_from_curve = false;
     // v20: the frequency ripple_current_rms is stated AT (CAS electrical.rippleCurrentFrequency,
     // Hz). NaN = not stated. A 100 Hz and a 20 kHz ripple rating of the same can differ by
     // 40 % or more, so the cross-reference compares the two ratings only on a common basis
@@ -396,6 +401,14 @@ struct CapacitorRow : RowBase {
     // V -> F, absolute farads as every record states them), with the one measurement
     // temperature the record states. Compared on the overlap of the two bias ranges.
     CurvePts bias_curve;
+    // v22 (owner 2026-11-14): the ripple rating's own tables, as stated (multiplier or amperes;
+    // only the ratio of two readings is ever used): vs frequency (Hz, from
+    // rippleCurrentFrequencyPoints / rippleCurrentPoints) and vs ambient temperature (degC,
+    // rippleCurrentTemperaturePoints; a CASE-temperature table is not kept). Kept only when
+    // evidently this rating's table (Views.cpp read_ripple_table); the ranker moves a ripple
+    // rating to the other side's frequency / temperature basis with them.
+    CurvePts ripple_f_curve;
+    CurvePts ripple_t_curve;
     bool no_thermal() const { return !present(rth); }
 };
 

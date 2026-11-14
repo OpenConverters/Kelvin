@@ -217,6 +217,111 @@ CurvePts read_bias_curve(const json* b) {
     return out;
 }
 
+// A ripple-current table (v22, owner 2026-11-14) — the record's own frequency or temperature
+// multiplier / ampere table, kept only when it is evidently THIS rating's table, so the ranker
+// can move the scalar rating to the other side's basis with I x y(target) / y(stated):
+//   * the y label names a ripple current ("Ripple current multiplier", "Ripple current [A]"),
+//     or the table is unlabelled and reads 1.0 (a multiplier) or the scalar itself (amperes)
+//     at the rating's own stated basis, within 1 % (an unlabelled table that does neither is
+//     not shown to belong to this rating); any other label ("Maximum continuous current") is
+//     not a ripple table;
+//   * the x label, when present, names the axis (`x_unit`) and, for temperature, not the CASE
+//     temperature: a case-temperature curve is a different condition from the ambient scalar
+//     rating (owner 2026-11-14);
+//   * the table's own stated condition on the OTHER axis (a frequency table's temperature, a
+//     temperature table's frequency) must be the scalar's; a condition stated by one side only
+//     or not numeric is a different condition (owner 2026-11-14) and the table is not kept;
+//   * every sample finite, y > 0 (a ratio of two readings), x strictly increasing.
+// The y values are kept as stated (multiplier or amperes): the ranker only ever uses the
+// ratio of two readings, which is the same either way. `basis` is the scalar's own stated
+// point on this axis (NaN when not stated: an unlabelled table cannot then be anchored).
+// `other_basis` is the scalar's stated value on the other axis (NaN = not stated);
+// `other_key` the condition key ("temperature" / "frequency"); for a frequency condition the
+// 100 Hz / 120 Hz sameness of the ripple basis (owner 2026-11-09) applies. `log_x`: frequency
+// (read log-log, x > 0 required); temperature is read linearly.
+// The CAS `factors` block (rippleCurrentFrequencyFactor* / rippleCurrentTemperatureFactor*)
+// repeats the same tables on the records that carry it (Nichicon, Panasonic), so only the
+// electrical.*Points tables are read.
+CurvePts read_ripple_table(const json* c, const char* x_unit, double basis, double scalar,
+                           const char* other_key, double other_basis, bool log_x) {
+    CurvePts out;
+    if (!c || !c->is_object()) return out;
+    if (auto xl = get_str(*c, "xLabel")) {
+        if (xl->find(x_unit) == std::string::npos) return out;
+        std::string l = *xl;
+        for (auto& ch : l) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+        if (l.find("case") != std::string::npos) return out;
+    }
+    bool labelled = false;
+    if (auto yl = get_str(*c, "yLabel")) {
+        if (yl->rfind("Ripple current", 0) != 0) return out;
+        labelled = true;
+    }
+    if (const json* cond = obj_get(*c, "conditions"); cond && cond->is_object()) {
+        if (auto it = cond->find(other_key); it != cond->end() && !it->is_null()) {
+            if (!it->is_number() || std::isnan(other_basis)) return out;
+            const double v = it->get<double>();
+            auto same = [](double a, double b) {
+                return std::fabs(a - b) <= 1e-9 * std::max(std::fabs(a), std::fabs(b));
+            };
+            const bool mains = std::string(other_key) == "frequency" &&
+                               (same(v, 100) || same(v, 120)) &&
+                               (same(other_basis, 100) || same(other_basis, 120));
+            if (!same(v, other_basis) && !mains) return out;
+        }
+    }
+    const json* xs = obj_get(*c, "xData");
+    const json* ys = obj_get(*c, "yData");
+    if (!xs || !ys || !xs->is_array() || !ys->is_array() || xs->size() != ys->size() ||
+        xs->size() < 2)
+        return out;
+    std::vector<std::pair<double, double>> pts;
+    for (size_t i = 0; i < xs->size(); ++i) {
+        const json& xv = (*xs)[i];
+        const json& yv = (*ys)[i];
+        if (!xv.is_number() || !yv.is_number()) return out;
+        const double xi = xv.get<double>(), yi = yv.get<double>();
+        if (!std::isfinite(xi) || !std::isfinite(yi) || !(yi > 0)) return out;
+        if (log_x && !(xi > 0)) return out;
+        pts.emplace_back(xi, yi);
+    }
+    std::sort(pts.begin(), pts.end());
+    for (size_t i = 1; i < pts.size(); ++i)
+        if (!(pts[i].first > pts[i - 1].first)) return out;
+    if (!labelled) {
+        if (std::isnan(basis)) return out;
+        // the table's reading at the stated basis (interpolated, log-log for frequency)
+        std::optional<double> at;
+        for (size_t i = 1; i < pts.size() && !at; ++i) {
+            const auto [x0, y0] = pts[i - 1];
+            const auto [x1, y1] = pts[i];
+            if (basis < x0 || basis > x1) continue;
+            if (basis == x0) at = y0;
+            else if (basis == x1) at = y1;
+            else if (log_x)
+                at = std::exp(std::log(y0) + (std::log(basis) - std::log(x0)) /
+                                                 (std::log(x1) - std::log(x0)) *
+                                                 (std::log(y1) - std::log(y0)));
+            else at = y0 + (basis - x0) / (x1 - x0) * (y1 - y0);
+        }
+        if (!at) return out;
+        const bool unit_multiplier = std::fabs(*at - 1.0) <= 0.01;
+        const bool amperes = std::fabs(*at - scalar) <= 0.01 * scalar;
+        if (!unit_multiplier && !amperes) return out;
+    }
+    auto x = std::make_shared<std::vector<float>>();
+    auto y = std::make_shared<std::vector<float>>();
+    for (const auto& [xi, yi] : pts) {
+        const float xf = static_cast<float>(xi);
+        if (!x->empty() && !(xf > x->back())) return CurvePts{};
+        x->push_back(xf);
+        y->push_back(static_cast<float>(yi));
+    }
+    out.x = std::move(x);
+    out.y = std::move(y);
+    return out;
+}
+
 // Physical body size + case code, shared by every family extractor: the
 // cross-reference footprint check needs a real size, because a substitute that
 // does not fit the board is not a substitute. Dimensions are
@@ -1251,10 +1356,30 @@ std::optional<CapacitorRow> extract_capacitor(const json& env) {
                                                 "[Hz]", {"[F]"}, /*positive_y=*/false));
     r.esl_curve = read_curve_xy(obj_get(*elec, "inductanceFrequencyPoints"), "[Hz]", {"[H]"},
                                 /*positive_y=*/true);
+    // The ripple rating's own frequency and temperature tables (v22, owner 2026-11-14), kept
+    // only alongside a ripple rating and only when evidently that rating's (read_ripple_table).
+    // Frequency: electrical.rippleCurrentFrequencyPoints (multiplier), else
+    // rippleCurrentPoints (amperes vs Hz).
+    if (present(r.ripple_current_rms)) {
+        r.ripple_f_curve = read_ripple_table(obj_get(*elec, "rippleCurrentFrequencyPoints"), "Hz",
+                                             r.ripple_current_frequency, r.ripple_current_rms,
+                                             "temperature", r.ripple_current_temperature,
+                                             /*log_x=*/true);
+        if (r.ripple_f_curve.empty())
+            r.ripple_f_curve = read_ripple_table(obj_get(*elec, "rippleCurrentPoints"), "Hz",
+                                                 r.ripple_current_frequency, r.ripple_current_rms,
+                                                 "temperature", r.ripple_current_temperature,
+                                                 /*log_x=*/true);
+        r.ripple_t_curve = read_ripple_table(obj_get(*elec, "rippleCurrentTemperaturePoints"),
+                                             "emperature", r.ripple_current_temperature,
+                                             r.ripple_current_rms, "frequency",
+                                             r.ripple_current_frequency, /*log_x=*/false);
+    }
     if (!present(r.esr)) {
         if (auto v = curve_at(obj_get(*elec, "esrPoints"), 1e5, "[Hz]", "Ohm"); v) {
             r.esr = *v;
             r.esr_frequency = 1e5;
+            r.esr_from_curve = true;
         }
     }
     // Operating temperature range: a substitute must cover the original's, at

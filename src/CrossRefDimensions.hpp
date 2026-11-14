@@ -403,6 +403,17 @@ inline std::optional<Dims> resolve_dimensions(const std::string& case_code,
     }
 
     // 4) Four-digit numeric codes — meaning depends on family.
+    //    Never inside a NAMED package family: Nexperia's DSN0603-2 is a 0.6 x 0.3 mm
+    //    silicon outline whose name happens to contain "0603", and the search below read it
+    //    as the imperial 0603 chip (1.6 x 0.8 mm) — Qarlos r28 seed 33352234,
+    //    JAN1N6857UR-1 -> PMEG3005ESFYL. The digits of a named family (DSN, DFN, SOD, QFN,
+    //    ...) belong to that family's own size scheme, which this table does not hold, so
+    //    the string resolves nothing here. "SC" is not in the list: WIMA's "SMD SC1812" is
+    //    the 1812 chip size.
+    static const std::regex named_family(
+        R"((?:DSN|DFN|SON|QFN|SOD|SOT|SLP|LLP|MLP|CSP|LGA|BGA)[-_ ]?\d{4})",
+        std::regex::icase);
+    if (std::regex_search(raw, named_family)) return std::nullopt;
     static const std::regex four(R"((?:^|[^0-9])(\d{4})(?:[^0-9]|$))");
     std::smatch fm;
     if (!leaded_body && std::regex_search(raw, fm, four)) {

@@ -464,6 +464,17 @@ inline std::string primary_rating_label(const std::string& key) {
     return it != k.end() ? it->second : param_label(key);
 }
 
+// Whether a spec states ANY physical datum: a case / package string, a body or lead-pitch
+// dimension, or a mount (connectors: `mounting`). The no-physical-data rule
+// (kNoPhysicalDataPenalty) reads it.
+inline bool states_physical_data(const json& p) {
+    for (const char* k : {"case_code", "package", "mount", "mounting"})
+        if (!str(p, k).empty()) return true;
+    for (const char* k : {"length_m", "width_m", "height_m", "lead_pitch_m"})
+        if (num(p, k)) return true;
+    return false;
+}
+
 inline bool is_hard_param(const std::string& cat, const std::string& key) {
     static const std::set<std::string> magnetic{"saturation_current", "rated_current"};
     // A connector is half of a mated pair: the other gender or another interface
@@ -557,6 +568,15 @@ inline constexpr double kVerdictFailPenalty = 3.0;
 // cost and more capacitance. A fixed step, well below a WARN (0.5), so it only orders among
 // otherwise-equal candidates; grade and direction are unchanged.
 inline constexpr double kGrossOverRatingFactor = 3.0;
+// A candidate that states NO physical data at all — no case / package string, no body or lead
+// dimension, no mount — against an original that states at least one (owner 2026-11-14;
+// states_physical_data): capped at minor_review, a note, and this small step on top of the
+// unknown-footprint penalty, so parts of a known size rank first. Below a WARN: it orders, it
+// does not judge (Qarlos r31 seed 34608982: Vishay D2TO020C1R910FTE3, whose record states no
+// case at all, against a Bourns 0201 chip).
+inline constexpr double kNoPhysicalDataPenalty = 0.25;
+static_assert(kNoPhysicalDataPenalty < kVerdictWarnPenalty,
+              "the no-physical-data step must stay below a WARN");
 inline constexpr double kGrossOverRatingPenalty = 0.15;
 static_assert(kGrossOverRatingPenalty < kVerdictWarnPenalty / 2,
               "Y4: the over-rating step must stay well below a WARN");
@@ -1612,6 +1632,41 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 penalty += opt.gate_weight * kVerdictFailPenalty;
                 missing_required_data = true;
             }
+        } else if (const auto o_ac = num(original, "voltage_ac")) {
+            // An original with no safety class that still states an AC rating (a film
+            // capacitor rated 500 V DC / 250 V AC): the AC rating is a rating of its own, and
+            // the DC one is not it. Qarlos r28 seed 33352234: Vishay MKP1847H61525JP4 (250 V
+            // AC) took WIMA DC-LINK parts whose records state no AC rating, with no AC verdict
+            // or note. Rule (owner 2026-11-14):
+            //   * both stated -> compared like the rated voltage (the capacitor "voltage"
+            //     critical rating: HigherBetter, WARN below 0.95x, FAIL below 0.9x rejects);
+            //   * the substitute states none -> UNVERIFIED with a note (no cap, no penalty);
+            //   * the original states none -> nothing is compared.
+            const auto s_ac = num(cand, "voltage_ac");
+            char buf[160];
+            if (!s_ac) {
+                params.push_back({{"name", "voltage_ac"}, {"verdict", UNVERIFIED}});
+                std::snprintf(buf, sizeof buf, "%g V AC", *o_ac);
+                notes.push_back(std::string("the original is rated ") + buf +
+                                "; the substitute's record states no AC rating, so its AC "
+                                "rating could not be compared (its DC rating is not that "
+                                "rating) — confirm it on the datasheet before an AC duty");
+            } else {
+                const auto v =
+                    score_directional(o_ac, s_ac, Mode::HigherBetter, 0.95, 0.9);
+                params.push_back({{"name", "voltage_ac"}, {"verdict", v.verdict}});
+                if (v.verdict == FAIL || v.verdict == WARN) {
+                    std::snprintf(buf, sizeof buf, "%g V AC against the original's %g V AC",
+                                  *s_ac, *o_ac);
+                    notes.push_back(std::string("AC rating below the original's: ") + buf +
+                                    " — less margin to the circuit's AC voltage; confirm the "
+                                    "application's worst-case AC voltage is covered");
+                    if (v.verdict == FAIL)
+                        return reject("AC voltage rating falls far below the original's");
+                    demote();
+                    penalty += opt.gate_weight * v.penalty;
+                }
+            }
         }
     }
     // A chip resistor ARRAY is not a discrete resistor: same body outline, a
@@ -1995,8 +2050,99 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         if (primary) demote();
         return true;
     };
+    // ── ripple rating moved to a common basis on a record's own table (owner 2026-11-14) ──
+    // When the two ripple ratings are stated at different frequencies and/or temperatures, a
+    // record's own ripple-current table (ripple_f_curve: frequency, read log-log; ripple_t_curve:
+    // temperature, read linearly — both as Views.cpp read_ripple_table keeps them: labelled
+    // ripple-current tables, or unlabelled ones anchored at the rating's own basis, no
+    // case-temperature table, no table stated under another condition) moves a rating to the
+    // other side's basis: I x y(target) / y(stated), only inside the table's measured range,
+    // never extrapolated. Per differing axis, the substitute is moved to the original's basis
+    // first; when its table does not cover both points, the original is moved to the
+    // substitute's. The two axes are independent factors (each table is stated at the rating's
+    // own basis on the other axis). Every differing axis must be resolved; otherwise nothing is
+    // converted and the basis rules below (ripple_basis_unverified /
+    // ripple_temp_basis_unverified) apply exactly as before. A side stating no basis on a
+    // differing axis cannot be moved (there is no point to read its table from).
+    struct RippleConv {
+        double o = 0, s = 0;
+        std::string note;
+    };
+    const std::optional<RippleConv> ripple_conv = [&]() -> std::optional<RippleConv> {
+        if (cat != "capacitor") return std::nullopt;
+        const auto o_v = num(original, "ripple_current"), s_v = num(cand, "ripple_current");
+        if (!o_v || !s_v) return std::nullopt;
+        const auto o_f = num(original, "ripple_current_frequency"),
+                   s_f = num(cand, "ripple_current_frequency");
+        const auto o_t = num(original, "ripple_current_temperature"),
+                   s_t = num(cand, "ripple_current_temperature");
+        auto same = [](double a, double b) {
+            return std::fabs(a - b) <= 1e-9 * std::max({std::fabs(a), std::fabs(b), 1.0});
+        };
+        auto mains = [&](double f) { return same(f, 100.0) || same(f, 120.0); };
+        const bool f_differs = o_f && !(s_f && (same(*o_f, *s_f) || (mains(*o_f) && mains(*s_f))));
+        const bool t_differs = o_t && !(s_t && same(*o_t, *s_t));
+        if (!f_differs && !t_differs) return std::nullopt;
+        RippleConv out;
+        double mo = 1.0, ms = 1.0;
+        std::string how, basis;
+        auto fmt = [](double v, const char* unit) {
+            char b[48];
+            std::snprintf(b, sizeof b, "%g %s", v, unit);
+            return std::string(b);
+        };
+        // One axis; false when it cannot be resolved.
+        auto axis = [&](bool differs, const std::optional<double>& ob,
+                        const std::optional<double>& sb, const char* key, Interp interp,
+                        const char* table, const char* unit) -> bool {
+            if (!differs) return true;
+            if (!sb) return false;
+            char b[256];
+            if (const auto st = curve_from_spec(cand, key)) {
+                const auto a = curve_at(st->curve, *ob, interp), z = curve_at(st->curve, *sb, interp);
+                if (a && z) {
+                    ms *= *a / *z;
+                    std::snprintf(b, sizeof b, "%sthe substitute's own %s table x%.4g (%s -> %s)",
+                                  how.empty() ? "" : "; ", table, *a / *z, fmt(*sb, unit).c_str(),
+                                  fmt(*ob, unit).c_str());
+                    how += b;
+                    basis += (basis.empty() ? "" : ", ") + fmt(*ob, unit);
+                    return true;
+                }
+            }
+            if (const auto ot = curve_from_spec(original, key)) {
+                const auto a = curve_at(ot->curve, *sb, interp), z = curve_at(ot->curve, *ob, interp);
+                if (a && z) {
+                    mo *= *a / *z;
+                    std::snprintf(b, sizeof b, "%sthe original's own %s table x%.4g (%s -> %s)",
+                                  how.empty() ? "" : "; ", table, *a / *z, fmt(*ob, unit).c_str(),
+                                  fmt(*sb, unit).c_str());
+                    how += b;
+                    basis += (basis.empty() ? "" : ", ") + fmt(*sb, unit);
+                    return true;
+                }
+            }
+            return false;
+        };
+        if (!axis(f_differs, o_f, s_f, "ripple_f_curve", Interp::LogLog,
+                  "ripple-current frequency", "Hz"))
+            return std::nullopt;
+        if (!axis(t_differs, o_t, s_t, "ripple_t_curve", Interp::Linear,
+                  "ripple-current temperature", "degC"))
+            return std::nullopt;
+        out.o = *o_v * mo;
+        out.s = *s_v * ms;
+        char buf[640];
+        std::snprintf(buf, sizeof buf,
+                      "ripple current compared on a common basis (%s): substitute %.4g A "
+                      "(stated %g A) vs original %.4g A (stated %g A), moved by %s "
+                      "(frequency log-log, temperature linear, inside each table's range)",
+                      basis.c_str(), out.s, *s_v, out.o, *o_v, how.c_str());
+        out.note = buf;
+        return out;
+    }();
     const bool ripple_basis_unverified =
-        cat == "capacitor" &&
+        cat == "capacitor" && !ripple_conv &&
         basis_unverified("ripple_current", "ripple_current_frequency", "ripple current", "A",
                          /*primary=*/true);
     // The ripple rating's TEMPERATURE basis (v22, Qarlos r26 32304944): an 85 degC rating
@@ -2009,7 +2155,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // basis rule above is (it was note-only, the Cj / Coss treatment). The original stating no
     // temperature -> compared as stated. No conversion between temperatures is attempted.
     const bool ripple_temp_basis_unverified = [&] {
-        if (cat != "capacitor") return false;
+        if (cat != "capacitor" || ripple_conv) return false;  // resolved on a table (above)
         const auto o_v = num(original, "ripple_current"), s_v = num(cand, "ripple_current");
         const auto o_t = num(original, "ripple_current_temperature"),
                    s_t = num(cand, "ripple_current_temperature");
@@ -2048,53 +2194,130 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             if (p.key == key) return p;
         throw std::logic_error(std::string("no ParamSpec '") + key + "' for " + cat);
     };
+    // The ripple ratings moved to a common basis on a record's own table (ripple_conv above):
+    // compared there with the ripple spec, the converted values carrying the direction.
+    if (ripple_conv) {
+        notes.push_back(ripple_conv->note);
+        curve_override["ripple_current"] = {
+            compare_numeric(spec_for("ripple_current"), ripple_conv->o, ripple_conv->s),
+            ripple_conv->o, ripple_conv->s};
+    }
     auto hz = [](double f) {
         char b[32];
         std::snprintf(b, sizeof b, "%g Hz", f);
         return std::string(b);
     };
+    // ── the useful band of a capacitor's impedance-type curves (owner 2026-11-14) ──────
+    // |Z|(f), ESL(f) and ESR(f) are judged only from the original's stated rating frequency
+    // (its ESR test frequency, esrFrequency, when the record states one; 1 MHz when it does
+    // not — an ESR Kelvin itself read off the curve at 100 kHz, esr_from_curve, is not a
+    // stated frequency) up to the original's self-resonance: the minimum of its |Z| curve. When
+    // that minimum is the curve's last sample, |Z| is still falling where the measurement
+    // stops and the resonance lies above it, so the band ends at the curve's end (all that is
+    // known to be below resonance). No |Z| curve on the original -> no self-resonance on
+    // record, no band, the curves are not graded. (The catalogue states no SRF field for
+    // capacitors, and every record with a C(f) curve also carries |Z|, so |Z| is the source.)
+    // Points outside the band are not graded; the note names the band.
+    struct UsefulBand {
+        std::optional<std::pair<double, double>> band;
+        std::string why;  // the band in words, or why there is none
+    };
+    const UsefulBand useful_band = [&]() -> UsefulBand {
+        UsefulBand u;
+        if (cat != "capacitor") return u;
+        char buf[320];
+        const auto o_f = num(original, "esr_frequency");
+        const auto derived = original.find("esr_from_curve");
+        const bool from_curve =
+            derived != original.end() && derived->is_boolean() && derived->get<bool>();
+        const bool stated_f = o_f && !from_curve;
+        const double lo = stated_f ? *o_f : 1e6;
+        const std::string lo_what = stated_f ? "the original's rating (ESR test) frequency " + hz(lo)
+                                             : std::string("1 MHz (the original states no rating frequency)");
+        const auto oz = curve_from_spec(original, "impedance_curve");
+        if (!oz) {
+            u.why = "the original carries no |Z| curve, so its self-resonance (the top of the "
+                    "useful band) is not on record";
+            return u;
+        }
+        const auto& zy = oz->curve.y;
+        const std::size_t imin =
+            static_cast<std::size_t>(std::min_element(zy.begin(), zy.end()) - zy.begin());
+        const double hi = oz->curve.x[imin];
+        const bool at_end = imin + 1 == zy.size();
+        const std::string hi_what =
+            at_end ? "the end of the original's |Z| curve at " + hz(hi) +
+                         " (|Z| still falling there; its self-resonance lies above)"
+                   : "the original's self-resonance (|Z| minimum) at " + hz(hi);
+        if (lo > hi) {
+            std::snprintf(buf, sizeof buf,
+                          "no useful band: %s lies below %s",
+                          hi_what.c_str(), lo_what.c_str());
+            u.why = buf;
+            return u;
+        }
+        u.band = std::make_pair(lo, hi);
+        u.why = "useful band from " + lo_what + " to " + hi_what +
+                "; points outside it are not graded";
+        return u;
+    }();
     // ESR (a): both records carry an ESR-vs-frequency curve -> compared on the overlap of the
-    // two measured ranges, log-log (ESR curves are plotted on log axes), with the ESR spec's
-    // bands at each point; the worst point decides. Different stated conditions or no overlap
-    // -> a note, and the scalars keep their own (basis) rule. Otherwise, when the two scalars
-    // are quoted at different frequencies, a curve resolves the basis: the substitute's ESR is
-    // read from its curve at the original's frequency (or the original's from its curve at the
-    // substitute's), inside the measured range only.
+    // two measured ranges inside the original's useful band, log-log (ESR curves are plotted on
+    // log axes), with the ESR spec's bands at each point; the worst point decides. Owner
+    // 2026-11-14: the curve verdict does NOT replace the scalar ESR verdict — it is its own
+    // row (esr_curve), booked like every curve (a WARN demotes and costs its depth-scaled
+    // warn, a FAIL demotes and costs the FAIL penalty), and the scalar ESR row is judged on
+    // its own; both penalise. Different stated conditions, no band or no overlap -> an
+    // UNVERIFIED esr_curve row and a note (no penalty, no cap).
+    // ESR (b), the scalar: when the two scalars are quoted at different frequencies, a curve
+    // resolves the basis: the substitute's ESR is read from its curve at the original's
+    // frequency (or the original's from its curve at the substitute's), inside the measured
+    // range only.
     if (cat == "capacitor") {
         const auto oc = curve_from_spec(original, "esr_curve"),
                    sc = curve_from_spec(cand, "esr_curve");
         const ParamSpec& esr_spec = spec_for("esr");
-        bool decided = false;
         if (oc && sc) {
             const std::string cond = conditions_differ(*oc, *sc);
+            auto row = [&](const char* v) { params.push_back({{"name", "esr_curve"}, {"verdict", v}}); };
+            if (!cond.empty()) row(UNVERIFIED);
+            else if (!useful_band.band) row(UNVERIFIED);
             if (!cond.empty()) {
                 notes.push_back("ESR curves measured under different conditions (" + cond +
                                 ") — the curves were not compared");
+            } else if (!useful_band.band) {
+                notes.push_back("ESR curves not compared: " + useful_band.why);
             } else {
                 const CurveVerdict v = compare_curves(oc->curve, sc->curve, esr_spec,
-                                                      Interp::LogLog);
+                                                      Interp::LogLog, useful_band.band);
+                row(v.verdict);
                 if (v.verdict == std::string(UNVERIFIED)) {
-                    notes.push_back("ESR curves do not overlap (original " +
+                    notes.push_back("ESR curves do not meet inside the useful band (original " +
                                     hz(oc->curve.x.front()) + " to " + hz(oc->curve.x.back()) +
                                     ", substitute " + hz(sc->curve.x.front()) + " to " +
-                                    hz(sc->curve.x.back()) + ") — the curves were not compared");
+                                    hz(sc->curve.x.back()) + "; " + useful_band.why +
+                                    ") — the curves were not compared");
                 } else {
-                    char buf[320];
+                    char buf[640];
                     std::snprintf(buf, sizeof buf,
                                   "ESR compared on both curves from %g to %g Hz (%zu points, "
                                   "log-log): %s at %g Hz, substitute %.4g ohm vs original "
-                                  "%.4g ohm",
+                                  "%.4g ohm (%s)",
                                   v.range->first, v.range->second, v.points,
                                   v.verdict == std::string(PASS) ? "passes everywhere, tightest" : "worst",
-                                  v.worst_x, v.sub_y, v.orig_y);
+                                  v.worst_x, v.sub_y, v.orig_y, useful_band.why.c_str());
                     notes.push_back(buf);
-                    CurveOverride ov;
-                    ov.outcome = ParamOutcome(v.verdict);
-                    ov.outcome.warn_depth = v.warn_depth;
-                    ov.o = v.orig_y;
-                    ov.s = v.sub_y;
-                    curve_override["esr"] = ov;
-                    decided = true;
+                    if (v.verdict == std::string(FAIL)) {
+                        demote();
+                        penalty += opt.gate_weight * kVerdictFailPenalty;
+                        ++worse;
+                    } else if (v.verdict == std::string(WARN)) {
+                        demote();
+                        penalty += opt.gate_weight * warn_penalty(v.warn_depth);
+                        ++worse;
+                    } else {
+                        note_direction(esr_spec.dir, v.orig_y, v.sub_y);
+                    }
                 }
             }
         }
@@ -2104,7 +2327,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         auto mains = [&](double f) { return same_f(f, 100.0) || same_f(f, 120.0); };
         const bool basis_differs =
             o_v && s_v && o_f && !(s_f && (same_f(*o_f, *s_f) || (mains(*o_f) && mains(*s_f))));
-        if (!decided && basis_differs) {
+        if (basis_differs) {
             char buf[320];
             const auto s_at = sc ? curve_at(sc->curve, *o_f, Interp::LogLog) : std::nullopt;
             const auto o_at =
@@ -2802,10 +3025,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // a comparison and adds nothing.
     auto curve_param = [&](const char* key, const char* name, const char* what, const char* unit,
                            const char* x_what, const char* x_unit, const ParamSpec& spec,
-                           const char* spec_named, Interp interp) {
+                           const char* spec_named, Interp interp, bool banded = false) {
         const auto oc = curve_from_spec(original, key), sc = curve_from_spec(cand, key);
         if (!oc || !sc) return;
-        char buf[400];
+        char buf[800];
         const std::string cond = conditions_differ(*oc, *sc);
         if (!cond.empty()) {
             params.push_back({{"name", name}, {"verdict", UNVERIFIED}});
@@ -2813,25 +3036,35 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                             cond + ") — not compared");
             return;
         }
-        const CurveVerdict v = compare_curves(oc->curve, sc->curve, spec, interp);
+        // `banded`: an impedance-type curve, graded only inside the original's useful band.
+        if (banded && !useful_band.band) {
+            params.push_back({{"name", name}, {"verdict", UNVERIFIED}});
+            notes.push_back(std::string(what) + " curves not compared: " + useful_band.why);
+            return;
+        }
+        const CurveVerdict v = compare_curves(oc->curve, sc->curve, spec, interp,
+                                              banded ? useful_band.band : std::nullopt);
         params.push_back({{"name", name}, {"verdict", v.verdict}});
         if (v.verdict == std::string(UNVERIFIED)) {
             std::snprintf(buf, sizeof buf,
-                          "%s curves do not overlap (original %g to %g %s, substitute %g to %g "
-                          "%s) — not compared",
-                          what, oc->curve.x.front(), oc->curve.x.back(), x_unit,
-                          sc->curve.x.front(), sc->curve.x.back(), x_unit);
+                          "%s curves do not %s (original %g to %g %s, substitute %g to %g "
+                          "%s%s%s) — not compared",
+                          what, banded ? "meet inside the useful band" : "overlap",
+                          oc->curve.x.front(), oc->curve.x.back(), x_unit,
+                          sc->curve.x.front(), sc->curve.x.back(), x_unit, banded ? "; " : "",
+                          banded ? useful_band.why.c_str() : "");
             notes.push_back(buf);
             return;
         }
         const bool ok = v.verdict == std::string(PASS);
         std::snprintf(buf, sizeof buf,
                       "%s compared on both curves over %s %g to %g %s (%zu points, %s, bands of "
-                      "the %s): %s at %g %s, substitute %.4g %s vs original %.4g %s",
+                      "the %s): %s at %g %s, substitute %.4g %s vs original %.4g %s%s%s%s",
                       what, x_what, v.range->first, v.range->second, x_unit, v.points,
                       interp == Interp::LogLog ? "log-log" : "linear", spec_named,
                       ok ? "passes everywhere, tightest" : "worst", v.worst_x, x_unit, v.sub_y, unit, v.orig_y,
-                      unit);
+                      unit, banded ? " (" : "", banded ? useful_band.why.c_str() : "",
+                      banded ? ")" : "");
         notes.push_back(buf);
         if (v.verdict == std::string(FAIL)) {
             demote();
@@ -2871,13 +3104,15 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                             std::nullopt, false, false, nullptr, 0.90};
         static const ParamSpec kEslSpec{"esl", Dir::Lower, 1.5, std::nullopt, false, false,
                                         nullptr};
+        // |Z| and ESL are graded only inside the original's useful band (useful_band above);
+        // C(f) is read only below self-resonance already (leading_positive), DC bias unchanged.
         curve_param("impedance_curve", "impedance_curve", "|Z|", "ohm", "frequency", "Hz",
-                    kImpedanceSpec, "ESR spec", Interp::LogLog);
+                    kImpedanceSpec, "ESR spec", Interp::LogLog, /*banded=*/true);
         curve_param("capacitance_frequency_curve", "capacitance_frequency_curve",
                     "capacitance vs frequency", "F", "frequency", "Hz", kCapFreqSpec,
                     "capacitance spec", Interp::LogLog);
         curve_param("esl_curve", "esl_curve", "ESL", "H", "frequency", "Hz", kEslSpec,
-                    "ESR spec", Interp::LogLog);
+                    "ESR spec", Interp::LogLog, /*banded=*/true);
     }
 
     // ── transformer turns ratio (owner 2026-11-13, R2; W4) ───────────────────
@@ -5779,6 +6014,27 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                         "requirement there — capped below drop_in; confirm the original's "
                         "rating from its datasheet before this swap");
     }
+    // No physical data on the candidate at all while the original states some (owner
+    // 2026-11-14; kNoPhysicalDataPenalty): capped, a small extra penalty, and a note.
+    const bool cand_no_physical_data = (opt.check_footprint || cat == "connector") &&
+                                       states_physical_data(original) &&
+                                       !states_physical_data(cand);
+    if (cand_no_physical_data) {
+        demote();
+        penalty += opt.footprint_weight * kNoPhysicalDataPenalty;
+        // When the mount gate has already reported the missing mount (mount_unverified), this
+        // note leaves the mount out: one mount note per candidate (owner 2026-11-14; the
+        // connector guard "exactly one mount verdict and one note").
+        notes.push_back(mount_unverified
+                            ? "the substitute's record states no physical data at all (no case "
+                              "or package, no dimensions; its board attach is noted separately) "
+                              "— its size is unknown, so it ranks after parts of a known size; "
+                              "confirm the package from its datasheet before this swap"
+                            : "the substitute's record states no physical data at all (no case or "
+                              "package, no dimensions, no mount) — its size and how it mounts are "
+                              "unknown, so it ranks after parts of a known size; confirm the "
+                              "package from its datasheet before this swap");
+    }
     if (!both_unstated_primary.empty()) {
         std::string axes;
         for (size_t i = 0; i < both_unstated_primary.size(); ++i)
@@ -5887,6 +6143,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //   a primary RATING stated by the substitute and NOT by
     //     the original (owner 2026-11-13, Y2; axes listed in
     //     is_primary_rating; orig_unstated_primary)            primary    note, cap minor_review
+    //   a candidate stating no physical data at all (no case /
+    //     package, dimension or mount) while the original states
+    //     some (owner 2026-11-14; kNoPhysicalDataPenalty)    primary    note, small penalty,
+    //                                                                    cap minor_review
     //   a primary RATING real for the original's technology
     //     (both_unknown_cap_applies) stated by NEITHER record
     //     (owner 2026-11-14; both_unstated_primary)           primary    note, cap minor_review
@@ -5928,7 +6188,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                     mount_unverified || timebase_pin_unverified ||
                                     timebase_prog_order || current_rating_one_sided ||
                                     !orig_unstated_primary.empty() ||
-                                    !both_unstated_primary.empty();
+                                    !both_unstated_primary.empty() || cand_no_physical_data;
     out["grade"] = grade_for(status, tier, any_warn, any_fail, primary_unverified,
                              missing_required_data || connector_identity_gaps_major ||
                                  timebase_tech_major,

@@ -8937,3 +8937,132 @@ TEST_CASE("owner 2026-11-14: a resistor power rating more than 3x the original's
           x25["penalty"].get<double>() + 0.9 * kelvin::crossref::kGrossOverRatingPenalty);
     CHECK(x5["grade"] == same["grade"]);  // an ordering step, not a grade change
 }
+
+// Owner decision 2026-11-14 (Qarlos r31 seed 34608982, data-524a699): Vishay D2TO020C1R910FTE3,
+// whose record states no physical data at all (case "", no dimensions, no mount), was offered for
+// the Bourns 0201 chip CR0201-F/-1R91GLF. A candidate stating nothing physical against an original
+// that states something is capped at minor_review, takes kNoPhysicalDataPenalty and a note, so a
+// part of known size ranks first. Its twin stating the original's case is the known-size control.
+TEST_CASE("owner 2026-11-14: a candidate stating no physical data ranks after known-size parts",
+          "[qarlos][crossref][resistor][no-physical-data]") {
+    const json orig = r29_bb::res("CR0201-F/-1R91GLF");
+    const json bare = r29_bb::res("D2TO020C1R910FTE3");
+    REQUIRE(orig["case_code"] == "0201");
+    // The premise: nothing physical on the candidate's record.
+    REQUIRE(bare.value("case_code", "") == "");
+    REQUIRE(bare.value("mount", "") == "");
+    REQUIRE(bare["length_m"].is_null());
+    REQUIRE(bare["width_m"].is_null());
+    json sized = bare;
+    sized["mpn"] = "D2TO020_WITH_CASE";
+    sized["case_code"] = "0201";
+    auto opt = res_opt();
+    opt.check_footprint = true;
+    const auto r =
+        kelvin::crossref::cross_reference("resistor", orig, json::array({bare, sized}), opt);
+    const json b = res_find(r, "D2TO020C1R910FTE3"), s = res_find(r, "D2TO020_WITH_CASE");
+    REQUIRE(!b.is_null());
+    REQUIRE(!s.is_null());
+    CHECK(has_note(b, "states no physical data at all"));
+    CHECK(b["grade"] != "drop_in");
+    CHECK_FALSE(has_note(s, "states no physical data at all"));
+    CHECK(b["penalty"].get<double>() >
+          s["penalty"].get<double>() + 0.9 * kelvin::crossref::kNoPhysicalDataPenalty);
+    CHECK(r["candidates"][0]["mpn"] == "D2TO020_WITH_CASE");
+}
+
+// Qarlos r28 seed 33352234 (data-524a699 records, verbatim in
+// tests/fixtures/qarlos_r28_capacitors.ndjson): Vishay MKP1847H61525JP4 (500 V DC, 250 V AC, no
+// safety class) took WIMA's DCP4H151506G4LJS00 (500 V DC, no AC rating) with no AC verdict or
+// note. An original's AC rating is compared even without a safety class.
+namespace r28_cap {
+json spec(const std::string& mpn) {
+    std::ifstream in(std::string(KELVIN_TEST_DIR) + "/fixtures/qarlos_r28_capacitors.ndjson");
+    std::string line;
+    while (std::getline(in, line))
+        if (line.find("\"reference\":\"" + mpn + "\"") != std::string::npos ||
+            line.find("\"reference\": \"" + mpn + "\"") != std::string::npos) {
+            auto r = kelvin::extract_capacitor(json::parse(line));
+            REQUIRE(r.has_value());
+            json s = cap_spec(*r);
+            s["voltage_ac"] =
+                std::isnan(r->v_rated_ac) ? json(nullptr) : json(r->v_rated_ac);
+            return s;
+        }
+    throw std::runtime_error("fixture has no capacitor record " + mpn);
+}
+}  // namespace r28_cap
+
+TEST_CASE("qarlos r28: an original's AC rating is compared without a safety class",
+          "[qarlos][crossref][capacitor][r28-ac]") {
+    const json orig = r28_cap::spec("MKP1847H61525JP4");
+    const json dc = r28_cap::spec("DCP4H151506G4LJS00");
+    REQUIRE(orig["voltage_ac"] == 250.0);
+    REQUIRE(dc["voltage_ac"].is_null());
+    kelvin::crossref::Options opt;
+    opt.max_results = 10;
+    auto r = kelvin::crossref::cross_reference("capacitor", orig, json::array({dc}), opt);
+    REQUIRE(r["candidates"].size() == 1);
+    const json c = r["candidates"][0];
+    CHECK(verdict_of(c, "voltage_ac") == "unverified");
+    CHECK(has_note(c, "the original is rated 250 V AC"));
+    // Both stated: compared like the rated voltage (the original's own record against an AC
+    // rating 5 % and 20 % lower).
+    json warm = orig, low = orig;
+    warm["mpn"] = "AC_237V";
+    warm["voltage_ac"] = 237.5 - 1.0;
+    low["mpn"] = "AC_200V";
+    low["voltage_ac"] = 200.0;
+    auto r2 = kelvin::crossref::cross_reference("capacitor", orig,
+                                                json::array({orig, warm, low}), opt);
+    bool seen_same = false, seen_warm = false, seen_low = false;
+    for (const auto& x : r2["candidates"]) {
+        if (x["mpn"] == "MKP1847H61525JP4") {
+            seen_same = true;
+            CHECK(verdict_of(x, "voltage_ac") == "pass");
+        }
+        if (x["mpn"] == "AC_237V") {
+            seen_warm = true;
+            CHECK(verdict_of(x, "voltage_ac") == "warn");
+            CHECK(has_note(x, "AC rating below the original's"));
+        }
+        if (x["mpn"] == "AC_200V") {  // below 0.9x: rejected like the rated voltage
+            seen_low = true;
+            CHECK(verdict_of(x, "voltage_ac") == "fail");
+            CHECK(x["status"] == "no_substitute");
+        }
+    }
+    CHECK(seen_same);
+    CHECK(seen_warm);
+    CHECK(seen_low);
+}
+
+// Qarlos r28 seed 33352234 (data-524a699 records, verbatim in
+// tests/fixtures/qarlos_r28_diodes.ndjson): Nexperia PMEG3005ESFYL's case "DSN0603-2" was read as
+// the imperial 0603 chip (1.6 x 0.8 mm); DSN0603 is a 0.6 x 0.3 mm outline. A named package
+// family's digits are never read as a chip code.
+TEST_CASE("qarlos r28: a DSN0603 package is not the imperial 0603 chip",
+          "[qarlos][crossref][diode][r28-dsn]") {
+    using kelvin::crossref::resolve_dimensions;
+    CHECK_FALSE(resolve_dimensions("DSN0603-2", "diode").has_value());
+    CHECK_FALSE(resolve_dimensions("X3-DFN0603-2", "diode").has_value());
+    CHECK_FALSE(resolve_dimensions("DSN0603-2", "").has_value());
+    CHECK(resolve_dimensions("0603", "diode").has_value());  // a bare chip code still reads
+    CHECK(resolve_dimensions("SMD SC1812", "capacitor").has_value());  // WIMA's 1812 chip
+    auto sh = kelvin::build_diode_shard(std::string(KELVIN_TEST_DIR) +
+                                        "/fixtures/qarlos_r28_diodes.ndjson");
+    const json rows = kelvin::browse::browse_rows(sh, json{{"limit", 10}})["rows"];
+    json orig, cand;
+    for (const auto& x : rows) {
+        if (x["mpn"] == "JAN1N6857UR-1") orig = diode_spec(x);
+        if (x["mpn"] == "PMEG3005ESFYL") cand = diode_spec(x);
+    }
+    REQUIRE(!orig.is_null());
+    REQUIRE(!cand.is_null());
+    REQUIRE(cand["case_code"] == "DSN0603-2");
+    auto r = kelvin::crossref::cross_reference("diode", orig, json::array({cand}));
+    REQUIRE(r["candidates"].size() == 1);
+    const json c = r["candidates"][0];
+    CHECK_FALSE(has_note(c, "1.6"));
+    CHECK_FALSE(has_note(c, "0603 chip"));
+}

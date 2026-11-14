@@ -294,12 +294,10 @@ TEST_CASE("golden: the footprint ladder is monotone — fits < unverified < esta
     auto o = order("resistor", original, cands);
     REQUIRE(o.size() == 5);
     CHECK(o[0] == "FITS");
-    // owner 2026-11-13 (Y3): unknown = different case. The unverified rung costs exactly the
-    // established different-case rung, so the two tie on penalty and their relative order is
-    // left to the other terms — equal here (the fixture's parts are otherwise identical), so
-    // the ranker's stable sort keeps them in input order, which is not a documented tie-break
-    // and is not pinned. Asserted: the tie, and that both rank after the fit and before the
-    // overhang.
+    // owner 2026-11-13 (Y3): unknown = different case — the unverified footprint rung costs
+    // exactly the established different-case rung. owner 2026-11-14: a candidate that states
+    // no physical data at all (UNVERIFIED here) adds kNoPhysicalDataPenalty on top, so it no
+    // longer ties DIFFERENT_CASE but ranks after it, still before the overhang.
     Options popt;
     popt.max_results = 50;
     const json pr = cross_reference("resistor", original, cands, popt)["candidates"];
@@ -309,9 +307,14 @@ TEST_CASE("golden: the footprint ladder is monotone — fits < unverified < esta
         FAIL("no candidate " << m);
         return 0.0;
     };
-    CHECK(penalty_of("UNVERIFIED") == penalty_of("DIFFERENT_CASE"));
-    CHECK(penalty_of("UNVERIFIED") == kUnknownDimPenalty);
+    // owner 2026-11-14 (no physical data): UNVERIFIED states no case, dimension or mount at
+    // all while the original states 0603, so it costs the unknown-footprint rung plus
+    // kNoPhysicalDataPenalty and ranks after DIFFERENT_CASE (approved rewrite of the former
+    // tie assertion; fixture unchanged).
+    CHECK(penalty_of("UNVERIFIED") == kUnknownDimPenalty + kNoPhysicalDataPenalty);
+    CHECK(penalty_of("DIFFERENT_CASE") == kUnknownDimPenalty);
     const auto pos_unverified = std::find(o.begin(), o.end(), "UNVERIFIED") - o.begin();
+    CHECK(pos_unverified > std::find(o.begin(), o.end(), "DIFFERENT_CASE") - o.begin());
     CHECK(pos_unverified >= 1);
     CHECK(pos_unverified <= 3);
     // The three established mismatches follow; a body that grossly overhangs the
@@ -321,8 +324,9 @@ TEST_CASE("golden: the footprint ladder is monotone — fits < unverified < esta
     CHECK(penalty_of("SMALLER_BODY") == penalty_of("DIFFERENT_CASE"));
     CHECK(std::find(o.begin(), o.end(), "SMALLER_BODY") > o.begin());
     CHECK(std::find(o.begin(), o.end(), "SMALLER_BODY") < o.begin() + 4);
-    // owner 2026-11-13 (Y3): unknown = different case — DIFFERENT_CASE ties UNVERIFIED (above),
-    // so it is only held after the fit and ahead of the overhang, not after UNVERIFIED.
+    // owner 2026-11-13 (Y3): unknown = different case; since 2026-11-14 UNVERIFIED (no
+    // physical data) ranks after DIFFERENT_CASE (above), which stays after the fit and ahead
+    // of the overhang.
     CHECK(std::find(o.begin(), o.end(), "DIFFERENT_CASE") > o.begin());
     CHECK(std::find(o.begin(), o.end(), "DIFFERENT_CASE") < o.begin() + 4);
     CHECK(o[4] == "OVERHANGS");
