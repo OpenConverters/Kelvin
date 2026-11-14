@@ -401,6 +401,8 @@ inline void extra_row_json(const MagneticRow& r, json& o) {
     // null when the record states none. A CMC's |Z|(f) is its common-mode curve ("mode").
     o["impedance_curve"] = curve_json(r.z_curve_f, r.z_curve_z,
                                       r.device_type == "commonModeChoke" ? "common" : "");
+    o["resistance_curve"] = curve_json(r.r_curve_f, r.r_curve_r);
+    o["reactance_curve"] = curve_json(r.x_curve_f, r.x_curve_x);
     if (r.sat_table_current.empty()) {
         o["saturation_points"] = nullptr;
         return;

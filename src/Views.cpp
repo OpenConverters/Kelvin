@@ -5,6 +5,7 @@
 #include <cmath>
 #include <regex>
 #include <stdexcept>
+#include <tuple>
 #include <unordered_map>
 
 #include "CrossRefDimensions.hpp"  // crossref::normalize_mount (smd / leaded)
@@ -849,6 +850,14 @@ int unstate_retracted_ratings(MagneticRow& r) {
         r.impedance_100mhz = r.impedance_peak = r.impedance_peak_freq = kNaN();
         ++n;
     }
+    for (auto [path, xs, ys] :
+         {std::tuple{"electrical.resistancePoints", &r.r_curve_f, &r.r_curve_r},
+          std::tuple{"electrical.reactancePoints", &r.x_curve_f, &r.x_curve_x}})
+        if (!xs->empty() && field_retracted(r, path)) {
+            xs->clear();
+            ys->clear();
+            ++n;
+        }
     if (!r.z_curve_f.empty() && field_retracted(r, "electrical.impedancePoints")) {
         r.z_curve_f.clear();
         r.z_curve_z.clear();
@@ -1701,6 +1710,30 @@ void store_curve(const std::vector<std::pair<double, double>>& c, std::vector<fl
     ys = std::move(y);
 }
 
+// A frequency sweep of one scalar (resistancePoints {frequency, resistance}, reactancePoints
+// {frequency, reactance}, insertion-loss points {frequency, insertionLoss}) as (x, y) sorted by
+// frequency: points with a non-positive frequency or no value are not samples. A record whose
+// points carry more than one `winding` tag states several curves in one array and yields none
+// (none in data-524a699 does).
+std::vector<std::pair<double, double>> sweep_points(const json& pts, const char* ykey) {
+    std::vector<std::pair<double, double>> curve;
+    if (!pts.is_array()) return curve;
+    std::optional<std::string> first_tag;
+    for (const auto& pt : pts) {
+        if (!pt.is_object()) continue;
+        if (const auto w = get_str(pt, "winding")) {
+            if (!first_tag) first_tag = *w;
+            else if (*w != *first_tag) return {};
+        }
+        const auto f = get_num(pt, "frequency");
+        const auto y = get_num(pt, ykey);
+        if (!f || !(*f > 0) || !y) continue;
+        curve.emplace_back(*f, *y);
+    }
+    std::sort(curve.begin(), curve.end());
+    return curve;
+}
+
 // The readings Kelvin ranks a |Z|(f) curve on: |Z| at the conventional 100 MHz test point
 // and the bracketed peak with its frequency. A bead's published spec is |Z| at 100 MHz, and
 // TDK's own engineer calls that spot value "irrelevant and misleading" on its own: parts with
@@ -1873,6 +1906,12 @@ std::optional<MagneticRow> extract_magnetic(const json& env) {
                                    r.dm_impedance_peak_freq);
             }
         }
+        // R(f) and X(f) (v22 curves): the dissipative and the reactive part of a bead's
+        // impedance, compared curve vs curve by the ranker.
+        if (const json* rp = obj_get(elec, "resistancePoints"))
+            store_curve(sweep_points(*rp, "resistance"), r.r_curve_f, r.r_curve_r);
+        if (const json* xp = obj_get(elec, "reactancePoints"))
+            store_curve(sweep_points(*xp, "reactance"), r.x_curve_f, r.x_curve_x);
         // Transformer turns ratio (primary:secondary): electrical[0].turnsRatios[0] (a dimWithTol). Lets
         // select_magnetic rank a catalog transformer by how close its ratio is to the design's required
         // ratio — the meaningful match for flyback/isolated transformers (TAS has no per-winding structure).

@@ -516,6 +516,10 @@ void row_io(Ar& ar, MagneticRow& r) {
     ar.dbl(r.dm_impedance_peak_freq);      // v22
     ar.fltvec(r.z_curve_f);                // v22 curves
     ar.fltvec(r.z_curve_z);
+    ar.fltvec(r.r_curve_f);
+    ar.fltvec(r.r_curve_r);
+    ar.fltvec(r.x_curve_f);
+    ar.fltvec(r.x_curve_x);
     ar.boolean(r.is_production);
 }
 

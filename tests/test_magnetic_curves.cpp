@@ -21,7 +21,7 @@ using nlohmann::json;
 
 namespace {
 // MAGNETIC_CURVE_KEYS in web/src/crossref.js.
-const char* const kCurveKeys[] = {"impedance_curve"};
+const char* const kCurveKeys[] = {"impedance_curve", "resistance_curve", "reactance_curve"};
 // The real record whose manufacturerInfo.reference is `mpn`; throws when the fixture lacks it.
 json real_record(const std::string& mpn) {
     std::ifstream in(std::string(KELVIN_TEST_DIR) + "/fixtures/magnetic_curves.ndjson");
@@ -124,4 +124,19 @@ TEST_CASE("curves: an inductor's |Z|(f) curve is compared with the other's",
     CHECK(note.find("worst at 3 GHz, substitute 217 ohm vs original 379 ohm") !=
           std::string::npos);
     CHECK(c["status"] == "partial");
+}
+
+// 3. A bead's resistancePoints / reactancePoints (2,630 / 2,637 bead records) were never
+// compared. R(f) — the dissipative part that suppresses the noise — and X(f) on the band both
+// curves are inductive are now compared with the bead impedance spec's bands, linear ohms over
+// log frequency.
+TEST_CASE("curves: a bead's R(f) and X(f) are compared with the other's",
+          "[magcurves][crossref][bead]") {
+    const auto o = row_of("742792653"), s = row_of("74279265");
+    REQUIRE(o.r_curve_f.size() >= 2);
+    REQUIRE(s.x_curve_f.size() >= 2);
+    const json c = rank("chipBead", spec_of(o, true), spec_of(s, true));
+    INFO(c.dump());
+    CHECK(verdict_of(c, "resistance_curve") == "XX");
+    CHECK(verdict_of(c, "reactance_curve") == "XX");
 }

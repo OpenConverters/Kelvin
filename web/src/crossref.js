@@ -425,7 +425,7 @@ const ZENER_VARIANT = {
 // graphs"), passed to the ranker as they come off the row ({x, y[, mode]}, null when the record
 // states none). The ranker compares each one both records carry, curve vs curve
 // (src/CrossRefMagneticCurves.hpp). Shared by the inductor and the impedance (bead) models.
-const MAGNETIC_CURVE_KEYS = ['impedance_curve']
+const MAGNETIC_CURVE_KEYS = ['impedance_curve', 'resistance_curve', 'reactance_curve']
 export function magneticCurves(r) {
   const out = {}
   for (const k of MAGNETIC_CURVE_KEYS) {

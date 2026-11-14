@@ -499,6 +499,8 @@ struct MagneticRow : RowBase {
     // parallel float vectors (x ascending, strictly), empty when the record states fewer than
     // two usable samples. The ranker compares them curve vs curve (CrossRefMagneticCurves.hpp).
     std::vector<float> z_curve_f, z_curve_z;  // |Z|(f), Hz -> ohm (a CMC's: common mode)
+    std::vector<float> r_curve_f, r_curve_r;  // R(f), Hz -> ohm (resistancePoints)
+    std::vector<float> x_curve_f, x_curve_x;  // X(f), Hz -> ohm, signed (reactancePoints)
     std::string device_type;              // electrical[0].subtype (inductor/transformer/…): annotated, never gated
     std::string family;                   // manufacturerInfo.family or part.family (series, for context)
     // v20: the operating-temperature range (PEAS thermal.operatingTemperature, degC), which the

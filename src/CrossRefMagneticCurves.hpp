@@ -128,6 +128,19 @@ inline const std::vector<Def>& defs() {
         {"impedance_curve", "impedance_curve", "|Z|(f)", impedance_spec("impedance_curve"),
          "the chip-bead impedance spec (PASS >= 0.85x, WARN >= 0.8x)", Axis::LogLog, "Hz",
          "ohm"},
+        // R(f): the dissipative part of a bead's impedance — what actually turns the noise
+        // into heat. Bead impedance bands; linear ohms over log frequency (R reaches 0 at low
+        // frequency in 68 bead records, which a log axis cannot read).
+        {"resistance_curve", "resistance_curve", "R(f)", impedance_spec("resistance_curve"),
+         "the chip-bead impedance spec (PASS >= 0.85x, WARN >= 0.8x)", Axis::SemiLogX, "Hz",
+         "ohm"},
+        // X(f): the reactive part, inductive (X > 0) below the bead's resonance and capacitive
+        // above it. The bead impedance bands are ratios, which a sign change makes meaningless,
+        // so X is judged on the inductive band both curves state (each curve's leading run of
+        // X > 0); the capacitive region is not judged (owner to decide how).
+        {"reactance_curve", "reactance_curve", "X(f)", impedance_spec("reactance_curve"),
+         "the chip-bead impedance spec (PASS >= 0.85x, WARN >= 0.8x)", Axis::SemiLogX, "Hz",
+         "ohm", true},
     };
     return d;
 }
