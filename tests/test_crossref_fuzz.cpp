@@ -298,3 +298,27 @@ TEST_CASE("bjt: an NPN is never a PNP's substitute", "[crossref][5fam][bjt]") {
     CHECK(c.value("status", std::string()) == "no_substitute");
     CHECK(param_verdict(c, "polarity") == "fail");
 }
+
+TEST_CASE("bjt: package aliases with identical pads are one land pattern (Qarlos 2026-11-15)",
+          "[crossref][5fam][bjt][case-alias]") {
+    // Real TAS rows (tests/fixtures/qarlos_1115_bjt_case_aliases.ndjson, verbatim):
+    //   TIP42C-S (Bourns, 'TO-220')  -> TIP42CG (onsemi, 'TO-220-3'): the 3-lead TO-220 under
+    //     its pin-count suffix, one land pattern;
+    //   BC817-Q (Nexperia, 'SOT23')  -> MMBT100 (onsemi, 'SOT-23 (TO-236) 2.90x1.30x1.00,
+    //     1.90P'): SOT-23 is JEDEC TO-236AB, the same pads;
+    //   negative: TIP42CG ('TO-220-3') -> MJF127G ('TO-220-3 FullPak'): the fully isolated
+    //     TO-220 is a different outline and must stay a different case.
+    auto shard = build_bjt_shard(fixtures() + "/qarlos_1115_bjt_case_aliases.ndjson");
+    auto footprint = [&](const char* o, const char* s) {
+        json orig = spec_by_mpn("bjt", shard, o);
+        json sub = spec_by_mpn("bjt", shard, s);
+        Options opt; opt.max_results = 5;
+        json r = cross_reference("bjt", orig, json::array({sub}), opt);
+        const json& c = cand_by_mpn(r, s);
+        INFO(o << " -> " << s << ": " << c.dump());
+        return c.value("footprint", std::string());
+    };
+    CHECK(footprint("TIP42C-S", "TIP42CG") != "different_case");
+    CHECK(footprint("BC817-Q", "MMBT100") != "different_case");
+    CHECK(footprint("TIP42CG", "MJF127G") == "different_case");
+}
