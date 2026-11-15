@@ -111,7 +111,8 @@ BROWSE_ONLY = ("analog", "timing")
 
 # Families the substitute ranker (CrossRef.hpp) has a parameter model for. The rest are refused
 # by name, never ranked with another family's model — say so up front instead of at call time.
-XREF_FAMILIES = ("magnetic", "capacitor", "resistor", "mosfet", "timing", "connector", "diode")
+XREF_FAMILIES = ("magnetic", "capacitor", "resistor", "mosfet", "timing", "connector", "diode",
+                 "igbt", "varistor", "analog")
 
 # A public server must not be a bulk-export endpoint: the catalogue is searched with filters, not
 # paged end to end. A caller who needs more narrows the filters (facet counts say how).

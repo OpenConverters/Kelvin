@@ -424,6 +424,81 @@ export const XREF = [
       { key: 'junction_capacitance', label: 'Cj', row: 'junction_capacitance', unit: 'F' },
     ],
   },
+  {
+    key: 'igbt', label: 'IGBTs', category: 'igbt',
+    // The ranker's IGBT model is its critical ratings (critical_ratings("igbt")): Vces is the
+    // hard gate (below 0.9x rejects), Ic a soft one, plus the Si / SiC process check shared
+    // with the MOSFET and the diode. It has no PARAM_SPECS table, so Vce(sat) and Tj max are
+    // shown for the engineer but graded by nothing (their cells read 'unverified').
+    primary: null,
+    sameFacet: { f: 'technology', label: 'technology' },
+    hardKeys: ['vces'],
+    hardMin: [{ row: 'vces_rated', factor: 0.9 }],
+    spec: (r) => ({ ...base(r), vces: nz(r.vces_rated), ic: nz(r.ic_continuous),
+      vce_sat: nz(r.vce_sat), technology: r.technology ?? '',
+      // Raw, NOT through nz(): 0 degC would be a stated value. Absent -> null.
+      tj_max: r.tj_max ?? null }),
+    params: [
+      { key: 'vces', label: 'Vces', row: 'vces_rated', unit: 'V' },
+      { key: 'ic', label: 'Ic', row: 'ic_continuous', unit: 'A' },
+      { key: 'vce_sat', label: 'Vce(sat)', row: 'vce_sat', unit: 'V' },
+      { key: 'tj_max', label: 'Tj max', row: 'tj_max', unit: '°C' },
+    ],
+  },
+  {
+    key: 'varistor', label: 'Varistors', category: 'varistor',
+    // The varistor voltage is the primary value (primary_value_spec("varistor"): PASS within
+    // +/-5 %, accept +/-10 %, the marking's own tolerance); the clamping voltage must not
+    // rise and the surge current must not fall (kVaristor). Neither is a reject edge, so no
+    // hard key: a record missing them is capped by the ranker (missing_required_data).
+    primary: { row: 'varistor_voltage', label: 'V varistor', unit: 'V', acceptLo: 0.90, acceptHi: 1.10 },
+    sameFacet: { f: 'technology', label: 'type' },
+    hardKeys: [],
+    spec: (r) => ({ ...base(r), value_si: nz(r.varistor_voltage),
+      clamping_voltage: nz(r.clamping_voltage), peak_surge_current: nz(r.peak_surge_current),
+      max_continuous_dc_voltage: nz(r.max_continuous_dc_voltage), capacitance: nz(r.capacitance),
+      technology: r.technology ?? '' }),
+    params: [
+      { key: 'value', label: 'V varistor', row: 'varistor_voltage', unit: 'V' },
+      { key: 'max_continuous_dc_voltage', label: 'V dc max', row: 'max_continuous_dc_voltage', unit: 'V' },
+      { key: 'clamping_voltage', label: 'V clamp', row: 'clamping_voltage', unit: 'V' },
+      { key: 'peak_surge_current', label: 'I surge', row: 'peak_surge_current', unit: 'A' },
+      { key: 'capacitance', label: 'C', row: 'capacitance', unit: 'F' },
+    ],
+  },
+  {
+    key: 'analog', label: 'Analog ICs', category: 'analog',
+    // Device type (op-amp / comparator / ADC ...) and channel count are the ranker's
+    // identities (is_hard_param("analog")): a dual is not a quad, so the pool is cut at the
+    // channel count like the connector's positions. The rest is kAnalog: the supply range,
+    // GBW / slew rate (higher), offset / bias (lower, as magnitudes), CMRR, resolution and
+    // sample rate.
+    primary: null,
+    sameFacet: { f: 'device_type', label: 'device type' },
+    hardKeys: ['subtype', 'channels'],
+    exactNum: [{ row: 'channels', tol: 1e-9 }],
+    // subtype falls back to null, NOT '': ExactMatch reads '' as a stated value (ABT #505).
+    // Offset and bias raw, NOT through nz(): a signed value is stated, and the ranker
+    // compares them as magnitudes.
+    spec: (r) => ({ ...base(r), subtype: r.device_type || null, channels: nz(r.channels),
+      supply_min_V: nz(r.vsupply_min), supply_max_V: nz(r.vsupply_max),
+      gbw: nz(r.gain_bandwidth), slew_rate: nz(r.slew_rate),
+      input_offset_voltage: r.input_offset_voltage ?? null,
+      input_bias_current: r.input_bias_current ?? null,
+      cmrr_db: nz(r.cmrr), resolution: nz(r.resolution), sample_rate: nz(r.sample_rate) }),
+    params: [
+      { key: 'channels', label: 'ch', row: 'channels', unit: '' },
+      { key: 'supply_min_V', label: 'Vsup min', row: 'vsupply_min', unit: 'V' },
+      { key: 'supply_max_V', label: 'Vsup max', row: 'vsupply_max', unit: 'V' },
+      { key: 'gbw', label: 'GBW', row: 'gain_bandwidth', unit: 'Hz' },
+      { key: 'slew_rate', label: 'SR', row: 'slew_rate', unit: 'V/s' },
+      { key: 'input_offset_voltage', label: 'Vos', row: 'input_offset_voltage', unit: 'V' },
+      { key: 'input_bias_current', label: 'Ib', row: 'input_bias_current', unit: 'A' },
+      { key: 'cmrr_db', label: 'CMRR', row: 'cmrr', unit: 'dB' },
+      { key: 'resolution', label: 'bits', row: 'resolution', unit: '' },
+      { key: 'sample_rate', label: 'fs', row: 'sample_rate', unit: 'S/s' },
+    ],
+  },
 ]
 
 // Zener view of the diode catalogue: same comparison model, but the pool is cut at the
