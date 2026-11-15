@@ -199,3 +199,102 @@ TEST_CASE("fuzz: bjt ranker holds its invariants over real rows", "[crossref][fu
 TEST_CASE("fuzz: varistor ranker holds its invariants over real rows", "[crossref][fuzz]") {
     fuzz_family("varistor", build_varistor_shard(fixtures() + "/varistors.ndjson"));
 }
+
+// ── IGBT / BJT / varistor guards on real records (owner 2026-11-15) ──────────────────────
+// Each case takes real TAS rows through the same browse row -> spec path as the fuzz pass
+// and asserts the one rule it guards, so reverting that rule fails here.
+namespace {
+template <class Row>
+json spec_by_mpn(const std::string& cat, const Shard<Row>& shard, const std::string& mpn) {
+    json all = browse::browse_rows(shard, json{{"limit", 1000}, {"curves", true}});
+    for (const auto& r : all.at("rows"))
+        if (r.value("mpn", std::string()) == mpn) return spec_for(cat, r);
+    FAIL("fixture row " << mpn << " not found");
+    return json();
+}
+const json& cand_by_mpn(const json& result, const std::string& mpn) {
+    for (const auto& c : result.at("candidates"))
+        if (c.value("mpn", std::string()) == mpn) return c;
+    FAIL("candidate " << mpn << " missing from the result");
+    static json none;
+    return none;
+}
+std::string param_verdict(const json& c, const std::string& name) {
+    for (const auto& p : c.at("params"))
+        if (p.value("name", std::string()) == name) return p.value("verdict", std::string());
+    return "";
+}
+}  // namespace
+
+TEST_CASE("varistor: a substitute rated below the original's Vdc max is refused",
+          "[crossref][5fam][varistor]") {
+    // TDK B72500E0140S260 (Vdc max 18 V) and B72500E1140S260 (16 V): same 24.5 V varistor
+    // voltage, clamping voltage, surge current, Vac max and 0603 case. 16 V < 18 V: the hard
+    // working-voltage gate (factor 1.0) rejects it; the original's own copy passes.
+    auto shard = build_varistor_shard(fixtures() + "/varistors.ndjson");
+    json orig = spec_by_mpn("varistor", shard, "B72500E0140S260");
+    json lower = spec_by_mpn("varistor", shard, "B72500E1140S260");
+    REQUIRE(orig.at("max_continuous_dc_voltage") == 18.0);
+    REQUIRE(lower.at("max_continuous_dc_voltage") == 16.0);
+    json self = orig;
+    self["_key"] = "SELF_COPY";
+    Options opt; opt.max_results = 5;
+    json r = cross_reference("varistor", orig, json::array({lower, self}), opt);
+    const json& c = cand_by_mpn(r, "B72500E1140S260");
+    INFO(c.dump());
+    CHECK(c.value("status", std::string()) == "no_substitute");
+    CHECK(param_verdict(c, "max_continuous_dc_voltage") == "fail");
+}
+
+TEST_CASE("igbt: Vce(sat) is compared only on a common collector current",
+          "[crossref][5fam][igbt]") {
+    // Real TAS 06fed09 rows, all 650 V / 100 A TO247. Original AOK50B65M2: 1.72 V at 50 A.
+    //   AOK50B65H1       1.90 V at 50 A  -> same basis, compared (1.10x: within the 1.2x band)
+    //   FGH4L50T65MQDC50 1.45 V at 50 A  -> same basis, compared (lower: pass)
+    //   STGW100H65FB2-4  1.55 V at 100 A -> different current: UNVERIFIED + vce_sat_basis
+    //   IKZA100N65EH7    1.40 V, no Ic   -> only one side states it: UNVERIFIED + vce_sat_basis
+    auto shard = build_igbt_shard(fixtures() + "/igbts_vce_sat_basis.ndjson");
+    json orig = spec_by_mpn("igbt", shard, "AOK50B65M2");
+    REQUIRE(orig.at("vce_sat_ic") == 50.0);
+    json pool = json::array();
+    for (const char* m : {"AOK50B65H1", "FGH4L50T65MQDC50", "STGW100H65FB2-4", "IKZA100N65EH7XKSA1"})
+        pool.push_back(spec_by_mpn("igbt", shard, m));
+    Options opt; opt.max_results = 10;
+    json r = cross_reference("igbt", orig, pool, opt);
+    {
+        const json& c = cand_by_mpn(r, "AOK50B65H1");
+        INFO(c.dump());
+        CHECK(param_verdict(c, "vce_sat") == "warn");
+        CHECK(param_verdict(c, "vce_sat_basis") == "");
+    }
+    {
+        const json& c = cand_by_mpn(r, "FGH4L50T65MQDC50");
+        INFO(c.dump());
+        CHECK(param_verdict(c, "vce_sat") == "pass");
+        CHECK(param_verdict(c, "vce_sat_basis") == "");
+    }
+    for (const char* m : {"STGW100H65FB2-4", "IKZA100N65EH7XKSA1"}) {
+        const json& c = cand_by_mpn(r, m);
+        INFO(c.dump());
+        CHECK(param_verdict(c, "vce_sat") == "unverified");
+        CHECK(param_verdict(c, "vce_sat_basis") == "unverified");
+    }
+}
+
+TEST_CASE("bjt: an NPN is never a PNP's substitute", "[crossref][5fam][bjt]") {
+    // onsemi MJ15003G (NPN) and its complement MJ15004G (PNP): identical 140 V / 20 A / 250 W
+    // ratings, gain and fT in the same TO-204 case. Only the polarity differs, and it rejects.
+    auto shard = build_bjt_shard(fixtures() + "/bjts.ndjson");
+    json npn = spec_by_mpn("bjt", shard, "MJ15003G");
+    json pnp = spec_by_mpn("bjt", shard, "MJ15004G");
+    REQUIRE(npn.at("polarity") == "npn");
+    REQUIRE(pnp.at("polarity") == "pnp");
+    json self = npn;
+    self["_key"] = "SELF_COPY";
+    Options opt; opt.max_results = 5;
+    json r = cross_reference("bjt", npn, json::array({pnp, self}), opt);
+    const json& c = cand_by_mpn(r, "MJ15004G");
+    INFO(c.dump());
+    CHECK(c.value("status", std::string()) == "no_substitute");
+    CHECK(param_verdict(c, "polarity") == "fail");
+}
