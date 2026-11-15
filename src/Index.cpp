@@ -154,14 +154,21 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // <family>.curves.kidx, keyed by row index, which the browser fetches only when something reads
 // curves. The base header gains the curve shard's build id (so the base build id covers it) and
 // the curve shard's header names the base build id: a curve shard of another build is refused.
-// v24 (owner 2026-11-15, timing / analog selectors) carries the lifecycle status a timing or
-// analog record states (TimingRow.status / AnalogRow.status, manufacturerInfo.status; "" when
-// none): the selectors keep a part with no stated status and drop only a stated non-production
-// one, which is_production cannot tell apart. Every v23 shard must be rebuilt.
-constexpr uint32_t kFormatVersion = 24;
 // The curve shard's own magic, so a base shard handed to the curve loader (or the reverse) is
 // refused by its first 8 bytes rather than misparsed.
 constexpr char kCurveMagic[8] = {'K', 'E', 'L', 'V', 'C', 'R', 'V', '\1'};
+// v24 carries a BJT's transition frequency and saturation voltage (BjtRow.transition_frequency,
+// vce_sat; tj_max is now filled), an IGBT's Vce(sat) test current (IgbtRow.vce_sat_ic), a
+// varistor's AC working voltage and energy rating (VaristorRow.max_continuous_ac_voltage,
+// energy_absorption) and the analog fields the cross-reference's kAnalog table already
+// compared but no row carried (AnalogRow.offset_drift, quiescent_current, propagation_delay,
+// rail_to_rail_input / _output, output_stage; owner 2026-11-15).
+// v24 also carries the lifecycle status a timing or analog record states (TimingRow.status /
+// AnalogRow.status, manufacturerInfo.status; "" when none; owner 2026-11-15, timing / analog
+// selectors): the selectors keep a part with no stated status and drop only a stated
+// non-production one, which is_production cannot tell apart. Numbered 24: one above the v23
+// curve-shard format; every v23 shard must be rebuilt and both engines redeployed together.
+constexpr uint32_t kFormatVersion = 24;
 
 // Identity of the code that produces rows, so a cached shard can be recognised as
 // having been built by a DIFFERENT extractor than the one running now (ABT #426).
@@ -522,6 +529,7 @@ void row_io(Ar& ar, IgbtRow& r) {
     ar.dbl(r.rth_jc);
     ar.dbl(r.tj_max);
     ar.str(r.technology);
+    ar.dbl(r.vce_sat_ic);  // v24
     ar.boolean(r.is_production);
 }
 
@@ -535,6 +543,10 @@ void row_io(Ar& ar, BjtRow& r) {
     ar.dbl(r.tj_max);
     ar.str(r.technology);
     ar.str(r.polarity);     // v14
+    ar.dbl(r.transition_frequency);  // v24
+    ar.dbl(r.vce_sat);               // v24
+    ar.dbl(r.vce_sat_ic);            // v24
+    ar.dbl(r.hfe_ic);                // v24
     ar.boolean(r.is_production);
 }
 
@@ -547,6 +559,8 @@ void row_io(Ar& ar, VaristorRow& r) {
     ar.dbl(r.max_continuous_dc_voltage);
     ar.dbl(r.capacitance);
     ar.str(r.technology);
+    ar.dbl(r.max_continuous_ac_voltage);  // v24
+    ar.dbl(r.energy_absorption);          // v24
     ar.boolean(r.is_production);
 }
 
@@ -606,6 +620,12 @@ void row_io(Ar& ar, AnalogRow& r) {
     ar.str(r.device_type);
     ar.str(r.architecture);
     ar.str(r.input_stage);
+    ar.dbl(r.offset_drift);          // v24
+    ar.dbl(r.quiescent_current);     // v24
+    ar.dbl(r.propagation_delay);     // v24
+    ar.str(r.rail_to_rail_input);    // v24
+    ar.str(r.rail_to_rail_output);   // v24
+    ar.str(r.output_stage);          // v24
     ar.boolean(r.is_production);
     ar.str(r.status);  // v24 (owner 2026-11-15)
 }

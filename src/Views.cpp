@@ -1990,6 +1990,9 @@ std::optional<IgbtRow> extract_igbt(const json& env) {
     r.vces_rated = *vces;
     r.ic_continuous = *ic;
     r.vce_sat = get_num(*refs->elec, "collectorEmitterSaturation").value_or(0.0);
+    // The current Vce(sat) is stated at (v24). Unstated stays NaN: unknown, never 0.
+    if (auto ic_sat = get_num(*refs->elec, "collectorEmitterSaturationIc"); pos(ic_sat))
+        r.vce_sat_ic = *ic_sat;
     r.technology = get_str(*refs->part, "technology").value_or("");
     auto st = get_str(*refs->mi, "status");
     r.is_production = st && *st == "production";
@@ -2030,6 +2033,21 @@ std::optional<BjtRow> extract_bjt(const json& env) {
     r.power_dissipation = get_num(*refs->elec, "powerDissipation").value_or(0.0);
     r.technology = get_str(*refs->part, "technology").value_or("");
     r.polarity = polarity;
+    // fT, Hz (v24). Unstated stays NaN: unknown, never 0.
+    if (auto ft = get_num(*refs->elec, "transitionFrequency"); ft && *ft > 0)
+        r.transition_frequency = *ft;
+    // Vce(sat), V (v24), a magnitude like the ratings above (a PNP's may be stated negative).
+    if (auto vs = rating_magnitude(get_num(*refs->elec, "saturationVoltage"), pnp); pos(vs))
+        r.vce_sat = *vs;
+    // The collector currents Vce(sat) and hFE are stated at (v24, SAS dd9d6e2), magnitudes.
+    if (auto i = rating_magnitude(get_num(*refs->elec, "saturationVoltageIc"), pnp); pos(i))
+        r.vce_sat_ic = *i;
+    if (auto i = rating_magnitude(get_num(*refs->elec, "dcCurrentGainIc"), pnp); pos(i))
+        r.hfe_ic = *i;
+    // The junction limit (v24; the row had the field and never filled it), as for the IGBT.
+    if (const json* bdi = obj_get(*refs->mi, "datasheetInfo"))
+        if (const json* th = obj_get(*bdi, "thermal"))
+            if (auto tj = get_num(*th, "junctionTemperatureMax")) r.tj_max = *tj;
     auto st = get_str(*refs->mi, "status");
     r.is_production = st && *st == "production";
     return r;
@@ -2062,6 +2080,9 @@ std::optional<VaristorRow> extract_varistor(const json& env) {
     r.peak_surge_current = get_num(*elec, "peakSurgeCurrent").value_or(0.0);
     r.max_continuous_dc_voltage = get_num(*elec, "maxContinuousDcVoltage").value_or(0.0);
     r.capacitance = get_num(*elec, "capacitance").value_or(0.0);
+    if (auto vac = get_num(*elec, "maxContinuousAcVoltage"); pos(vac))  // v24
+        r.max_continuous_ac_voltage = *vac;
+    if (auto e = get_num(*elec, "energyAbsorption"); pos(e)) r.energy_absorption = *e;  // v24
     r.technology = get_str(*part, "technology").value_or("");
     auto st = get_str(*mi, "status");
     r.is_production = st && *st == "production";
@@ -2757,13 +2778,26 @@ std::optional<AnalogRow> extract_analog(const json& env) {
         set_if_pos(r.resolution, get_num(*elec, "resolution"));
         set_if_pos(r.sample_rate, get_num(*elec, "sampleRate"));
         set_if_pos(r.on_resistance, get_num(*elec, "onResistance"));
+        set_if_pos(r.offset_drift, get_num(*elec, "inputOffsetVoltageDrift"));
+        set_if_pos(r.propagation_delay, get_num(*elec, "propagationDelay"));
         const json* supply = obj_get(*elec, "supply");
         if (supply) {
             set_if_pos(r.vsupply_min, get_num(*supply, "minimumSupplyVoltage"));
             set_if_pos(r.vsupply_max, get_num(*supply, "maximumSupplyVoltage"));
+            set_if_pos(r.quiescent_current, get_num(*supply, "quiescentCurrentPerChannel"));
         }
         r.architecture = get_str(*elec, "architecture").value_or("");
         r.input_stage = get_str(*elec, "inputStage").value_or("");
+        r.output_stage = get_str(*elec, "outputStage").value_or("");
+        // Tri-state (v24): a stated boolean becomes "yes" / "no" (the ranker's yes_no_rank),
+        // an absent or non-boolean value stays "" — unstated is never "no".
+        auto yes_no = [&](const char* key) -> std::string {
+            const json* b = obj_get(*elec, key);
+            if (!b || !b->is_boolean()) return "";
+            return b->get<bool>() ? "yes" : "no";
+        };
+        r.rail_to_rail_input = yes_no("railToRailInput");
+        r.rail_to_rail_output = yes_no("railToRailOutput");
     }
     auto status = get_str(*node->mi, "status");
     r.is_production = status.has_value() && *status == "production";
