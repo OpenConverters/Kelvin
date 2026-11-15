@@ -39,6 +39,15 @@ function openFamily(key) {
 
 <template>
   <div class="stats-home">
+    <div class="family-strip">
+      <button class="fam-tab active" type="button">‹ All stats</button>
+      <button
+        v-for="f in FAMILIES" :key="f.key"
+        class="fam-tab"
+        type="button"
+        @click="openFamily(f.key)"
+      >{{ f.label }}</button>
+    </div>
     <div class="tiles">
       <div class="tile panel">
         <span class="tile-label">catalogued parts</span>
@@ -108,6 +117,15 @@ function openFamily(key) {
 </template>
 
 <style scoped>
+.family-strip { display: flex; flex-wrap: wrap; gap: 6px; }
+.fam-tab {
+  font-family: var(--disp);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 7px 12px;
+}
+.fam-tab.active { border-color: var(--k-deep); color: var(--k-hi); box-shadow: 0 0 10px rgba(127, 201, 255, 0.1) inset; }
 .stats-home { display: flex; flex-direction: column; gap: 14px; flex: 1; min-height: 0; overflow-y: auto; }
 .tiles { display: flex; flex-wrap: wrap; gap: 10px; }
 .tile { padding: 12px 18px; display: flex; flex-direction: column; gap: 4px; }
