@@ -137,6 +137,40 @@ function penaltyText(c) {
   if (c.status === 'no_substitute') return '—'
   return c.penalty.toFixed(2)
 }
+// Engine notes are full sentences joined in one string per candidate. Show each as a short
+// label (the text before its first colon, dash or semicolon, capped at a word boundary), the
+// full sentences on demand, and collapse a row whose notes repeat the previous row's.
+const openNotes = reactive({})
+function noteItems(notes) {
+  const out = []
+  for (const n of notes ?? []) for (const part of String(n).split(' · ')) {
+    const t = part.trim()
+    if (t && !out.includes(t)) out.push(t)
+  }
+  return out
+}
+function noteHead(t) {
+  let h = t.split(/:\s| — |; /)[0].trim()
+  if (h.length > 60) h = h.slice(0, h.lastIndexOf(' ', 57)) + '…'
+  return h
+}
+function noteHeads(notes) {
+  const out = []
+  for (const t of noteItems(notes)) { const h = noteHead(t); if (!out.includes(h)) out.push(h) }
+  return out
+}
+function sameNotesAs(i) {
+  const rows = result.value?.ranked ?? []
+  if (i === 0) return null
+  const key = (c) => noteItems(c.notes).join('\n')
+  const mine = key(rows[i])
+  let j = i - 1
+  if (key(rows[j]) !== mine) return null
+  while (j > 0 && key(rows[j - 1]) === mine) j--
+  return j
+}
+watch(result, () => { for (const k of Object.keys(openNotes)) delete openNotes[k] })
+
 const STATUS_LABEL = { recommended: 'recommended', partial: 'partial', no_substitute: 'no substitute' }
 // Grade answers "what work does this swap cost me?" — the question the industry
 // graders (SiliconExpert A/B/C/D/SF, Z2Data Drop-In A/B/C) exist to answer.
@@ -366,7 +400,18 @@ function openPart(r) {
                      unexplained. -->
                 <tr v-if="c.notes?.length" class="notes-row">
                   <td></td>
-                  <td :colspan="fam.params.length + 5" class="note">{{ c.notes.join(' · ') }}</td>
+                  <td :colspan="fam.params.length + 5" class="note">
+                    <template v-if="!openNotes[i] && sameNotesAs(i) !== null">
+                      <span class="note-same">same notes as #{{ String(sameNotesAs(i) + 1).padStart(2, '0') }}</span>
+                    </template>
+                    <template v-else-if="!openNotes[i]">
+                      <span v-for="(h, k) in noteHeads(c.notes)" :key="k" class="note-chip">{{ h }}</span>
+                    </template>
+                    <ul v-else class="note-list">
+                      <li v-for="(n, k) in noteItems(c.notes)" :key="k">{{ n }}</li>
+                    </ul>
+                    <button type="button" class="note-toggle" @click="openNotes[i] = !openNotes[i]">{{ openNotes[i] ? 'less' : 'details' }}</button>
+                  </td>
                 </tr>
                 </template>
               </tbody>
@@ -492,6 +537,17 @@ function openPart(r) {
    no longer stretches the table to thousands of pixels */
 .notes-row td.note { white-space: normal; overflow-wrap: anywhere; }
 .note { font-size: calc(10px + var(--fs-bump, 0px)); color: var(--warm); }
+.note-chip {
+  display: inline-block; margin: 0 6px 4px 0; padding: 1px 7px;
+  border: 1px solid rgba(255, 179, 71, 0.35); border-radius: 999px; line-height: 1.5;
+}
+.note-same { color: var(--ink-dim); margin-right: 8px; }
+.note-list { margin: 2px 0 4px; padding-left: 16px; line-height: 1.45; }
+.note-list li + li { margin-top: 2px; }
+.note-toggle {
+  background: none; border: 0; padding: 0 2px; cursor: pointer;
+  font-size: inherit; color: var(--k); text-decoration: underline; text-underline-offset: 2px;
+}
 .pin { padding: 1px 7px; border-radius: 999px; font-size: calc(12px + var(--fs-bump, 0px)); }
 .legend { font-size: calc(10px + var(--fs-bump, 0px)); color: var(--ink-dim); margin: 10px 0 0; }
 
