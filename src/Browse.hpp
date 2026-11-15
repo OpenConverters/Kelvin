@@ -10,7 +10,8 @@
 // Query (all keys optional):
 //   { "filters": { "<numField>": {"min":x,"max":y}, "<strField>": ["v1","v2"],
 //                  "<boolField>": true, "mpn": "substr" },
-//     "sort": {"field": "<numField>|mpn|manufacturer|lineno", "dir": "asc"|"desc"},
+//     "sort": {"field": "<numField>|mpn|manufacturer|lineno", "dir": "asc"|"desc"}
+//          or {"field": "random", "seed": <integer>},
 //     "offset": 0, "limit": 50, "withFacets": false, "facetTop": 100,
 //     "histogram": {"field": "<numField>", "buckets": 24, "log": true}, "curves": false }
 // curves (v23, owner 2026-11-15): true puts each row's measured curves on it (esr_curve,
@@ -19,6 +20,10 @@
 // "curvesOmitted": true and no curve key at all, so nothing downstream can mistake an omitted
 // curve for a record that states none (null).
 // Unknown filter/sort fields throw InvalidOptions (no silent skips).
+// mpn / manufacturer sort is case-insensitive (ASCII-folded); ties, including strings equal
+// ignoring case, break by lineno. "random" orders rows by splitmix64(lineno ^ mix(seed)) —
+// deterministic for a given seed, so paging is stable; "seed" is required (an integer) and
+// "dir" is rejected for random (it has no direction). The default order stays lineno.
 // histogram: bucket counts of one numeric field over the FILTERED set (log10 or linear
 // edges); rows lacking the datum (and, for log, non-positive values) are reported in
 // "absent" rather than silently dropped.
@@ -515,8 +520,9 @@ struct Query {
     std::vector<std::string> manufacturers;                    // exact values, empty = all
     std::string mpn_substr;                                    // lowercased, empty = none
     int sort_num = -1;                                         // index into table.nums, or:
-    enum class SortKey { Lineno, Mpn, Manufacturer, Num } sort_key = SortKey::Lineno;
+    enum class SortKey { Lineno, Mpn, Manufacturer, Num, Random } sort_key = SortKey::Lineno;
     bool sort_desc = false;
+    uint64_t sort_seed = 0;  // only meaningful (and always set) for SortKey::Random
     size_t offset = 0;
     size_t limit = 50;
     bool with_facets = false;
@@ -620,6 +626,16 @@ Query<Row> parse_query(const json& q) {
         if (fname == "lineno") out.sort_key = SK::Lineno;
         else if (fname == "mpn") out.sort_key = SK::Mpn;
         else if (fname == "manufacturer") out.sort_key = SK::Manufacturer;
+        else if (fname == "random") {
+            if (s.contains("dir"))
+                throw InvalidOptions("browse: sort.dir is not allowed with field 'random'");
+            if (!s.contains("seed") || !s.at("seed").is_number_integer())
+                throw InvalidOptions("browse: sort 'random' requires an integer 'seed'");
+            out.sort_key = SK::Random;
+            out.sort_seed = s.at("seed").is_number_unsigned()
+                                ? s.at("seed").get<uint64_t>()
+                                : static_cast<uint64_t>(s.at("seed").get<int64_t>());
+        }
         else if (int i = num_index(fname); i >= 0) { out.sort_key = SK::Num; out.sort_num = i; }
         else throw InvalidOptions("browse: unknown sort field '" + fname + "'");
     }
@@ -731,6 +747,25 @@ inline json facet_json(const std::map<std::string, uint64_t>& counts, size_t top
     return json{{"values", values}, {"omitted", v.size() - n}};
 }
 
+// Case-insensitive (ASCII tolower) three-way compare: -1, 0, 1.
+inline int compare_ci(const std::string& a, const std::string& b) {
+    const size_t n = std::min(a.size(), b.size());
+    for (size_t i = 0; i < n; ++i) {
+        const int ca = std::tolower(static_cast<unsigned char>(a[i]));
+        const int cb = std::tolower(static_cast<unsigned char>(b[i]));
+        if (ca != cb) return ca < cb ? -1 : 1;
+    }
+    return a.size() < b.size() ? -1 : (a.size() == b.size() ? 0 : 1);
+}
+
+// splitmix64 finaliser: a full-avalanche 64-bit mix.
+inline uint64_t splitmix64(uint64_t x) {
+    x += 0x9E3779B97F4A7C15ULL;
+    x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ULL;
+    x = (x ^ (x >> 27)) * 0x94D049BB133111EBULL;
+    return x ^ (x >> 31);
+}
+
 }  // namespace detail
 
 // ---- the browse engine ------------------------------------------------------------------------
@@ -758,11 +793,15 @@ json browse_rows(const Shard<Row>& shard, const json& query) {
                 if (na != nb) return nb;  // NaN sorts last regardless of direction
                 if (!na) cmp = va < vb ? -1 : (va > vb ? 1 : 0);
             } else if (q.sort_key == SK::Mpn) {
-                cmp = ra.mpn.compare(rb.mpn) < 0 ? -1 : (ra.mpn == rb.mpn ? 0 : 1);
+                cmp = detail::compare_ci(ra.mpn, rb.mpn);
             } else if (q.sort_key == SK::Manufacturer) {
-                cmp = ra.manufacturer.compare(rb.manufacturer) < 0
-                          ? -1
-                          : (ra.manufacturer == rb.manufacturer ? 0 : 1);
+                cmp = detail::compare_ci(ra.manufacturer, rb.manufacturer);
+            } else if (q.sort_key == SK::Random) {
+                const uint64_t ka = detail::splitmix64(
+                    static_cast<uint64_t>(ra.lineno) ^ detail::splitmix64(q.sort_seed));
+                const uint64_t kb = detail::splitmix64(
+                    static_cast<uint64_t>(rb.lineno) ^ detail::splitmix64(q.sort_seed));
+                cmp = ka < kb ? -1 : (ka == kb ? 0 : 1);
             } else {  // Lineno desc
                 cmp = ra.lineno < rb.lineno ? -1 : (ra.lineno == rb.lineno ? 0 : 1);
             }
