@@ -1799,7 +1799,8 @@ std::optional<ResistorRow> extract_resistor(const json& env) {
     auto tol_o = get_num(*elec, "tolerance");
     double tol = (tol_o && *tol_o > 0) ? *tol_o : kNaN();
     auto pw_o = get_num(*elec, "powerRating");
-    double pw = (pw_o && *pw_o > 0) ? *pw_o : 0.0;
+    // Power rating likewise: unstated (or non-positive) stays NaN, never 0 (owner 2026-11-15).
+    double pw = (pw_o && *pw_o > 0) ? *pw_o : kNaN();
 
     ResistorRow r;
     r.mpn = *mpn;
@@ -1994,7 +1995,9 @@ std::optional<IgbtRow> extract_igbt(const json& env) {
     if (dinfo_dims) fill_dimensions(r, *dinfo_dims, *refs->part);
     r.vces_rated = *vces;
     r.ic_continuous = *ic;
-    r.vce_sat = get_num(*refs->elec, "collectorEmitterSaturation").value_or(0.0);
+    // Unstated Vce(sat) stays NaN, never 0 (owner 2026-11-15): a 0 ranked first under
+    // lowest_vce_sat and matched a browse filter starting at 0.
+    if (auto vs = get_num(*refs->elec, "collectorEmitterSaturation")) r.vce_sat = *vs;
     // The current Vce(sat) is stated at (v24). Unstated stays NaN: unknown, never 0.
     if (auto ic_sat = get_num(*refs->elec, "collectorEmitterSaturationIc"); pos(ic_sat))
         r.vce_sat_ic = *ic_sat;

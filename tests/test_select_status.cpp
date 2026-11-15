@@ -7,12 +7,15 @@
 //  select_status_all/bjts.ndjson: 1 BD675 (no status, 45 V, hFE >= 750) 2 BC847BHZGT116 (nrnd)
 //   3 BCW66KH (obsolete) 4 PMBT6429 (production, 45 V, hFE >= 500)
 #include <algorithm>
+#include <fstream>
+#include <cmath>
 
 #include <catch2/catch_test_macros.hpp>
 
 #include "CrossRef.hpp"
 #include "KelvinApi.hpp"
 #include "Select.hpp"
+#include "Views.hpp"
 
 using namespace kelvin;
 using json = nlohmann::json;
@@ -220,4 +223,58 @@ TEST_CASE("select bjt / varistor: an unstated gated value is its own rejection, 
     CHECK(mpns(v) == std::vector<std::string>{"AVR-M0603C120MTAAB", "B72520T0300K062"});
     CHECK(rej_of(v, "vc_unstated") == 1);  // V130LA10CP states no Vdc
     CHECK(rej_of(v, "vc_low") == 0);
+}
+
+// ---- Unstated IGBT Vce(sat) / resistor power rating are NaN, never 0 (owner 2026-11-15) -----
+// unstated_nan_v24/: NO catalogue record lacks these fields (TAS 6bcb7bb: all 2317 IGBTs state
+// collectorEmitterSaturation, all 1324715 resistors powerRating), so line 1 of each file is a
+// real record (tests/fixtures/igbts.ndjson FP50R12KT4, resistors.ndjson RC1206FR-102RL) with
+// that ONE field deleted; line 2 is a real record unchanged (IRGP35B60PD Vce(sat) 2.0 V,
+// RC2512FK-079R1L 1 W).
+TEST_CASE("unstated IGBT Vce(sat) and resistor power rating are NaN, never 0",
+          "[select][nan][igbt][resistor]") {
+    std::ifstream fi(dir("unstated_nan_v24") + "/igbts.ndjson");
+    std::string l1, l2;
+    REQUIRE(std::getline(fi, l1));
+    REQUIRE(std::getline(fi, l2));
+    const auto g1 = extract_igbt(json::parse(l1));
+    const auto g2 = extract_igbt(json::parse(l2));
+    REQUIRE((g1 && g2));
+    CHECK(std::isnan(g1->vce_sat));
+    CHECK(g2->vce_sat == 2.0);
+
+    api::Engine eng(dir("unstated_nan_v24"), "", true);
+    const json req = {{"ratedCollectorEmitterVoltage", 600.0}, {"ratedCollectorCurrent", 30.0}};
+    const json r = eng.select("igbt", req,
+                              {{"includeEnvelope", false}, {"tiebreaker", "lowest_vce_sat"}});
+    // The unstated Vce(sat) sorts LAST, not first as the 0 it used to hold.
+    CHECK(mpns(r) == std::vector<std::string>{"IRGP35B60PD", "FP50R12KT4"});
+    // A Vce(sat) ceiling stays vacuous for it (the BJT / varistor ceiling rule) and its
+    // headroom is null, never a number.
+    const json rc = eng.select("igbt", {{"ratedCollectorEmitterVoltage", 600.0},
+                                        {"ratedCollectorCurrent", 30.0},
+                                        {"maximumSaturationVoltage", 1.9}},
+                               {{"includeEnvelope", false}});
+    CHECK(mpns(rc) == std::vector<std::string>{"FP50R12KT4"});
+    CHECK(rej_of(rc, "vce_sat_high") == 1);
+    CHECK(cand(rc, "FP50R12KT4").at("margins").at("vce_sat_headroom").is_null());
+    const json bi = eng.browse("igbt", json{{"limit", 10}});
+    for (const auto& row : bi.at("rows"))
+        if (row.at("mpn") == "FP50R12KT4") CHECK(row.at("vce_sat").is_null());
+    CHECK(eng.browse("igbt", json{{"filters", {{"vce_sat", {{"min", 0.0}}}}}})
+              .at("total") == 1);
+
+    std::ifstream fr(dir("unstated_nan_v24") + "/resistors.ndjson");
+    REQUIRE(std::getline(fr, l1));
+    REQUIRE(std::getline(fr, l2));
+    const auto r1 = extract_resistor(json::parse(l1));
+    const auto r2 = extract_resistor(json::parse(l2));
+    REQUIRE((r1 && r2));
+    CHECK(std::isnan(r1->power_rating));
+    CHECK(r2->power_rating == 1.0);
+    const json br = eng.browse("resistor", json{{"limit", 10}});
+    for (const auto& row : br.at("rows"))
+        if (row.at("mpn") == "RC1206FR-102RL") CHECK(row.at("power_rating").is_null());
+    CHECK(eng.browse("resistor", json{{"filters", {{"power_rating", {{"min", 0.0}}}}}})
+              .at("total") == 1);
 }

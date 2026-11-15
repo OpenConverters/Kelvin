@@ -1098,14 +1098,21 @@ json select_igbt(const Shard<IgbtRow>& shard, const IgbtConstraints& c, IgbtTieb
         if (!status_gate(g, c.exclude_discontinued, rej)) continue;
         if (g.vces_rated < c.vces_min) { rej["vces_low"]++; continue; }
         if (g.ic_continuous < c.ic_min) { rej["ic_low"]++; continue; }
-        if (c.vce_sat_max.has_value() && g.vce_sat > *c.vce_sat_max) { rej["vce_sat_high"]++; continue; }
+        // A Vce(sat) ceiling is vacuous for an unstated value (NaN), as it was for the 0 the
+        // row used to hold — the BJT / varistor ceilings' rule (6857e89).
+        if (c.vce_sat_max.has_value() && present(g.vce_sat) && g.vce_sat > *c.vce_sat_max) {
+            rej["vce_sat_high"]++; continue;
+        }
         passing.push_back(&g);
     }
     if (passing.empty())
         throw NoCandidates("IgbtConstraints", emit_rejections(rej), shard.meta.source_line_count);
     auto metric = [&](const IgbtRow* g) -> double {
         switch (tb) {
-            case IgbtTiebreaker::LowestVceSat: return g->vce_sat;
+            // An unstated Vce(sat) (NaN) must not reach the sort (strict weak ordering): it
+            // sorts LAST (owner 2026-11-15) — the 0 it used to hold sorted it first.
+            case IgbtTiebreaker::LowestVceSat:
+                return present(g->vce_sat) ? g->vce_sat : std::numeric_limits<double>::infinity();
             case IgbtTiebreaker::HighestVcesMargin: return -g->vces_rated / c.vces_min;
             case IgbtTiebreaker::HighestIcMargin: return -g->ic_continuous / c.ic_min;
         }
@@ -1133,7 +1140,8 @@ json select_igbt(const Shard<IgbtRow>& shard, const IgbtConstraints& c, IgbtTieb
         cd["margins"] = {{"vces_margin", g->vces_rated / c.vces_min},
                          {"ic_margin", g->ic_continuous / c.ic_min},
                          {"vce_sat_headroom",
-                          (c.vce_sat_max && g->vce_sat > 0) ? num_or_null(*c.vce_sat_max / g->vce_sat)
+                          (c.vce_sat_max && present(g->vce_sat) && g->vce_sat > 0)
+                              ? num_or_null(*c.vce_sat_max / g->vce_sat)
                                                             : json(nullptr)}};
         cd["evidence"] = {{"thermalPresent", !g->no_thermal()}};
         cd["sortKey"] = {{"metric", to_string(tb)}, {"value", metric(g)}};
