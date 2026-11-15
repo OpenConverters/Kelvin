@@ -90,8 +90,8 @@ TEST_CASE("ESR curves: an original with no |Z| curve is graded from its rating f
     // note saying the self-resonance is unknown.
     const auto o = row("CL05A225KP5NSNC");
     const auto s = row("C1005X5R1A225K050BC");
-    REQUIRE_FALSE(o.esr_curve.empty());
-    REQUIRE_FALSE(s.esr_curve.empty());
+    REQUIRE_FALSE(o.curves->esr_curve.empty());
+    REQUIRE_FALSE(s.curves->esr_curve.empty());
     const json c = rank_one("CL05A225KP5NSNC", "C1005X5R1A225K050BC");
     INFO(notes_of(c));
     CHECK(verdict_of(c, "esr_curve") == "pass");
@@ -127,10 +127,10 @@ TEST_CASE("DC-bias curves: effective capacitance compared on the common bias ran
     // the TDK part keeps far less capacitance (0.54 uF at 5 V against Murata's ~1.2 uF).
     const auto o = row("ZRB157R6YA225ME11");
     const auto s = row("C1005X5R1V225K050BC");
-    REQUIRE_FALSE(o.bias_curve.empty());
-    REQUIRE_FALSE(s.bias_curve.empty());
-    CHECK(o.bias_curve.temperature == 25.0);
-    CHECK(std::isnan(s.bias_curve.temperature));
+    REQUIRE_FALSE(o.curves->bias_curve.empty());
+    REQUIRE_FALSE(s.curves->bias_curve.empty());
+    CHECK(o.curves->bias_curve.temperature == 25.0);
+    CHECK(std::isnan(s.curves->bias_curve.temperature));
     // Owner 2026-11-14: a condition stated by ONE side only is a DIFFERENT condition. Murata's
     // curve is at 25 degC, TDK's at no stated temperature -> not compared, UNVERIFIED + note.
     const json c = rank_one("ZRB157R6YA225ME11", "C1005X5R1V225K050BC");
@@ -149,10 +149,10 @@ TEST_CASE("Frequency curves: |Z|, C(f) and ESL compared on the common band",
     // carry |Z|, C(f) and ESL curves (KEMET is the only maker with ESL curves, 16,583 records).
     const auto o = row("C0603C104K3RECTU");
     const auto s = row("C0603C104M4RAC");
-    REQUIRE_FALSE(o.z_curve.empty());
-    REQUIRE_FALSE(o.cf_curve.empty());
-    REQUIRE_FALSE(o.esl_curve.empty());
-    REQUIRE_FALSE(s.esl_curve.empty());
+    REQUIRE_FALSE(o.curves->z_curve.empty());
+    REQUIRE_FALSE(o.curves->cf_curve.empty());
+    REQUIRE_FALSE(o.curves->esl_curve.empty());
+    REQUIRE_FALSE(s.curves->esl_curve.empty());
     const json c = rank_one("C0603C104K3RECTU", "C0603C104M4RAC");
     INFO(notes_of(c));
     // Owner 2026-11-14: |Z|, ESL and ESR curves are graded only in the useful band, from the
@@ -229,7 +229,7 @@ TEST_CASE("|Z| useful band: an ESR Kelvin read off the curve is no rating freque
     // of its curves starts at 1 MHz (owner 2026-11-14), up to its |Z| minimum.
     const auto o = row("C1005X5R1V225K050BC");
     REQUIRE(o.esr_from_curve);
-    REQUIRE_FALSE(o.z_curve.empty());
+    REQUIRE_FALSE(o.curves->z_curve.empty());
     const json c = rank_one("C1005X5R1V225K050BC", "C1005X5R1A225K050BC");
     INFO(notes_of(c));
     CHECK(has_note(c, "useful band from 1 MHz (the original states no rating frequency) to "));
@@ -245,9 +245,9 @@ TEST_CASE("ESL band: self-resonance above the original's |Z| curve -> ESL not gr
     // self-resonance upward; with the resonance unknown, ESL is UNVERIFIED + note.
     const auto o = row("C0402C360G5GACTU");
     const auto s = row("C0402C360J5GACTU");
-    REQUIRE_FALSE(o.z_curve.empty());
-    REQUIRE_FALSE(o.esl_curve.empty());
-    REQUIRE_FALSE(s.esl_curve.empty());
+    REQUIRE_FALSE(o.curves->z_curve.empty());
+    REQUIRE_FALSE(o.curves->esl_curve.empty());
+    REQUIRE_FALSE(s.curves->esl_curve.empty());
     const json c = rank_one("C0402C360G5GACTU", "C0402C360J5GACTU");
     INFO(notes_of(c));
     CHECK(verdict_of(c, "esl_curve") == "unverified");
@@ -268,7 +268,7 @@ TEST_CASE("Ripple basis: frequency resolved on the substitute's own multiplier t
     // frequency bases: the substitute's table moves its rating to 120 Hz (log-log), and the
     // two are compared there instead of leaving the ripple basis UNVERIFIED.
     const auto s = row("MAL212016102E3");
-    REQUIRE_FALSE(s.ripple_f_curve.empty());
+    REQUIRE_FALSE(s.curves->ripple_f_curve.empty());
     const json c = rank_one("ECE-A0JN102UB", "MAL212016102E3");
     INFO(notes_of(c));
     CHECK(verdict_of(c, "ripple_current") == "pass");
@@ -284,7 +284,7 @@ TEST_CASE("Ripple basis: temperature resolved on a record's own temperature tabl
     // 40-85 degC. The substitute's table does not reach 105 degC, so the original is moved to
     // the substitute's 85 degC: 1.95 x 1.2 = 2.34 A against 0.9 A -> FAIL.
     const auto o = row("UPW1V102MHD");
-    REQUIRE_FALSE(o.ripple_t_curve.empty());
+    REQUIRE_FALSE(o.curves->ripple_t_curve.empty());
     const json c = rank_one("UPW1V102MHD", "EEUEB1V102");
     INFO(notes_of(c));
     CHECK(verdict_of(c, "ripple_current") == "fail");
@@ -307,9 +307,9 @@ TEST_CASE("Ripple tables: a case-temperature table is not an ambient rating's ta
     // is not kept.
     const auto r = row("930C1P22K-F");
     CHECK(r.ripple_current_rms == 2.3);
-    CHECK(r.ripple_t_curve.empty());
+    CHECK(r.curves->ripple_t_curve.empty());
     // A temperature table the same records would keep (UPW, unlabelled, 1.0 at its 105 degC).
-    CHECK_FALSE(row("UPW1V102MHD").ripple_t_curve.empty());
+    CHECK_FALSE(row("UPW1V102MHD").curves->ripple_t_curve.empty());
 }
 
 TEST_CASE("room temperature: a curve at 20 degC and one at 25 degC are the same condition",
@@ -319,8 +319,8 @@ TEST_CASE("room temperature: a curve at 20 degC and one at 25 degC are the same 
     // curves at 20 degC, GRM188R71H104KA93D at 25 degC (both 100 nF 50 V 0603, DC bias 0 V):
     // before, the |Z| curves were "measured under different conditions (temperature 20 vs
     // 25 degC)" and not compared; now they are compared on the useful band.
-    REQUIRE(row("GRM188B31H104KA92D").z_curve.temperature == 20.0);
-    REQUIRE(row("GRM188R71H104KA93D").z_curve.temperature == 25.0);
+    REQUIRE(row("GRM188B31H104KA92D").curves->z_curve.temperature == 20.0);
+    REQUIRE(row("GRM188R71H104KA93D").curves->z_curve.temperature == 25.0);
     const json c = rank_one("GRM188B31H104KA92D", "GRM188R71H104KA93D");
     INFO(notes_of(c));
     CHECK(verdict_of(c, "impedance_curve") == "pass");

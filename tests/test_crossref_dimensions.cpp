@@ -373,7 +373,7 @@ TEST_CASE("connectors and analog parts now rank (previously uncovered)", "[cross
 TEST_CASE("dimensions survive the shard round-trip and reach browse rows",
           "[crossref][dims][browse]") {
     auto shard = kelvin::build_mosfet_shard(std::string(KELVIN_TEST_DIR) + "/fixtures/mosfets.ndjson");
-    json r = kelvin::browse::browse_rows(shard, json{{"limit", 200}});
+    json r = kelvin::browse::browse_rows(shard, json{{"limit", 200}, {"curves", true}});
     REQUIRE(r.at("rows").size() > 0);
 
     size_t with_dims = 0;
@@ -418,7 +418,7 @@ TEST_CASE("a can's diameter and stated assembly reach the browse row",
 
     // Every CAS capacitor states shape.assembly, so no row may come back without a
     // mount — reading only the flat spelling silently emptied the whole catalogue.
-    json all = kelvin::browse::browse_rows(shard, json{{"limit", 1000}});
+    json all = kelvin::browse::browse_rows(shard, json{{"limit", 1000}, {"curves", true}});
     REQUIRE(all.at("rows").size() > 0);
     size_t with_mount = 0;
     for (const auto& row : all.at("rows"))
@@ -435,7 +435,7 @@ TEST_CASE("a stated body thickness reaches the browse row as the axis it names",
           "[crossref][dims][browse]") {
     auto shard = kelvin::build_capacitor_shard(std::string(KELVIN_TEST_DIR) +
                                                "/fixtures/capacitors_thickness.ndjson");
-    json all = kelvin::browse::browse_rows(shard, json{{"limit", 100}});
+    json all = kelvin::browse::browse_rows(shard, json{{"limit", 100}, {"curves", true}});
     std::map<std::string, json> by_mpn;
     for (const auto& row : all.at("rows")) by_mpn[row.at("mpn").get<std::string>()] = row;
     REQUIRE(by_mpn.size() == 5);

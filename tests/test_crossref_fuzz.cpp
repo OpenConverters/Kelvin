@@ -88,7 +88,7 @@ json spec_for(const std::string& cat, const json& row) {
 
 template <class Row>
 void fuzz_family(const std::string& cat, const Shard<Row>& shard) {
-    json all = browse::browse_rows(shard, json{{"limit", 400}});
+    json all = browse::browse_rows(shard, json{{"limit", 400}, {"curves", true}});
     const json& rows = all.at("rows");
     REQUIRE(rows.size() > 2);
 

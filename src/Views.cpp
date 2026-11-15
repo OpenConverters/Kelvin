@@ -912,12 +912,12 @@ std::optional<MosfetRow> extract_mosfet(const json& env) {
     r.qualification = get_str(*part, "qualification").value_or("");
     r.technology = get_str(*part, "technology").value_or("");
     // Measured curves (owner rule 2026-11-14), as stated; compared by CrossRefCurveChecks.hpp.
-    r.ciss_curve = read_named_curve(*di, "cissVsVds", *mpn);
-    r.coss_curve = read_named_curve(*di, "cossVsVds", *mpn);
-    r.crss_curve = read_named_curve(*di, "crssVsVds", *mpn);
-    r.rds_on_id_curve = read_named_curve(*di, "rdsOnVsId", *mpn);
-    r.rds_on_tj_curve = read_named_curve(*di, "rdsOnVsTj", *mpn);
-    r.qg_curve = read_named_curve(*di, "gateCharge", *mpn);
+    r.curves.mut().ciss_curve = read_named_curve(*di, "cissVsVds", *mpn);
+    r.curves.mut().coss_curve = read_named_curve(*di, "cossVsVds", *mpn);
+    r.curves.mut().crss_curve = read_named_curve(*di, "crssVsVds", *mpn);
+    r.curves.mut().rds_on_id_curve = read_named_curve(*di, "rdsOnVsId", *mpn);
+    r.curves.mut().rds_on_tj_curve = read_named_curve(*di, "rdsOnVsTj", *mpn);
+    r.curves.mut().qg_curve = read_named_curve(*di, "gateCharge", *mpn);
     {
         // Unlabelled curves: checked against the record's own scalar at its stated condition.
         auto opt = [](double v) { return present(v) ? std::optional<double>(v) : std::nullopt; };
@@ -932,10 +932,10 @@ std::optional<MosfetRow> extract_mosfet(const json& env) {
                              1e12, "V"};
         const UnitCheck rid{opt(r.rds_on), elec_pos("onResistanceId"), false, "Rds(on)", "mohm",
                             1e3, "A"};
-        settle_unit_unstated(r.ciss_curve, &ciss);
-        settle_unit_unstated(r.coss_curve, &coss);
-        settle_unit_unstated(r.crss_curve, &crss);
-        settle_unit_unstated(r.rds_on_id_curve, &rid);
+        settle_unit_unstated(r.curves.mut().ciss_curve, &ciss);
+        settle_unit_unstated(r.curves.mut().coss_curve, &coss);
+        settle_unit_unstated(r.curves.mut().crss_curve, &crss);
+        settle_unit_unstated(r.curves.mut().rds_on_id_curve, &rid);
         // Rds(on)(Tj): the scalar Rds(on) states no junction temperature (SAS has no field for
         // it); owner 2026-11-14: it is taken as 25 degC for this unit check, the convention Vf
         // follows, and the note says so. The gate-charge curve's x is the charge, no scalar
@@ -944,8 +944,8 @@ std::optional<MosfetRow> extract_mosfet(const json& env) {
                       1e3, "degC"};
         rtj.at_basis = " (the record states no junction temperature for it: taken as 25 degC, "
                        "as for Vf)";
-        settle_unit_unstated(r.rds_on_tj_curve, &rtj);
-        settle_unit_unstated(r.qg_curve, nullptr);
+        settle_unit_unstated(r.curves.mut().rds_on_tj_curve, &rtj);
+        settle_unit_unstated(r.curves.mut().qg_curve, nullptr);
     }
     // Ambient ratings (the package's, or the identical dies' this row is read from — the 43
     // AOS duals state their per-die Id only here, ABT #2388): one curve per rating and per
@@ -985,7 +985,7 @@ std::optional<MosfetRow> extract_mosfet(const json& env) {
                 if (auto d = get_num(a, "duration")) set_condition(c, "duration", *d);
                 if (vg) set_condition(c, "gateSourceVoltage", *vg);
                 c.cond_text = text;
-                r.id_ambient_curves.push_back(std::move(c));
+                r.curves.mut().id_ambient_curves.push_back(std::move(c));
             }
         }
     }
@@ -1176,19 +1176,19 @@ std::optional<DiodeRow> extract_diode(const json& env) {
         if (!quotes.empty()) r.price_quotes = quotes.dump();
     }
     // Measured curves (owner rule 2026-11-14), as stated; compared by CrossRefCurveChecks.hpp.
-    r.vf_curve = read_named_curve(*di, "forwardVoltageVsCurrent", *mpn);
-    r.ir_curve = read_named_curve(*di, "reverseCurrentVsVoltage", *mpn);
-    r.cj_curve = read_named_curve(*di, "capacitanceVsVoltage", *mpn);
+    r.curves.mut().vf_curve = read_named_curve(*di, "forwardVoltageVsCurrent", *mpn);
+    r.curves.mut().ir_curve = read_named_curve(*di, "reverseCurrentVsVoltage", *mpn);
+    r.curves.mut().cj_curve = read_named_curve(*di, "capacitanceVsVoltage", *mpn);
     {
         // Unlabelled curves: checked against the record's own scalar at its stated condition.
         auto opt = [](double v) { return present(v) ? std::optional<double>(v) : std::nullopt; };
         const UnitCheck vf{opt(r.vf_typ), opt(r.vf_test_current), true, "Vf", "V", 1.0, "A"};
         const UnitCheck cj{opt(r.junction_capacitance), opt(r.junction_capacitance_vr), false,
                            "junction capacitance", "pF", 1e12, "V"};
-        settle_unit_unstated(r.vf_curve, &vf);
+        settle_unit_unstated(r.curves.mut().vf_curve, &vf);
         // Ir(Vr): the record's reverse leakage states no reverse voltage on record — not checked.
-        settle_unit_unstated(r.ir_curve, nullptr);
-        settle_unit_unstated(r.cj_curve, &cj);
+        settle_unit_unstated(r.curves.mut().ir_curve, nullptr);
+        settle_unit_unstated(r.curves.mut().cj_curve, &cj);
     }
     r.clamping_waveform = get_str(*elec, "clampingWaveform").value_or("");
     r.peak_pulse_power_waveform = get_str(*elec, "peakPulsePowerWaveform").value_or("");
@@ -1380,9 +1380,9 @@ int unstate_retracted_ratings(MagneticRow& r) {
         r.impedance_100mhz = r.impedance_peak = r.impedance_peak_freq = kNaN();
         ++n;
     }
-    for (auto [path, c] : {std::pair{"electrical.resistancePoints", &r.r_curve},
-                           std::pair{"electrical.reactancePoints", &r.x_curve},
-                           std::pair{"electrical.impedancePoints", &r.z_curve}})
+    for (auto [path, c] : {std::pair{"electrical.resistancePoints", &r.curves.mut().r_curve},
+                           std::pair{"electrical.reactancePoints", &r.curves.mut().x_curve},
+                           std::pair{"electrical.impedancePoints", &r.curves.mut().z_curve}})
         if (!c->empty() && field_retracted(r, path)) {
             *c = CurvePts{};
             ++n;
@@ -1396,15 +1396,15 @@ int unstate_retracted_ratings(MagneticRow& r) {
         r.dm_impedance_100mhz = r.dm_impedance_peak = r.dm_impedance_peak_freq = kNaN();
         ++n;
     }
-    if (!r.dm_z_curve.empty() &&
+    if (!r.curves.mut().dm_z_curve.empty() &&
         (field_retracted(r, "electrical.impedancePoints") ||
          field_retracted(r, "electrical.differentialModeImpedancePoints"))) {
-        r.dm_z_curve = CurvePts{};
+        r.curves.mut().dm_z_curve = CurvePts{};
         ++n;
     }
     for (auto [path, c] :
-         {std::pair{"electrical.commonModeInsertionLossPoints", &r.cm_il_curve},
-          std::pair{"electrical.differentialModeInsertionLossPoints", &r.dm_il_curve}})
+         {std::pair{"electrical.commonModeInsertionLossPoints", &r.curves.mut().cm_il_curve},
+          std::pair{"electrical.differentialModeInsertionLossPoints", &r.curves.mut().dm_il_curve}})
         if (!c->empty() && field_retracted(r, path)) {
             *c = CurvePts{};
             ++n;
@@ -1653,30 +1653,30 @@ std::optional<CapacitorRow> extract_capacitor(const json& env) {
     // extrapolation — and only from a curve whose labels, when present, say Hz and ohm.
     // The whole curve is kept too (v22, owner 2026-11-14): the ranker compares two ESR curves
     // on their overlap and reads one at the other side's stated ESR frequency.
-    r.esr_curve = read_curve_xy(obj_get(*elec, "esrPoints"), "[Hz]", {"Ohm", "\u03a9"},
+    r.curves.mut().esr_curve = read_curve_xy(obj_get(*elec, "esrPoints"), "[Hz]", {"Ohm", "\u03a9"},
                                 /*positive_y=*/true);
-    r.bias_curve = read_bias_curve(obj_get(*elec, "capacitanceBiasPoints"));
-    r.z_curve = read_curve_xy(obj_get(*elec, "impedancePoints"), "[Hz]", {"Ohm", "\u03a9"},
+    r.curves.mut().bias_curve = read_bias_curve(obj_get(*elec, "capacitanceBiasPoints"));
+    r.curves.mut().z_curve = read_curve_xy(obj_get(*elec, "impedancePoints"), "[Hz]", {"Ohm", "\u03a9"},
                               /*positive_y=*/true);
-    r.cf_curve = leading_positive(read_curve_xy(obj_get(*elec, "capacitanceFrequencyPoints"),
+    r.curves.mut().cf_curve = leading_positive(read_curve_xy(obj_get(*elec, "capacitanceFrequencyPoints"),
                                                 "[Hz]", {"[F]"}, /*positive_y=*/false));
-    r.esl_curve = read_curve_xy(obj_get(*elec, "inductanceFrequencyPoints"), "[Hz]", {"[H]"},
+    r.curves.mut().esl_curve = read_curve_xy(obj_get(*elec, "inductanceFrequencyPoints"), "[Hz]", {"[H]"},
                                 /*positive_y=*/true);
     // The ripple rating's own frequency and temperature tables (v22, owner 2026-11-14), kept
     // only alongside a ripple rating and only when evidently that rating's (read_ripple_table).
     // Frequency: electrical.rippleCurrentFrequencyPoints (multiplier), else
     // rippleCurrentPoints (amperes vs Hz).
     if (present(r.ripple_current_rms)) {
-        r.ripple_f_curve = read_ripple_table(obj_get(*elec, "rippleCurrentFrequencyPoints"), "Hz",
+        r.curves.mut().ripple_f_curve = read_ripple_table(obj_get(*elec, "rippleCurrentFrequencyPoints"), "Hz",
                                              r.ripple_current_frequency, r.ripple_current_rms,
                                              "temperature", r.ripple_current_temperature,
                                              /*log_x=*/true);
-        if (r.ripple_f_curve.empty())
-            r.ripple_f_curve = read_ripple_table(obj_get(*elec, "rippleCurrentPoints"), "Hz",
+        if (r.curves.mut().ripple_f_curve.empty())
+            r.curves.mut().ripple_f_curve = read_ripple_table(obj_get(*elec, "rippleCurrentPoints"), "Hz",
                                                  r.ripple_current_frequency, r.ripple_current_rms,
                                                  "temperature", r.ripple_current_temperature,
                                                  /*log_x=*/true);
-        r.ripple_t_curve = read_ripple_table(obj_get(*elec, "rippleCurrentTemperaturePoints"),
+        r.curves.mut().ripple_t_curve = read_ripple_table(obj_get(*elec, "rippleCurrentTemperaturePoints"),
                                              "emperature", r.ripple_current_temperature,
                                              r.ripple_current_rms, "frequency",
                                              r.ripple_current_frequency, /*log_x=*/false);
@@ -2219,9 +2219,9 @@ void magnetic_rated_points(const json& elec, MagneticRow& r) {
         x.push_back(fx);
         y.push_back(fy);
     }
-    r.rated_points.x = std::make_shared<const std::vector<float>>(std::move(x));
-    r.rated_points.y = std::make_shared<const std::vector<float>>(std::move(y));
-    if (ambient) r.rated_points.temperature = *ambient;
+    r.curves.mut().rated_points.x = std::make_shared<const std::vector<float>>(std::move(x));
+    r.curves.mut().rated_points.y = std::make_shared<const std::vector<float>>(std::move(y));
+    if (ambient) r.curves.mut().rated_points.temperature = *ambient;
 }
 void magnetic_saturation_from_bias_curve(const json& elec, MagneticRow& r) {
     const bool stated = !r.sat_table_current.empty();  // the record states its Isat outright
@@ -2272,7 +2272,7 @@ void magnetic_saturation_from_bias_curve(const json& elec, MagneticRow& r) {
         store_curve(xy, cp);
         if (cp.empty()) continue;
         if (c->has_temp) cp.temperature = c->temp;
-        r.l_curves.push_back(std::move(cp));
+        r.curves.mut().l_curves.push_back(std::move(cp));
     }
     if (!pick) return;
     std::vector<BiasPoint> curve = pick->pts;
@@ -2580,7 +2580,7 @@ std::optional<MagneticRow> extract_magnetic(const json& env) {
             const auto cm = impedance_curve_points(*pts, cmc ? ImpedanceMode::Common
                                                              : ImpedanceMode::Untagged);
             impedance_readings(cm, r.impedance_100mhz, r.impedance_peak, r.impedance_peak_freq);
-            store_curve(cm, r.z_curve);
+            store_curve(cm, r.curves.mut().z_curve);
             if (cmc) {
                 // differentialModeImpedancePoints is the schema's own DM field; the tagged
                 // points are read only when it is absent (every record that states both states
@@ -2592,21 +2592,21 @@ std::optional<MagneticRow> extract_magnetic(const json& env) {
                         : impedance_curve_points(*pts, ImpedanceMode::Differential);
                 impedance_readings(dm, r.dm_impedance_100mhz, r.dm_impedance_peak,
                                    r.dm_impedance_peak_freq);
-                store_curve(dm, r.dm_z_curve);
+                store_curve(dm, r.curves.mut().dm_z_curve);
             }
         }
         // R(f) and X(f) (v22 curves): the dissipative and the reactive part of a bead's
         // impedance, compared curve vs curve by the ranker.
         if (const json* rp = obj_get(elec, "resistancePoints"))
-            store_curve(sweep_points(*rp, "resistance"), r.r_curve);
+            store_curve(sweep_points(*rp, "resistance"), r.curves.mut().r_curve);
         if (const json* xp = obj_get(elec, "reactancePoints"))
-            store_curve(sweep_points(*xp, "reactance"), r.x_curve);
+            store_curve(sweep_points(*xp, "reactance"), r.curves.mut().x_curve);
         // A CMC's insertion loss per mode (dB, positive = attenuation, as all 310 / 264 records
         // state it), compared curve vs curve by the ranker.
         if (const json* p = obj_get(elec, "commonModeInsertionLossPoints"))
-            store_curve(sweep_points(*p, "insertionLoss"), r.cm_il_curve);
+            store_curve(sweep_points(*p, "insertionLoss"), r.curves.mut().cm_il_curve);
         if (const json* p = obj_get(elec, "differentialModeInsertionLossPoints"))
-            store_curve(sweep_points(*p, "insertionLoss"), r.dm_il_curve);
+            store_curve(sweep_points(*p, "insertionLoss"), r.curves.mut().dm_il_curve);
         // Transformer turns ratio (primary:secondary): electrical[0].turnsRatios[0] (a dimWithTol). Lets
         // select_magnetic rank a catalog transformer by how close its ratio is to the design's required
         // ratio — the meaningful match for flyback/isolated transformers (TAS has no per-winding structure).
@@ -2865,9 +2865,9 @@ std::optional<ConnectorRow> extract_connector(const json& env) {
                        {"yData", cva->value("amplitude", json(nullptr))}};
             if (auto rise = get_num(*der, "maxTemperatureRise"))
                 xy["conditions"] = {{"maxTemperatureRise", *rise}};
-            r.current_ambient_curve = read_xy_curve(xy, *mpn + ": derating.currentVsAmbient");
-            if (!r.current_ambient_curve.empty())
-                for (float a : *r.current_ambient_curve.y)
+            r.curves.mut().current_ambient_curve = read_xy_curve(xy, *mpn + ": derating.currentVsAmbient");
+            if (!r.curves.mut().current_ambient_curve.empty())
+                for (float a : *r.curves.mut().current_ambient_curve.y)
                     if (!(a >= 0.0f && a <= 1.0f))
                         throw std::runtime_error(*mpn + ": derating.currentVsAmbient amplitude must "
                                              "lie in [0, 1]");

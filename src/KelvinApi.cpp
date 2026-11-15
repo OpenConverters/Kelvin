@@ -297,6 +297,26 @@ ShardMeta Engine::load_shard_bytes(const std::string& family, const std::string&
     throw InvalidOptions("unknown family");
 }
 
+ShardMeta Engine::load_curve_shard_bytes(const std::string& family, const std::string& bytes) {
+    Family f = family_from_string(family);
+    auto attach = [&](auto& shard) -> ShardMeta {
+        if (!shard)
+            throw InvalidOptions(std::string("load the ") + family_name(f) +
+                                 " base shard before its curve shard");
+        attach_curve_shard(*shard, bytes);
+        return shard->meta;
+    };
+    switch (f) {
+        case Family::Mosfet: return attach(mosfet_);
+        case Family::Diode: return attach(diode_);
+        case Family::Capacitor: return attach(capacitor_);
+        case Family::Magnetic: return attach(magnetic_);
+        case Family::Connector: return attach(connector_);
+        default:
+            throw InvalidOptions(std::string(family_name(f)) + " has no curve shard");
+    }
+}
+
 ShardMeta Engine::build_index(const std::string& family) {
     Family f = family_from_string(family);
     switch (f) {
@@ -320,13 +340,24 @@ void Engine::publish_index(const std::string& family) {
     Family f = family_from_string(family);
     const std::string from = shard_path(f), to = published_shard_path(f);
     if (from == to) return;
-    std::ifstream in(from, std::ios::binary);
-    if (!in) throw DataError(from, 0, "kelvin: built shard is missing; cannot publish it");
-    std::ofstream out(to, std::ios::binary | std::ios::trunc);
-    if (!out) throw DataError(to, 0, "kelvin: cannot write the published shard");
-    out << in.rdbuf();
-    if (!out) throw DataError(to, 0, "kelvin: short write publishing the shard");
-    std::remove(from.c_str());   // the cache copy is not wanted in a deploy tree
+    auto copy = [](const std::string& src, const std::string& dst) {
+        std::ifstream in(src, std::ios::binary);
+        if (!in) throw DataError(src, 0, "kelvin: built shard is missing; cannot publish it");
+        std::ofstream out(dst, std::ios::binary | std::ios::trunc);
+        if (!out) throw DataError(dst, 0, "kelvin: cannot write the published shard");
+        out << in.rdbuf();
+        if (!out) throw DataError(dst, 0, "kelvin: short write publishing the shard");
+        std::remove(src.c_str());   // the cache copy is not wanted in a deploy tree
+    };
+    // v23: a family with curves publishes its curve shard beside the base, as one pair.
+    bool has_curves = false;
+    switch (f) {
+        case Family::Mosfet: case Family::Diode: case Family::Capacitor: case Family::Magnetic:
+        case Family::Connector: has_curves = true; break;
+        default: break;
+    }
+    if (has_curves) copy(curve_shard_path(from), curve_shard_path(to));
+    copy(from, to);
 }
 
 json Engine::select(const std::string& category, const json& req, const json& options) {

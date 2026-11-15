@@ -370,7 +370,7 @@ json price_json(const DiodeRow& d, std::optional<double> quantity) {
 }
 
 // The curves a diode row carries for the loss terms (datasheetInfo.curves, SI).
-DiodeCurves diode_curves_of(const DiodeRow& d) { return {&d.vf_curve, &d.cj_curve, &d.ir_curve}; }
+DiodeCurves diode_curves_of(const DiodeRow& d) { return {&d.curves->vf_curve, &d.curves->cj_curve, &d.curves->ir_curve}; }
 
 json diode_loss_json(const DiodeLossBreakdown& lb, const DiodeLossOperatingPoint& op) {
     json loss;

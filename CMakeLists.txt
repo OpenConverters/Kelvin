@@ -166,5 +166,7 @@ if (EMSCRIPTEN)
         "--bind"
         "-sMODULARIZE=1" "-sEXPORT_NAME=createKelvinModule"
         "-sENVIRONMENT=web,worker,node" "-sALLOW_MEMORY_GROWTH=1"
+        # v23 (owner 2026-11-15): 4 GB ceiling (Kirchhoff's), a margin over the 2 GB default.
+        "-sMAXIMUM_MEMORY=4gb"
         "-sEXPORT_ES6=1" "-sSINGLE_FILE=1")
 endif()

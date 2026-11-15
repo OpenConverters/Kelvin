@@ -3960,11 +3960,11 @@ std::string fixture_(const char* f) {
 const json& md_row(const std::string& family, const std::string& mpn) {
     static const json mos = [] {
         auto sh = kelvin::build_mosfet_shard(fixture_("mosfets.ndjson"));
-        return kelvin::browse::browse_rows(sh, json{{"limit", 1000}})["rows"];
+        return kelvin::browse::browse_rows(sh, json{{"limit", 1000}, {"curves", true}})["rows"];
     }();
     static const json dio = [] {
         auto sh = kelvin::build_diode_shard(fixture_("diodes.ndjson"));
-        return kelvin::browse::browse_rows(sh, json{{"limit", 1000}})["rows"];
+        return kelvin::browse::browse_rows(sh, json{{"limit", 1000}, {"curves", true}})["rows"];
     }();
     for (const auto& r : family == "mosfet" ? mos : dio)
         if (r.value("mpn", "") == mpn) return r;
@@ -4422,7 +4422,7 @@ const json& r8r10_diode_row(const std::string& mpn) {
     static const json rows = [] {
         auto sh = kelvin::build_diode_shard(std::string(KELVIN_TEST_DIR) +
                                             "/fixtures/qarlos_r8r10_diodes.ndjson");
-        return kelvin::browse::browse_rows(sh, json{{"limit", 100}})["rows"];
+        return kelvin::browse::browse_rows(sh, json{{"limit", 100}, {"curves", true}})["rows"];
     }();
     for (const auto& r : rows)
         if (r.value("mpn", "") == mpn) return r;
@@ -4801,12 +4801,12 @@ const json& row(const std::string& family, const std::string& mpn) {
     static const json mos = [] {
         auto sh = kelvin::build_mosfet_shard(std::string(KELVIN_TEST_DIR) +
                                              "/fixtures/qarlos_r11r13_d_mosfets.ndjson");
-        return kelvin::browse::browse_rows(sh, json{{"limit", 100}})["rows"];
+        return kelvin::browse::browse_rows(sh, json{{"limit", 100}, {"curves", true}})["rows"];
     }();
     static const json dio = [] {
         auto sh = kelvin::build_diode_shard(std::string(KELVIN_TEST_DIR) +
                                             "/fixtures/qarlos_r11r13_d_diodes.ndjson");
-        return kelvin::browse::browse_rows(sh, json{{"limit", 100}})["rows"];
+        return kelvin::browse::browse_rows(sh, json{{"limit", 100}, {"curves", true}})["rows"];
     }();
     for (const auto& r : family == "mosfet" ? mos : dio)
         if (r.value("mpn", "") == mpn) return r;
@@ -6747,7 +6747,7 @@ const json& rows() {
     static const json r = [] {
         auto sh = kelvin::build_mosfet_shard(std::string(KELVIN_TEST_DIR) +
                                              "/fixtures/qarlos_1113_n2c_mosfets.ndjson");
-        return kelvin::browse::browse_rows(sh, json{{"limit", 100}})["rows"];
+        return kelvin::browse::browse_rows(sh, json{{"limit", 100}, {"curves", true}})["rows"];
     }();
     return r;
 }
@@ -7961,7 +7961,7 @@ json drow(const std::string& mpn) {
     static const json rows = [] {
         auto sh = kelvin::build_diode_shard(std::string(KELVIN_TEST_DIR) +
                                             "/fixtures/qarlos_1113_y_diodes.ndjson");
-        return kelvin::browse::browse_rows(sh, json{{"limit", 100}})["rows"];
+        return kelvin::browse::browse_rows(sh, json{{"limit", 100}, {"curves", true}})["rows"];
     }();
     for (const auto& r : rows)
         if (r.value("mpn", "") == mpn) return r;
@@ -8016,7 +8016,7 @@ TEST_CASE("owner 2026-11-13 Z1: a retracted-only Vr leaves the candidate out of 
     }
     const auto shard = kelvin::build_diode_shard(path);
     fs::remove(path);
-    const json all = kelvin::browse::browse_rows(shard, json{{"limit", 10}});
+    const json all = kelvin::browse::browse_rows(shard, json{{"limit", 10}, {"curves", true}});
     REQUIRE(all.at("total") == 2);
     double pu_vrrm = 0;
     for (const json& r : all.at("rows")) {
@@ -8031,7 +8031,7 @@ TEST_CASE("owner 2026-11-13 Z1: a retracted-only Vr leaves the candidate out of 
     REQUIRE(pu_vrrm == 200.0);
     // PU1DFSH's pool, cut as web/src/crossref.js runCrossRef cuts it.
     const json pool = kelvin::browse::browse_rows(
-        shard, json{{"filters", {{"vrrm_rated", {{"min", pu_vrrm * 0.9}}}}}, {"limit", 10}});
+        shard, json{{"filters", {{"vrrm_rated", {{"min", pu_vrrm * 0.9}}}}}, {"limit", 10}, {"curves", true}});
     REQUIRE(pool.at("total") == 1);
     CHECK(pool.at("rows")[0].at("mpn") == "PU1DFSH");
 }
@@ -8301,7 +8301,7 @@ const json& rows() {
         }
         const auto sh = kelvin::build_diode_shard(path);
         fs::remove(path);
-        return kelvin::browse::browse_rows(sh, json{{"limit", 100}})["rows"];
+        return kelvin::browse::browse_rows(sh, json{{"limit", 100}, {"curves", true}})["rows"];
     }();
     return r;
 }
@@ -8437,7 +8437,7 @@ const json& rows() {
         }
         const auto sh = kelvin::build_resistor_shard(path);
         fs::remove(path);
-        return kelvin::browse::browse_rows(sh, json{{"limit", 100}})["rows"];
+        return kelvin::browse::browse_rows(sh, json{{"limit", 100}, {"curves", true}})["rows"];
     }();
     return r;
 }
@@ -8585,7 +8585,7 @@ TEST_CASE("owner 2026-11-13 C: a retracted-only capacitance is not stated: no or
     }
     const auto shard = kelvin::build_capacitor_shard(path);
     fs::remove(path);
-    const json all = kelvin::browse::browse_rows(shard, json{{"limit", 10}});
+    const json all = kelvin::browse::browse_rows(shard, json{{"limit", 10}, {"curves", true}});
     REQUIRE(all.at("total") == 2);  // the record is still indexed and browsable
     double live_c = 0;
     for (const json& r : all.at("rows")) {
@@ -8603,7 +8603,7 @@ TEST_CASE("owner 2026-11-13 C: a retracted-only capacitance is not stated: no or
     // would be inside it; not stated, it is left out like a record stating no capacitance.
     const json pool = kelvin::browse::browse_rows(
         shard, json{{"filters", {{"capacitance", {{"min", live_c * 0.80}, {"max", live_c * 4.00}}}}},
-                    {"limit", 10}});
+                    {"limit", 10}, {"curves", true}});
     REQUIRE(pool.at("total") == 1);
     CHECK(pool.at("rows")[0].at("mpn") == "CL10C1R5CB8NNNC");
 }
@@ -8713,7 +8713,7 @@ json mos_row(const std::string& mpn) {
     static const json rows = [] {
         auto sh = kelvin::build_mosfet_shard(std::string(KELVIN_TEST_DIR) +
                                              "/fixtures/qarlos_r29_mosfets.ndjson");
-        return kelvin::browse::browse_rows(sh, json{{"limit", 100}})["rows"];
+        return kelvin::browse::browse_rows(sh, json{{"limit", 100}, {"curves", true}})["rows"];
     }();
     for (const auto& r : rows)
         if (r.value("mpn", "") == mpn) return r;
@@ -9072,7 +9072,7 @@ TEST_CASE("qarlos r28: a DSN0603 package is not the imperial 0603 chip",
     CHECK(resolve_dimensions("SMD SC1812", "capacitor").has_value());  // WIMA's 1812 chip
     auto sh = kelvin::build_diode_shard(std::string(KELVIN_TEST_DIR) +
                                         "/fixtures/qarlos_r28_diodes.ndjson");
-    const json rows = kelvin::browse::browse_rows(sh, json{{"limit", 10}})["rows"];
+    const json rows = kelvin::browse::browse_rows(sh, json{{"limit", 10}, {"curves", true}})["rows"];
     json orig, cand;
     for (const auto& x : rows) {
         if (x["mpn"] == "JAN1N6857UR-1") orig = diode_spec(x);

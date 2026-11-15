@@ -32,6 +32,12 @@ int usage() {
 // longer matches the shard's `sourceSize` (a mismatched shard/NDJSON pair). buildId/contentHash are
 // 64-bit fnv values → emitted as strings so a JS consumer never rounds them past 2^53. When a single
 // --family is (re)built the entry is merged into any existing manifest rather than dropping the rest.
+uint64_t file_size(const std::string& path) {
+    std::ifstream f(path, std::ios::binary | std::ios::ate);
+    if (!f) throw std::runtime_error("kelvin-index: cannot stat " + path);
+    return static_cast<uint64_t>(f.tellg());
+}
+
 void write_manifest(const std::string& out_dir, Family f, const ShardMeta& m) {
     std::string path = out_dir + "/manifest.json";
     json doc;
@@ -49,7 +55,18 @@ void write_manifest(const std::string& out_dir, Family f, const ShardMeta& m) {
         {"unreadableRows", m.unreadable_row_count},
         {"sourceLines", m.source_line_count},
         {"sourceSize", m.source_size},        // bytes of the NDJSON at build — the pairing anchor
+        {"shardSize", file_size(out_dir + "/" + fam + ".kidx")},
     };
+    // v23: the family's curve shard, fetched by the browser only when something needs curves.
+    // Its buildId is what the engine checks the bytes against (the curve shard also names the
+    // base buildId it pairs with, and the engine refuses any other pairing).
+    if (m.has_curve_shard) {
+        doc["families"][fam]["curves"] = {
+            {"shard", fam + ".curves.kidx"},
+            {"buildId", std::to_string(m.curves_build_id)},
+            {"size", file_size(out_dir + "/" + fam + ".curves.kidx")},
+        };
+    }
     std::ofstream out(path);
     if (!out) throw std::runtime_error("kelvin-index: cannot write " + path);
     out << doc.dump(2) << "\n";

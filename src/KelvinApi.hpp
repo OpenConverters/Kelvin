@@ -51,6 +51,12 @@ class Engine {
     // candidate's srcOffset/srcLength locate that record in the source NDJSON.
     ShardMeta load_shard_bytes(const std::string& family, const std::string& bytes);
 
+    // v23: pair a family's curve shard (<family>.curves.kidx bytes) with its base shard, loaded
+    // first by load_shard_bytes. Until then every curve read on that family throws
+    // CurvesNotLoaded (a browse asking for curves, an operating-point loss ranking). Throws for a
+    // family without curves, an unloaded base, or a curve shard of another build.
+    ShardMeta load_curve_shard_bytes(const std::string& family, const std::string& bytes);
+
    private:
     std::string data_dir_;
     std::string cache_dir_;

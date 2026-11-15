@@ -135,10 +135,10 @@ inline LossBreakdown buck_high_side_loss(const MosfetRow& m, const LossOperating
             present(m.rds_on_vgs) ? fmt(" at Vgs %g V", m.rds_on_vgs) : std::string(", Vgs not stated");
         const std::string stated = "stated Rds(on) " + fmt("%.4g mohm", m.rds_on * 1e3) + at_vgs +
                                    " (the record gives no Tj: datasheet headline, 25 degC)";
-        const double tj_curve_vgs = condition_magnitude(m, m.rds_on_tj_curve, "gateSourceVoltage");
-        if (op.tj && !m.rds_on_tj_curve.empty()) {
+        const double tj_curve_vgs = condition_magnitude(m, m.curves->rds_on_tj_curve, "gateSourceVoltage");
+        if (op.tj && !m.curves->rds_on_tj_curve.empty()) {
             std::optional<double> r;
-            if (auto c = to_curve(m.rds_on_tj_curve))
+            if (auto c = to_curve(m.curves->rds_on_tj_curve))
                 r = crossref::curve_at(*c, *op.tj, crossref::Interp::Linear);
             if (r && *r > 0) {
                 rds = *r;
@@ -148,8 +148,8 @@ inline LossBreakdown buck_high_side_loss(const MosfetRow& m, const LossOperating
                                                         : std::string(", curve Vgs not stated"));
             } else {
                 basis = stated + "; Tj " + fmt("%g degC", *op.tj) + " is outside the record's " +
-                        fmt("Rds(on)(Tj) curve (%g", (*m.rds_on_tj_curve.x).front()) +
-                        fmt(" to %g degC), not extrapolated", (*m.rds_on_tj_curve.x).back());
+                        fmt("Rds(on)(Tj) curve (%g", (*m.curves->rds_on_tj_curve.x).front()) +
+                        fmt(" to %g degC), not extrapolated", (*m.curves->rds_on_tj_curve.x).back());
             }
         } else if (op.tj) {
             basis = stated + "; the record has no Rds(on)(Tj) curve to read it at Tj " +
@@ -189,9 +189,9 @@ inline LossBreakdown buck_high_side_loss(const MosfetRow& m, const LossOperating
             std::optional<double> qg;
             std::string basis;
             std::string curve_miss;
-            const double qg_curve_vds = condition_magnitude(m, m.qg_curve, "drainSourceVoltage");
-            if (!m.qg_curve.empty()) {
-                if (auto c = to_curve(m.qg_curve)) qg = charge_at_vgs(*c, *op.vdrive);
+            const double qg_curve_vds = condition_magnitude(m, m.curves->qg_curve, "drainSourceVoltage");
+            if (!m.curves->qg_curve.empty()) {
+                if (auto c = to_curve(m.curves->qg_curve)) qg = charge_at_vgs(*c, *op.vdrive);
                 if (qg && *qg > 0) {
                     basis = "Qg " + fmt("%.4g nC", *qg * 1e9) + fmt(" at Vgs %g V", *op.vdrive) +
                             " read off the record's gate-charge curve" +
@@ -227,8 +227,8 @@ inline LossBreakdown buck_high_side_loss(const MosfetRow& m, const LossOperating
         std::optional<double> c_at;
         std::string basis;
         std::string curve_miss;
-        if (!m.coss_curve.empty()) {
-            const auto c = to_curve(m.coss_curve);
+        if (!m.curves->coss_curve.empty()) {
+            const auto c = to_curve(m.curves->coss_curve);
             const bool readable = c && loglog_readable(*c);
             if (readable) c_at = crossref::curve_at(*c, vin, crossref::Interp::LogLog);
             if (!readable) {
@@ -240,8 +240,8 @@ inline LossBreakdown buck_high_side_loss(const MosfetRow& m, const LossOperating
             } else {
                 c_at.reset();
                 curve_miss = fmt("; Vin %g V is outside the record's Coss(Vds) curve", vin) +
-                             fmt(" (%g", (*m.coss_curve.x).front()) +
-                             fmt(" to %g V), not extrapolated", (*m.coss_curve.x).back());
+                             fmt(" (%g", (*m.curves->coss_curve.x).front()) +
+                             fmt(" to %g V), not extrapolated", (*m.curves->coss_curve.x).back());
             }
         }
         if (!c_at && present(m.coss)) {

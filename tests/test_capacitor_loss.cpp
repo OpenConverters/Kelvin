@@ -91,8 +91,8 @@ TEST_CASE("capacitor loss: ripple current through the output and the input capac
 TEST_CASE("capacitor loss: ESR and effective capacitance read off the record's curves",
           "[capacitor_loss]") {
     const CapacitorRow x = row("C1005X5R1V225K050BC");
-    REQUIRE_FALSE(x.esr_curve.empty());
-    REQUIRE_FALSE(x.bias_curve.empty());
+    REQUIRE_FALSE(x.curves->esr_curve.empty());
+    REQUIRE_FALSE(x.curves->bias_curve.empty());
     auto b = capacitor_loss(x, out_point());
     REQUIRE(b.esr_at_fs);
     REQUIRE(b.esr_loss.watts);
@@ -132,7 +132,7 @@ TEST_CASE("capacitor loss: no ESR on record is UNVERIFIED, never estimated", "[c
 TEST_CASE("capacitor loss: class-II ceramic without a DC-bias curve leaves Ceff UNVERIFIED",
           "[capacitor_loss]") {
     const CapacitorRow x = row("C1206C105K4RACTU", "capacitors_op_loss.ndjson");
-    REQUIRE(x.bias_curve.empty());
+    REQUIRE(x.curves->bias_curve.empty());
     auto b = capacitor_loss(x, out_point());
     CHECK_FALSE(b.c_eff.value);
     CHECK(has(joined(b.c_eff.missing), "has no DC-bias curve"));
@@ -255,7 +255,7 @@ TEST_CASE("capacitor loss: ESR from the dissipation factor is an upper bound at 
 TEST_CASE("capacitor loss: a rating stated above the ambient with no table is a lower bound",
           "[capacitor_loss]") {
     const CapacitorRow x = row("EKXJ201ELL151MJ50S", "capacitors_op_loss.ndjson");
-    REQUIRE(x.ripple_t_curve.empty());
+    REQUIRE(x.curves->ripple_t_curve.empty());
     CapacitorOperatingPoint op = in_point();
     op.ambient = 40;
     auto b = capacitor_loss(x, op);

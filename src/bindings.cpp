@@ -103,7 +103,23 @@ PYBIND11_MODULE(PyKelvin, m) {
                 }();
                 return json{{"family", kelvin::family_name(m.family)},
                             {"rowCount", m.row_count},
-                            {"buildId", m.build_id}};
+                            {"buildId", m.build_id},
+                            {"hasCurveShard", m.has_curve_shard},
+                            {"curvesBuildId", m.curves_build_id}};
+            },
+            py::arg("family"), py::arg("bytes"))
+        .def(
+            "load_curve_shard_bytes",
+            [](kelvin::api::Engine& e, const std::string& family, const py::bytes& b) {
+                std::string bytes = b;  // copy the buffer (needs the GIL)
+                kelvin::ShardMeta m = [&] {
+                    EngineCall call;
+                    return e.load_curve_shard_bytes(family, bytes);
+                }();
+                return json{{"family", kelvin::family_name(m.family)},
+                            {"rowCount", m.row_count},
+                            {"buildId", m.build_id},
+                            {"curvesBuildId", m.curves_build_id}};
             },
             py::arg("family"), py::arg("bytes"))
         .def(
@@ -207,7 +223,9 @@ PYBIND11_MODULE(PyKelvin, m) {
                         {"rowCount", meta.row_count},
                         {"unreadableRowCount", meta.unreadable_row_count},
                         {"sourceLineCount", meta.source_line_count},
-                        {"buildId", meta.build_id}};
+                        {"buildId", meta.build_id},
+                        {"hasCurveShard", meta.has_curve_shard},
+                        {"curvesBuildId", meta.curves_build_id}};
         },
         py::arg("data_dir"), py::arg("out_dir"), py::arg("family"));
 }

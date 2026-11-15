@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <limits>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -109,8 +110,211 @@ struct CurvePts {
     bool unit_inferred = false;
     std::string unit_note;
     bool empty() const { return !x || x->empty(); }
+    // True when the curve states nothing at all (no points, no condition, no unit marker): the
+    // state of a curve the record does not carry. A curve set holding only such curves gets no
+    // record in the curve shard (v23).
+    bool is_default() const {
+        return empty() && (!y || y->empty()) && std::isnan(temperature) && std::isnan(dc_bias) &&
+               std::isnan(frequency) && cond_keys.empty() && cond_vals.empty() &&
+               cond_text.empty() && !unit_unstated && !unit_inferred && unit_note.empty();
+    }
 };
 
+// v23 (owner 2026-11-15) — a row's measured curves are not in its family's base shard
+// (<family>.kidx) but in a separate curve shard (<family>.curves.kidx), loaded on demand: at
+// v22 the curves inline in the rows tripled the capacitor shard (155 MB -> 518 MB, 1.8 GB of
+// WASM heap) and the browser ran out of memory loading the families together.
+//
+// Reading a curve of a row whose curve shard has not been attached THROWS this: an unloaded
+// curve is not an empty one, and comparing against it as "the record states no curve" would
+// silently turn every curve verdict into a missing-data one.
+struct CurvesNotLoaded : std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
+
+// The handle a row holds on its curve set. Three states:
+//   * curves loaded, row states none: no set (reads return an empty set);
+//   * curves loaded, row states some: the set;
+//   * detached: the row came from a base shard whose curve shard is not attached — every
+//     read throws CurvesNotLoaded.
+// A row built in memory (extracted from its record) is never detached. Only the base-shard
+// reader detaches, and only attach_curve_shard (Index.hpp) attaches. The set is shared (a row
+// copy shares it) and copied on write.
+template <class Set>
+class CurveSlot {
+   public:
+    const Set& get() const {
+        if (detached_)
+            throw CurvesNotLoaded(std::string("kelvin: the ") + Set::kFamily +
+                                  " curve shard (" + Set::kFamily +
+                                  ".curves.kidx) is not loaded; this needs the row's measured "
+                                  "curves — load the curve shard beside the base shard first");
+        return p_ ? *p_ : empty_set();
+    }
+    const Set& operator*() const { return get(); }
+    const Set* operator->() const { return &get(); }
+    // Write access (the extractor, tests): creates the set, copies a shared one first.
+    Set& mut() {
+        if (detached_)
+            throw CurvesNotLoaded(std::string("kelvin: cannot write the curves of a ") +
+                                  Set::kFamily + " row whose curve shard is not loaded");
+        if (!p_)
+            p_ = std::make_shared<Set>();
+        else if (p_.use_count() > 1)
+            p_ = std::make_shared<Set>(*p_);
+        return *p_;
+    }
+    bool detached() const { return detached_; }
+    // The set, or null when the row states none; for the curve-shard writer. Throws when
+    // detached, like get().
+    const Set* stated() const {
+        get();
+        return p_ && p_->any() ? p_.get() : nullptr;
+    }
+    void detach() {
+        p_.reset();
+        detached_ = true;
+    }
+    void attach(std::shared_ptr<Set> p) {
+        p_ = std::move(p);
+        detached_ = false;
+    }
+
+   private:
+    static const Set& empty_set() {
+        static const Set e{};
+        return e;
+    }
+    std::shared_ptr<Set> p_;
+    bool detached_ = false;
+};
+
+// The mosfet row's measured curves (v23: stored in mosfet.curves.kidx).
+struct MosfetCurveSet {
+    static constexpr const char* kFamily = "mosfet";
+    // datasheetInfo.curves (owner rule 2026-11-14, compared by CrossRefCurveChecks.hpp): the
+    // capacitances against Vds, Rds(on) against Id and against Tj, and the gate-charge curve
+    // (x = Qg in C, y = Vgs), each with the conditions the record states; empty = not stated.
+    CurvePts ciss_curve, coss_curve, crss_curve, rds_on_id_curve, rds_on_tj_curve, qg_curve;
+    // electrical.ambientRatings[] (of the package, or of the identical dies a multi-die record
+    // is read from): one curve per rating, x = ambient degC, y = |continuous drain current| A,
+    // conditions timeBase / duration / gate-source voltage and the mounting as free text. This
+    // is the AMBIENT-rated current, a different quantity from id_continuous (case-rated); it is
+    // compared only as its own curve, never substituted for Id.
+    std::vector<CurvePts> id_ambient_curves;
+    // False when the set states nothing (the curve shard then carries no record for the row).
+    bool any() const {
+        return !ciss_curve.is_default() ||
+               !coss_curve.is_default() ||
+               !crss_curve.is_default() ||
+               !rds_on_id_curve.is_default() ||
+               !rds_on_tj_curve.is_default() ||
+               !qg_curve.is_default() ||
+               !id_ambient_curves.empty();
+    }
+};
+
+// The diode row's measured curves (v23: stored in diode.curves.kidx).
+struct DiodeCurveSet {
+    static constexpr const char* kFamily = "diode";
+    // datasheetInfo.curves (owner rule 2026-11-14): Vf against If, Ir against Vr and Cj
+    // against Vr, each with the conditions the record states (temperature); empty = none.
+    CurvePts vf_curve, ir_curve, cj_curve;
+    // False when the set states nothing (the curve shard then carries no record for the row).
+    bool any() const {
+        return !vf_curve.is_default() ||
+               !ir_curve.is_default() ||
+               !cj_curve.is_default();
+    }
+};
+
+// The capacitor row's measured curves (v23: stored in capacitor.curves.kidx).
+struct CapacitorCurveSet {
+    static constexpr const char* kFamily = "capacitor";
+    // v22 (owner 2026-11-14): the record's ESR-vs-frequency curve (CAS electrical.esrPoints,
+    // Hz -> ohm), read whole. Compared curve-vs-curve on the overlap and read at the other
+    // side's stated ESR frequency to resolve a basis mismatch.
+    CurvePts esr_curve;
+    // v22 (owner 2026-11-14): |Z| vs frequency (CAS electrical.impedancePoints, Hz -> ohm), with
+    // the conditions the record states (temperature, DC bias).
+    CurvePts z_curve;
+    // v22 (owner 2026-11-14): capacitance vs frequency (CAS electrical.capacitanceFrequencyPoints,
+    // Hz -> F), kept up to the first sample <= 0: past self-resonance the record states the
+    // reactance as a negative "capacitance", which is not a capacitance (|Z| covers it).
+    CurvePts cf_curve;
+    // v22 (owner 2026-11-14): ESL vs frequency (CAS electrical.inductanceFrequencyPoints, Hz -> H).
+    CurvePts esl_curve;
+    // v22 (owner 2026-11-14): effective capacitance vs DC bias (CAS electrical.capacitanceBiasPoints,
+    // V -> F, absolute farads as every record states them), with the one measurement
+    // temperature the record states. Compared on the overlap of the two bias ranges.
+    CurvePts bias_curve;
+    // v22 (owner 2026-11-14): the ripple rating's own tables, as stated (multiplier or amperes;
+    // only the ratio of two readings is ever used): vs frequency (Hz, from
+    // rippleCurrentFrequencyPoints / rippleCurrentPoints) and vs ambient temperature (degC,
+    // rippleCurrentTemperaturePoints; a CASE-temperature table is not kept). Kept only when
+    // evidently this rating's table (Views.cpp read_ripple_table); the ranker moves a ripple
+    // rating to the other side's frequency / temperature basis with them.
+    CurvePts ripple_f_curve;
+    CurvePts ripple_t_curve;
+    // False when the set states nothing (the curve shard then carries no record for the row).
+    bool any() const {
+        return !esr_curve.is_default() ||
+               !z_curve.is_default() ||
+               !cf_curve.is_default() ||
+               !esl_curve.is_default() ||
+               !bias_curve.is_default() ||
+               !ripple_f_curve.is_default() ||
+               !ripple_t_curve.is_default();
+    }
+};
+
+// The magnetic row's measured curves (v23: stored in magnetic.curves.kidx).
+struct MagneticCurveSet {
+    static constexpr const char* kFamily = "magnetic";
+    // v22 (owner 2026-11-14, "compare ALL existing graphs"): EVERY L(I) curve the record states
+    // (inductancePoints, one per stated temperature; an untemperatured set is its own curve),
+    // in henries vs amperes, with or without a 0 A point, in the shared curve storage (the
+    // CurvePts temperature is the curve's). Ascending temperature, the unstated one last.
+    std::vector<CurvePts> l_curves;
+    // v22 (owner 2026-11-14): the rated currents qualified by their temperature rise
+    // (ratedCurrentPoints): x = rise (K), y = current (A), temperature = ambient (degC, NaN =
+    // not stated). May hold ONE point (a single rating at its rise). Empty when not stated or
+    // not readable as one rating per rise (Views.cpp magnetic_rated_points).
+    CurvePts rated_points;
+    // Measured curves (v22, owner 2026-11-14: "compare ALL existing graphs") in the shared
+    // curve storage (CurvePts, as the capacitor's), empty when the record states fewer than
+    // two usable samples. The ranker compares them curve vs curve (CrossRefMagneticCurves.hpp).
+    CurvePts z_curve;  // |Z|(f), Hz -> ohm (a CMC's: common mode)
+    CurvePts r_curve;  // R(f), Hz -> ohm (resistancePoints)
+    CurvePts x_curve;  // X(f), Hz -> ohm, signed (reactancePoints)
+    // A common-mode choke's other curves (v22, owner 2026-11-14): its differential-mode |Z|(f)
+    // (the curve dm_impedance_* are read off) and its common- / differential-mode insertion
+    // loss, Hz -> dB (commonModeInsertionLossPoints / differentialModeInsertionLossPoints).
+    CurvePts dm_z_curve, cm_il_curve, dm_il_curve;
+    // False when the set states nothing (the curve shard then carries no record for the row).
+    bool any() const {
+        return !rated_points.is_default() ||
+               !z_curve.is_default() ||
+               !r_curve.is_default() ||
+               !x_curve.is_default() ||
+               !dm_z_curve.is_default() ||
+               !cm_il_curve.is_default() ||
+               !dm_il_curve.is_default() ||
+               !l_curves.empty();
+    }
+};
+
+// The connector row's measured curves (v23: stored in connector.curves.kidx).
+struct ConnectorCurveSet {
+    static constexpr const char* kFamily = "connector";
+    // derating.currentVsAmbient (owner rule 2026-11-14): x = ambient degC, y = the stated
+    // FRACTION of rated_current (0..1), condition maxTemperatureRise; empty = none stated.
+    CurvePts current_ambient_curve;
+    // False when the set states nothing (the curve shard then carries no record for the row).
+    bool any() const {
+        return !current_ambient_curve.is_default();
+    }
+};
 struct RowBase {
     uint32_t lineno = 0;      // 1-based source line (the determinism tie-break key)
     uint64_t src_offset = 0;  // byte offset of the raw line start in the NDJSON
@@ -228,16 +432,9 @@ struct MosfetRow : RowBase {
     // part.internalConnection of a multi-die record ('halfBridge' / 'independent' /
     // 'commonDrain' ...), "" when unstated; graded like the diode one (owner 2026-11-13, V2).
     std::string internal_connection;
-    // datasheetInfo.curves (owner rule 2026-11-14, compared by CrossRefCurveChecks.hpp): the
-    // capacitances against Vds, Rds(on) against Id and against Tj, and the gate-charge curve
-    // (x = Qg in C, y = Vgs), each with the conditions the record states; empty = not stated.
-    CurvePts ciss_curve, coss_curve, crss_curve, rds_on_id_curve, rds_on_tj_curve, qg_curve;
-    // electrical.ambientRatings[] (of the package, or of the identical dies a multi-die record
-    // is read from): one curve per rating, x = ambient degC, y = |continuous drain current| A,
-    // conditions timeBase / duration / gate-source voltage and the mounting as free text. This
-    // is the AMBIENT-rated current, a different quantity from id_continuous (case-rated); it is
-    // compared only as its own curve, never substituted for Id.
-    std::vector<CurvePts> id_ambient_curves;
+    // v23 (owner 2026-11-15): the measured curves live in the family's curve shard
+    // (<family>.curves.kidx), not in the base shard; see MosfetCurveSet and CurveSlot.
+    CurveSlot<MosfetCurveSet> curves;
     bool is_production = false;
     bool datasheet_usable = false;  // !_datasheet_unusable(datasheetUrl), precomputed at index time
     // Python evidence tier: no stated (positive) Qg OR datasheet unusable. Written as
@@ -294,9 +491,9 @@ struct DiodeRow : RowBase {
     // the MPN or the configuration (the ranker reads a stated 'dual' / 'single' as 2 / 1,
     // which is how SAS defines them).
     double number_of_elements = kNaN();
-    // datasheetInfo.curves (owner rule 2026-11-14): Vf against If, Ir against Vr and Cj
-    // against Vr, each with the conditions the record states (temperature); empty = none.
-    CurvePts vf_curve, ir_curve, cj_curve;
+    // v23 (owner 2026-11-15): the measured curves live in the family's curve shard
+    // (<family>.curves.kidx), not in the base shard; see DiodeCurveSet and CurveSlot.
+    CurveSlot<DiodeCurveSet> curves;
     // Transient-suppression specs (tvs / esd). These, not Vrrm, are what a protection diode
     // IS: the surge it absorbs, the level it clamps to, the capacitance it loads the line
     // with. None was carried, so a 400 W SMAJ came back an 'upgrade' for a 15 kW 15KP and a
@@ -417,31 +614,9 @@ struct CapacitorRow : RowBase {
     double temp_min_c = kNaN();
     double temp_max_c = kNaN();
     bool is_production = false;
-    // v22 (owner 2026-11-14): the record's ESR-vs-frequency curve (CAS electrical.esrPoints,
-    // Hz -> ohm), read whole. Compared curve-vs-curve on the overlap and read at the other
-    // side's stated ESR frequency to resolve a basis mismatch.
-    CurvePts esr_curve;
-    // v22 (owner 2026-11-14): |Z| vs frequency (CAS electrical.impedancePoints, Hz -> ohm), with
-    // the conditions the record states (temperature, DC bias).
-    CurvePts z_curve;
-    // v22 (owner 2026-11-14): capacitance vs frequency (CAS electrical.capacitanceFrequencyPoints,
-    // Hz -> F), kept up to the first sample <= 0: past self-resonance the record states the
-    // reactance as a negative "capacitance", which is not a capacitance (|Z| covers it).
-    CurvePts cf_curve;
-    // v22 (owner 2026-11-14): ESL vs frequency (CAS electrical.inductanceFrequencyPoints, Hz -> H).
-    CurvePts esl_curve;
-    // v22 (owner 2026-11-14): effective capacitance vs DC bias (CAS electrical.capacitanceBiasPoints,
-    // V -> F, absolute farads as every record states them), with the one measurement
-    // temperature the record states. Compared on the overlap of the two bias ranges.
-    CurvePts bias_curve;
-    // v22 (owner 2026-11-14): the ripple rating's own tables, as stated (multiplier or amperes;
-    // only the ratio of two readings is ever used): vs frequency (Hz, from
-    // rippleCurrentFrequencyPoints / rippleCurrentPoints) and vs ambient temperature (degC,
-    // rippleCurrentTemperaturePoints; a CASE-temperature table is not kept). Kept only when
-    // evidently this rating's table (Views.cpp read_ripple_table); the ranker moves a ripple
-    // rating to the other side's frequency / temperature basis with them.
-    CurvePts ripple_f_curve;
-    CurvePts ripple_t_curve;
+    // v23 (owner 2026-11-15): the measured curves live in the family's curve shard
+    // (<family>.curves.kidx), not in the base shard; see CapacitorCurveSet and CurveSlot.
+    CurveSlot<CapacitorCurveSet> curves;
     // v22 (owner 2026-11-14, capacitor operating-point selector) — the record's distributor
     // unit-cost quotes as a compact JSON array [{distributor, unitCost, currency, moq?}] ("" when
     // none), read as MosfetRow::price_quotes is: one unit cost per distributor, no price breaks,
@@ -588,16 +763,9 @@ struct MagneticRow : RowBase {
     // 2026-11-14: two curves are read against each other only at one temperature).
     double bias_curve_temperature = kNaN();
     bool sat_table_from_curve = false;
-    // v22 (owner 2026-11-14, "compare ALL existing graphs"): EVERY L(I) curve the record states
-    // (inductancePoints, one per stated temperature; an untemperatured set is its own curve),
-    // in henries vs amperes, with or without a 0 A point, in the shared curve storage (the
-    // CurvePts temperature is the curve's). Ascending temperature, the unstated one last.
-    std::vector<CurvePts> l_curves;
-    // v22 (owner 2026-11-14): the rated currents qualified by their temperature rise
-    // (ratedCurrentPoints): x = rise (K), y = current (A), temperature = ambient (degC, NaN =
-    // not stated). May hold ONE point (a single rating at its rise). Empty when not stated or
-    // not readable as one rating per rise (Views.cpp magnetic_rated_points).
-    CurvePts rated_points;
+    // v23 (owner 2026-11-15): the measured curves live in the family's curve shard
+    // (<family>.curves.kidx), not in the base shard; see MagneticCurveSet and CurveSlot.
+    CurveSlot<MagneticCurveSet> curves;
     // Winding structure: bit n set when some electrical[] wiring configuration has n windings besides
     // the primary (a single-winding inductor/chip bead sets bit 0; a transformer or coupled inductor sets
     // bit turnsRatios.size()). 0 means no configuration states its structure (e.g. a transformer entry
@@ -623,16 +791,6 @@ struct MagneticRow : RowBase {
     // cable passes its |Z| is stated for (numberTurns). NaN = not stated.
     double cable_max_diameter = kNaN();  // m
     double number_turns = kNaN();
-    // Measured curves (v22, owner 2026-11-14: "compare ALL existing graphs") in the shared
-    // curve storage (CurvePts, as the capacitor's), empty when the record states fewer than
-    // two usable samples. The ranker compares them curve vs curve (CrossRefMagneticCurves.hpp).
-    CurvePts z_curve;  // |Z|(f), Hz -> ohm (a CMC's: common mode)
-    CurvePts r_curve;  // R(f), Hz -> ohm (resistancePoints)
-    CurvePts x_curve;  // X(f), Hz -> ohm, signed (reactancePoints)
-    // A common-mode choke's other curves (v22, owner 2026-11-14): its differential-mode |Z|(f)
-    // (the curve dm_impedance_* are read off) and its common- / differential-mode insertion
-    // loss, Hz -> dB (commonModeInsertionLossPoints / differentialModeInsertionLossPoints).
-    CurvePts dm_z_curve, cm_il_curve, dm_il_curve;
     std::string device_type;              // electrical[0].subtype (inductor/transformer/…): annotated, never gated
     std::string family;                   // manufacturerInfo.family or part.family (series, for context)
     // v20: the operating-temperature range (PEAS thermal.operatingTemperature, degC), which the
@@ -725,9 +883,9 @@ struct TimingRow : RowBase {
 // environmental.operatingTemperature, familyDetails, part).
 struct ConnectorRow : RowBase {
     double rated_current = kNaN();  // A per contact
-    // derating.currentVsAmbient (owner rule 2026-11-14): x = ambient degC, y = the stated
-    // FRACTION of rated_current (0..1), condition maxTemperatureRise; empty = none stated.
-    CurvePts current_ambient_curve;
+    // v23 (owner 2026-11-15): the measured curves live in the family's curve shard
+    // (<family>.curves.kidx), not in the base shard; see ConnectorCurveSet and CurveSlot.
+    CurveSlot<ConnectorCurveSet> curves;
     double rated_voltage = kNaN();  // V
     double positions = kNaN();      // contact count
     // m — contact-to-contact spacing. A connector record carries no body outline, so this IS
@@ -808,5 +966,13 @@ struct ControllerRow : RowBase {
     double fsw_min_khz() const { return 0.0; }
     double fsw_max_khz() const { return 1e12; }
 };
+
+// Families whose rows carry measured curves, i.e. whose shard comes with a curve shard (v23).
+template <class Row> inline constexpr bool row_has_curves = false;
+template <> inline constexpr bool row_has_curves<MosfetRow> = true;
+template <> inline constexpr bool row_has_curves<DiodeRow> = true;
+template <> inline constexpr bool row_has_curves<CapacitorRow> = true;
+template <> inline constexpr bool row_has_curves<MagneticRow> = true;
+template <> inline constexpr bool row_has_curves<ConnectorRow> = true;
 
 }  // namespace kelvin

@@ -47,6 +47,11 @@ struct ShardMeta {
     uint64_t source_line_count = 0;   // non-blank lines considered (== Python `total`)
     uint64_t physical_line_count = 0; // total physical lines incl. blanks (last lineno); for incremental
     uint64_t build_id = 0;            // fnv1a64 of the serialized body — content-addressed, deterministic
+    // v23: a family whose rows carry measured curves has a curve shard (<family>.curves.kidx);
+    // curves_build_id is that shard's content hash, part of build_id, and the curve shard
+    // names build_id back, so neither half pairs with another build's other half.
+    bool has_curve_shard = false;
+    uint64_t curves_build_id = 0;     // meaningful only when has_curve_shard
 };
 
 template <class Row>
@@ -83,6 +88,13 @@ Shard<ConnectorRow> build_connector_shard(const std::string& ndjson_path,
                                           const Shard<ConnectorRow>* prev = nullptr);
 
 // ---- serialize / deserialize ----------------------------------------------
+// v23 (owner 2026-11-15): a family with curves (mosfet, diode, capacitor, magnetic, connector)
+// is TWO files: the base shard <family>.kidx (the scalar rows) and the curve shard
+// <family>.curves.kidx (every row's measured curves, keyed by row index). write_shard writes
+// both, read_*_shard reads both (native callers load curves eagerly), deserialize_*_shard reads
+// the base alone and leaves every row's curves DETACHED (a curve read throws CurvesNotLoaded)
+// until attach_curve_shard pairs the curve bytes — the browser path, which fetches the curve
+// shard only when something needs curves.
 void write_shard(const std::string& out_path, const Shard<MosfetRow>&);
 void write_shard(const std::string& out_path, const Shard<DiodeRow>&);
 void write_shard(const std::string& out_path, const Shard<CapacitorRow>&);
@@ -135,6 +147,25 @@ Shard<MagneticRow> deserialize_magnetic_shard(const std::string& bytes);
 Shard<AnalogRow> deserialize_analog_shard(const std::string& bytes);
 Shard<TimingRow> deserialize_timing_shard(const std::string& bytes);
 Shard<ConnectorRow> deserialize_connector_shard(const std::string& bytes);
+
+// The curve shard's path beside a base shard path: <x>.kidx -> <x>.curves.kidx.
+std::string curve_shard_path(const std::string& base_path);
+
+// The curve shard of a shard whose rows carry their curves (built, or read with curves). Throws
+// CurvesNotLoaded for a base-only shard.
+std::string serialize_curve_shard(const Shard<MosfetRow>&);
+std::string serialize_curve_shard(const Shard<DiodeRow>&);
+std::string serialize_curve_shard(const Shard<CapacitorRow>&);
+std::string serialize_curve_shard(const Shard<MagneticRow>&);
+std::string serialize_curve_shard(const Shard<ConnectorRow>&);
+
+// Pair curve-shard bytes with a loaded base shard. Throws (and changes nothing) when the bytes
+// are not a curve shard, are another format / family, or belong to another build of the base.
+void attach_curve_shard(Shard<MosfetRow>&, const std::string& bytes);
+void attach_curve_shard(Shard<DiodeRow>&, const std::string& bytes);
+void attach_curve_shard(Shard<CapacitorRow>&, const std::string& bytes);
+void attach_curve_shard(Shard<MagneticRow>&, const std::string& bytes);
+void attach_curve_shard(Shard<ConnectorRow>&, const std::string& bytes);
 
 // Staleness: size-first (the nightly append always changes size), hash as confirmation.
 // Is this shard's cached content still usable? False only when the source bytes AND the

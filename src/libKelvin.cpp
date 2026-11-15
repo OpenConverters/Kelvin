@@ -53,19 +53,42 @@ std::string guarded(F&& body) {
 }
 
 // Shard bytes are BINARY, so load_shard takes a Uint8Array (not a std::string, whose embind
-// marshalling is UTF-8 and would corrupt bytes >= 0x80).
+// marshalling is UTF-8 and would corrupt bytes >= 0x80). The bytes are copied ONCE, straight
+// into the string the deserializer reads (v23: vecFromJSArray went element by element through a
+// vector and then copied again — three copies of a 100+ MB shard alive at the peak).
+std::string bytes_of(const val& bytes) {
+    const size_t n = bytes["length"].as<size_t>();
+    std::string out(n, '\0');
+    val view(typed_memory_view(n, reinterpret_cast<unsigned char*>(out.data())));
+    view.call<void>("set", bytes);
+    return out;
+}
+
 std::string load_shard(std::string family, val bytes) {
     return guarded([&] {
-        std::vector<unsigned char> v = vecFromJSArray<unsigned char>(bytes);
-        kelvin::ShardMeta m = web_engine().load_shard_bytes(family, std::string(v.begin(), v.end()));
+        kelvin::ShardMeta m = web_engine().load_shard_bytes(family, bytes_of(bytes));
         // buildId is a uint64 and these run past 2^53, so a JSON number would
         // be ROUNDED the moment JS parsed it and could never be compared with
         // the manifest's — which is why the manifest writes it as a string too.
         // The caller needs that comparison: it is the only way to tell that the
         // bytes it was handed are the shard the manifest asked for.
+        json out{{"family", kelvin::family_name(m.family)},
+                 {"rowCount", m.row_count},
+                 {"buildId", std::to_string(m.build_id)}};
+        if (m.has_curve_shard) out["curvesBuildId"] = std::to_string(m.curves_build_id);
+        return out.dump();
+    });
+}
+
+// v23: the family's curve shard (<family>.curves.kidx), after its base shard. Throws (as an
+// "Exception: " string) when it is not the curve shard of the loaded base build.
+std::string load_curve_shard(std::string family, val bytes) {
+    return guarded([&] {
+        kelvin::ShardMeta m = web_engine().load_curve_shard_bytes(family, bytes_of(bytes));
         return json{{"family", kelvin::family_name(m.family)},
                     {"rowCount", m.row_count},
-                    {"buildId", std::to_string(m.build_id)}}
+                    {"buildId", std::to_string(m.build_id)},
+                    {"curvesBuildId", std::to_string(m.curves_build_id)}}
             .dump();
     });
 }
@@ -101,6 +124,7 @@ EMSCRIPTEN_BINDINGS(kelvin) {
     function("cross_reference_string", &cross_reference_string);
     // Browser sourcing (no FS): load prebuilt shard bytes, then select/browse the loaded families.
     function("load_shard", &load_shard);
+    function("load_curve_shard", &load_curve_shard);
     // The shard layout this build reads. The loader puts it in every shard URL,
     // so a format bump changes the URL and a browser cannot serve back the
     // previous file from an "immutable, 1 year" cache entry.

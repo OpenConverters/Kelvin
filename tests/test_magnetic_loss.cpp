@@ -560,7 +560,7 @@ TEST_CASE("magnetic curves: a rated current only above a 40 K rise is an upper b
     CHECK(t.failed());
     CHECK(has(t.basis, "rated current 1.6 A at a 50 K rise"));
     CHECK(has(t.basis, "an upper bound of the 40 K current"));
-    const auto u = thermal_check(crow("1110-221K").rated_points, 1.0, std::nullopt, "none");
+    const auto u = thermal_check(crow("1110-221K").curves->rated_points, 1.0, std::nullopt, "none");
     CHECK(u.unverified());
 }
 

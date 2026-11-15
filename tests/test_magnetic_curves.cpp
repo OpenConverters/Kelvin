@@ -123,8 +123,8 @@ TEST_CASE("curves: a CMC's impedance readings are taken per winding mode",
 TEST_CASE("curves: an inductor's |Z|(f) curve is compared with the other's",
           "[magcurves][crossref][impedance]") {
     const auto o = row_of("LQG15HN10NJ02"), s = row_of("LQW15AN10NJ00");
-    REQUIRE(o.z_curve.x->size() == 300);
-    REQUIRE(s.z_curve.x->size() == 300);
+    REQUIRE(o.curves->z_curve.x->size() == 300);
+    REQUIRE(s.curves->z_curve.x->size() == 300);
     const json c = rank("magnetic", spec_of(o), spec_of(s));
     INFO(c.dump());
     // Both 10 nH 0402 parts are swept 10 MHz-3 GHz; the wirewound LQW15AN sits at 217 ohm at
@@ -144,8 +144,8 @@ TEST_CASE("curves: an inductor's |Z|(f) curve is compared with the other's",
 TEST_CASE("curves: a bead's R(f) and X(f) are compared with the other's",
           "[magcurves][crossref][bead]") {
     const auto o = row_of("KMZ1608YHR301BTD25"), s = row_of("MMZ1608B301CTAH0");
-    REQUIRE(o.r_curve.x->size() >= 2);
-    REQUIRE(s.x_curve.x->size() >= 2);
+    REQUIRE(o.curves->r_curve.x->size() >= 2);
+    REQUIRE(s.curves->x_curve.x->size() >= 2);
     const json c = rank("chipBead", spec_of(o, true), spec_of(s, true));
     INFO(c.dump());
     // Two TDK 0603 300 ohm @ 100 MHz beads, both swept 1 MHz-3 GHz with a SIGNED reactance
@@ -195,9 +195,9 @@ TEST_CASE("curves: |Z|(f) is graded only up to the original's impedance peak",
 TEST_CASE("curves: a CMC's DM impedance and CM / DM insertion loss are compared",
           "[magcurves][crossref][cmc]") {
     const auto o = row_of("744841247"), s = row_of("744844470");
-    REQUIRE_FALSE(o.dm_z_curve.empty());
-    REQUIRE_FALSE(s.cm_il_curve.empty());
-    REQUIRE_FALSE(s.dm_il_curve.empty());
+    REQUIRE_FALSE(o.curves->dm_z_curve.empty());
+    REQUIRE_FALSE(s.curves->cm_il_curve.empty());
+    REQUIRE_FALSE(s.curves->dm_il_curve.empty());
     const json c = rank("magnetic", spec_of(o), spec_of(s));
     INFO(c.dump());
     // CM |Z| (bead impedance bands) and CM insertion loss (the CMRR spec, higher is better):
@@ -255,8 +255,8 @@ TEST_CASE("curves: a CMC's curves are graded from 150 kHz", "[magcurves][crossre
 TEST_CASE("curves: L(I) curves are compared at each temperature both records state",
           "[magcurves][crossref][lcurve]") {
     const auto o = row_of("MDH6045C-1R5NA"), s = row_of("CLF7045NIT-1R5N-D");
-    REQUIRE(o.l_curves.size() == 4);
-    REQUIRE(s.l_curves.size() == 10);
+    REQUIRE(o.curves->l_curves.size() == 4);
+    REQUIRE(s.curves->l_curves.size() == 10);
     const json c = rank("magnetic", spec_of(o), spec_of(s));
     INFO(c.dump());
     CHECK(verdict_of(c, "inductance_curve") == "pass");
@@ -308,17 +308,17 @@ TEST_CASE("curves: an L(I) temperature stated on one side only blocks the compar
 TEST_CASE("curves: rated-current points are extracted per temperature rise",
           "[magcurves][views][rated]") {
     const auto x = row_of("XFL7015-102MEC");
-    REQUIRE_FALSE(x.rated_points.empty());
-    CHECK(*x.rated_points.x == std::vector<float>{20.f, 40.f});
-    CHECK(*x.rated_points.y == std::vector<float>{7.5f, 10.5f});
-    CHECK(std::isnan(x.rated_points.temperature));
+    REQUIRE_FALSE(x.curves->rated_points.empty());
+    CHECK(*x.curves->rated_points.x == std::vector<float>{20.f, 40.f});
+    CHECK(*x.curves->rated_points.y == std::vector<float>{7.5f, 10.5f});
+    CHECK(std::isnan(x.curves->rated_points.temperature));
     const auto one = row_of("CDMC60D28L150NP-1R0MC");
-    REQUIRE(one.rated_points.x->size() == 1);
-    CHECK(one.rated_points.temperature == 20.0);
+    REQUIRE(one.curves->rated_points.x->size() == 1);
+    CHECK(one.curves->rated_points.temperature == 20.0);
     for (const char* bad : {"ETQP3W1R5WFN", "ME3215-333KLC"}) {
         const auto r = row_of(bad);
         INFO(bad);
-        CHECK(r.rated_points.empty());
+        CHECK(r.curves->rated_points.empty());
         CHECK(r.rated_current > 0);
     }
 }

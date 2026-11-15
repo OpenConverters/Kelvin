@@ -144,15 +144,15 @@ std::string fixture(const char* f) {
 const json& row(const std::string& family, const std::string& mpn) {
     static const json mos = [] {
         auto sh = kelvin::build_mosfet_shard(fixture("mosfets.ndjson"));
-        return kelvin::browse::browse_rows(sh, json{{"limit", 1000}})["rows"];
+        return kelvin::browse::browse_rows(sh, json{{"limit", 1000}, {"curves", true}})["rows"];
     }();
     static const json dio = [] {
         auto sh = kelvin::build_diode_shard(fixture("diodes.ndjson"));
-        return kelvin::browse::browse_rows(sh, json{{"limit", 1000}})["rows"];
+        return kelvin::browse::browse_rows(sh, json{{"limit", 1000}, {"curves", true}})["rows"];
     }();
     static const json con = [] {
         auto sh = kelvin::build_connector_shard(fixture("connectors.ndjson"));
-        return kelvin::browse::browse_rows(sh, json{{"limit", 1000}})["rows"];
+        return kelvin::browse::browse_rows(sh, json{{"limit", 1000}, {"curves", true}})["rows"];
     }();
     const json* rows = family == "mosfet" ? &mos : family == "diode" ? &dio : &con;
     for (const auto& r : *rows)

@@ -147,7 +147,17 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // electrical.rippleCurrentTemperature; Qarlos r26), and (owner 2026-11-14, capacitor
 // operating-point selector) a capacitor's distributor price quotes and its dissipation factor
 // with the frequency it is stated at.
-constexpr uint32_t kFormatVersion = 22;
+// v23 (owner 2026-11-15) moves every row's measured curves (CurvePts: a capacitor's ESR / |Z| /
+// C(f) / ESL / DC-bias / ripple tables, a magnetic's L(I) / |Z| / R / X / CMC curves and rated
+// points, a MOSFET's capacitance / Rds(on) / gate-charge / ambient-rating curves, a diode's
+// Vf / Ir / Cj curves, a connector's derating) out of <family>.kidx into a separate curve shard
+// <family>.curves.kidx, keyed by row index, which the browser fetches only when something reads
+// curves. The base header gains the curve shard's build id (so the base build id covers it) and
+// the curve shard's header names the base build id: a curve shard of another build is refused.
+constexpr uint32_t kFormatVersion = 23;
+// The curve shard's own magic, so a base shard handed to the curve loader (or the reverse) is
+// refused by its first 8 bytes rather than misparsed.
+constexpr char kCurveMagic[8] = {'K', 'E', 'L', 'V', 'C', 'R', 'V', '\1'};
 
 // Identity of the code that produces rows, so a cached shard can be recognised as
 // having been built by a DIFFERENT extractor than the one running now (ABT #426).
@@ -402,13 +412,6 @@ void row_io(Ar& ar, MosfetRow& r) {
     ar.dbl(r.coss_vds);           // v21
     ar.str(r.die_configuration);  // v22
     ar.str(r.internal_connection);  // v22 (owner 2026-11-13, V2)
-    ar.curve(r.ciss_curve);       // v22 (owner curve rule 2026-11-14)
-    ar.curve(r.coss_curve);       // v22 (also read by the operating-point loss, MosfetLoss.hpp)
-    ar.curve(r.crss_curve);       // v22
-    ar.curve(r.rds_on_id_curve);  // v22
-    ar.curve(r.rds_on_tj_curve);  // v22 (also read by the operating-point loss)
-    ar.curve(r.qg_curve);         // v22 (also read by the operating-point loss)
-    curves(ar, r.id_ambient_curves);  // v22
     ar.dbl(r.qgs);                  // v22 (owner 2026-11-14, operating-point loss)
     ar.dbl(r.qgd);
     ar.dbl(r.qg_vgs);
@@ -449,9 +452,6 @@ void row_io(Ar& ar, DiodeRow& r) {
     ar.dbl(r.vf_test_current);         // v22
     ar.dbl(r.reverse_leakage);         // v22 (owner 2026-11-14, operating-point loss)
     ar.str(r.price_quotes);            // v22 (owner 2026-11-14, price)
-    ar.curve(r.vf_curve);          // v22 (owner curve rule 2026-11-14)
-    ar.curve(r.ir_curve);          // v22
-    ar.curve(r.cj_curve);          // v22
     ar.boolean(r.is_production);
 }
 
@@ -481,14 +481,7 @@ void row_io(Ar& ar, CapacitorRow& r) {
     ar.dbl(r.qualified_failure_rate);    // v20
     ar.boolean(r.is_production);
     ar.dbl(r.ripple_current_temperature);  // v22 (Qarlos r26)
-    ar.curve(r.esr_curve);                 // v22 (owner 2026-11-14, curves)
-    ar.curve(r.z_curve);
-    ar.curve(r.cf_curve);
-    ar.curve(r.esl_curve);
-    ar.curve(r.bias_curve);
     ar.boolean(r.esr_from_curve);          // v22 (owner 2026-11-14, useful band)
-    ar.curve(r.ripple_f_curve);            // v22 (owner 2026-11-14, ripple tables)
-    ar.curve(r.ripple_t_curve);
     ar.str(r.price_quotes);                // v22 (owner 2026-11-14, capacitor price)
     ar.dbl(r.dissipation_factor);          // v22 (owner 2026-11-14, ESR from tan delta)
     ar.dbl(r.dissipation_factor_frequency);
@@ -581,8 +574,6 @@ void row_io(Ar& ar, MagneticRow& r) {
     ar.dblvec(r.bias_curve_current);       // v22 (Z5)
     ar.dblvec(r.bias_curve_ratio);         // v22 (Z5)
     ar.dbl(r.bias_curve_temperature);      // v22 (curves)
-    curves(ar, r.l_curves);            // v22 (curves)
-    ar.curve(r.rated_points);              // v22 (curves, rated current per rise)
     ar.boolean(r.sat_table_from_curve);    // v22 (Z5)
     ar.boolean(r.dcr_is_maximum);          // v22 (owner 2026-11-14, operating-point loss)
     ar.str(r.price_quotes);                // v22 (owner 2026-11-14, price)
@@ -591,12 +582,6 @@ void row_io(Ar& ar, MagneticRow& r) {
     ar.dbl(r.dm_impedance_peak_freq);      // v22
     ar.dbl(r.cable_max_diameter);          // v22 (cable cores, owner 2026-11-14)
     ar.dbl(r.number_turns);                // v22
-    ar.curve(r.z_curve);                   // v22 curves (shared CurvePts storage)
-    ar.curve(r.r_curve);
-    ar.curve(r.x_curve);
-    ar.curve(r.dm_z_curve);                // v22 curves (CMC)
-    ar.curve(r.cm_il_curve);
-    ar.curve(r.dm_il_curve);
     ar.boolean(r.is_production);
 }
 
@@ -668,7 +653,6 @@ void row_io(Ar& ar, ConnectorRow& r) {
     ar.str(r.shell_size);     // v21
     ar.str(r.coding);         // v21
     ar.str(r.coupling_type);  // v21
-    ar.curve(r.current_ambient_curve);  // v22 (owner curve rule 2026-11-14)
     ar.boolean(r.is_production);
 }
 
@@ -682,7 +666,50 @@ void row_io(Ar& ar, ControllerRow& r) {
     ar.boolean(r.integrated_driver);
 }
 
-// ---- header (fixed 88 bytes, all little-endian) ----------------------------
+// ---- curve sets (v23: the curve shard's records) ---------------------------
+template <class Ar>
+void curves_io(Ar& ar, MosfetCurveSet& c) {
+    ar.curve(c.ciss_curve);       // v22 (owner curve rule 2026-11-14)
+    ar.curve(c.coss_curve);       // v22 (also read by the operating-point loss, MosfetLoss.hpp)
+    ar.curve(c.crss_curve);       // v22
+    ar.curve(c.rds_on_id_curve);  // v22
+    ar.curve(c.rds_on_tj_curve);  // v22 (also read by the operating-point loss)
+    ar.curve(c.qg_curve);         // v22 (also read by the operating-point loss)
+    curves(ar, c.id_ambient_curves);  // v22
+}
+template <class Ar>
+void curves_io(Ar& ar, DiodeCurveSet& c) {
+    ar.curve(c.vf_curve);  // v22 (owner curve rule 2026-11-14)
+    ar.curve(c.ir_curve);
+    ar.curve(c.cj_curve);
+}
+template <class Ar>
+void curves_io(Ar& ar, CapacitorCurveSet& c) {
+    ar.curve(c.esr_curve);  // v22 (owner 2026-11-14, curves)
+    ar.curve(c.z_curve);
+    ar.curve(c.cf_curve);
+    ar.curve(c.esl_curve);
+    ar.curve(c.bias_curve);
+    ar.curve(c.ripple_f_curve);  // v22 (owner 2026-11-14, ripple tables)
+    ar.curve(c.ripple_t_curve);
+}
+template <class Ar>
+void curves_io(Ar& ar, MagneticCurveSet& c) {
+    curves(ar, c.l_curves);    // v22 (curves)
+    ar.curve(c.rated_points);  // v22 (curves, rated current per rise)
+    ar.curve(c.z_curve);       // v22 curves
+    ar.curve(c.r_curve);
+    ar.curve(c.x_curve);
+    ar.curve(c.dm_z_curve);    // v22 curves (CMC)
+    ar.curve(c.cm_il_curve);
+    ar.curve(c.dm_il_curve);
+}
+template <class Ar>
+void curves_io(Ar& ar, ConnectorCurveSet& c) {
+    ar.curve(c.current_ambient_curve);  // v22 (owner curve rule 2026-11-14)
+}
+
+// ---- header (fixed 104 bytes, all little-endian) ---------------------------
 #pragma pack(push, 1)
 struct Header {
     char magic[8];
@@ -698,6 +725,22 @@ struct Header {
     uint64_t build_id;
     uint64_t pool_size;
     uint64_t rows_size;
+    uint64_t curves_build_id;  // v23: build id of the curve shard paired with this base shard
+    uint32_t has_curve_shard;  // v23: 1 when the family has a curve shard
+    uint32_t reserved;         // v23: 0
+};
+// The curve shard's header (v23). base_build_id ties it to ONE base shard; curves_build_id is
+// the hash of its own body, which the base header carries too.
+struct CurveHeader {
+    char magic[8];
+    uint32_t format_version;
+    uint32_t family_id;
+    uint64_t base_build_id;
+    uint64_t curves_build_id;
+    uint64_t row_count;     // rows of the base shard
+    uint64_t record_count;  // rows that state curves (one record each)
+    uint64_t pool_size;
+    uint64_t body_size;
 };
 #pragma pack(pop)
 
@@ -713,20 +756,93 @@ void serialize_body(const Shard<Row>& shard, std::string& pool_blob, std::string
     pool_blob = pool.blob();
 }
 
+// The curve shard body: one record per row that states curves, in row order:
+// u32 row index, u32 lineno (a second check on the pairing), the family's curve set.
 template <class Row>
-uint64_t compute_build_id(const Shard<Row>& shard) {
+void serialize_curve_body(const Shard<Row>& shard, std::string& pool_blob, std::string& body,
+                          uint64_t& records) {
+    StringPool pool;
+    WriteAr war{&body, &pool};
+    records = 0;
+    for (size_t i = 0; i < shard.rows.size(); ++i) {
+        const auto* set = shard.rows[i].curves.stated();  // throws when the row is detached
+        if (!set) continue;
+        uint32_t idx = static_cast<uint32_t>(i);
+        uint32_t lineno = shard.rows[i].lineno;
+        war.u32(idx);
+        war.u32(lineno);
+        auto copy = *set;
+        curves_io(war, copy);
+        ++records;
+    }
+    pool_blob = pool.blob();
+}
+
+template <class Row>
+bool rows_detached(const Shard<Row>& shard) {
+    if constexpr (row_has_curves<Row>) {
+        bool any = false, all = true;
+        for (const auto& r : shard.rows) {
+            any = any || r.curves.detached();
+            all = all && r.curves.detached();
+        }
+        if (any && !all)
+            throw std::runtime_error(std::string("kelvin: ") + family_name(shard.meta.family) +
+                                     " shard mixes rows with and without loaded curves");
+        return any;
+    }
+    return false;
+}
+
+// The base shard's curve-shard linkage: the curve body's hash, from the rows' own curves, or
+// for a base-only shard (curves not attached) the one its header carried.
+template <class Row>
+uint64_t curves_build_id_of(const Shard<Row>& shard) {
+    if constexpr (!row_has_curves<Row>) {
+        return 0;  // not a hash input: has_curve_shard is 0 and the base build id skips it
+    } else {
+        if (rows_detached(shard)) {
+            if (!shard.meta.has_curve_shard)
+                throw std::runtime_error("kelvin: base-only shard carries no curve-shard linkage");
+            return shard.meta.curves_build_id;
+        }
+        std::string pool_blob, body;
+        uint64_t records = 0;
+        serialize_curve_body(shard, pool_blob, body, records);
+        return fnv1a64(body.data(), body.size(), fnv1a64(pool_blob.data(), pool_blob.size()));
+    }
+}
+
+// The base build id hashes the base body and, for a family with curves, the curve shard's
+// build id: a change to any curve changes the base shard's id (and URL) too.
+uint64_t base_build_id(const char* pool, size_t pool_size, const char* rows, size_t rows_size,
+                       bool has_curves, uint64_t curves_build_id) {
+    uint64_t seed = fnv1a64(pool, pool_size);
+    if (has_curves) seed = fnv1a64(&curves_build_id, sizeof curves_build_id, seed);
+    return fnv1a64(rows, rows_size, seed);
+}
+uint64_t base_build_id(const std::string& pool_blob, const std::string& rows_buf,
+                       bool has_curves, uint64_t curves_build_id) {
+    return base_build_id(pool_blob.data(), pool_blob.size(), rows_buf.data(), rows_buf.size(),
+                         has_curves, curves_build_id);
+}
+
+template <class Row>
+void compute_build_ids(Shard<Row>& shard) {
     std::string pool_blob, rows_buf;
     serialize_body(shard, pool_blob, rows_buf);
-    return fnv1a64(rows_buf.data(), rows_buf.size(), fnv1a64(pool_blob.data(), pool_blob.size()));
+    shard.meta.has_curve_shard = row_has_curves<Row>;
+    shard.meta.curves_build_id = curves_build_id_of(shard);
+    shard.meta.build_id =
+        base_build_id(pool_blob, rows_buf, row_has_curves<Row>, shard.meta.curves_build_id);
 }
 
 template <class Row>
 std::string serialize_impl(const Shard<Row>& shard) {
     std::string pool_blob, rows_buf;
     serialize_body(shard, pool_blob, rows_buf);
-
-    uint64_t build_id = fnv1a64(rows_buf.data(), rows_buf.size(),
-                                fnv1a64(pool_blob.data(), pool_blob.size()));
+    const uint64_t curves_id = curves_build_id_of(shard);
+    const uint64_t build_id = base_build_id(pool_blob, rows_buf, row_has_curves<Row>, curves_id);
 
     Header h{};
     std::memcpy(h.magic, kMagic, 8);
@@ -742,6 +858,9 @@ std::string serialize_impl(const Shard<Row>& shard) {
     h.build_id = build_id;
     h.pool_size = pool_blob.size();
     h.rows_size = rows_buf.size();
+    h.curves_build_id = curves_id;
+    h.has_curve_shard = row_has_curves<Row> ? 1u : 0u;
+    h.reserved = 0;
 
     std::string out;
     out.reserve(sizeof(Header) + pool_blob.size() + rows_buf.size());
@@ -751,11 +870,49 @@ std::string serialize_impl(const Shard<Row>& shard) {
     return out;
 }
 
+template <class Row>
+std::string serialize_curve_impl(const Shard<Row>& shard) {
+    if (rows_detached(shard))
+        throw CurvesNotLoaded(std::string("kelvin: cannot write the ") +
+                              family_name(shard.meta.family) +
+                              " curve shard: the rows' curves are not loaded");
+    std::string pool_blob, body;
+    uint64_t records = 0;
+    serialize_curve_body(shard, pool_blob, body, records);
+    std::string base_pool, base_rows;
+    serialize_body(shard, base_pool, base_rows);
+    const uint64_t curves_id =
+        fnv1a64(body.data(), body.size(), fnv1a64(pool_blob.data(), pool_blob.size()));
+
+    CurveHeader h{};
+    std::memcpy(h.magic, kCurveMagic, 8);
+    h.format_version = kFormatVersion;
+    h.family_id = static_cast<uint32_t>(shard.meta.family);
+    h.base_build_id = base_build_id(base_pool, base_rows, true, curves_id);
+    h.curves_build_id = curves_id;
+    h.row_count = shard.rows.size();
+    h.record_count = records;
+    h.pool_size = pool_blob.size();
+    h.body_size = body.size();
+
+    std::string out;
+    out.reserve(sizeof(CurveHeader) + pool_blob.size() + body.size());
+    out.append(reinterpret_cast<const char*>(&h), sizeof(CurveHeader));
+    out.append(pool_blob);
+    out.append(body);
+    return out;
+}
+
 // ---- generic deserialize ---------------------------------------------------
+// The base shard only. A family with curves comes back with every row's curves DETACHED:
+// reading one throws CurvesNotLoaded until attach_curve_impl() pairs the curve shard.
 template <class Row>
 Shard<Row> deserialize_impl(const std::string& bytes, Family expected) {
     if (bytes.size() < sizeof(Header))
         throw std::runtime_error("kelvin: shard too small for header");
+    if (std::memcmp(bytes.data(), kCurveMagic, 8) == 0)
+        throw std::runtime_error(std::string("kelvin: this is a curve shard, not the ") +
+                                 family_name(expected) + " base shard");
     Header h;
     std::memcpy(&h, bytes.data(), sizeof(Header));
     if (std::memcmp(h.magic, kMagic, 8) != 0)
@@ -767,12 +924,17 @@ Shard<Row> deserialize_impl(const std::string& bytes, Family expected) {
         throw std::runtime_error("kelvin: shard family mismatch");
     if (sizeof(Header) + h.pool_size + h.rows_size > bytes.size())
         throw std::runtime_error("kelvin: shard truncated");
+    if (h.has_curve_shard != (row_has_curves<Row> ? 1u : 0u))
+        throw std::runtime_error(std::string("kelvin: ") + family_name(expected) +
+                                 " shard header disagrees on whether the family has a curve shard");
 
     const char* pool_base = bytes.data() + sizeof(Header);
     const char* rows_base = pool_base + h.pool_size;
 
     // Verify build_id (content integrity + determinism guard).
-    uint64_t expect_build = fnv1a64(rows_base, h.rows_size, fnv1a64(pool_base, h.pool_size));
+    const uint64_t expect_build =
+        base_build_id(pool_base, static_cast<size_t>(h.pool_size), rows_base,
+                      static_cast<size_t>(h.rows_size), h.has_curve_shard != 0, h.curves_build_id);
     if (expect_build != h.build_id)
         throw std::runtime_error("kelvin: shard build_id mismatch (corrupt or tampered)");
 
@@ -786,12 +948,83 @@ Shard<Row> deserialize_impl(const std::string& bytes, Family expected) {
     shard.meta.source_line_count = h.source_line_count;
     shard.meta.physical_line_count = h.physical_line_count;
     shard.meta.build_id = h.build_id;
+    shard.meta.curves_build_id = h.curves_build_id;
+    shard.meta.has_curve_shard = h.has_curve_shard != 0;
 
     ReadAr rar{rows_base, static_cast<size_t>(h.rows_size), 0, pool_base,
                static_cast<size_t>(h.pool_size)};
     shard.rows.resize(h.row_count);
-    for (uint64_t i = 0; i < h.row_count; ++i) row_io(rar, shard.rows[i]);
+    for (uint64_t i = 0; i < h.row_count; ++i) {
+        row_io(rar, shard.rows[i]);
+        if constexpr (row_has_curves<Row>) shard.rows[i].curves.detach();
+    }
     return shard;
+}
+
+// Pair a curve shard with a loaded base shard. Every check is a throw: a curve shard of any
+// other build, family or format is refused, never half-applied (records are parsed into a
+// side vector first and attached only when the whole shard has been read).
+template <class Row>
+void attach_curve_impl(Shard<Row>& shard, const std::string& bytes) {
+    static_assert(row_has_curves<Row>, "family has no curve shard");
+    const std::string fam = family_name(shard.meta.family);
+    if (bytes.size() < sizeof(CurveHeader))
+        throw std::runtime_error("kelvin: " + fam + " curve shard too small for its header");
+    CurveHeader h;
+    std::memcpy(&h, bytes.data(), sizeof(CurveHeader));
+    if (std::memcmp(h.magic, kCurveMagic, 8) != 0)
+        throw std::runtime_error("kelvin: " + fam + " curve shard has a bad magic (not a curve shard)");
+    if (h.format_version != kFormatVersion)
+        throw std::runtime_error("kelvin: " + fam + " curve shard is format " +
+                                 std::to_string(h.format_version) + ", this engine reads " +
+                                 std::to_string(kFormatVersion));
+    if (h.family_id != static_cast<uint32_t>(shard.meta.family))
+        throw std::runtime_error("kelvin: curve shard is for another family, not " + fam);
+    if (!shard.meta.has_curve_shard)
+        throw std::runtime_error("kelvin: the " + fam + " base shard names no curve shard");
+    if (h.base_build_id != shard.meta.build_id || h.curves_build_id != shard.meta.curves_build_id)
+        throw std::runtime_error(
+            "kelvin: " + fam + " curve shard does not belong to the loaded base shard (curve "
+            "shard pairs with base build " + std::to_string(h.base_build_id) + ", curves " +
+            std::to_string(h.curves_build_id) + "; loaded base is build " +
+            std::to_string(shard.meta.build_id) + ", curves " +
+            std::to_string(shard.meta.curves_build_id) + ") — deploy the two from one build");
+    if (h.row_count != shard.rows.size())
+        throw std::runtime_error("kelvin: " + fam + " curve shard row count mismatch");
+    if (sizeof(CurveHeader) + h.pool_size + h.body_size > bytes.size())
+        throw std::runtime_error("kelvin: " + fam + " curve shard truncated");
+    const char* pool_base = bytes.data() + sizeof(CurveHeader);
+    const char* body_base = pool_base + h.pool_size;
+    if (fnv1a64(body_base, h.body_size, fnv1a64(pool_base, h.pool_size)) != h.curves_build_id)
+        throw std::runtime_error("kelvin: " + fam + " curve shard content does not match its "
+                                 "build id (corrupt or tampered)");
+
+    using Set = std::decay_t<decltype(*shard.rows[0].curves)>;
+    ReadAr rar{body_base, static_cast<size_t>(h.body_size), 0, pool_base,
+               static_cast<size_t>(h.pool_size)};
+    std::vector<std::pair<uint32_t, std::shared_ptr<Set>>> recs;
+    recs.reserve(h.record_count);
+    int64_t prev = -1;
+    for (uint64_t k = 0; k < h.record_count; ++k) {
+        uint32_t idx = 0, lineno = 0;
+        rar.u32(idx);
+        rar.u32(lineno);
+        if (idx >= shard.rows.size() || static_cast<int64_t>(idx) <= prev)
+            throw std::runtime_error("kelvin: " + fam + " curve shard record index out of order");
+        if (shard.rows[idx].lineno != lineno)
+            throw std::runtime_error("kelvin: " + fam + " curve shard record for row " +
+                                     std::to_string(idx) + " names line " + std::to_string(lineno) +
+                                     ", the base row is line " +
+                                     std::to_string(shard.rows[idx].lineno));
+        prev = idx;
+        auto set = std::make_shared<Set>();
+        curves_io(rar, *set);
+        recs.emplace_back(idx, std::move(set));
+    }
+    if (rar.pos != h.body_size)
+        throw std::runtime_error("kelvin: " + fam + " curve shard has trailing bytes");
+    for (auto& r : shard.rows) r.curves.attach(nullptr);
+    for (auto& [idx, set] : recs) shard.rows[idx].curves.attach(std::move(set));
 }
 
 // ---- file helpers ----------------------------------------------------------
@@ -904,6 +1137,11 @@ Shard<Row> build_generic(Family fam, const std::string& path, Extract&& extract,
     if (prev != nullptr && prev->meta.extractor_hash == kExtractorHash &&
         content.size() > prev->meta.source_size &&
         fnv1a64(content.data(), prev->meta.source_size) == prev->meta.content_hash) {
+        // The reused rows must carry their curves: a base-only prev would write a curve shard
+        // missing every prefix row's curves (v23).
+        if (rows_detached(*prev))
+            throw CurvesNotLoaded(std::string("kelvin: incremental ") + family_name(fam) +
+                                  " build needs the previous shard's curves attached");
         shard.rows = prev->rows;  // reuse prefix rows verbatim
         shard.meta.row_count = prev->meta.row_count;
         shard.meta.unreadable_row_count = prev->meta.unreadable_row_count;
@@ -913,13 +1151,13 @@ Shard<Row> build_generic(Family fam, const std::string& path, Extract&& extract,
         parse_region(path, content, prev->meta.source_size, content.size(), start_line,
                      std::forward<Extract>(extract), shard);
         shard.meta.physical_line_count = count_physical_lines(content, content.size());
-        shard.meta.build_id = compute_build_id(shard);
+        compute_build_ids(shard);
         return shard;
     }
 
     parse_region(path, content, 0, content.size(), 1, std::forward<Extract>(extract), shard);
     shard.meta.physical_line_count = count_physical_lines(content, content.size());
-    shard.meta.build_id = compute_build_id(shard);
+    compute_build_ids(shard);
     return shard;
 }
 
@@ -1009,18 +1247,61 @@ void write_bytes(const std::string& path, const std::string& bytes) {
 }
 }  // namespace
 
-void write_shard(const std::string& p, const Shard<MosfetRow>& s) { write_bytes(p, serialize_impl(s)); }
-void write_shard(const std::string& p, const Shard<DiodeRow>& s) { write_bytes(p, serialize_impl(s)); }
-void write_shard(const std::string& p, const Shard<CapacitorRow>& s) { write_bytes(p, serialize_impl(s)); }
-void write_shard(const std::string& p, const Shard<ResistorRow>& s) { write_bytes(p, serialize_impl(s)); }
-void write_shard(const std::string& p, const Shard<ControllerRow>& s) { write_bytes(p, serialize_impl(s)); }
-void write_shard(const std::string& p, const Shard<IgbtRow>& s) { write_bytes(p, serialize_impl(s)); }
-void write_shard(const std::string& p, const Shard<BjtRow>& s) { write_bytes(p, serialize_impl(s)); }
-void write_shard(const std::string& p, const Shard<VaristorRow>& s) { write_bytes(p, serialize_impl(s)); }
-void write_shard(const std::string& p, const Shard<MagneticRow>& s) { write_bytes(p, serialize_impl(s)); }
-void write_shard(const std::string& p, const Shard<AnalogRow>& s) { write_bytes(p, serialize_impl(s)); }
-void write_shard(const std::string& p, const Shard<TimingRow>& s) { write_bytes(p, serialize_impl(s)); }
-void write_shard(const std::string& p, const Shard<ConnectorRow>& s) { write_bytes(p, serialize_impl(s)); }
+namespace {
+// v23: a family with curves writes its curve shard beside the base (<base>.curves.kidx) —
+// curves first, so a reader that finds the new base finds its curves too.
+template <class Row>
+void write_impl(const std::string& p, const Shard<Row>& s) {
+    if constexpr (row_has_curves<Row>) write_bytes(curve_shard_path(p), serialize_curve_impl(s));
+    write_bytes(p, serialize_impl(s));
+}
+// Native readers load the curve shard eagerly beside the base (v23). A missing or mismatched
+// curve shard throws: a base whose curves cannot be paired is not a usable shard here.
+template <class Row>
+Shard<Row> read_impl(const std::string& p, Shard<Row> base) {
+    if constexpr (row_has_curves<Row>) {
+        const std::string cp = curve_shard_path(p);
+        std::ifstream probe(cp, std::ios::binary);
+        if (!probe)
+            throw std::runtime_error("kelvin: " + std::string(family_name(base.meta.family)) +
+                                     " curve shard missing beside its base shard: " + cp);
+        probe.close();
+        attach_curve_impl(base, read_file(cp));
+    }
+    return base;
+}
+}  // namespace
+
+std::string curve_shard_path(const std::string& base_path) {
+    const std::string ext = ".kidx";
+    if (base_path.size() >= ext.size() &&
+        base_path.compare(base_path.size() - ext.size(), ext.size(), ext) == 0)
+        return base_path.substr(0, base_path.size() - ext.size()) + ".curves.kidx";
+    return base_path + ".curves";
+}
+
+#define KELVIN_CURVE_FAMILY(Row)                                                   \
+    std::string serialize_curve_shard(const Shard<Row>& s) { return serialize_curve_impl(s); } \
+    void attach_curve_shard(Shard<Row>& s, const std::string& b) { attach_curve_impl(s, b); }
+KELVIN_CURVE_FAMILY(MosfetRow)
+KELVIN_CURVE_FAMILY(DiodeRow)
+KELVIN_CURVE_FAMILY(CapacitorRow)
+KELVIN_CURVE_FAMILY(MagneticRow)
+KELVIN_CURVE_FAMILY(ConnectorRow)
+#undef KELVIN_CURVE_FAMILY
+
+void write_shard(const std::string& p, const Shard<MosfetRow>& s) { write_impl(p, s); }
+void write_shard(const std::string& p, const Shard<DiodeRow>& s) { write_impl(p, s); }
+void write_shard(const std::string& p, const Shard<CapacitorRow>& s) { write_impl(p, s); }
+void write_shard(const std::string& p, const Shard<ResistorRow>& s) { write_impl(p, s); }
+void write_shard(const std::string& p, const Shard<ControllerRow>& s) { write_impl(p, s); }
+void write_shard(const std::string& p, const Shard<IgbtRow>& s) { write_impl(p, s); }
+void write_shard(const std::string& p, const Shard<BjtRow>& s) { write_impl(p, s); }
+void write_shard(const std::string& p, const Shard<VaristorRow>& s) { write_impl(p, s); }
+void write_shard(const std::string& p, const Shard<MagneticRow>& s) { write_impl(p, s); }
+void write_shard(const std::string& p, const Shard<AnalogRow>& s) { write_impl(p, s); }
+void write_shard(const std::string& p, const Shard<TimingRow>& s) { write_impl(p, s); }
+void write_shard(const std::string& p, const Shard<ConnectorRow>& s) { write_impl(p, s); }
 
 Shard<MosfetRow> deserialize_mosfet_shard(const std::string& b) { return deserialize_impl<MosfetRow>(b, Family::Mosfet); }
 Shard<DiodeRow> deserialize_diode_shard(const std::string& b) { return deserialize_impl<DiodeRow>(b, Family::Diode); }
@@ -1035,18 +1316,18 @@ Shard<AnalogRow> deserialize_analog_shard(const std::string& b) { return deseria
 Shard<TimingRow> deserialize_timing_shard(const std::string& b) { return deserialize_impl<TimingRow>(b, Family::Timing); }
 Shard<ConnectorRow> deserialize_connector_shard(const std::string& b) { return deserialize_impl<ConnectorRow>(b, Family::Connector); }
 
-Shard<MosfetRow> read_mosfet_shard(const std::string& p) { return deserialize_mosfet_shard(read_file(p)); }
-Shard<DiodeRow> read_diode_shard(const std::string& p) { return deserialize_diode_shard(read_file(p)); }
-Shard<CapacitorRow> read_capacitor_shard(const std::string& p) { return deserialize_capacitor_shard(read_file(p)); }
-Shard<ResistorRow> read_resistor_shard(const std::string& p) { return deserialize_resistor_shard(read_file(p)); }
-Shard<ControllerRow> read_controller_shard(const std::string& p) { return deserialize_controller_shard(read_file(p)); }
-Shard<IgbtRow> read_igbt_shard(const std::string& p) { return deserialize_igbt_shard(read_file(p)); }
-Shard<BjtRow> read_bjt_shard(const std::string& p) { return deserialize_bjt_shard(read_file(p)); }
-Shard<VaristorRow> read_varistor_shard(const std::string& p) { return deserialize_varistor_shard(read_file(p)); }
-Shard<MagneticRow> read_magnetic_shard(const std::string& p) { return deserialize_magnetic_shard(read_file(p)); }
-Shard<AnalogRow> read_analog_shard(const std::string& p) { return deserialize_analog_shard(read_file(p)); }
-Shard<TimingRow> read_timing_shard(const std::string& p) { return deserialize_timing_shard(read_file(p)); }
-Shard<ConnectorRow> read_connector_shard(const std::string& p) { return deserialize_connector_shard(read_file(p)); }
+Shard<MosfetRow> read_mosfet_shard(const std::string& p) { return read_impl<MosfetRow>(p, deserialize_mosfet_shard(read_file(p))); }
+Shard<DiodeRow> read_diode_shard(const std::string& p) { return read_impl<DiodeRow>(p, deserialize_diode_shard(read_file(p))); }
+Shard<CapacitorRow> read_capacitor_shard(const std::string& p) { return read_impl<CapacitorRow>(p, deserialize_capacitor_shard(read_file(p))); }
+Shard<ResistorRow> read_resistor_shard(const std::string& p) { return read_impl<ResistorRow>(p, deserialize_resistor_shard(read_file(p))); }
+Shard<ControllerRow> read_controller_shard(const std::string& p) { return read_impl<ControllerRow>(p, deserialize_controller_shard(read_file(p))); }
+Shard<IgbtRow> read_igbt_shard(const std::string& p) { return read_impl<IgbtRow>(p, deserialize_igbt_shard(read_file(p))); }
+Shard<BjtRow> read_bjt_shard(const std::string& p) { return read_impl<BjtRow>(p, deserialize_bjt_shard(read_file(p))); }
+Shard<VaristorRow> read_varistor_shard(const std::string& p) { return read_impl<VaristorRow>(p, deserialize_varistor_shard(read_file(p))); }
+Shard<MagneticRow> read_magnetic_shard(const std::string& p) { return read_impl<MagneticRow>(p, deserialize_magnetic_shard(read_file(p))); }
+Shard<AnalogRow> read_analog_shard(const std::string& p) { return read_impl<AnalogRow>(p, deserialize_analog_shard(read_file(p))); }
+Shard<TimingRow> read_timing_shard(const std::string& p) { return read_impl<TimingRow>(p, deserialize_timing_shard(read_file(p))); }
+Shard<ConnectorRow> read_connector_shard(const std::string& p) { return read_impl<ConnectorRow>(p, deserialize_connector_shard(read_file(p))); }
 
 uint64_t extractor_version() { return kExtractorHash; }
 

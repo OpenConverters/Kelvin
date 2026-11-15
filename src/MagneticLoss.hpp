@@ -472,7 +472,7 @@ inline MagneticCheck thermal_check_of(const MagneticRow& m, double irms,
                   "(or its rated-current points are not readable as one rating per rise), so "
                   "the current at a 40 K rise is not known"
             : std::string("no rated current stated in the record");
-    return thermal_check(m.rated_points, irms, ambient, why);
+    return thermal_check(m.curves->rated_points, irms, ambient, why);
 }
 
 // ---- the L(I) curve the operating point reads (owner 2026-11-14) ----------------------------
@@ -505,7 +505,7 @@ inline LCurvePick pick_l_curve(const MagneticRow& m, std::optional<double> ambie
     auto temp_s = [](double t) {
         return present(t) ? fmt("%g degC", t) : std::string("no stated temperature");
     };
-    if (m.l_curves.empty()) {
+    if (m.curves->l_curves.empty()) {
         // The extractor keeps the picked curve as it is stated (bias_curve_*); l_curves drops a
         // curve stating two inductances at one current (Views.cpp store_curve).
         if (m.bias_curve_current.size() >= 2) {
@@ -521,7 +521,7 @@ inline LCurvePick pick_l_curve(const MagneticRow& m, std::optional<double> ambie
     const double bt = m.bias_curve_temperature;
     const bool dropped =
         m.bias_curve_current.size() >= 2 &&
-        std::none_of(m.l_curves.begin(), m.l_curves.end(), [&](const CurvePts& c) {
+        std::none_of(m.curves->l_curves.begin(), m.curves->l_curves.end(), [&](const CurvePts& c) {
             return present(bt) ? (present(c.temperature) && c.temperature == bt)
                                : !present(c.temperature);
         });
@@ -534,7 +534,7 @@ inline LCurvePick pick_l_curve(const MagneticRow& m, std::optional<double> ambie
             k.why = dropped_why;
             return k;
         }
-        for (const CurvePts& c : m.l_curves)
+        for (const CurvePts& c : m.curves->l_curves)
             if (magnetic_loss_detail::at_ambient(c.temperature, *ambient)) pick.push_back(&c);
     }
     const bool at_amb = !pick.empty();
@@ -543,11 +543,11 @@ inline LCurvePick pick_l_curve(const MagneticRow& m, std::optional<double> ambie
             k.why = dropped_why;
             return k;
         }
-        for (const CurvePts& c : m.l_curves)
+        for (const CurvePts& c : m.curves->l_curves)
             if (!present(c.temperature) || room_temperature(c.temperature)) pick.push_back(&c);
     }
     std::string all;
-    for (const CurvePts& c : m.l_curves) all += (all.empty() ? "" : ", ") + temp_s(c.temperature);
+    for (const CurvePts& c : m.curves->l_curves) all += (all.empty() ? "" : ", ") + temp_s(c.temperature);
     if (pick.empty()) {
         k.why = "its L(I) curves are stated only at " + all + ": not at the operating ambient" +
                 (ambient ? fmt(" %g degC", *ambient) : std::string(" (not stated)")) +

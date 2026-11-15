@@ -167,17 +167,17 @@ inline CapacitorLossBreakdown capacitor_loss(const CapacitorRow& x, const Capaci
     // ---- ESR at fs and the ESR loss --------------------------------------------------
     {
         std::string basis, curve_miss;
-        if (!x.esr_curve.empty()) {
+        if (!x.curves->esr_curve.empty()) {
             std::optional<double> e;
-            if (auto c = to_curve(x.esr_curve)) e = crossref::curve_at(*c, fs, crossref::Interp::LogLog);
+            if (auto c = to_curve(x.curves->esr_curve)) e = crossref::curve_at(*c, fs, crossref::Interp::LogLog);
             if (e && *e > 0) {
                 b.esr_at_fs = *e;
                 basis = "ESR " + fmt("%.4g mohm", *e * 1e3) + fmt(" at fs %g Hz", fs) +
-                        " read off the record's ESR(f) curve (log-log" + curve_temp(x.esr_curve) + ")";
+                        " read off the record's ESR(f) curve (log-log" + curve_temp(x.curves->esr_curve) + ")";
             } else {
                 curve_miss = fmt("; fs %g Hz is outside the record's ESR(f) curve", fs) +
-                             fmt(" (%g", (*x.esr_curve.x).front()) +
-                             fmt(" to %g Hz), not extrapolated", (*x.esr_curve.x).back());
+                             fmt(" (%g", (*x.curves->esr_curve.x).front()) +
+                             fmt(" to %g Hz), not extrapolated", (*x.curves->esr_curve.x).back());
             }
         }
         // A stated ESR with no stated frequency is UNVERIFIED (owner 2026-11-14): the frequency is
@@ -248,19 +248,19 @@ inline CapacitorLossBreakdown capacitor_loss(const CapacitorRow& x, const Capaci
     {
         CapacitorCheck& t = b.c_eff;
         std::string curve_miss;
-        if (!x.bias_curve.empty()) {
+        if (!x.curves->bias_curve.empty()) {
             std::optional<double> c_at;
-            if (auto c = to_curve(x.bias_curve))
+            if (auto c = to_curve(x.curves->bias_curve))
                 c_at = crossref::curve_at(*c, b.v_dc, crossref::Interp::Linear);
             if (c_at && *c_at > 0) {
                 t.value = *c_at;
                 t.basis = "Ceff " + fmt("%.4g uF", *c_at * 1e6) + fmt(" at %g V DC", b.v_dc) +
-                          " read off the record's DC-bias curve (linear" + curve_temp(x.bias_curve) +
+                          " read off the record's DC-bias curve (linear" + curve_temp(x.curves->bias_curve) +
                           fmt("; nominal %.4g uF)", x.capacitance * 1e6);
             } else {
                 curve_miss = fmt("; %g V DC is outside the record's DC-bias curve", b.v_dc) +
-                             fmt(" (%g", (*x.bias_curve.x).front()) +
-                             fmt(" to %g V), not extrapolated", (*x.bias_curve.x).back());
+                             fmt(" (%g", (*x.curves->bias_curve.x).front()) +
+                             fmt(" to %g V), not extrapolated", (*x.curves->bias_curve.x).back());
             }
         }
         if (!t.value) {
@@ -269,7 +269,7 @@ inline CapacitorLossBreakdown capacitor_loss(const CapacitorRow& x, const Capaci
                     "effective capacitance at " + fmt("%g V DC", b.v_dc) + " not stated: a " +
                     (x.dielectric_code.empty() ? x.technology : x.dielectric_code) +
                     " ceramic loses capacitance with DC bias and the record " +
-                    (x.bias_curve.empty() ? std::string("has no DC-bias curve")
+                    (x.curves->bias_curve.empty() ? std::string("has no DC-bias curve")
                                           : std::string("DC-bias curve does not reach it")) +
                     curve_miss + " (not derated by a guessed factor)");
             } else {
@@ -331,7 +331,7 @@ inline CapacitorLossBreakdown capacitor_loss(const CapacitorRow& x, const Capaci
                                     " ripple rating: it cannot be moved to fs");
             } else if (!same(f0, fs)) {
                 std::optional<double> a, z;
-                if (auto c = to_curve(x.ripple_f_curve)) {
+                if (auto c = to_curve(x.curves->ripple_f_curve)) {
                     a = crossref::curve_at(*c, fs, crossref::Interp::LogLog);
                     z = crossref::curve_at(*c, f0, crossref::Interp::LogLog);
                 }
@@ -342,10 +342,10 @@ inline CapacitorLossBreakdown capacitor_loss(const CapacitorRow& x, const Capaci
                 } else {
                     t.missing.push_back(
                         fmt("ripple rating stated at %g Hz", f0) + "; " +
-                        (x.ripple_f_curve.empty()
+                        (x.curves->ripple_f_curve.empty()
                              ? std::string("the record has no ripple-current frequency table")
-                             : fmt("the record's ripple-current frequency table (%g", (*x.ripple_f_curve.x).front()) +
-                                   fmt(" to %g Hz) does not cover both points", (*x.ripple_f_curve.x).back())) +
+                             : fmt("the record's ripple-current frequency table (%g", (*x.curves->ripple_f_curve.x).front()) +
+                                   fmt(" to %g Hz) does not cover both points", (*x.curves->ripple_f_curve.x).back())) +
                         fmt(" to move it to fs %g Hz (not extrapolated)", fs));
                 }
             }
@@ -360,7 +360,7 @@ inline CapacitorLossBreakdown capacitor_loss(const CapacitorRow& x, const Capaci
                                     "cannot be moved to the " + fmt("%g degC", *op.ambient) + " ambient");
             } else if (same_temp(t0, *op.ambient)) {
                 temp_basis = fmt(" at %g degC", t0);
-            } else if (x.ripple_t_curve.empty() && t0 > *op.ambient) {
+            } else if (x.curves->ripple_t_curve.empty() && t0 > *op.ambient) {
                 // Stated at a temperature above the ambient, no table (owner 2026-11-14): the
                 // stated value is a conservative lower bound of the rating at the ambient.
                 temp_basis = fmt(" at the %g degC ambient", *op.ambient) +
@@ -371,7 +371,7 @@ inline CapacitorLossBreakdown capacitor_loss(const CapacitorRow& x, const Capaci
                                   ", with no temperature table: used as a conservative lower bound");
             } else {
                 std::optional<double> a, z;
-                if (auto c = to_curve(x.ripple_t_curve)) {
+                if (auto c = to_curve(x.curves->ripple_t_curve)) {
                     a = crossref::curve_at(*c, *op.ambient, crossref::Interp::Linear);
                     z = crossref::curve_at(*c, t0, crossref::Interp::Linear);
                 }
@@ -383,10 +383,10 @@ inline CapacitorLossBreakdown capacitor_loss(const CapacitorRow& x, const Capaci
                 } else {
                     t.missing.push_back(
                         fmt("ripple rating stated at %g degC", t0) + "; " +
-                        (x.ripple_t_curve.empty()
+                        (x.curves->ripple_t_curve.empty()
                              ? std::string("the record has no ripple-current temperature table")
-                             : fmt("the record's ripple-current temperature table (%g", (*x.ripple_t_curve.x).front()) +
-                                   fmt(" to %g degC) does not cover both points", (*x.ripple_t_curve.x).back())) +
+                             : fmt("the record's ripple-current temperature table (%g", (*x.curves->ripple_t_curve.x).front()) +
+                                   fmt(" to %g degC) does not cover both points", (*x.curves->ripple_t_curve.x).back())) +
                         fmt(" to move it to the %g degC ambient (not extrapolated)", *op.ambient));
                 }
             }

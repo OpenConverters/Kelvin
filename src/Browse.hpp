@@ -12,7 +12,12 @@
 //                  "<boolField>": true, "mpn": "substr" },
 //     "sort": {"field": "<numField>|mpn|manufacturer|lineno", "dir": "asc"|"desc"},
 //     "offset": 0, "limit": 50, "withFacets": false, "facetTop": 100,
-//     "histogram": {"field": "<numField>", "buckets": 24, "log": true} }
+//     "histogram": {"field": "<numField>", "buckets": 24, "log": true}, "curves": false }
+// curves (v23, owner 2026-11-15): true puts each row's measured curves on it (esr_curve,
+// coss_curve, inductance_curves, ...), which needs the family's curve shard loaded and THROWS
+// (CurvesNotLoaded) when it is not. Without it a row of a family that has curves carries
+// "curvesOmitted": true and no curve key at all, so nothing downstream can mistake an omitted
+// curve for a record that states none (null).
 // Unknown filter/sort fields throw InvalidOptions (no silent skips).
 // histogram: bucket counts of one numeric field over the FILTERED set (log10 or linear
 // edges); rows lacking the datum (and, for log, non-positive values) are reported in
@@ -347,10 +352,10 @@ json field_names() {
 
 // ---- per-family row fields that are not scalars (not filterable, not sortable) -----------------
 // Emitted with the row so the cross-reference can read them without a second fetch.
-inline void extra_row_json(const RowBase&, json&) {}
+inline void scalar_extra_json(const RowBase&, json&) {}
 // A resistor's stated derating curve (v18) as two parallel arrays, or null when the record
 // states none — never an empty curve, which would read as "derates to nothing".
-inline void extra_row_json(const ResistorRow& r, json& o) {
+inline void scalar_extra_json(const ResistorRow& r, json& o) {
     if (r.derating_temperature.empty()) {
         o["derating_temperature"] = nullptr;
         o["derating_amplitude"] = nullptr;
@@ -385,44 +390,72 @@ inline json curve_json(const CurvePts& c) {
     if (c.unit_inferred) o["unit_inferred"] = c.unit_note;
     return o;
 }
-inline void extra_row_json(const CapacitorRow& r, json& o) {
-    o["esr_curve"] = curve_json(r.esr_curve);
-    o["impedance_curve"] = curve_json(r.z_curve);
-    o["capacitance_frequency_curve"] = curve_json(r.cf_curve);
-    o["esl_curve"] = curve_json(r.esl_curve);
-    o["capacitance_bias_curve"] = curve_json(r.bias_curve);
-    o["esr_from_curve"] = r.esr_from_curve;  // the ESR / its 100 kHz were read off the curve
-    o["ripple_f_curve"] = curve_json(r.ripple_f_curve);  // ripple tables (owner 2026-11-14)
-    o["ripple_t_curve"] = curve_json(r.ripple_t_curve);
+// v23: the measured curves of a row (curve_row_json) are emitted apart from its other
+// non-scalar fields (extra_row_json): they live in the curve shard and need it loaded.
+inline void curve_row_json(const RowBase&, json&) {}
+inline void curve_row_json(const CapacitorRow& r, json& o) {
+    o["esr_curve"] = curve_json(r.curves->esr_curve);
+    o["impedance_curve"] = curve_json(r.curves->z_curve);
+    o["capacitance_frequency_curve"] = curve_json(r.curves->cf_curve);
+    o["esl_curve"] = curve_json(r.curves->esl_curve);
+    o["capacitance_bias_curve"] = curve_json(r.curves->bias_curve);
+    o["ripple_f_curve"] = curve_json(r.curves->ripple_f_curve);  // ripple tables (owner 2026-11-14)
+    o["ripple_t_curve"] = curve_json(r.curves->ripple_t_curve);
 }
-inline void extra_row_json(const MosfetRow& r, json& o) {
-    o["ciss_curve"] = curve_json(r.ciss_curve);
-    o["coss_curve"] = curve_json(r.coss_curve);
-    o["crss_curve"] = curve_json(r.crss_curve);
-    o["rds_on_id_curve"] = curve_json(r.rds_on_id_curve);
-    o["rds_on_tj_curve"] = curve_json(r.rds_on_tj_curve);
-    o["qg_curve"] = curve_json(r.qg_curve);
-    if (r.id_ambient_curves.empty()) {
+inline void scalar_extra_json(const CapacitorRow& r, json& o) {
+    o["esr_from_curve"] = r.esr_from_curve;  // the ESR / its 100 kHz were read off the curve
+}
+inline void curve_row_json(const MosfetRow& r, json& o) {
+    o["ciss_curve"] = curve_json(r.curves->ciss_curve);
+    o["coss_curve"] = curve_json(r.curves->coss_curve);
+    o["crss_curve"] = curve_json(r.curves->crss_curve);
+    o["rds_on_id_curve"] = curve_json(r.curves->rds_on_id_curve);
+    o["rds_on_tj_curve"] = curve_json(r.curves->rds_on_tj_curve);
+    o["qg_curve"] = curve_json(r.curves->qg_curve);
+    if (r.curves->id_ambient_curves.empty()) {
         o["id_ambient_curves"] = nullptr;
     } else {
         json a = json::array();
-        for (const auto& c : r.id_ambient_curves) a.push_back(curve_json(c));
+        for (const auto& c : r.curves->id_ambient_curves) a.push_back(curve_json(c));
         o["id_ambient_curves"] = std::move(a);
     }
 }
-inline void extra_row_json(const DiodeRow& r, json& o) {
-    o["vf_curve"] = curve_json(r.vf_curve);
-    o["ir_curve"] = curve_json(r.ir_curve);
-    o["cj_curve"] = curve_json(r.cj_curve);
+inline void curve_row_json(const DiodeRow& r, json& o) {
+    o["vf_curve"] = curve_json(r.curves->vf_curve);
+    o["ir_curve"] = curve_json(r.curves->ir_curve);
+    o["cj_curve"] = curve_json(r.curves->cj_curve);
 }
-inline void extra_row_json(const ConnectorRow& r, json& o) {
-    o["current_ambient_curve"] = curve_json(r.current_ambient_curve);
+inline void curve_row_json(const ConnectorRow& r, json& o) {
+    o["current_ambient_curve"] = curve_json(r.curves->current_ambient_curve);
+}
+
+inline void curve_row_json(const MagneticRow& r, json& o) {
+    // Every L(I) curve (v22, owner 2026-11-14) in the shared curve shape, null when none.
+    if (r.curves->l_curves.empty()) {
+        o["inductance_curves"] = nullptr;
+    } else {
+        o["inductance_curves"] = json::array();
+        for (const CurvePts& c : r.curves->l_curves) o["inductance_curves"].push_back(curve_json(c));
+    }
+    // The rated currents per temperature rise (v22, owner 2026-11-14): {x: [K], y: [A],
+    // temperature?: ambient degC}, possibly ONE point; null when not stated / not readable.
+    o["rated_current_points"] = curve_json(r.curves->rated_points);
+    // Measured curves (v22, owner 2026-11-14) in the spec block's shape {x: [...], y: [...]},
+    // null when the record states none. A CMC's |Z|(f) is its common-mode curve ("mode").
+    o["impedance_curve"] = curve_json(r.curves->z_curve);
+    if (!r.curves->z_curve.empty() && r.device_type == "commonModeChoke")
+        o["impedance_curve"]["mode"] = "common";
+    o["resistance_curve"] = curve_json(r.curves->r_curve);
+    o["reactance_curve"] = curve_json(r.curves->x_curve);
+    o["dm_impedance_curve"] = curve_json(r.curves->dm_z_curve);
+    o["cm_insertion_loss_curve"] = curve_json(r.curves->cm_il_curve);
+    o["dm_insertion_loss_curve"] = curve_json(r.curves->dm_il_curve);
 }
 
 // A magnetic's whole saturation table (v20) as the ranker's saturation_points shape:
 // [{current, percent_drop, temperature}], a criterion or temperature the record does not state
 // is null. null when the record states no Isat at all — never an empty table.
-inline void extra_row_json(const MagneticRow& r, json& o) {
+inline void scalar_extra_json(const MagneticRow& r, json& o) {
     // The whole turns-ratio array (v22), null when the record states none.
     o["turns_ratios"] = r.turns_ratios.empty() ? json(nullptr) : json(r.turns_ratios);
     // Every wiring configuration's ratios (v22, owner 2026-11-13 W4), null when none states one.
@@ -436,27 +469,7 @@ inline void extra_row_json(const MagneticRow& r, json& o) {
         o["bias_curve"] = {{"current", r.bias_curve_current}, {"ratio", r.bias_curve_ratio}};
     if (!r.bias_curve_current.empty() && !std::isnan(r.bias_curve_temperature))
         o["bias_curve"]["temperature"] = r.bias_curve_temperature;
-    // Every L(I) curve (v22, owner 2026-11-14) in the shared curve shape, null when none.
-    if (r.l_curves.empty()) {
-        o["inductance_curves"] = nullptr;
-    } else {
-        o["inductance_curves"] = json::array();
-        for (const CurvePts& c : r.l_curves) o["inductance_curves"].push_back(curve_json(c));
-    }
     o["saturation_from_curve"] = r.sat_table_from_curve;
-    // The rated currents per temperature rise (v22, owner 2026-11-14): {x: [K], y: [A],
-    // temperature?: ambient degC}, possibly ONE point; null when not stated / not readable.
-    o["rated_current_points"] = curve_json(r.rated_points);
-    // Measured curves (v22, owner 2026-11-14) in the spec block's shape {x: [...], y: [...]},
-    // null when the record states none. A CMC's |Z|(f) is its common-mode curve ("mode").
-    o["impedance_curve"] = curve_json(r.z_curve);
-    if (!r.z_curve.empty() && r.device_type == "commonModeChoke")
-        o["impedance_curve"]["mode"] = "common";
-    o["resistance_curve"] = curve_json(r.r_curve);
-    o["reactance_curve"] = curve_json(r.x_curve);
-    o["dm_impedance_curve"] = curve_json(r.dm_z_curve);
-    o["cm_insertion_loss_curve"] = curve_json(r.cm_il_curve);
-    o["dm_insertion_loss_curve"] = curve_json(r.dm_il_curve);
     if (r.sat_table_current.empty()) {
         o["saturation_points"] = nullptr;
         return;
@@ -470,6 +483,14 @@ inline void extra_row_json(const MagneticRow& r, json& o) {
         pts.push_back(std::move(p));
     }
     o["saturation_points"] = std::move(pts);
+}
+
+// Every non-scalar field of a row, its curves included (the v22 browse row; tests build the
+// ranker spec from it). Needs the curve shard for a family with curves.
+template <class Row>
+void extra_row_json(const Row& r, json& o) {
+    scalar_extra_json(r, o);
+    curve_row_json(r, o);
 }
 
 // ---- parsed query -----------------------------------------------------------------------------
@@ -503,6 +524,7 @@ struct Query {
     int histogram_field = -1;  // index into table.nums, -1 = none
     size_t histogram_buckets = 24;
     bool histogram_log = false;
+    bool curves = false;  // v23: put the rows' measured curves on them (needs the curve shard)
 };
 
 template <class Row>
@@ -610,6 +632,10 @@ Query<Row> parse_query(const json& q) {
         if (!q.at("limit").is_number_integer() || q.at("limit").get<int64_t>() < 0)
             throw InvalidOptions("browse: limit must be a non-negative integer");
         out.limit = std::min<size_t>(q.at("limit").get<size_t>(), 1000);
+    }
+    if (q.contains("curves")) {
+        if (!q.at("curves").is_boolean()) throw InvalidOptions("browse: curves must be a boolean");
+        out.curves = q.at("curves").get<bool>();
     }
     if (q.contains("withFacets")) {
         if (!q.at("withFacets").is_boolean())
@@ -780,7 +806,13 @@ json browse_rows(const Shard<Row>& shard, const json& query) {
         for (const auto& [name, mem] : t.strs) o[name] = r.*mem;
         for (const auto& [name, mem] : t.bools) o[name] = r.*mem;
         for (const auto& [name, mem] : t.lists) o[name] = r.*mem;
-        extra_row_json(r, o);
+        scalar_extra_json(r, o);
+        if constexpr (row_has_curves<Row>) {
+            // v23: curves only when asked for (they need the curve shard; a detached row
+            // throws CurvesNotLoaded here). Otherwise the row says they were left off.
+            if (q.curves) curve_row_json(r, o);
+            else o["curvesOmitted"] = true;
+        }
         rows.push_back(std::move(o));
     }
 

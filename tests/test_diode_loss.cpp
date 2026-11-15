@@ -294,13 +294,13 @@ TEST_CASE("diode loss: the API reads lossOperatingPoint strictly", "[diode_loss]
 // ---- curves (Vf(If), Cj(Vr), Ir(Vr) on DiodeRow since curves-ff) ---------------------------
 
 namespace {
-DiodeCurves curves_of(const DiodeRow& d) { return {&d.vf_curve, &d.cj_curve, &d.ir_curve}; }
+DiodeCurves curves_of(const DiodeRow& d) { return {&d.curves->vf_curve, &d.curves->cj_curve, &d.curves->ir_curve}; }
 }  // namespace
 
 TEST_CASE("diode loss: Vf read off the Vf(If) curve at the current conducted", "[diode_loss_curves]") {
     // STPS30L60CT: Vf(If) 1 A 0.30 V, 5 A 0.36 V (unlabelled; its own 0.42 V at 15 A confirms SI).
     const DiodeRow& d = row("STPS30L60CT");
-    REQUIRE_FALSE(d.vf_curve.empty());
+    REQUIRE_FALSE(d.curves->vf_curve.empty());
     const DiodeLossBreakdown b = diode_loss(d, paper_point(), curves_of(d));
     const double vf2 = std::exp(std::log(0.30) + std::log(2.0) / std::log(5.0) *
                                                      (std::log(0.36) - std::log(0.30)));
@@ -328,7 +328,7 @@ TEST_CASE("diode loss: Qc integrated from the Cj(Vr) curve up to Vin, never abov
     // C3D10065A: Cj 280 pF at 0 V, 150 pF at 10 V, 70 pF at 50 V. To 36 V (trapezoid, the end
     // read linearly at 98 pF).
     const DiodeRow& c3d = row("C3D10065A");
-    REQUIRE_FALSE(c3d.cj_curve.empty());
+    REQUIRE_FALSE(c3d.curves->cj_curve.empty());
     const DiodeLossBreakdown b = diode_loss(c3d, paper_point(), curves_of(c3d));
     const double qc = 0.5 * (280e-12 + 150e-12) * 10 + 0.5 * (150e-12 + 98e-12) * 26;
     REQUIRE(b.switching.watts);
@@ -339,7 +339,7 @@ TEST_CASE("diode loss: Qc integrated from the Cj(Vr) curve up to Vin, never abov
     // computed, and the basis says the 0 to 0.5 V span is left out (a slight lower bound).
     // Cj 4.5 / 3.2 / 1.5 / 1.1 / 0.8 / 0.5 nF at 0.5 / 1 / 5 / 10 / 20 / 40 V; at 36 V 0.56 nF.
     const DiodeRow& st = row("STPS30L60CT");
-    REQUIRE_FALSE(st.cj_curve.empty());
+    REQUIRE_FALSE(st.curves->cj_curve.empty());
     const DiodeLossBreakdown s = diode_loss(st, paper_point(), curves_of(st));
     const double qs = 0.5 * (4.5e-9 + 3.2e-9) * 0.5 + 0.5 * (3.2e-9 + 1.5e-9) * 4 +
                       0.5 * (1.5e-9 + 1.1e-9) * 5 + 0.5 * (1.1e-9 + 0.8e-9) * 10 +
@@ -366,7 +366,7 @@ TEST_CASE("diode loss: Ir read off the Ir(Vr) curve at Vin, its temperature stat
           "[diode_loss_curves]") {
     // MSS1P6HM3_A/H: Ir(Vr) at 125 degC, 2.62 mA at 36.02 V, 1.911 mA at 18.02 V.
     const DiodeRow& d = row("MSS1P6HM3_A/H");
-    REQUIRE_FALSE(d.ir_curve.empty());
+    REQUIRE_FALSE(d.curves->ir_curve.empty());
     DiodeLossOperatingPoint op = paper_point();
     op.tj = 100;
     const DiodeLossBreakdown b = diode_loss(d, op, curves_of(d));

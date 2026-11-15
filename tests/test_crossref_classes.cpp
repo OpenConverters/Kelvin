@@ -1014,7 +1014,7 @@ TEST_CASE("the device class survives extraction into the browse row",
     // records, copied verbatim.
     auto shard = kelvin::build_resistor_shard(std::string(KELVIN_TEST_DIR) +
                                               "/fixtures/resistors_arrays.ndjson");
-    json all = kelvin::browse::browse_rows(shard, json{{"limit", 100}});
+    json all = kelvin::browse::browse_rows(shard, json{{"limit", 100}, {"curves", true}});
     std::map<std::string, json> by_mpn;
     for (const auto& row : all.at("rows")) by_mpn[row.at("mpn").get<std::string>()] = row;
     REQUIRE(by_mpn.size() == 8);
@@ -1343,7 +1343,7 @@ TEST_CASE("the four-lead package survives extraction into the browse row",
     // catalogue records, copied verbatim.
     auto shard = kelvin::build_diode_shard(std::string(KELVIN_TEST_DIR) +
                                            "/fixtures/diodes_bridges.ndjson");
-    json all = kelvin::browse::browse_rows(shard, json{{"limit", 100}});
+    json all = kelvin::browse::browse_rows(shard, json{{"limit", 100}, {"curves", true}});
     std::map<std::string, json> by_mpn;
     for (const auto& row : all.at("rows")) by_mpn[row.at("mpn").get<std::string>()] = row;
     REQUIRE(by_mpn.size() == 8);
