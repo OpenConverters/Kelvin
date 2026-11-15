@@ -284,15 +284,21 @@ for (const k of ['igbt', 'varistor', 'analog', 'bjt']) assert.ok(XREF.some((f) =
 assert.ok(!XREF.some((f) => f.key === 'controller'))
 const famCases = [
   ['igbt', { mpn: 'IGBT-A', manufacturer: 'A', vces_rated: 650, ic_continuous: 40, vce_sat: 1.6,
-    tj_max: 175, technology: 'si' }, 'igbt',
+    vce_sat_ic: 40, tj_max: 175, technology: 'si' }, 'igbt',
   (q) => assert.ok(Math.abs(q.filters.vces_rated.min - 585) < 1e-9),
-  (s) => { assert.equal(s.vces, 650); assert.equal(s.ic, 40); assert.equal(s.technology, 'si') }],
+  (s) => { assert.equal(s.vces, 650); assert.equal(s.ic, 40); assert.equal(s.technology, 'si')
+    assert.equal(s.vce_sat, 1.6); assert.equal(s.vce_sat_ic, 40) }],
   ['varistor', { mpn: 'MOV-A', manufacturer: 'A', varistor_voltage: 430, clamping_voltage: 710,
-    peak_surge_current: 6500, max_continuous_dc_voltage: 350, capacitance: 4e-10, technology: 'mov' }, 'varistor',
+    peak_surge_current: 6500, max_continuous_dc_voltage: 350, max_continuous_ac_voltage: 275,
+    energy_absorption: 190, capacitance: 4e-10, technology: 'mov' }, 'varistor',
   (q) => { assert.ok(Math.abs(q.filters.varistor_voltage.min - 387) < 1e-9)
-    assert.ok(Math.abs(q.filters.varistor_voltage.max - 473) < 1e-9) },
+    assert.ok(Math.abs(q.filters.varistor_voltage.max - 473) < 1e-9)
+    // the hard working-voltage / energy gates are not pool filters (an omission is UNVERIFIED)
+    assert.equal(q.filters.max_continuous_dc_voltage, undefined)
+    assert.equal(q.filters.energy_absorption, undefined) },
   (s) => { assert.equal(s.value_si, 430); assert.equal(s.clamping_voltage, 710)
-    assert.equal(s.peak_surge_current, 6500) }],
+    assert.equal(s.peak_surge_current, 6500); assert.equal(s.max_continuous_ac_voltage, 275)
+    assert.equal(s.energy_absorption, 190) }],
   ['analog', { mpn: 'OPA-A', manufacturer: 'A', device_type: 'operationalAmplifier', channels: 2,
     gain_bandwidth: 1e6, slew_rate: 5e5, input_offset_voltage: -2e-3, input_bias_current: 2e-8,
     cmrr: 80, vsupply_min: 3, vsupply_max: 32 }, 'analog',
@@ -301,13 +307,17 @@ const famCases = [
   (s) => { assert.equal(s.subtype, 'operationalAmplifier'); assert.equal(s.channels, 2)
     assert.equal(s.gbw, 1e6); assert.equal(s.input_offset_voltage, -2e-3); assert.equal(s.cmrr_db, 80)
     // unstated tri-state / string fields travel as null, never ''
-    assert.equal(s.rail_to_rail_input, null); assert.equal(s.output_stage, null) }],
+    assert.equal(s.rail_to_rail_input, null); assert.equal(s.output_stage, null)
+    // package fit is the footprint gate on the case code, not a spec key (owner 2026-11-15)
+    assert.equal(s.package, undefined) }],
   ['bjt', { mpn: 'BJT-A', manufacturer: 'A', vceo_rated: 50, ic_continuous: 0.5, hfe_min: 200,
-    transition_frequency: 6e8, power_dissipation: 0.7, polarity: 'pnp', technology: 'Si' }, 'bjt',
+    transition_frequency: 6e8, power_dissipation: 0.7, polarity: 'pnp', technology: 'Si',
+    vce_sat: 0.25, tj_max: 150 }, 'bjt',
   (q) => { assert.ok(Math.abs(q.filters.vceo_rated.min - 45) < 1e-9)
     assert.deepEqual(q.filters.polarity, ['pnp']) },
   (s) => { assert.equal(s.vceo, 50); assert.equal(s.ic, 0.5); assert.equal(s.hfe_min, 200)
-    assert.equal(s.transition_frequency, 6e8); assert.equal(s.polarity, 'pnp') }],
+    assert.equal(s.transition_frequency, 6e8); assert.equal(s.polarity, 'pnp')
+    assert.equal(s.vce_sat, 0.25); assert.equal(s.tj_max, 150) }],
 ]
 for (const [family, orig, category, checkPool, checkSpec] of famCases) {
   let q = null, seenCat = null, seenOrig = null

@@ -1990,6 +1990,9 @@ std::optional<IgbtRow> extract_igbt(const json& env) {
     r.vces_rated = *vces;
     r.ic_continuous = *ic;
     r.vce_sat = get_num(*refs->elec, "collectorEmitterSaturation").value_or(0.0);
+    // The current Vce(sat) is stated at (v24). Unstated stays NaN: unknown, never 0.
+    if (auto ic_sat = get_num(*refs->elec, "collectorEmitterSaturationIc"); pos(ic_sat))
+        r.vce_sat_ic = *ic_sat;
     r.technology = get_str(*refs->part, "technology").value_or("");
     auto st = get_str(*refs->mi, "status");
     r.is_production = st && *st == "production";
@@ -2033,6 +2036,13 @@ std::optional<BjtRow> extract_bjt(const json& env) {
     // fT, Hz (v24). Unstated stays NaN: unknown, never 0.
     if (auto ft = get_num(*refs->elec, "transitionFrequency"); ft && *ft > 0)
         r.transition_frequency = *ft;
+    // Vce(sat), V (v24), a magnitude like the ratings above (a PNP's may be stated negative).
+    if (auto vs = rating_magnitude(get_num(*refs->elec, "saturationVoltage"), pnp); pos(vs))
+        r.vce_sat = *vs;
+    // The junction limit (v24; the row had the field and never filled it), as for the IGBT.
+    if (const json* bdi = obj_get(*refs->mi, "datasheetInfo"))
+        if (const json* th = obj_get(*bdi, "thermal"))
+            if (auto tj = get_num(*th, "junctionTemperatureMax")) r.tj_max = *tj;
     auto st = get_str(*refs->mi, "status");
     r.is_production = st && *st == "production";
     return r;
@@ -2065,6 +2075,9 @@ std::optional<VaristorRow> extract_varistor(const json& env) {
     r.peak_surge_current = get_num(*elec, "peakSurgeCurrent").value_or(0.0);
     r.max_continuous_dc_voltage = get_num(*elec, "maxContinuousDcVoltage").value_or(0.0);
     r.capacitance = get_num(*elec, "capacitance").value_or(0.0);
+    if (auto vac = get_num(*elec, "maxContinuousAcVoltage"); pos(vac))  // v24
+        r.max_continuous_ac_voltage = *vac;
+    if (auto e = get_num(*elec, "energyAbsorption"); pos(e)) r.energy_absorption = *e;  // v24
     r.technology = get_str(*part, "technology").value_or("");
     auto st = get_str(*mi, "status");
     r.is_production = st && *st == "production";

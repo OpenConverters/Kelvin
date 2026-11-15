@@ -427,15 +427,16 @@ export const XREF = [
   {
     key: 'igbt', label: 'IGBTs', category: 'igbt',
     // The ranker's IGBT model (owner 2026-11-15): Vces is the hard gate (below 0.9x
-    // rejects), Ic a soft one (critical_ratings("igbt")), Vce(sat) lower-is-better and Tj max
-    // must be reached (kIgbt), plus the Si / SiC process check shared with the MOSFET and the
-    // diode.
+    // rejects), Ic a soft one (critical_ratings("igbt")), Vce(sat) lower-is-better — compared
+    // only when both records state it at the same collector current, UNVERIFIED otherwise —
+    // and Tj max must be reached (kIgbt), plus the Si / SiC process check shared with the
+    // MOSFET and the diode.
     primary: null,
     sameFacet: { f: 'technology', label: 'technology' },
     hardKeys: ['vces'],
     hardMin: [{ row: 'vces_rated', factor: 0.9 }],
     spec: (r) => ({ ...base(r), vces: nz(r.vces_rated), ic: nz(r.ic_continuous),
-      vce_sat: nz(r.vce_sat), technology: r.technology ?? '',
+      vce_sat: nz(r.vce_sat), vce_sat_ic: nz(r.vce_sat_ic), technology: r.technology ?? '',
       // Raw, NOT through nz(): 0 degC would be a stated value. Absent -> null.
       tj_max: r.tj_max ?? null }),
     params: [
@@ -449,19 +450,25 @@ export const XREF = [
     key: 'varistor', label: 'Varistors', category: 'varistor',
     // The varistor voltage is the primary value (primary_value_spec("varistor"): PASS within
     // +/-5 %, accept +/-10 %, the marking's own tolerance); the clamping voltage must not
-    // rise and the surge current must not fall, the maximum continuous DC voltage must be
-    // reached and the capacitance must not grow (kVaristor). None is a reject edge, so no
-    // hard key: a record missing Vclamp / Isurge is capped by the ranker (missing_required_data).
+    // rise, the surge current must not fall and the capacitance must not grow (kVaristor).
+    // The maximum continuous DC and AC voltages and the energy rating are hard gates (owner
+    // 2026-11-15, critical_ratings("varistor")): any value below the original's rejects. They
+    // are NOT pre-gated in the pool: a candidate whose record omits one is UNVERIFIED in the
+    // ranker, not refused, and a range filter would drop it.
     primary: { row: 'varistor_voltage', label: 'V varistor', unit: 'V', acceptLo: 0.90, acceptHi: 1.10 },
     sameFacet: { f: 'technology', label: 'type' },
-    hardKeys: [],
+    hardKeys: ['max_continuous_dc_voltage', 'max_continuous_ac_voltage', 'energy_absorption'],
     spec: (r) => ({ ...base(r), value_si: nz(r.varistor_voltage),
       clamping_voltage: nz(r.clamping_voltage), peak_surge_current: nz(r.peak_surge_current),
       max_continuous_dc_voltage: nz(r.max_continuous_dc_voltage), capacitance: nz(r.capacitance),
+      max_continuous_ac_voltage: nz(r.max_continuous_ac_voltage),
+      energy_absorption: nz(r.energy_absorption),
       technology: r.technology ?? '' }),
     params: [
       { key: 'value', label: 'V varistor', row: 'varistor_voltage', unit: 'V' },
       { key: 'max_continuous_dc_voltage', label: 'V dc max', row: 'max_continuous_dc_voltage', unit: 'V' },
+      { key: 'max_continuous_ac_voltage', label: 'V ac max', row: 'max_continuous_ac_voltage', unit: 'V' },
+      { key: 'energy_absorption', label: 'E', row: 'energy_absorption', unit: 'J' },
       { key: 'clamping_voltage', label: 'V clamp', row: 'clamping_voltage', unit: 'V' },
       { key: 'peak_surge_current', label: 'I surge', row: 'peak_surge_current', unit: 'A' },
       { key: 'capacitance', label: 'C', row: 'capacitance', unit: 'F' },
@@ -474,7 +481,8 @@ export const XREF = [
     // channel count like the connector's positions. The rest is kAnalog: the supply range,
     // GBW / slew rate (higher), offset / drift / bias (lower, as magnitudes), CMRR, quiescent
     // current per channel, rail-to-rail input / output, a comparator's propagation delay and
-    // output stage, resolution, sample rate, a switch's on-resistance, and the package.
+    // output stage, resolution, sample rate and a switch's on-resistance. The package fit is
+    // the shared footprint / mount gate on the case code (owner 2026-11-15).
     primary: null,
     sameFacet: { f: 'device_type', label: 'device type' },
     hardKeys: ['subtype', 'channels'],
@@ -495,10 +503,7 @@ export const XREF = [
       propagation_delay: nz(r.propagation_delay), on_resistance: nz(r.on_resistance),
       rail_to_rail_input: r.rail_to_rail_input || null,
       rail_to_rail_output: r.rail_to_rail_output || null,
-      output_stage: r.output_stage || null,
-      // The package the record states (part.case, else part.package: the row's case code),
-      // compared by kAnalog as an identity string.
-      package: r.caseCode || null }),
+      output_stage: r.output_stage || null }),
     params: [
       { key: 'channels', label: 'ch', row: 'channels', unit: '' },
       { key: 'supply_min_V', label: 'Vsup min', row: 'vsupply_min', unit: 'V' },
@@ -524,8 +529,9 @@ export const XREF = [
     // The ranker's BJT model (owner 2026-11-15), on the IGBT / MOSFET pattern: Vceo is the
     // hard gate (below 0.9x rejects), Ic a soft one (critical_ratings("bjt")); the polarity is
     // an identity (an NPN never substitutes for a PNP), so the pool keeps to the original's;
-    // the guaranteed minimum hFE, fT and the power rating are graded (kBjt). The package is
-    // the shared footprint / mount gate on the case code, as for every semiconductor.
+    // the guaranteed minimum hFE, fT, the power rating, Vce(sat) (at a common collector current
+    // only, which no BJT record states today, so UNVERIFIED) and Tj max are graded (kBjt). The
+    // package is the shared footprint / mount gate on the case code (owner 2026-11-15).
     primary: null,
     sameFacet: null,
     hardKeys: ['vceo'],
@@ -534,6 +540,9 @@ export const XREF = [
     spec: (r) => ({ ...base(r), vceo: nz(r.vceo_rated), ic: nz(r.ic_continuous),
       hfe_min: nz(r.hfe_min), transition_frequency: nz(r.transition_frequency),
       power_dissipation: nz(r.power_dissipation), polarity: r.polarity || null,
+      vce_sat: nz(r.vce_sat),
+      // Raw, NOT through nz(): 0 degC would be a stated value. Absent -> null.
+      tj_max: r.tj_max ?? null,
       technology: r.technology ?? '' }),
     params: [
       { key: 'vceo', label: 'Vceo', row: 'vceo_rated', unit: 'V' },
@@ -541,6 +550,8 @@ export const XREF = [
       { key: 'hfe_min', label: 'hFE min', row: 'hfe_min', unit: '' },
       { key: 'transition_frequency', label: 'fT', row: 'transition_frequency', unit: 'Hz' },
       { key: 'power_dissipation', label: 'P', row: 'power_dissipation', unit: 'W' },
+      { key: 'vce_sat', label: 'Vce(sat)', row: 'vce_sat', unit: 'V' },
+      { key: 'tj_max', label: 'Tj max', row: 'tj_max', unit: '°C' },
       { key: 'polarity', label: 'polarity', row: 'polarity', str: true },
     ],
   },

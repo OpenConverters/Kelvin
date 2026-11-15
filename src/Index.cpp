@@ -157,10 +157,12 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // The curve shard's own magic, so a base shard handed to the curve loader (or the reverse) is
 // refused by its first 8 bytes rather than misparsed.
 constexpr char kCurveMagic[8] = {'K', 'E', 'L', 'V', 'C', 'R', 'V', '\1'};
-// v24 carries a BJT's transition frequency (BjtRow.transition_frequency, SAS
-// electrical.transitionFrequency) and the analog fields the cross-reference's kAnalog table
-// already compared but no row carried (AnalogRow.offset_drift, quiescent_current,
-// propagation_delay, rail_to_rail_input / _output, output_stage; owner 2026-11-15). Numbered
+// v24 carries a BJT's transition frequency and saturation voltage (BjtRow.transition_frequency,
+// vce_sat; tj_max is now filled), an IGBT's Vce(sat) test current (IgbtRow.vce_sat_ic), a
+// varistor's AC working voltage and energy rating (VaristorRow.max_continuous_ac_voltage,
+// energy_absorption) and the analog fields the cross-reference's kAnalog table already
+// compared but no row carried (AnalogRow.offset_drift, quiescent_current, propagation_delay,
+// rail_to_rail_input / _output, output_stage; owner 2026-11-15). Numbered
 // 24: one above the v23 curve-shard format.
 constexpr uint32_t kFormatVersion = 24;
 
@@ -523,6 +525,7 @@ void row_io(Ar& ar, IgbtRow& r) {
     ar.dbl(r.rth_jc);
     ar.dbl(r.tj_max);
     ar.str(r.technology);
+    ar.dbl(r.vce_sat_ic);  // v24
     ar.boolean(r.is_production);
 }
 
@@ -537,6 +540,7 @@ void row_io(Ar& ar, BjtRow& r) {
     ar.str(r.technology);
     ar.str(r.polarity);     // v14
     ar.dbl(r.transition_frequency);  // v24
+    ar.dbl(r.vce_sat);               // v24
     ar.boolean(r.is_production);
 }
 
@@ -549,6 +553,8 @@ void row_io(Ar& ar, VaristorRow& r) {
     ar.dbl(r.max_continuous_dc_voltage);
     ar.dbl(r.capacitance);
     ar.str(r.technology);
+    ar.dbl(r.max_continuous_ac_voltage);  // v24
+    ar.dbl(r.energy_absorption);          // v24
     ar.boolean(r.is_production);
 }
 

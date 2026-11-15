@@ -345,7 +345,9 @@ inline std::vector<std::string> comparison_source_fields(const std::string& cat,
     if (cat == "igbt") {
         if (name == "vces") return {"electrical.collectorEmitterVoltage"};
         if (name == "ic") return {"electrical.continuousCollectorCurrent"};
-        if (name == "vce_sat") return {"electrical.collectorEmitterSaturation"};
+        if (name == "vce_sat" || name == "vce_sat_basis")
+            return {"electrical.collectorEmitterSaturation",
+                    "electrical.collectorEmitterSaturationIc"};
         if (name == "tj_max") return {"thermal.junctionTemperatureMax"};
         if (name == "process") return {"part.technology"};
         return {};
@@ -356,6 +358,8 @@ inline std::vector<std::string> comparison_source_fields(const std::string& cat,
         if (name == "hfe_min") return {"electrical.dcCurrentGain"};
         if (name == "transition_frequency") return {"electrical.transitionFrequency"};
         if (name == "power_dissipation") return {"electrical.powerDissipation"};
+        if (name == "vce_sat" || name == "vce_sat_basis") return {"electrical.saturationVoltage"};
+        if (name == "tj_max") return {"thermal.junctionTemperatureMax"};
         if (name == "polarity") return {"part.subType"};
         return {};
     }
@@ -364,6 +368,8 @@ inline std::vector<std::string> comparison_source_fields(const std::string& cat,
         if (name == "clamping_voltage") return {"electrical.clampingVoltage"};
         if (name == "peak_surge_current") return {"electrical.peakSurgeCurrent"};
         if (name == "max_continuous_dc_voltage") return {"electrical.maxContinuousDcVoltage"};
+        if (name == "max_continuous_ac_voltage") return {"electrical.maxContinuousAcVoltage"};
+        if (name == "energy_absorption") return {"electrical.energyAbsorption"};
         if (name == "capacitance") return {"electrical.capacitance"};
         return {};
     }
@@ -384,7 +390,6 @@ inline std::vector<std::string> comparison_source_fields(const std::string& cat,
         if (name == "resolution") return {"electrical.resolution"};
         if (name == "sample_rate") return {"electrical.sampleRate"};
         if (name == "on_resistance") return {"electrical.onResistance"};
-        if (name == "package") return {"part.package", "part.case"};
         return {};
     }
     if (cat == "timeBase") {
@@ -437,6 +442,15 @@ inline std::vector<Rating> critical_ratings(const std::string& cat) {
     if (cat == "bjt")
         return {{"vceo", Mode::HigherBetter, 0.95, 0.9, true},
                 {"ic", Mode::HigherBetter, 0.9, 0.7, false}};
+    // A varistor's working voltages and energy rating (owner 2026-11-15): hard, higher is
+    // better, and ANY value below the original's rejects (warn and gate factor 1.0) — below
+    // its maximum continuous voltage the original never conducts, and a substitute rated
+    // lower conducts on the original's line. A record that omits one is UNVERIFIED, never
+    // refused (score_directional).
+    if (cat == "varistor")
+        return {{"max_continuous_dc_voltage", Mode::HigherBetter, 1.0, 1.0, true},
+                {"max_continuous_ac_voltage", Mode::HigherBetter, 1.0, 1.0, true},
+                {"energy_absorption", Mode::HigherBetter, 1.0, 1.0, true}};
     return {};
 }
 
@@ -461,7 +475,8 @@ inline bool is_primary_rating(const std::string& cat, const std::string& key) {
         {"magnetic", {"saturation_current", "rated_current"}},
         {"chipBead", {"impedance_100mhz", "impedance_peak", "rated_current"}},
         {"connector", {"rated_current_A", "rated_voltage_V"}},
-        {"varistor", {"clamping_voltage", "peak_surge_current"}},
+        {"varistor", {"clamping_voltage", "peak_surge_current", "max_continuous_dc_voltage",
+                      "max_continuous_ac_voltage", "energy_absorption"}},
         {"resistor", {"power_rating"}}};
     const auto it = k.find(cat);
     return it != k.end() && it->second.count(key);
@@ -535,6 +550,9 @@ inline std::string primary_rating_label(const std::string& key) {
         {"rated_current", "rated current"},
         {"clamping_voltage", "clamping voltage"},
         {"peak_surge_current", "peak surge current"},
+        {"max_continuous_dc_voltage", "maximum continuous DC voltage"},
+        {"max_continuous_ac_voltage", "maximum continuous AC voltage"},
+        {"energy_absorption", "energy rating (10/1000 us)"},
         {"power_rating", "power rating"}};
     const auto it = k.find(key);
     return it != k.end() ? it->second : param_label(key);
@@ -1345,6 +1363,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             {"vces", {"collector-emitter voltage rating", "V"}},
             {"vceo", {"collector-emitter voltage rating", "V"}},
             {"ic", {"continuous collector current rating", "A"}},
+            {"max_continuous_dc_voltage", {"maximum continuous DC voltage", "V"}},
+            {"max_continuous_ac_voltage", {"maximum continuous AC voltage", "V"}},
+            {"energy_absorption", {"energy rating", "J"}},
             {"saturation_current", {"saturation current", "A"}},
             {"rated_current", {"rated current", "A"}},
             {"rated_current_A", {"rated current", "A"}},
@@ -2641,6 +2662,36 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         }
     }
 
+    // ── IGBT / BJT Vce(sat) basis (owner 2026-11-15) ─────────────────────────
+    // Vce(sat) rises with the collector current, so two values are compared only when BOTH
+    // records state the current they are quoted at and it is the same one (within the
+    // representation epsilon). Otherwise — a current on one side only, two different
+    // currents, or none stated — the vce_sat row is UNVERIFIED, with a vce_sat_basis row and
+    // a note, and no penalty (the diode Vf basis rule, without a curve to read across).
+    // SAS bjt.json has no field for the BJT's test current, so a BJT pair always lands here.
+    bool vce_sat_basis_unverified = false;
+    if (cat == "igbt" || cat == "bjt") {
+        const auto ov = num(original, "vce_sat"), sv = num(cand, "vce_sat");
+        const auto oi = num(original, "vce_sat_ic"), si = num(cand, "vce_sat_ic");
+        const bool same_basis =
+            oi && si && std::fabs(*oi - *si) <= 1e-9 * std::max(std::fabs(*oi), std::fabs(*si));
+        if (ov && sv && !same_basis) {
+            vce_sat_basis_unverified = true;
+            params.push_back({{"name", "vce_sat_basis"}, {"verdict", UNVERIFIED}});
+            char si_o[48] = "no stated collector current", si_s[48] = "no stated collector current";
+            if (oi) std::snprintf(si_o, sizeof si_o, "%g A", *oi);
+            if (si) std::snprintf(si_s, sizeof si_s, "%g A", *si);
+            char buf[400];
+            std::snprintf(buf, sizeof buf,
+                          "collector-emitter saturation voltage not on a common basis "
+                          "(original %g V at %s, substitute %g V at %s) — Vce(sat) rises with "
+                          "the collector current; confirm the substitute's Vce(sat) at the "
+                          "original's current from its datasheet",
+                          *ov, si_o, *sv, si_s);
+            notes.push_back(buf);
+        }
+    }
+
     // ── capacitance tolerance (the band each record guarantees) ─────────────
     // A capacitor's tolerance is the band the circuit was designed around, exactly as a
     // resistor's is: a +/-5 % C0G is not a drop-in for a +/-1 % one in a filter or timing
@@ -2785,7 +2836,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                     (ripple_basis_unverified || ripple_temp_basis_unverified)) ||
                                    (spec.key == "esr" && esr_basis_unverified));
         const bool coss_blind = (cat == "mosfet" && spec.key == "coss" && coss_basis_unverified) ||
-                                (cat == "diode" && spec.key == "vf" && vf_basis_unverified);
+                                (cat == "diode" && spec.key == "vf" && vf_basis_unverified) ||
+                                (spec.key == "vce_sat" && vce_sat_basis_unverified);
         const bool work_v_basis = spec.key == "max_voltage_V" && work_v.applies;
         // A diode's breakdown grade is DERIVED, (Vz max - Vz min) / (Vz max + Vz min), from two
         // window figures the datasheet states to 0.1 V. Two 5 % TVS grades therefore come out
@@ -3840,7 +3892,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // and the substitute's record does not is UNVERIFIED and noted like the operating
         // range above, with no demotion and no cap (Qarlos 2026-11-09, seeds 20575296 /
         // 20889483; secondary since the owner's rule of the same day).
-        if (cat == "diode" || cat == "igbt") {
+        if (cat == "diode" || cat == "igbt" || cat == "bjt") {
             const auto o_tj = num(original, "tj_max"), s_tj = num(cand, "tj_max");
             const std::string v = verdict_of("tj_max");
             if (v == FAIL && o_tj && s_tj) {
@@ -4638,7 +4690,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 {"voltage", {"rated voltage", "V"}},
                 {"vces", {"collector-emitter voltage rating", "V"}},
                 {"vceo", {"collector-emitter voltage rating", "V"}},
-                {"ic", {"continuous collector current rating", "A"}}};
+                {"ic", {"continuous collector current rating", "A"}},
+                {"max_continuous_dc_voltage", {"maximum continuous DC voltage", "V"}},
+                {"max_continuous_ac_voltage", {"maximum continuous AC voltage", "V"}},
+                {"energy_absorption", {"energy rating", "J"}}};
             const auto it = kWhat.find(r.key);
             const char* what = it != kWhat.end() ? it->second.first : r.key;
             const char* unit = it != kWhat.end() ? it->second.second : "";

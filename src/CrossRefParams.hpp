@@ -670,11 +670,9 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
     static const std::vector<ParamSpec> kVaristor = {
         {"clamping_voltage", D::Lower, 1.05, std::nullopt, false, true, nullptr},
         {"peak_surge_current", D::Higher, 0.9, std::nullopt, false, true, nullptr},
-        // Maximum continuous DC voltage (owner 2026-11-15): the working voltage the part
-        // stands without conducting, so the substitute must reach the original's. The band of
-        // the other maximum-voltage ratings (resistor max_voltage_V, connector rated voltage):
-        // equal or higher passes, down to 90 % warns, lower FAILs. Absent -> UNVERIFIED.
-        {"max_continuous_dc_voltage", D::Higher, 0.9, std::nullopt, false, false, nullptr},
+        // The maximum continuous DC / AC working voltages and the energy rating are hard
+        // critical ratings (critical_ratings("varistor"), CrossRef.hpp; owner 2026-11-15), not
+        // rows of this table.
         // Capacitance (owner 2026-11-15): the load the part puts on the line it protects.
         // Lower is better; the diode junction-capacitance band (up to 2x warns, beyond FAILs).
         // The records state no measurement frequency / bias for it, so it is compared as stated.
@@ -683,21 +681,26 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
     // An IGBT's ratings Vces / Ic are critical_ratings (CrossRef.hpp). The table grades the
     // conduction drop and the junction limit (owner 2026-11-15), on the diode's conventions:
     // Vce(sat) like the diode Vf (lower is better, up to 1.2x warns), Tj max like the diode
-    // tj_max (the substitute must reach it, no band). Vce(sat) is compared as stated: the
-    // shard carries no collector current it is stated at.
+    // tj_max (the substitute must reach it, no band). Vce(sat) is compared only when both
+    // records state it at the same collector current (vce_sat_ic); otherwise CrossRef.hpp
+    // reports it UNVERIFIED (owner 2026-11-15).
     static const std::vector<ParamSpec> kIgbt = {
         {"vce_sat", D::Lower, 1.2, std::nullopt, false, false, nullptr},
         {"tj_max", D::Higher, 0.0, 0.0, false, false, nullptr},
     };
     // A BJT (owner 2026-11-15), on the IGBT / MOSFET pattern: Vceo / Ic are critical_ratings
     // (CrossRef.hpp); the polarity is an identity like the MOSFET channel (an NPN is never a
-    // PNP's substitute); the guaranteed minimum gain and the power rating follow the generic
-    // equal-or-better band (down to 90 % warns), fT the analog bandwidth band (GBW, 0.7).
+    // PNP's substitute); the guaranteed minimum gain warns down to 0.7x, fT too (the GBW
+    // band), the power rating down to 0.9x; Vce(sat) and Tj max as for the IGBT (Vce(sat)
+    // only at a common collector current, which SAS bjt.json cannot state today — so it reads
+    // UNVERIFIED whenever both records state one).
     static const std::vector<ParamSpec> kBjt = {
         {"polarity", D::ExactMatch, 0.0, std::nullopt, false, false, nullptr},
-        {"hfe_min", D::Higher, 0.9, std::nullopt, false, false, nullptr},
+        {"hfe_min", D::Higher, 0.7, std::nullopt, false, false, nullptr},
         {"transition_frequency", D::Higher, 0.7, std::nullopt, false, false, nullptr},
         {"power_dissipation", D::Higher, 0.9, std::nullopt, false, false, nullptr},
+        {"vce_sat", D::Lower, 1.2, std::nullopt, false, false, nullptr},
+        {"tj_max", D::Higher, 0.0, 0.0, false, false, nullptr},
     };
     static const std::vector<ParamSpec> kCapacitor = {
         {"esr", D::Lower, 1.5, std::nullopt, false, true, nullptr},
@@ -861,10 +864,12 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
         {"mating_cycles", D::Higher, 0.5, std::nullopt, false, false, nullptr},
         {"contact_resistance", D::Lower, 2.0, std::nullopt, false, false, nullptr},
     };
+    // No "package" row (owner 2026-11-15): the package fit is the shared footprint / mount
+    // gate on the case code, as for every semiconductor; an exact string match failed
+    // "SOIC" against "SOIC-8".
     static const std::vector<ParamSpec> kAnalog = {
         {"subtype", D::ExactMatch, 0.0, std::nullopt, false, true, nullptr},
         {"channels", D::ExactMatch, 0.0, std::nullopt, false, true, nullptr},
-        {"package", D::ExactMatch, 0.0, std::nullopt, false, false, nullptr},
         {"supply_min_V", D::Lower, 0.0, 0.3, false, false, nullptr},
         {"supply_max_V", D::Higher, 0.9, std::nullopt, false, false, nullptr},
         {"gbw", D::Higher, 0.7, std::nullopt, false, false, nullptr},
@@ -1008,6 +1013,8 @@ inline std::string param_label(const std::string& key) {
         {"hfe_min", "minimum DC current gain (hFE)"},
         {"transition_frequency", "transition frequency (fT)"},
         {"max_continuous_dc_voltage", "maximum continuous DC voltage"},
+        {"max_continuous_ac_voltage", "maximum continuous AC voltage"},
+        {"energy_absorption", "energy rating"},
         {"on_resistance", "on-resistance"},
     };
     for (const auto& [k, label] : kLabels)

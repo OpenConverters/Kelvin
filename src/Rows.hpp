@@ -686,6 +686,9 @@ struct ResistorRow : RowBase {
 struct IgbtRow : RowBase {
     double vces_rated = 0, ic_continuous = 0, vce_sat = 0;
     double rth_jc = kNaN(), tj_max = kNaN();
+    // A — the collector current Vce(sat) is stated at (electrical.collectorEmitterSaturationIc);
+    // NaN when unstated. v24: the cross-reference compares two Vce(sat) only at one current.
+    double vce_sat_ic = kNaN();
     std::string technology;  // Si / SiC (part.technology)
     bool is_production = false;
     bool no_thermal() const { return !present(tj_max); }
@@ -697,6 +700,9 @@ struct BjtRow : RowBase {
     std::string technology;
     std::string polarity;  // part.subType: npn / pnp; ratings above are magnitudes for both
     double transition_frequency = kNaN();  // Hz — electrical.transitionFrequency (fT); v24
+    // V — electrical.saturationVoltage (v24). SAS bjt.json states no collector current for it,
+    // so the cross-reference cannot put two on one basis and reports it UNVERIFIED.
+    double vce_sat = kNaN();
     bool is_production = false;
     bool no_thermal() const { return !present(tj_max); }
 };
@@ -704,6 +710,9 @@ struct BjtRow : RowBase {
 struct VaristorRow : RowBase {
     double varistor_voltage = 0, clamping_voltage = 0, peak_surge_current = 0;
     double max_continuous_dc_voltage = 0, capacitance = 0;
+    // v24 (owner 2026-11-15): RAS electrical.maxContinuousAcVoltage (V rms) and
+    // electrical.energyAbsorption (J, 10/1000 us single pulse). NaN when unstated.
+    double max_continuous_ac_voltage = kNaN(), energy_absorption = kNaN();
     std::string technology;
     bool is_production = false;
 };

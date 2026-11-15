@@ -85,13 +85,14 @@ json spec_for(const std::string& cat, const json& row) {
     } else if (cat == "igbt") {
         // web/src/crossref.js XREF igbt (owner 2026-11-15)
         o["vces"] = num("vces_rated"); o["ic"] = num("ic_continuous");
-        o["vce_sat"] = num("vce_sat"); o["tj_max"] = num("tj_max");
-        o["technology"] = s("technology");
+        o["vce_sat"] = num("vce_sat"); o["vce_sat_ic"] = num("vce_sat_ic");
+        o["tj_max"] = num("tj_max"); o["technology"] = s("technology");
     } else if (cat == "bjt") {
         // web/src/crossref.js XREF bjt (owner 2026-11-15)
         o["vceo"] = num("vceo_rated"); o["ic"] = num("ic_continuous");
         o["hfe_min"] = num("hfe_min"); o["transition_frequency"] = num("transition_frequency");
         o["power_dissipation"] = num("power_dissipation");
+        o["vce_sat"] = num("vce_sat"); o["tj_max"] = num("tj_max");
         if (!s("polarity").empty()) o["polarity"] = s("polarity");
         o["technology"] = s("technology");
     } else if (cat == "varistor") {
@@ -100,6 +101,8 @@ json spec_for(const std::string& cat, const json& row) {
         o["peak_surge_current"] = num("peak_surge_current");
         o["max_continuous_dc_voltage"] = num("max_continuous_dc_voltage");
         o["capacitance"] = num("capacitance"); o["technology"] = s("technology");
+        o["max_continuous_ac_voltage"] = num("max_continuous_ac_voltage");
+        o["energy_absorption"] = num("energy_absorption");
     }
     return o;
 }
