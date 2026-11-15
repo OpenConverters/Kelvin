@@ -287,11 +287,9 @@ TEST_CASE("browse: histogram — log buckets count every present value once", "[
         InvalidOptions);
 }
 
-TEST_CASE("browse-only families: select refuses loudly", "[browse][select]") {
-    api::Engine eng(fixtures_dir(), "", /*quiet=*/true);
-    REQUIRE_THROWS_AS(eng.select("analog", json::object(), json::object()), InvalidOptions);
-    REQUIRE_THROWS_AS(eng.select("timing", json::object(), json::object()), InvalidOptions);
-}
+// "browse-only families: select refuses loudly" was retired 2026-11-15 (owner-approved): analog
+// and timing gained selectors and no family is left without one (controller selects too), so the
+// premise is gone. The missing-input refusals of the new selectors live in test_select_spec.cpp.
 
 TEST_CASE("select connector: gates + margin ranking + rejection buckets", "[select][connector]") {
     api::Engine eng(fixtures_dir(), "", /*quiet=*/true);

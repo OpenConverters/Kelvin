@@ -1,4 +1,4 @@
-// The five parametric selectors. Each filters the shard rows (exact Python order + rejection
+// The parametric selectors. Each filters the shard rows (exact Python order + rejection
 // keys), ranks the survivors by the tiebreaker tuple with source line number as the final key
 // (reproduces Python min()/max() first-in-file-order-wins semantics), and returns a
 // SelectionResult JSON. Throws NoCandidates (carrying the rejection histogram) when none pass.
@@ -63,6 +63,24 @@ json select_varistor(const Shard<VaristorRow>& shard, const VaristorConstraints&
 json select_connector(const Shard<ConnectorRow>& shard, const ConnectorConstraints& c,
                       ConnectorTiebreaker tb, size_t max_candidates = kDefaultMaxCandidates,
                       RecordFetcher* fetcher = nullptr, const MfrPolicy& mfr = {});
+
+// ---- Timing and analog ICs (owner-approved 2026-11-15) ----------------------
+// A requirement the record states and fails rejects the part (its own rejection bucket); one it
+// does not state passes UNVERIFIED; under excludeDiscontinued a part stating no lifecycle status
+// is kept and counts one more UNVERIFIED item (only a STATED non-production status drops it).
+// Order (owner 2026-11-15): fewer UNVERIFIED items first (an undeterminable size counts one
+// more, OpRanking.hpp); timing then the nearer frequency, the tightest stated stability, the
+// smallest board area; analog then the type's key figure (op-amp / comparator / in-amp / PGA
+// lowest |Vos|, ADC highest sample rate, DAC highest resolution, switch / mux lowest Ron; a part
+// not stating it after those that do), the smallest board area; both then file order. Every
+// candidate carries its checks {key, verdict, required, stated[, basis]}, the unverified list,
+// flags (programmable, overRated), notes, its boardArea and evidence.
+json select_timing(const Shard<TimingRow>& shard, const TimingConstraints& c,
+                   size_t max_candidates = kDefaultMaxCandidates,
+                   RecordFetcher* fetcher = nullptr, const MfrPolicy& mfr = {});
+json select_analog(const Shard<AnalogRow>& shard, const AnalogConstraints& c,
+                   size_t max_candidates = kDefaultMaxCandidates,
+                   RecordFetcher* fetcher = nullptr, const MfrPolicy& mfr = {});
 
 // ---- Magnetic (from-spec, rank-not-gate) -----------------------------------
 // Unlike every other selector this one NEVER hard-gates: it ranks the whole catalogue toward the

@@ -154,7 +154,11 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // <family>.curves.kidx, keyed by row index, which the browser fetches only when something reads
 // curves. The base header gains the curve shard's build id (so the base build id covers it) and
 // the curve shard's header names the base build id: a curve shard of another build is refused.
-constexpr uint32_t kFormatVersion = 23;
+// v24 (owner 2026-11-15, timing / analog selectors) carries the lifecycle status a timing or
+// analog record states (TimingRow.status / AnalogRow.status, manufacturerInfo.status; "" when
+// none): the selectors keep a part with no stated status and drop only a stated non-production
+// one, which is_production cannot tell apart. Every v23 shard must be rebuilt.
+constexpr uint32_t kFormatVersion = 24;
 // The curve shard's own magic, so a base shard handed to the curve loader (or the reverse) is
 // refused by its first 8 bytes rather than misparsed.
 constexpr char kCurveMagic[8] = {'K', 'E', 'L', 'V', 'C', 'R', 'V', '\1'};
@@ -603,6 +607,7 @@ void row_io(Ar& ar, AnalogRow& r) {
     ar.str(r.architecture);
     ar.str(r.input_stage);
     ar.boolean(r.is_production);
+    ar.str(r.status);  // v24 (owner 2026-11-15)
 }
 
 template <class Ar>
@@ -628,6 +633,7 @@ void row_io(Ar& ar, TimingRow& r) {
     ar.dbl(r.frequency_max);  // v22
     ar.dbl(r.current_consumption);  // v22 (owner 2026-11-13, S3)
     ar.boolean(r.is_production);
+    ar.str(r.status);  // v24 (owner 2026-11-15)
 }
 
 template <class Ar>
