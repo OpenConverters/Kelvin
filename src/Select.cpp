@@ -66,7 +66,8 @@ bool status_unverified(const RowBase& r, bool exclude_discontinued) {
 
 constexpr const char* kStatusNotStatedNote =
     "status not stated: the record names no lifecycle status, so it cannot be shown to be in "
-    "production (counts one more UNVERIFIED item)";
+    "production (counts one more UNVERIFIED item; the UNVERIFIED count is the first sort key, so "
+    "it ranks after the parts that state production)";
 
 // A candidate of a family whose own JSON carries no unverified list: "status" joins (or starts)
 // its unverified list, the note joins its notes, and the sortKey says so — its unverifiedItems

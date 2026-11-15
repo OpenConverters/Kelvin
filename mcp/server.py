@@ -1656,9 +1656,12 @@ def recommend_parts(family: str, requirements: dict, options: dict | None = None
         requirements: that family's designRequirements block, SI units. The keys each family
             reads are listed by describe_family (e.g. mosfet: ratedDrainSourceVoltage,
             ratedContinuousDrainCurrent, maximumOnResistance).
-        options: selector options — tiebreaker, excludeDiscontinued (default true: a stated
-            non-production lifecycle status drops a part; a record stating none is kept with
-            "status" in its unverified list and ranks after the parts that state one),
+        options: selector options — tiebreaker, excludeDiscontinued (default true, every
+            family that takes it: a stated non-production lifecycle status drops a part; a
+            record stating none is kept, "status" joins its unverified list with a 'status not
+            stated' note, and it counts one more UNVERIFIED item. The UNVERIFIED count is the
+            FIRST sort key, so a status-less part ranks after the parts that state production,
+            whatever its other merits),
             manufacturerAllowlist,
             maxManufacturerFraction, switchingFrequency, and per-family extras (mosfet qgMax /
             technologyAllowed, diode qrrMax, capacitor capacitanceMin|Max, resistor
@@ -1780,6 +1783,13 @@ def recommend_parts(family: str, requirements: dict, options: dict | None = None
                or "(none recorded)")) from error
     cands = result.get("candidates") or []
     lines = []
+    # Timing / analog print their whole unverified list (_spec_extras); every other family says
+    # here when its record states no lifecycle status, the reason it ranks after the parts that
+    # state production (owner 2026-11-15).
+    def _status_extra(c: dict) -> str:
+        if key in ("timing", "analog") or "status" not in (c.get("unverified") or []):
+            return ""
+        return " | STATUS NOT STATED (one more UNVERIFIED item: ranks after parts stating production)"
     for c in cands[:15]:
         # A margin the record could not state is null, not 0 — it has no place in a
         # "tightest margin" comparison, and ranking it as the smallest would report an
@@ -1796,7 +1806,8 @@ def recommend_parts(family: str, requirements: dict, options: dict | None = None
                      + (_capacitor_extras(c) if key == "capacitor" else
                         _diode_extras(c) if key == "diode" else
                         _magnetic_extras(c) if key == "magnetic" else
-                        _spec_extras(c) if key in ("timing", "analog") else _mosfet_extras(c)))
+                        _spec_extras(c) if key in ("timing", "analog") else _mosfet_extras(c))
+                     + _status_extra(c))
     rejected = result.get("rejections") or {}
     return _result(
         f"{len(cands)} {key} candidate(s), best first "
