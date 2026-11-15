@@ -2034,9 +2034,10 @@ std::optional<BjtRow> extract_bjt(const json& env) {
     r.vceo_rated = *vceo;
     r.ic_continuous = *ic;
     // dcCurrentGain: {minimum,maximum} or scalar -> the guaranteed MINIMUM gain.
-    r.hfe_min = resolve_field(*refs->elec, "dcCurrentGain", PEAS::DimensionalValues::MINIMUM)
-                    .value_or(0.0);
-    r.power_dissipation = get_num(*refs->elec, "powerDissipation").value_or(0.0);
+    // Unstated stays NaN (owner 2026-11-15): unknown, never 0.
+    if (auto h = resolve_field(*refs->elec, "dcCurrentGain", PEAS::DimensionalValues::MINIMUM); pos(h))
+        r.hfe_min = *h;
+    if (auto pd = get_num(*refs->elec, "powerDissipation"); pos(pd)) r.power_dissipation = *pd;
     r.technology = get_str(*refs->part, "technology").value_or("");
     r.polarity = polarity;
     // fT, Hz (v24). Unstated stays NaN: unknown, never 0.
@@ -2083,10 +2084,11 @@ std::optional<VaristorRow> extract_varistor(const json& env) {
     r.manufacturer = *manuf;
     fill_dimensions(r, *di, *part);
     r.varistor_voltage = *vnom;
-    r.clamping_voltage = get_num(*elec, "clampingVoltage").value_or(0.0);
-    r.peak_surge_current = get_num(*elec, "peakSurgeCurrent").value_or(0.0);
-    r.max_continuous_dc_voltage = get_num(*elec, "maxContinuousDcVoltage").value_or(0.0);
-    r.capacitance = get_num(*elec, "capacitance").value_or(0.0);
+    // Unstated stays NaN (owner 2026-11-15): unknown, never 0.
+    if (auto x = get_num(*elec, "clampingVoltage"); pos(x)) r.clamping_voltage = *x;
+    if (auto x = get_num(*elec, "peakSurgeCurrent"); pos(x)) r.peak_surge_current = *x;
+    if (auto x = get_num(*elec, "maxContinuousDcVoltage"); pos(x)) r.max_continuous_dc_voltage = *x;
+    if (auto x = get_num(*elec, "capacitance"); pos(x)) r.capacitance = *x;
     if (auto vac = get_num(*elec, "maxContinuousAcVoltage"); pos(vac))  // v24
         r.max_continuous_ac_voltage = *vac;
     if (auto e = get_num(*elec, "energyAbsorption"); pos(e)) r.energy_absorption = *e;  // v24

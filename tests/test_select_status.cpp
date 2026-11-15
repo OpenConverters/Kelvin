@@ -83,3 +83,62 @@ TEST_CASE("select bjt: no stated status is kept UNVERIFIED and ranks after a sta
     CHECK(contains(cand(r, "BD675").at("unverified"), "status"));
     CHECK(note_has(cand(r, "BD675"), "status not stated"));
 }
+
+// ---- Unstated BJT / varistor values are NaN, never 0 (owner 2026-11-15) ---------------------
+// unstated_nan/ (kelvin-public-data, TAS 06fed09): bjts 1 PBSS4130PANP (no dcCurrentGain, no
+// powerDissipation) 2 PMBT6429 (hFE >= 500, Pd stated); varistors 1 V130LA10CP (no
+// maxContinuousDcVoltage, no capacitance) 2 B72520T0300K062 (no capacitance) 3
+// AVR-M0603C120MTAAB (every value stated).
+
+TEST_CASE("browse bjt / varistor: an unstated value is null, not 0", "[browse][nan][bjt][varistor]") {
+    api::Engine eng(dir("unstated_nan"), "", true);
+    json b = eng.browse("bjt", json{{"limit", 10}});
+    REQUIRE(b.at("rows").size() == 2);
+    for (const auto& row : b.at("rows")) {
+        if (row.at("mpn") == "PBSS4130PANP") {
+            CHECK(row.at("hfe_min").is_null());
+            CHECK(row.at("power_dissipation").is_null());
+        } else {
+            CHECK(row.at("hfe_min").get<double>() == 500.0);
+            CHECK(row.at("power_dissipation").is_number());
+        }
+    }
+    json v = eng.browse("varistor", json{{"limit", 10}});
+    REQUIRE(v.at("rows").size() == 3);
+    for (const auto& row : v.at("rows")) {
+        if (row.at("mpn") == "V130LA10CP") {
+            CHECK(row.at("max_continuous_dc_voltage").is_null());
+            CHECK(row.at("capacitance").is_null());
+            CHECK(row.at("clamping_voltage").is_number());
+        } else if (row.at("mpn") == "B72520T0300K062") {
+            CHECK(row.at("capacitance").is_null());
+            CHECK(row.at("max_continuous_dc_voltage").get<double>() == 38.0);
+        } else {
+            CHECK(row.at("capacitance").is_number());
+        }
+    }
+    // A numeric filter never matches an unstated value (it used to match 0 in [0, x]).
+    json f = eng.browse("varistor",
+                        json{{"filters", {{"capacitance", {{"min", 0.0}, {"max", 1.0}}}}}, {"limit", 10}});
+    CHECK(f.at("rows").size() == 1);
+}
+
+TEST_CASE("select bjt / varistor: an unstated gated value is its own rejection, never 0",
+          "[select][nan][bjt][varistor]") {
+    api::Engine eng(dir("unstated_nan"), "", true);
+    const json opt = {{"includeEnvelope", false}};
+    json b = eng.select("bjt", {{"ratedCollectorEmitterVoltage", 20.0}, {"ratedCollectorCurrent", 0.1}},
+                        {{"includeEnvelope", false}, {"tiebreaker", "highest_hfe"}});
+    CHECK(mpns(b) == std::vector<std::string>{"PMBT6429", "PBSS4130PANP"});  // unstated hFE last
+    CHECK(cand(b, "PBSS4130PANP").at("margins").at("hfe").is_null());
+    json bh = eng.select("bjt", {{"ratedCollectorEmitterVoltage", 20.0}, {"ratedCollectorCurrent", 0.1},
+                                 {"minimumDcCurrentGain", 100.0}}, opt);
+    CHECK(mpns(bh) == std::vector<std::string>{"PMBT6429"});
+    CHECK(rej_of(bh, "hfe_unstated") == 1);
+
+    json v = eng.select("varistor", {{"ratedContinuousVoltage", 5.0}},
+                        {{"includeEnvelope", false}, {"tiebreaker", "lowest_capacitance"}});
+    CHECK(mpns(v) == std::vector<std::string>{"AVR-M0603C120MTAAB", "B72520T0300K062"});
+    CHECK(rej_of(v, "vc_unstated") == 1);  // V130LA10CP states no Vdc
+    CHECK(rej_of(v, "vc_low") == 0);
+}

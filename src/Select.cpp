@@ -1154,6 +1154,9 @@ json select_bjt(const Shard<BjtRow>& shard, const BjtConstraints& c, BjtTiebreak
         if (c.polarity && b.polarity != *c.polarity) { rej["polarity_mismatch"]++; continue; }
         if (b.vceo_rated < c.vceo_min) { rej["vceo_low"]++; continue; }
         if (b.ic_continuous < c.ic_min) { rej["ic_low"]++; continue; }
+        // An unstated hFE (NaN) does not meet a gain floor — not read as passing (NaN < x is
+        // false) nor as 0; it has its own bucket, as the MOSFET's unstated Id.
+        if (c.hfe_min.has_value() && !present(b.hfe_min)) { rej["hfe_unstated"]++; continue; }
         if (c.hfe_min.has_value() && b.hfe_min < *c.hfe_min) { rej["hfe_low"]++; continue; }
         passing.push_back(&b);
     }
@@ -1161,7 +1164,10 @@ json select_bjt(const Shard<BjtRow>& shard, const BjtConstraints& c, BjtTiebreak
         throw NoCandidates("BjtConstraints", emit_rejections(rej), shard.meta.source_line_count);
     auto metric = [&](const BjtRow* b) -> double {
         switch (tb) {
-            case BjtTiebreaker::HighestHfe: return -b->hfe_min;
+            // An unstated hFE (NaN) must not reach the sort (strict weak ordering): it sorts
+            // LAST, as the 0 it used to hold did.
+            case BjtTiebreaker::HighestHfe:
+                return present(b->hfe_min) ? -b->hfe_min : std::numeric_limits<double>::infinity();
             case BjtTiebreaker::HighestVceoMargin: return -b->vceo_rated / c.vceo_min;
             case BjtTiebreaker::HighestIcMargin: return -b->ic_continuous / c.ic_min;
         }
@@ -1188,7 +1194,7 @@ json select_bjt(const Shard<BjtRow>& shard, const BjtConstraints& c, BjtTiebreak
         json cd = base_candidate(b, fetcher);
         cd["margins"] = {{"vceo_margin", b->vceo_rated / c.vceo_min},
                          {"ic_margin", b->ic_continuous / c.ic_min},
-                         {"hfe", b->hfe_min}};
+                         {"hfe", num_or_null(b->hfe_min)}};
         cd["sortKey"] = {{"metric", to_string(tb)}, {"value", metric(b)}};
         if (status_unverified(*b, c.exclude_discontinued)) mark_status_unverified(cd);
         cands.push_back(std::move(cd));
@@ -1205,9 +1211,17 @@ json select_varistor(const Shard<VaristorRow>& shard, const VaristorConstraints&
     std::vector<const VaristorRow*> passing;
     for (const auto& v : shard.rows) {
         if (!status_gate(v, c.exclude_discontinued, rej)) continue;
+        // An unstated value (NaN) never meets a gated limit (NaN compares false both ways):
+        // Vdc and the surge floor get their own *_unstated buckets, as the 0 they used to hold
+        // was rejected. A clamping / capacitance ceiling stays vacuous for an unstated value,
+        // as it was for the 0.
+        if (!present(v.max_continuous_dc_voltage)) { rej["vc_unstated"]++; continue; }
         if (v.max_continuous_dc_voltage < c.rated_continuous_voltage) { rej["vc_low"]++; continue; }
         if (c.max_clamping_voltage.has_value() && v.clamping_voltage > *c.max_clamping_voltage) {
             rej["clamping_high"]++; continue;
+        }
+        if (c.min_peak_surge_current.has_value() && !present(v.peak_surge_current)) {
+            rej["surge_unstated"]++; continue;
         }
         if (c.min_peak_surge_current.has_value() && v.peak_surge_current < *c.min_peak_surge_current) {
             rej["surge_low"]++; continue;
@@ -1220,15 +1234,19 @@ json select_varistor(const Shard<VaristorRow>& shard, const VaristorConstraints&
     if (passing.empty())
         throw NoCandidates("VaristorConstraints", emit_rejections(rej),
                            shard.meta.source_line_count);
-    // Parts missing the ranked datum are deprioritised (clamping/capacitance 0 = unknown, not best).
+    // Parts missing the ranked datum (NaN) are deprioritised — unknown, not best — and their
+    // metric is 0 so no NaN reaches the sort.
     auto tier_metric = [&](const VaristorRow* v) -> std::tuple<int, double> {
+        auto tm = [](double x, double key) -> std::tuple<int, double> {
+            return present(x) ? std::tuple<int, double>{0, key} : std::tuple<int, double>{1, 0.0};
+        };
         switch (tb) {
             case VaristorTiebreaker::LowestClampingVoltage:
-                return {v->clamping_voltage <= 0 ? 1 : 0, v->clamping_voltage};
+                return tm(v->clamping_voltage, v->clamping_voltage);
             case VaristorTiebreaker::HighestSurge:
-                return {v->peak_surge_current <= 0 ? 1 : 0, -v->peak_surge_current};
+                return tm(v->peak_surge_current, -v->peak_surge_current);
             case VaristorTiebreaker::LowestCapacitance:
-                return {v->capacitance <= 0 ? 1 : 0, v->capacitance};
+                return tm(v->capacitance, v->capacitance);
         }
         return {0, 0};
     };
@@ -1256,14 +1274,14 @@ json select_varistor(const Shard<VaristorRow>& shard, const VaristorConstraints&
         cd["margins"] = {
             {"vc_margin", v->max_continuous_dc_voltage / c.rated_continuous_voltage},
             {"clamping_headroom",
-             (c.max_clamping_voltage && v->clamping_voltage > 0)
+             (c.max_clamping_voltage && present(v->clamping_voltage))
                  ? num_or_null(*c.max_clamping_voltage / v->clamping_voltage)
                  : json(nullptr)},
             {"surge_headroom", (c.min_peak_surge_current && *c.min_peak_surge_current > 0)
                                    ? num_or_null(v->peak_surge_current / *c.min_peak_surge_current)
                                    : json(nullptr)}};
-        cd["sortKey"] = {{"clampingVoltage", v->clamping_voltage},
-                         {"peakSurgeCurrent", v->peak_surge_current}};
+        cd["sortKey"] = {{"clampingVoltage", num_or_null(v->clamping_voltage)},
+                         {"peakSurgeCurrent", num_or_null(v->peak_surge_current)}};
         if (status_unverified(*v, c.exclude_discontinued)) mark_status_unverified(cd);
         cands.push_back(std::move(cd));
     }

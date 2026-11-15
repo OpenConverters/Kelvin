@@ -701,7 +701,9 @@ struct IgbtRow : RowBase {
 };
 
 struct BjtRow : RowBase {
-    double vceo_rated = 0, ic_continuous = 0, hfe_min = 0, power_dissipation = 0;
+    // NaN = not stated (owner 2026-11-15): a 0 default showed a missing hFE or Pd as "0" in
+    // browse rows and on cards. Vceo and Ic are required by the extractor, so always set.
+    double vceo_rated = kNaN(), ic_continuous = kNaN(), hfe_min = kNaN(), power_dissipation = kNaN();
     double tj_max = kNaN();
     std::string technology;
     std::string polarity;  // part.subType: npn / pnp; ratings above are magnitudes for both
@@ -717,8 +719,11 @@ struct BjtRow : RowBase {
 };
 
 struct VaristorRow : RowBase {
-    double varistor_voltage = 0, clamping_voltage = 0, peak_surge_current = 0;
-    double max_continuous_dc_voltage = 0, capacitance = 0;
+    // NaN = not stated (owner 2026-11-15): a 0 default showed a missing clamping voltage,
+    // surge current, Vdc or capacitance as "0" in browse rows and on cards. The varistor
+    // voltage is required by the extractor, so always set.
+    double varistor_voltage = kNaN(), clamping_voltage = kNaN(), peak_surge_current = kNaN();
+    double max_continuous_dc_voltage = kNaN(), capacitance = kNaN();
     // v24 (owner 2026-11-15): RAS electrical.maxContinuousAcVoltage (V rms) and
     // electrical.energyAbsorption (J, 10/1000 us single pulse). NaN when unstated.
     double max_continuous_ac_voltage = kNaN(), energy_absorption = kNaN();
