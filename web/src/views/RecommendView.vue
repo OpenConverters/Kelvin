@@ -262,7 +262,11 @@ function evidenceBadges(c) {
   if (e.thermalPresent === false) out.push({ t: 'θ?', title: 'no thermal data in the datasheet record' })
   if (e.datasheetUsable === false) out.push({ t: '⚠ sheet', title: 'datasheet link unusable' })
   if (e.qgPresent === false) out.push({ t: 'Qg?', title: 'gate charge not documented' })
-  if (e.isProduction === false) out.push({ t: 'EOL?', title: 'not marked production status' })
+  // A record stating no status carries "status" in its unverified list (owner 2026-11-15) and
+  // says so on its UNVERIFIED chip and in its notes; EOL? is for the rest.
+  if (e.isProduction === false && !(c.unverified ?? []).includes('status')) {
+    out.push({ t: 'EOL?', title: 'not marked production status' })
+  }
   return out
 }
 
@@ -681,7 +685,8 @@ function priceCell(c) {
                 @click="togglePin(fam.key, c)"
               >◉</button>
             </header>
-            <ul v-if="fam.recommend.compareChecks && c.notes?.length" class="cand-notes">
+            <!-- Every family (owner 2026-11-15): the ranker's notes, e.g. 'status not stated'. -->
+            <ul v-if="c.notes?.length" class="cand-notes">
               <li v-for="(n, j) in c.notes" :key="j">{{ n }}</li>
             </ul>
             <div v-if="meterRows(c).length" class="meters">
