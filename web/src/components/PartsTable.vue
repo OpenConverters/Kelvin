@@ -8,7 +8,7 @@ import { isPinned, pinColor } from '../store.js'
 const props = defineProps({
   family: { type: Object, required: true },
   rows: { type: Array, required: true },
-  sort: { type: Object, required: true }, // {field, dir}
+  sort: { type: Object, required: true }, // {field, dir}, or {field:'random', seed} (no arrow)
   busy: { type: Boolean, default: false },
 })
 const emit = defineEmits(['sort', 'open', 'pin'])
