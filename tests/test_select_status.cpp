@@ -84,6 +84,32 @@ TEST_CASE("select bjt: no stated status is kept UNVERIFIED and ranks after a sta
     CHECK(note_has(cand(r, "BD675"), "status not stated"));
 }
 
+// Magnetic best_fit (owner 2026-11-15): the same gate and note, and the lifecycle order
+// production < status not stated < stated non-production right after the structural fit.
+// select_status_magnetic/magnetics.ndjson (TAS 6bcb7bb, verbatim): 1 SRP1265A-220M (Bourns,
+// 22 uH, no status) 2 744043100 (Wuerth, 10 uH, production) 3 NR4018T220M (Taiyo Yuden, 22 uH,
+// obsolete). Against 22 uH the two 22 uH parts fit exactly and the production part does not.
+TEST_CASE("select magnetic best_fit: production, then status not stated, then a stated "
+          "non-production status", "[select][status][magnetic]") {
+    api::Engine eng(dir("select_status_magnetic"), "", true);
+    const json req = {{"magnetizingInductance", 22e-6}};
+    json all = eng.select("magnetic", req,
+                          {{"includeEnvelope", false}, {"excludeDiscontinued", false}});
+    CHECK(all.at("tiebreaker") == "best_fit");
+    CHECK(mpns(all) == std::vector<std::string>{"744043100", "SRP1265A-220M", "NR4018T220M"});
+    CHECK(rej_of(all, "discontinued") == 0);
+    CHECK_FALSE(cand(all, "SRP1265A-220M").contains("unverified"));  // status is no requirement
+
+    json r = eng.select("magnetic", req, {{"includeEnvelope", false}});
+    CHECK(mpns(r) == std::vector<std::string>{"744043100", "SRP1265A-220M"});
+    CHECK(rej_of(r, "discontinued") == 1);  // obsolete NR4018T220M
+    const json& ns = cand(r, "SRP1265A-220M");
+    CHECK(contains(ns.at("unverified"), "status"));
+    CHECK(note_has(ns, "status not stated"));
+    CHECK(ns.at("sortKey").at("statusUnverified") == true);
+    CHECK_FALSE(cand(r, "744043100").contains("unverified"));
+}
+
 // ---- Unstated BJT / varistor values are NaN, never 0 (owner 2026-11-15) ---------------------
 // unstated_nan/ (kelvin-public-data, TAS 06fed09): bjts 1 PBSS4130PANP (no dcCurrentGain, no
 // powerDissipation) 2 PMBT6429 (hFE >= 500, Pd stated); varistors 1 V130LA10CP (no

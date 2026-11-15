@@ -1436,10 +1436,13 @@ json select_magnetic(const Shard<MagneticRow>& shard, const MagneticConstraints&
 
     // RANK-NOT-GATE: every readable row is a candidate. We never drop a part for missing a spec —
     // each instead carries per-dimension margins + a pass/marginal/fail verdict so the UI can show
-    // even imperfect matches. (There are no rejection buckets beyond the index-time unreadable count.)
+    // even imperfect matches. The one gate is the lifecycle rule every selector shares (owner
+    // 2026-11-15): under excludeDiscontinued a STATED non-production status drops the part
+    // ("discontinued"); a record stating none is kept as one more UNVERIFIED item.
     std::vector<const MagneticRow*> all;
     all.reserve(shard.rows.size());
-    for (const auto& m : shard.rows) all.push_back(&m);
+    for (const auto& m : shard.rows)
+        if (status_gate(m, c.exclude_discontinued, rej)) all.push_back(&m);
     if (all.empty())
         throw NoCandidates("MagneticConstraints", emit_rejections(rej), shard.meta.source_line_count);
 
@@ -1483,11 +1486,19 @@ json select_magnetic(const Shard<MagneticRow>& shard, const MagneticConstraints&
     auto dcr_key = [](const MagneticRow* m) {
         return present(m->dcr) ? m->dcr : std::numeric_limits<double>::infinity();
     };
-    // Ascending tuple: (structural fit, fit penalty, production first, lower DCR, source line) —
-    // deterministic.
+    // Lifecycle tier (owner 2026-11-15): production < status not stated < a stated
+    // non-production status (only reachable with excludeDiscontinued off, which drops none). A
+    // part stating no status must not tie with an obsolete one.
+    auto lifecycle_tier = [](const MagneticRow* m) {
+        return m->status == "production" ? 0 : m->status.empty() ? 1 : 2;
+    };
+    // Ascending tuple: (structural fit, lifecycle tier, fit penalty, lower DCR, source line) —
+    // deterministic. The lifecycle tier is the first key among the parts that can be wired, as
+    // the +1 UNVERIFIED of a status-less part is the first key of every other selector: it
+    // ranks after the parts that state production.
     std::sort(all.begin(), all.end(), [&](const MagneticRow* a, const MagneticRow* b) {
-        return std::make_tuple(structure_fail(a), penalty(a), a->is_production ? 0 : 1, dcr_key(a), a->lineno) <
-               std::make_tuple(structure_fail(b), penalty(b), b->is_production ? 0 : 1, dcr_key(b), b->lineno);
+        return std::make_tuple(structure_fail(a), lifecycle_tier(a), penalty(a), dcr_key(a), a->lineno) <
+               std::make_tuple(structure_fail(b), lifecycle_tier(b), penalty(b), dcr_key(b), b->lineno);
     });
 
     json result;
@@ -1560,6 +1571,7 @@ json select_magnetic(const Shard<MagneticRow>& shard, const MagneticConstraints&
                           {"dcr", num_or_null(m->dcr)},
                           {"selfResonantFrequency", num_or_null(m->srf)}};
         cd["sortKey"] = {{"metric", "best_fit"}, {"penalty", penalty(m)}};
+        if (status_unverified(*m, c.exclude_discontinued)) mark_status_unverified(cd);
         cands.push_back(std::move(cd));
     }
     result["candidates"] = std::move(cands);
