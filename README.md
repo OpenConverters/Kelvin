@@ -25,6 +25,18 @@ Sibling of [Kirchhoff](../Kirchhoff) and [Heaviside](../Heaviside). Design docs 
 - **v1 (parity-locked to the HS Python selector):** MOSFET, diode, capacitor, resistor, controller.
 - **Phase 5 (new selectors, no HS reference — physics-sensible bounds, review-gated):** IGBT, BJT,
   varistor.
+- **Evidence-ranked (2026-11-15):** timing (crystals / resonators / XO / TCXO / MEMS) and analog
+  ICs (per `deviceType`). A requirement the record states and fails rejects the part; one it
+  does not state passes UNVERIFIED and ranks after every part with fewer UNVERIFIED items (an
+  undeterminable size counts one more). Timing keys: `frequency` + `maximumFrequencyDeviation`
+  (required), `maximumFrequencyTolerance`, `maximumFrequencyStability`, `loadCapacitance`,
+  `supplyVoltage`, `minimumOperatingTemperature` / `maximumOperatingTemperature`,
+  `maximumLength` + `maximumWidth`, `maximumHeight`, `technology`, `outputType`. Analog keys:
+  `deviceType` (required) and, per type, `numberOfChannels`, `supplyVoltage`,
+  `maximumInputOffsetVoltage`, `maximumInputBiasCurrent`, `minimumGainBandwidthProduct`,
+  `minimumSlewRate`, `minimumCommonModeRejectionRatio`, `minimumResolution`,
+  `minimumSampleRate`, `maximumOnResistance`, `architecture`, `inputStage` (a key that does not
+  apply to the type is refused).
 
 (Analog ICs + the cross-ref ranker are further follow-ups; magnetics stay with MKF; connectors
 have no requirements emitter yet.)

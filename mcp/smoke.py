@@ -240,9 +240,13 @@ def main() -> int:
     conforms("list_families", r.structuredContent)
     names = [f["family"] for f in r.structuredContent["families"]]
     check("all twelve families listed", len(names) == 12, ", ".join(names))
-    check("browse-only families flagged",
-          all(f["selector"] is False for f in r.structuredContent["families"]
-              if f["family"] in S.BROWSE_ONLY))
+    # Rewritten 2026-11-15 (owner-approved): analog and timing gained selectors, so no family is
+    # browse-only any more and every listed family must say it has a selector.
+    check("browse-only set is empty (every family has a selector)",
+          tuple(S.BROWSE_ONLY) == ()
+          and all(f["selector"] is True for f in r.structuredContent["families"]),
+          ", ".join(f["family"] for f in r.structuredContent["families"]
+                    if f["selector"] is not True))
 
     print("describe_family(capacitor)")
     r = S.describe_family("capacitors")            # plural must normalise
@@ -343,12 +347,16 @@ def main() -> int:
         check("impossible requirement names the gate that rejected",
               "Rejections by gate" in str(e) and "=" in str(e))
 
-    print("recommend_parts on a browse-only family")
+    # Rewritten 2026-11-15 (owner-approved): the browse-only refusal had no target left (timing
+    # and analog select now, and controller already had a selector), so this checks the timing
+    # selector's own refusal: a frequency without maximumFrequencyDeviation names the missing key.
+    print("recommend_parts(timing) without maximumFrequencyDeviation")
     try:
         S.recommend_parts("timing", {"frequency": 16e6})
-        check("browse-only family refused", False)
-    except ValueError as e:
-        check("browse-only family refused", "no selector" in str(e))
+        check("timing without maximumFrequencyDeviation refused", False)
+    except Exception as e:
+        check("timing without maximumFrequencyDeviation refused",
+              "missing numeric 'maximumFrequencyDeviation'" in str(e), str(e))
 
     print("spec_distribution(mosfet rds_on over 100 V silicon)")
     r = S.spec_distribution("mosfet", "rds_on", filters={"vds_rated": {"min": 100}}, buckets=12)

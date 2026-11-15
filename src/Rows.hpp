@@ -31,8 +31,8 @@ enum class Family : uint32_t {
     // Magnetic (from-spec): unlike the parametric families this one RANKS the whole catalogue
     // and returns the top-N even when nothing meets the spec (no hard gate) — see select_magnetic.
     Magnetic = 9,
-    // Browse-only families (no requirements emitter → no selector yet; the Kelvin site
-    // catalogues them and select() refuses them loudly).
+    // Analog ICs and timing devices: browse families that gained a requirement-gated,
+    // evidence-ranked selector on 2026-11-15 (select_analog / select_timing).
     Analog = 10,
     Timing = 11,
     Connector = 12,
@@ -828,6 +828,11 @@ struct AnalogRow : RowBase {
     std::string architecture;
     std::string input_stage;
     bool is_production = false;
+    // manufacturerInfo.status as stated ("" when the record states none) — v24 (owner
+    // 2026-11-15, decision 8): the selector keeps a part with no stated status under
+    // excludeDiscontinued (one more UNVERIFIED item) and drops only a STATED non-production
+    // status, which is_production alone cannot tell apart.
+    std::string status;
 };
 
 // A catalogue timing device (quartz crystal / MEMS / XO / TCXO / ...). Browse-only projection
@@ -876,6 +881,8 @@ struct TimingRow : RowBase {
     // when unstated; a stated 0 is left unset like the supply voltages (set_if_pos).
     double current_consumption = kNaN();
     bool is_production = false;
+    // manufacturerInfo.status as stated ("" when none) — v24, see AnalogRow::status.
+    std::string status;
 };
 
 // A catalogue connector. Browse-only projection of connector.manufacturerInfo.datasheetInfo

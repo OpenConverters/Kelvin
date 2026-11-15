@@ -2695,10 +2695,10 @@ std::optional<MagneticRow> extract_magnetic(const json& env) {
     return r;
 }
 
-// ---- browse-only families (analog ICs / timing devices) --------------------
+// ---- analog ICs / timing devices -------------------------------------------
 // Both envelopes carry a VARIABLE subtype key (analog.<subtype> / timeBase.<subtype>), so the
 // walk takes the first object member carrying a manufacturerInfo. Identity is required; every
-// electrical datum is optional (NaN when absent) — these rows browse, they never gate.
+// electrical datum is optional (NaN when absent): the selectors judge an absent one UNVERIFIED.
 namespace {
 struct SubtypeNode {
     std::string subtype;
@@ -2767,6 +2767,7 @@ std::optional<AnalogRow> extract_analog(const json& env) {
     }
     auto status = get_str(*node->mi, "status");
     r.is_production = status.has_value() && *status == "production";
+    r.status = status.value_or("");  // "" = not stated (v24)
     return r;
 }
 
@@ -2827,6 +2828,7 @@ std::optional<TimingRow> extract_timing(const json& env) {
     }
     auto status = get_str(*node->mi, "status");
     r.is_production = status.has_value() && *status == "production";
+    r.status = status.value_or("");  // "" = not stated (v24)
     return r;
 }
 

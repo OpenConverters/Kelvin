@@ -300,14 +300,13 @@ export const FAMILIES = [
   },
 ]
 
-// ---- browse-only families (no Kelvin selector yet — catalogue + graphs only) --
+// ---- analog ICs and timing devices (browse + Recommend; selectors owner-approved 2026-11-15) --
 FAMILIES.push(
   {
     key: 'analog',
     label: 'Analog ICs',
     tagline: 'op-amps · comparators · ADC · DAC · switches',
     glyph: 'A',
-    browseOnly: true,
     columns: [
       { f: 'channels', label: 'ch', unit: '', plain: true },
       { f: 'gain_bandwidth', label: 'GBW', unit: 'Hz' },
@@ -322,14 +321,48 @@ FAMILIES.push(
       { f: 'architecture', label: 'Architecture' },
       { f: 'input_stage', label: 'Input stage' },
     ],
-    recommend: null,
+    // Selector (owner-approved 2026-11-15): Requirements.cpp analog_constraints. The device type
+    // decides which requirements apply (analog_requirement_keys); a field shows only for the
+    // types the catalogue populates it for. A value a part states and fails drops it; one it
+    // does not state ranks it after the parts that state it (UNVERIFIED).
+    recommend: {
+      intro: 'Choose the device type first. A part that does not state a value you set ranks after the parts that do.',
+      facetFields: [
+        { key: 'deviceType', label: 'Device type', facet: 'device_type', required: true, first: true, exclude: ['digitalIsolator'] },
+        { key: 'architecture', label: 'Architecture', facet: 'architecture', when: { deviceType: ['adc', 'dac'] } },
+        { key: 'inputStage', label: 'Input stage', facet: 'input_stage', when: { deviceType: ['operationalAmplifier'] } },
+      ],
+      fields: [
+        { key: 'numberOfChannels', label: 'Channels (exact)', unit: '', placeholder: '2', when: { deviceType: ['operationalAmplifier', 'comparator', 'instrumentationAmplifier', 'programmableGainAmplifier', 'differenceAmplifier', 'buffer', 'multiplier', 'adc', 'multiplexer'] } },
+        { key: 'supplyVoltage', label: 'Supply voltage (total)', unit: 'V', dim: true, placeholder: '5', when: { deviceType: ['operationalAmplifier', 'comparator', 'instrumentationAmplifier', 'programmableGainAmplifier', 'differenceAmplifier', 'buffer', 'multiplier', 'adc', 'analogSwitch', 'multiplexer'] } },
+        { key: 'maximumInputOffsetVoltage', label: 'Vos ≤', unit: 'V', placeholder: '1m', when: { deviceType: ['operationalAmplifier', 'comparator', 'instrumentationAmplifier', 'programmableGainAmplifier'] } },
+        { key: 'maximumInputBiasCurrent', label: 'Ib ≤', unit: 'A', placeholder: '1n', when: { deviceType: ['operationalAmplifier', 'comparator', 'instrumentationAmplifier'] } },
+        { key: 'minimumGainBandwidthProduct', label: 'GBW ≥', unit: 'Hz', placeholder: '10M', when: { deviceType: ['operationalAmplifier'] } },
+        { key: 'minimumSlewRate', label: 'Slew rate ≥', unit: 'V/s', placeholder: '1M', when: { deviceType: ['operationalAmplifier', 'instrumentationAmplifier', 'programmableGainAmplifier', 'differenceAmplifier'] } },
+        { key: 'minimumCommonModeRejectionRatio', label: 'CMRR ≥', unit: 'dB', placeholder: '90', when: { deviceType: ['operationalAmplifier', 'instrumentationAmplifier', 'differenceAmplifier'] } },
+        { key: 'minimumResolution', label: 'Resolution ≥', unit: 'bits', placeholder: '12', when: { deviceType: ['adc', 'dac'] } },
+        { key: 'minimumSampleRate', label: 'Sample rate ≥', unit: 'S/s', placeholder: '1M', when: { deviceType: ['adc'] } },
+        { key: 'maximumOnResistance', label: 'On-resistance ≤', unit: 'Ω', placeholder: '10', when: { deviceType: ['analogSwitch', 'multiplexer'] } },
+      ],
+      tiebreakers: [],
+      compareChecks: true,
+      marginLabels: {
+        inputOffsetVoltage_headroom: 'Vos headroom',
+        inputBiasCurrent_headroom: 'Ib headroom',
+        gainBandwidthProduct_headroom: 'GBW margin',
+        slewRate_headroom: 'Slew-rate margin',
+        commonModeRejectionRatio_headroom: 'CMRR margin',
+        resolution_headroom: 'Resolution margin',
+        sampleRate_headroom: 'Sample-rate margin',
+        onResistance_headroom: 'Ron headroom',
+      },
+    },
   },
   {
     key: 'timing',
     label: 'Timing',
     tagline: 'crystals · MEMS · XO · TCXO',
     glyph: 'X',
-    browseOnly: true,
     columns: [
       { f: 'frequency', label: 'f', unit: 'Hz' },
       { f: 'frequency_tolerance', label: 'tol', unit: 'ppm', scale: 1e6, plain: true },
@@ -342,7 +375,36 @@ FAMILIES.push(
       { f: 'output_type', label: 'Output' },
       { f: 'mode', label: 'Mode' },
     ],
-    recommend: null,
+    // Selector (owner-approved 2026-11-15): Requirements.cpp timing_constraints. The frequency
+    // must match within the stated deviation; a value a part states and fails drops it; one it
+    // does not state ranks it after the parts that state it (UNVERIFIED).
+    recommend: {
+      intro: 'The frequency must match within the deviation you set (0 = exact). A part that does not state a value you set ranks after the parts that do.',
+      fields: [
+        { key: 'frequency', label: 'Frequency', unit: 'Hz', dim: true, required: true, placeholder: '25M' },
+        { key: 'maximumFrequencyDeviation', label: 'Frequency match within', unit: 'ppm', scale: 1e-6, required: true, placeholder: '0 = exact' },
+        { key: 'maximumFrequencyTolerance', label: 'Frequency tolerance ≤', unit: 'ppm', scale: 1e-6, placeholder: 'optional' },
+        { key: 'maximumFrequencyStability', label: 'Frequency stability ≤', unit: 'ppm', scale: 1e-6, placeholder: 'optional' },
+        { key: 'loadCapacitance', label: 'Load capacitance (crystals)', unit: 'F', dim: true, placeholder: '18p' },
+        { key: 'supplyVoltage', label: 'Supply voltage (oscillators)', unit: 'V', dim: true, placeholder: '3.3' },
+        { key: 'minimumOperatingTemperature', label: 'Operating from', unit: '°C', placeholder: '-40' },
+        { key: 'maximumOperatingTemperature', label: 'Operating to', unit: '°C', placeholder: '85' },
+        { key: 'maximumLength', label: 'Max length', unit: 'mm', scale: 1e-3, placeholder: '3.2', pairWith: 'maximumWidth' },
+        { key: 'maximumWidth', label: 'Max width', unit: 'mm', scale: 1e-3, placeholder: '2.5', pairWith: 'maximumLength' },
+        { key: 'maximumHeight', label: 'Max height', unit: 'mm', scale: 1e-3, placeholder: '1' },
+      ],
+      facetFields: [
+        { key: 'technology', label: 'Technology', facet: 'technology' },
+        { key: 'outputType', label: 'Output type', facet: 'output_type' },
+      ],
+      tiebreakers: [],
+      compareChecks: true,
+      marginLabels: {
+        frequencyTolerance_headroom: 'Tolerance headroom',
+        frequencyStability_headroom: 'Stability headroom',
+        height_headroom: 'Height headroom',
+      },
+    },
   },
   {
     key: 'connector',

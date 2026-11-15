@@ -10,7 +10,7 @@ import { store, togglePin, isPinned, pinColor } from '../store.js'
 import { trackEvent } from '../telemetry.js'
 import MarginMeter from '../components/MarginMeter.vue'
 
-// browse-only families have no selector — the recommender only lists selectable ones
+// the recommender lists the families that have a selector (every family since 2026-11-15)
 const SELECTABLE = FAMILIES.filter((f) => f.recommend)
 const fam = computed(() => {
   const f = familyByKey(store.family)
@@ -59,10 +59,20 @@ watch(() => fam.value.key, async (k) => {
     const r = await browse(k, { withFacets: true, limit: 0 })
     if (wantsTopo) topologies.value = r.facets.topologies.values.map(([v]) => v)
     for (const ff of facetFields) {
-      facetOptions[ff.facet] = r.facets[ff.facet].values.map(([v]) => v).filter(Boolean)
+      facetOptions[ff.facet] = r.facets[ff.facet].values.map(([v]) => v)
+        .filter((v) => v && !(ff.exclude ?? []).includes(v))
     }
   } catch { /* facet lists are a convenience; select still validates */ }
 }, { immediate: true })
+
+// A field or facet field with `when: { facetKey: [values] }` applies only while that facet
+// field holds one of the values (analog: the device type decides which requirements apply).
+function applies(x) {
+  if (!x.when) return true
+  return Object.entries(x.when).every(([k, vals]) => vals.includes(form().facet[k]))
+}
+const visibleFields = computed(() => (fam.value.recommend.fields ?? []).filter(applies))
+const visibleFacetFields = computed(() => (fam.value.recommend.facetFields ?? []).filter(applies))
 
 function parsedField(field) {
   const raw = form().text[field.key]
@@ -98,10 +108,16 @@ function lossPointValues() {
 const formErrors = computed(() => {
   const errs = []
   const f = fam.value
-  for (const field of f.recommend.fields ?? []) {
+  for (const ff of f.recommend.facetFields ?? []) {
+    if (ff.required && !form().facet[ff.key]) errs.push(`${ff.label} is required`)
+  }
+  for (const field of visibleFields.value) {
     const v = parsedField(field)
     if (Number.isNaN(v)) errs.push(`${field.label}: can't parse "${form().text[field.key]}"`)
     else if (v == null && field.required) errs.push(`${field.label} is required`)
+    else if (v != null && field.pairWith && parsedField(visibleFields.value.find((x) => x.key === field.pairWith)) == null) {
+      errs.push(`${field.label} needs ${visibleFields.value.find((x) => x.key === field.pairWith).label} too`)
+    }
   }
   if (f.recommend.lossPoint) {
     const lp = lossPointValues()
@@ -149,7 +165,7 @@ async function run() {
   const req = {}
   const options = { maxCandidates: Number(st.maxCandidates) || 25 }
 
-  for (const field of f.recommend.fields ?? []) {
+  for (const field of visibleFields.value) {
     const v = parsedField(field)
     if (v == null || Number.isNaN(v)) continue
     if (field.dimArray) req[field.dimArray] = [{ nominal: v }]
@@ -162,7 +178,7 @@ async function run() {
     if (v != null && !Number.isNaN(v)) options[opt.key] = v
   }
   if (f.recommend.roleToggle && st.role) req[f.recommend.roleToggle.key] = f.recommend.roleToggle.value
-  for (const ff of f.recommend.facetFields ?? []) {
+  for (const ff of visibleFacetFields.value) {
     if (st.facet[ff.key]) req[ff.key] = st.facet[ff.key]
   }
   if (f.recommend.technologyOption && st.technology.length) options.technologyAllowed = st.technology
@@ -231,7 +247,7 @@ function meterRows(c) {
     if (key.endsWith('_log_distance')) continue // internal ranking detail, not a spec margin
     out.push({
       key,
-      label: MARGIN_LABELS[key] ?? key,
+      label: fam.value.recommend.marginLabels?.[key] ?? MARGIN_LABELS[key] ?? key,
       value: typeof value === 'number' ? value : null,
       kind: key.endsWith('_ratio') ? 'ratio' : 'headroom',
       verdict: c.verdictByDimension?.[DIM_FOR_MARGIN[key]] ?? null,
@@ -262,7 +278,26 @@ const target = computed(() => result.value?.target ?? null)
 // its basis as a tooltip; an UNVERIFIED term says what is missing instead of a number.
 const COMPARE_COLUMNS = 6
 const compareCands = computed(() => candidates.value.slice(0, COMPARE_COLUMNS))
-const showCompare = computed(() => compareCands.value.some((c) => c.loss || c.boardArea || c.price))
+const showCompare = computed(() => !fam.value.recommend.compareChecks && compareCands.value.some((c) => c.loss || c.boardArea || c.price))
+// Requirement checks side by side (timing, analog; 2026-11-15): one row per judged requirement,
+// the verdict and what the record states; UNVERIFIED = the record does not state it.
+const checkKeys = computed(() => {
+  const keys = []
+  for (const c of compareCands.value) for (const k of c.checks ?? []) if (!keys.includes(k.key)) keys.push(k.key)
+  return keys
+})
+function statedText(k) {
+  const s = k.stated
+  if (s == null) return 'not stated'
+  if (typeof s === 'object') return `${s.minimum ?? '?'} … ${s.maximum ?? '?'}`
+  return typeof s === 'number' ? String(Number(s.toPrecision(4))) : String(s)
+}
+function specCheckCell(c, key) {
+  const k = (c.checks ?? []).find((x) => x.key === key)
+  if (!k) return { text: '—', title: '' }
+  if (k.verdict === 'unverified') return { text: 'UNVERIFIED', title: `${statedText(k)}; required ${JSON.stringify(k.required)}`, unverified: true }
+  return { text: `${k.verdict} (${statedText(k)})`, title: `required ${JSON.stringify(k.required)}` }
+}
 const MOSFET_LOSS_TERMS = [
   ['conduction', 'Conduction'],
   ['switching', 'Switching'],
@@ -383,12 +418,20 @@ function priceCell(c) {
           </label>
         </template>
 
-        <label v-for="field in fam.recommend.fields" :key="field.key" class="field">
+        <label v-for="ff in visibleFacetFields.filter((x) => x.first)" :key="ff.key" class="field">
+          <span>{{ ff.label }} <em v-if="ff.required">required</em></span>
+          <select v-model="form().facet[ff.key]">
+            <option value="">{{ ff.required ? 'choose' : 'any' }}</option>
+            <option v-for="v in facetOptions[ff.facet] ?? []" :key="v" :value="v">{{ v }}</option>
+          </select>
+        </label>
+
+        <label v-for="field in visibleFields" :key="field.key" class="field">
           <span>{{ field.label }} <template v-if="field.unit">({{ field.unit }})</template> <em v-if="field.required">required</em></span>
           <input v-model="form().text[field.key]" :placeholder="field.placeholder" />
         </label>
 
-        <label v-for="ff in fam.recommend.facetFields ?? []" :key="ff.key" class="field">
+        <label v-for="ff in visibleFacetFields.filter((x) => !x.first)" :key="ff.key" class="field">
           <span>{{ ff.label }}</span>
           <select v-model="form().facet[ff.key]">
             <option value="">any</option>
@@ -591,6 +634,32 @@ function priceCell(c) {
           <p class="hint">Hover a cell to see where it comes from. UNVERIFIED = data missing; nothing is estimated.</p>
         </div>
 
+        <div v-if="fam.recommend.compareChecks && compareCands.length" class="compare-wrap">
+          <table class="compare mono">
+            <thead>
+              <tr>
+                <th />
+                <th v-for="c in compareCands" :key="c.mpn">{{ c.mpn }}<br><span class="dim">{{ c.manufacturer }}</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="k in checkKeys" :key="'sc-' + k">
+                <th>{{ k }}</th>
+                <td v-for="c in compareCands" :key="c.mpn" :title="specCheckCell(c, k).title" :class="{ warnc: specCheckCell(c, k).unverified }">{{ specCheckCell(c, k).text }}</td>
+              </tr>
+              <tr>
+                <th>Board area</th>
+                <td v-for="c in compareCands" :key="c.mpn" :title="areaCell(c).title" :class="{ warnc: areaCell(c).unverified }">{{ areaCell(c).text }}</td>
+              </tr>
+              <tr class="total">
+                <th>UNVERIFIED items</th>
+                <td v-for="c in compareCands" :key="c.mpn" :title="(c.unverified ?? []).join(', ')">{{ c.sortKey?.unverifiedItems ?? '—' }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p class="hint">A part with fewer UNVERIFIED items ranks first. UNVERIFIED = the record does not state it; nothing is estimated.</p>
+        </div>
+
         <ol class="cand-list">
           <li v-for="(c, i) in candidates" :key="c.mpn" class="cand">
             <header class="cand-head">
@@ -602,6 +671,9 @@ function priceCell(c) {
               <span v-if="c.evidence?.positions != null" class="chip">{{ c.evidence.positions }} pos</span>
               <span v-if="c.evidence?.dieConfiguration" class="chip" title="multi-die package: ratings are per die">{{ c.evidence.dieConfiguration }}{{ c.evidence.internalConnection ? ` · ${c.evidence.internalConnection}` : '' }}</span>
               <span v-for="b in evidenceBadges(c)" :key="b.t" class="chip warn" :title="b.title">{{ b.t }}</span>
+              <span v-if="c.unverified?.length" class="chip warn" :title="(c.notes ?? []).join('; ')">UNVERIFIED: {{ c.unverified.join(', ') }}</span>
+              <span v-if="c.flags?.includes('programmable')" class="chip warn" title="States only a frequency range: it must be ordered or programmed for the asked frequency">programmable</span>
+              <span v-for="o in c.overRated ?? []" :key="'or-' + o.key" class="chip" :title="`${o.key} ${si(o.stated)} vs ${si(o.required)} asked: flagged only, the order is unchanged`">over-rated {{ o.key }} {{ o.ratio.toFixed(1) }}×</span>
               <button
                 class="pin"
                 type="button"
@@ -609,6 +681,9 @@ function priceCell(c) {
                 @click="togglePin(fam.key, c)"
               >◉</button>
             </header>
+            <ul v-if="fam.recommend.compareChecks && c.notes?.length" class="cand-notes">
+              <li v-for="(n, j) in c.notes" :key="j">{{ n }}</li>
+            </ul>
             <div v-if="meterRows(c).length" class="meters">
               <MarginMeter
                 v-for="m in meterRows(c)" :key="m.key"
@@ -667,6 +742,7 @@ function priceCell(c) {
 .chip.warn { color: var(--warm); border-color: rgba(255, 179, 71, 0.4); }
 .pin { padding: 1px 7px; border-radius: 999px; font-size: 12px; }
 .meters { margin-top: 8px; display: flex; flex-direction: column; }
+.cand-notes { margin: 6px 0 0; padding-left: 18px; font-size: 11px; color: var(--ink-dim); }
 
 .rejections { max-width: 560px; }
 .rej-title { font-size: 12px; color: var(--ink); }
