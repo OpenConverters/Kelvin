@@ -426,10 +426,10 @@ export const XREF = [
   },
   {
     key: 'igbt', label: 'IGBTs', category: 'igbt',
-    // The ranker's IGBT model is its critical ratings (critical_ratings("igbt")): Vces is the
-    // hard gate (below 0.9x rejects), Ic a soft one, plus the Si / SiC process check shared
-    // with the MOSFET and the diode. It has no PARAM_SPECS table, so Vce(sat) and Tj max are
-    // shown for the engineer but graded by nothing (their cells read 'unverified').
+    // The ranker's IGBT model (owner 2026-11-15): Vces is the hard gate (below 0.9x
+    // rejects), Ic a soft one (critical_ratings("igbt")), Vce(sat) lower-is-better and Tj max
+    // must be reached (kIgbt), plus the Si / SiC process check shared with the MOSFET and the
+    // diode.
     primary: null,
     sameFacet: { f: 'technology', label: 'technology' },
     hardKeys: ['vces'],
@@ -449,8 +449,9 @@ export const XREF = [
     key: 'varistor', label: 'Varistors', category: 'varistor',
     // The varistor voltage is the primary value (primary_value_spec("varistor"): PASS within
     // +/-5 %, accept +/-10 %, the marking's own tolerance); the clamping voltage must not
-    // rise and the surge current must not fall (kVaristor). Neither is a reject edge, so no
-    // hard key: a record missing them is capped by the ranker (missing_required_data).
+    // rise and the surge current must not fall, the maximum continuous DC voltage must be
+    // reached and the capacitance must not grow (kVaristor). None is a reject edge, so no
+    // hard key: a record missing Vclamp / Isurge is capped by the ranker (missing_required_data).
     primary: { row: 'varistor_voltage', label: 'V varistor', unit: 'V', acceptLo: 0.90, acceptHi: 1.10 },
     sameFacet: { f: 'technology', label: 'type' },
     hardKeys: [],
@@ -471,8 +472,9 @@ export const XREF = [
     // Device type (op-amp / comparator / ADC ...) and channel count are the ranker's
     // identities (is_hard_param("analog")): a dual is not a quad, so the pool is cut at the
     // channel count like the connector's positions. The rest is kAnalog: the supply range,
-    // GBW / slew rate (higher), offset / bias (lower, as magnitudes), CMRR, resolution and
-    // sample rate.
+    // GBW / slew rate (higher), offset / drift / bias (lower, as magnitudes), CMRR, quiescent
+    // current per channel, rail-to-rail input / output, a comparator's propagation delay and
+    // output stage, resolution, sample rate, a switch's on-resistance, and the package.
     primary: null,
     sameFacet: { f: 'device_type', label: 'device type' },
     hardKeys: ['subtype', 'channels'],
@@ -485,7 +487,18 @@ export const XREF = [
       gbw: nz(r.gain_bandwidth), slew_rate: nz(r.slew_rate),
       input_offset_voltage: r.input_offset_voltage ?? null,
       input_bias_current: r.input_bias_current ?? null,
-      cmrr_db: nz(r.cmrr), resolution: nz(r.resolution), sample_rate: nz(r.sample_rate) }),
+      cmrr_db: nz(r.cmrr), resolution: nz(r.resolution), sample_rate: nz(r.sample_rate),
+      // v24 (owner 2026-11-15): the axes kAnalog compared but no row carried. The rail-to-rail
+      // flags arrive as 'yes' / 'no' / '' (unstated) and the output stage as stated; '' -> null,
+      // NOT '' (ExactMatch / ClassMatch read '' as a stated value, ABT #505).
+      offset_drift: nz(r.offset_drift), quiescent_current: nz(r.quiescent_current),
+      propagation_delay: nz(r.propagation_delay), on_resistance: nz(r.on_resistance),
+      rail_to_rail_input: r.rail_to_rail_input || null,
+      rail_to_rail_output: r.rail_to_rail_output || null,
+      output_stage: r.output_stage || null,
+      // The package the record states (part.case, else part.package: the row's case code),
+      // compared by kAnalog as an identity string.
+      package: r.caseCode || null }),
     params: [
       { key: 'channels', label: 'ch', row: 'channels', unit: '' },
       { key: 'supply_min_V', label: 'Vsup min', row: 'vsupply_min', unit: 'V' },
@@ -495,8 +508,40 @@ export const XREF = [
       { key: 'input_offset_voltage', label: 'Vos', row: 'input_offset_voltage', unit: 'V' },
       { key: 'input_bias_current', label: 'Ib', row: 'input_bias_current', unit: 'A' },
       { key: 'cmrr_db', label: 'CMRR', row: 'cmrr', unit: 'dB' },
+      { key: 'offset_drift', label: 'Vos drift', row: 'offset_drift', unit: 'V/K' },
+      { key: 'quiescent_current', label: 'Iq/ch', row: 'quiescent_current', unit: 'A' },
+      { key: 'rail_to_rail_input', label: 'RRI', row: 'rail_to_rail_input', str: true },
+      { key: 'rail_to_rail_output', label: 'RRO', row: 'rail_to_rail_output', str: true },
+      { key: 'propagation_delay', label: 'tpd', row: 'propagation_delay', unit: 's' },
+      { key: 'output_stage', label: 'output', row: 'output_stage', str: true },
       { key: 'resolution', label: 'bits', row: 'resolution', unit: '' },
       { key: 'sample_rate', label: 'fs', row: 'sample_rate', unit: 'S/s' },
+      { key: 'on_resistance', label: 'Ron', row: 'on_resistance', unit: 'Ω' },
+    ],
+  },
+  {
+    key: 'bjt', label: 'BJTs', category: 'bjt',
+    // The ranker's BJT model (owner 2026-11-15), on the IGBT / MOSFET pattern: Vceo is the
+    // hard gate (below 0.9x rejects), Ic a soft one (critical_ratings("bjt")); the polarity is
+    // an identity (an NPN never substitutes for a PNP), so the pool keeps to the original's;
+    // the guaranteed minimum hFE, fT and the power rating are graded (kBjt). The package is
+    // the shared footprint / mount gate on the case code, as for every semiconductor.
+    primary: null,
+    sameFacet: null,
+    hardKeys: ['vceo'],
+    hardMin: [{ row: 'vceo_rated', factor: 0.9 }],
+    sameStr: ['polarity'],
+    spec: (r) => ({ ...base(r), vceo: nz(r.vceo_rated), ic: nz(r.ic_continuous),
+      hfe_min: nz(r.hfe_min), transition_frequency: nz(r.transition_frequency),
+      power_dissipation: nz(r.power_dissipation), polarity: r.polarity || null,
+      technology: r.technology ?? '' }),
+    params: [
+      { key: 'vceo', label: 'Vceo', row: 'vceo_rated', unit: 'V' },
+      { key: 'ic', label: 'Ic', row: 'ic_continuous', unit: 'A' },
+      { key: 'hfe_min', label: 'hFE min', row: 'hfe_min', unit: '' },
+      { key: 'transition_frequency', label: 'fT', row: 'transition_frequency', unit: 'Hz' },
+      { key: 'power_dissipation', label: 'P', row: 'power_dissipation', unit: 'W' },
+      { key: 'polarity', label: 'polarity', row: 'polarity', str: true },
     ],
   },
 ]

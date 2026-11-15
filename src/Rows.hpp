@@ -696,6 +696,7 @@ struct BjtRow : RowBase {
     double tj_max = kNaN();
     std::string technology;
     std::string polarity;  // part.subType: npn / pnp; ratings above are magnitudes for both
+    double transition_frequency = kNaN();  // Hz — electrical.transitionFrequency (fT); v24
     bool is_production = false;
     bool no_thermal() const { return !present(tj_max); }
 };
@@ -824,9 +825,18 @@ struct AnalogRow : RowBase {
     double resolution = kNaN();           // bits (ADC/DAC)
     double sample_rate = kNaN();          // S/s (ADC)
     double on_resistance = kNaN();        // Ω (switch/mux)
+    // v24: the rest of what the cross-reference's kAnalog table compares.
+    double offset_drift = kNaN();         // V/K — inputOffsetVoltageDrift
+    double quiescent_current = kNaN();    // A per channel — supply.quiescentCurrentPerChannel
+    double propagation_delay = kNaN();    // s — propagationDelay (comparators)
     std::string device_type;              // the analog.<subtype> key (operationalAmplifier, adc, …)
     std::string architecture;
     std::string input_stage;
+    // railToRailInput / railToRailOutput: "yes" / "no" as stated, "" when unstated (tri-state:
+    // unstated is never "no").
+    std::string rail_to_rail_input;
+    std::string rail_to_rail_output;
+    std::string output_stage;             // outputStage (comparators: pushPull / openDrain …)
     bool is_production = false;
 };
 

@@ -154,10 +154,15 @@ constexpr char kMagic[8] = {'K', 'E', 'L', 'V', 'I', 'D', 'X', '\1'};
 // <family>.curves.kidx, keyed by row index, which the browser fetches only when something reads
 // curves. The base header gains the curve shard's build id (so the base build id covers it) and
 // the curve shard's header names the base build id: a curve shard of another build is refused.
-constexpr uint32_t kFormatVersion = 23;
 // The curve shard's own magic, so a base shard handed to the curve loader (or the reverse) is
 // refused by its first 8 bytes rather than misparsed.
 constexpr char kCurveMagic[8] = {'K', 'E', 'L', 'V', 'C', 'R', 'V', '\1'};
+// v24 carries a BJT's transition frequency (BjtRow.transition_frequency, SAS
+// electrical.transitionFrequency) and the analog fields the cross-reference's kAnalog table
+// already compared but no row carried (AnalogRow.offset_drift, quiescent_current,
+// propagation_delay, rail_to_rail_input / _output, output_stage; owner 2026-11-15). Numbered
+// 24: one above the v23 curve-shard format.
+constexpr uint32_t kFormatVersion = 24;
 
 // Identity of the code that produces rows, so a cached shard can be recognised as
 // having been built by a DIFFERENT extractor than the one running now (ABT #426).
@@ -531,6 +536,7 @@ void row_io(Ar& ar, BjtRow& r) {
     ar.dbl(r.tj_max);
     ar.str(r.technology);
     ar.str(r.polarity);     // v14
+    ar.dbl(r.transition_frequency);  // v24
     ar.boolean(r.is_production);
 }
 
@@ -602,6 +608,12 @@ void row_io(Ar& ar, AnalogRow& r) {
     ar.str(r.device_type);
     ar.str(r.architecture);
     ar.str(r.input_stage);
+    ar.dbl(r.offset_drift);          // v24
+    ar.dbl(r.quiescent_current);     // v24
+    ar.dbl(r.propagation_delay);     // v24
+    ar.str(r.rail_to_rail_input);    // v24
+    ar.str(r.rail_to_rail_output);   // v24
+    ar.str(r.output_stage);          // v24
     ar.boolean(r.is_production);
 }
 

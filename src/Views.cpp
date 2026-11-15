@@ -2030,6 +2030,9 @@ std::optional<BjtRow> extract_bjt(const json& env) {
     r.power_dissipation = get_num(*refs->elec, "powerDissipation").value_or(0.0);
     r.technology = get_str(*refs->part, "technology").value_or("");
     r.polarity = polarity;
+    // fT, Hz (v24). Unstated stays NaN: unknown, never 0.
+    if (auto ft = get_num(*refs->elec, "transitionFrequency"); ft && *ft > 0)
+        r.transition_frequency = *ft;
     auto st = get_str(*refs->mi, "status");
     r.is_production = st && *st == "production";
     return r;
@@ -2757,13 +2760,26 @@ std::optional<AnalogRow> extract_analog(const json& env) {
         set_if_pos(r.resolution, get_num(*elec, "resolution"));
         set_if_pos(r.sample_rate, get_num(*elec, "sampleRate"));
         set_if_pos(r.on_resistance, get_num(*elec, "onResistance"));
+        set_if_pos(r.offset_drift, get_num(*elec, "inputOffsetVoltageDrift"));
+        set_if_pos(r.propagation_delay, get_num(*elec, "propagationDelay"));
         const json* supply = obj_get(*elec, "supply");
         if (supply) {
             set_if_pos(r.vsupply_min, get_num(*supply, "minimumSupplyVoltage"));
             set_if_pos(r.vsupply_max, get_num(*supply, "maximumSupplyVoltage"));
+            set_if_pos(r.quiescent_current, get_num(*supply, "quiescentCurrentPerChannel"));
         }
         r.architecture = get_str(*elec, "architecture").value_or("");
         r.input_stage = get_str(*elec, "inputStage").value_or("");
+        r.output_stage = get_str(*elec, "outputStage").value_or("");
+        // Tri-state (v24): a stated boolean becomes "yes" / "no" (the ranker's yes_no_rank),
+        // an absent or non-boolean value stays "" — unstated is never "no".
+        auto yes_no = [&](const char* key) -> std::string {
+            const json* b = obj_get(*elec, key);
+            if (!b || !b->is_boolean()) return "";
+            return b->get<bool>() ? "yes" : "no";
+        };
+        r.rail_to_rail_input = yes_no("railToRailInput");
+        r.rail_to_rail_output = yes_no("railToRailOutput");
     }
     auto status = get_str(*node->mi, "status");
     r.is_production = status.has_value() && *status == "production";

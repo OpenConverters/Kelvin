@@ -82,6 +82,24 @@ json spec_for(const std::string& cat, const json& row) {
         o["subtype"] = s("device_type"); o["channels"] = num("channels");
         o["supply_max_V"] = num("vsupply_max"); o["gbw"] = num("gain_bandwidth");
         o["slew_rate"] = num("slew_rate");
+    } else if (cat == "igbt") {
+        // web/src/crossref.js XREF igbt (owner 2026-11-15)
+        o["vces"] = num("vces_rated"); o["ic"] = num("ic_continuous");
+        o["vce_sat"] = num("vce_sat"); o["tj_max"] = num("tj_max");
+        o["technology"] = s("technology");
+    } else if (cat == "bjt") {
+        // web/src/crossref.js XREF bjt (owner 2026-11-15)
+        o["vceo"] = num("vceo_rated"); o["ic"] = num("ic_continuous");
+        o["hfe_min"] = num("hfe_min"); o["transition_frequency"] = num("transition_frequency");
+        o["power_dissipation"] = num("power_dissipation");
+        if (!s("polarity").empty()) o["polarity"] = s("polarity");
+        o["technology"] = s("technology");
+    } else if (cat == "varistor") {
+        // web/src/crossref.js XREF varistor (owner 2026-11-15)
+        o["value_si"] = num("varistor_voltage"); o["clamping_voltage"] = num("clamping_voltage");
+        o["peak_surge_current"] = num("peak_surge_current");
+        o["max_continuous_dc_voltage"] = num("max_continuous_dc_voltage");
+        o["capacitance"] = num("capacitance"); o["technology"] = s("technology");
     }
     return o;
 }
@@ -167,4 +185,13 @@ TEST_CASE("fuzz: connector ranker holds its invariants over real rows", "[crossr
 }
 TEST_CASE("fuzz: analog ranker holds its invariants over real rows", "[crossref][fuzz]") {
     fuzz_family("analog", build_analog_shard(fixtures() + "/analog_ics.ndjson"));
+}
+TEST_CASE("fuzz: igbt ranker holds its invariants over real rows", "[crossref][fuzz]") {
+    fuzz_family("igbt", build_igbt_shard(fixtures() + "/igbts.ndjson"));
+}
+TEST_CASE("fuzz: bjt ranker holds its invariants over real rows", "[crossref][fuzz]") {
+    fuzz_family("bjt", build_bjt_shard(fixtures() + "/bjts.ndjson"));
+}
+TEST_CASE("fuzz: varistor ranker holds its invariants over real rows", "[crossref][fuzz]") {
+    fuzz_family("varistor", build_varistor_shard(fixtures() + "/varistors.ndjson"));
 }

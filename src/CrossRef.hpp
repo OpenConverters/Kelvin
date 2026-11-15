@@ -342,6 +342,51 @@ inline std::vector<std::string> comparison_source_fields(const std::string& cat,
         if (name == "temp_min_C" || name == "temp_max_C") return {"environmental.operatingTemperature"};
         return {};
     }
+    if (cat == "igbt") {
+        if (name == "vces") return {"electrical.collectorEmitterVoltage"};
+        if (name == "ic") return {"electrical.continuousCollectorCurrent"};
+        if (name == "vce_sat") return {"electrical.collectorEmitterSaturation"};
+        if (name == "tj_max") return {"thermal.junctionTemperatureMax"};
+        if (name == "process") return {"part.technology"};
+        return {};
+    }
+    if (cat == "bjt") {
+        if (name == "vceo") return {"electrical.collectorEmitterVoltage"};
+        if (name == "ic") return {"electrical.collectorCurrent"};
+        if (name == "hfe_min") return {"electrical.dcCurrentGain"};
+        if (name == "transition_frequency") return {"electrical.transitionFrequency"};
+        if (name == "power_dissipation") return {"electrical.powerDissipation"};
+        if (name == "polarity") return {"part.subType"};
+        return {};
+    }
+    if (cat == "varistor") {
+        if (name == "value") return {"electrical.varistorVoltage"};
+        if (name == "clamping_voltage") return {"electrical.clampingVoltage"};
+        if (name == "peak_surge_current") return {"electrical.peakSurgeCurrent"};
+        if (name == "max_continuous_dc_voltage") return {"electrical.maxContinuousDcVoltage"};
+        if (name == "capacitance") return {"electrical.capacitance"};
+        return {};
+    }
+    if (cat == "analog") {
+        if (name == "channels") return {"electrical.numberOfChannels"};
+        if (name == "supply_min_V" || name == "supply_max_V" || name == "quiescent_current")
+            return {"electrical.supply"};
+        if (name == "gbw") return {"electrical.gainBandwidthProduct"};
+        if (name == "slew_rate") return {"electrical.slewRate"};
+        if (name == "input_offset_voltage") return {"electrical.inputOffsetVoltage"};
+        if (name == "offset_drift") return {"electrical.inputOffsetVoltageDrift"};
+        if (name == "input_bias_current") return {"electrical.inputBiasCurrent"};
+        if (name == "cmrr_db") return {"electrical.commonModeRejectionRatio"};
+        if (name == "rail_to_rail_input") return {"electrical.railToRailInput"};
+        if (name == "rail_to_rail_output") return {"electrical.railToRailOutput"};
+        if (name == "propagation_delay") return {"electrical.propagationDelay"};
+        if (name == "output_stage") return {"electrical.outputStage"};
+        if (name == "resolution") return {"electrical.resolution"};
+        if (name == "sample_rate") return {"electrical.sampleRate"};
+        if (name == "on_resistance") return {"electrical.onResistance"};
+        if (name == "package") return {"part.package", "part.case"};
+        return {};
+    }
     if (cat == "timeBase") {
         if (name == "frequency") return {"electrical.frequency"};
         if (name == "tolerance_ppm") return {"electrical.frequencyTolerance"};
@@ -386,6 +431,12 @@ inline std::vector<Rating> critical_ratings(const std::string& cat) {
     if (cat == "igbt")
         return {{"vces", Mode::HigherBetter, 0.95, 0.9, true},
                 {"ic", Mode::HigherBetter, 0.9, 0.7, false}};
+    // A BJT: the IGBT's ratings under the BJT's names (owner 2026-11-15). Vceo is the hard
+    // gate, Ic the soft one; both are magnitudes (a PNP's are stated negative, the shard
+    // stores their magnitude).
+    if (cat == "bjt")
+        return {{"vceo", Mode::HigherBetter, 0.95, 0.9, true},
+                {"ic", Mode::HigherBetter, 0.9, 0.7, false}};
     return {};
 }
 
@@ -405,6 +456,7 @@ inline bool is_primary_rating(const std::string& cat, const std::string& key) {
         {"mosfet", {"vds", "rds_on"}},
         {"diode", {"vrrm", "power_dissipation", "peak_pulse_power", "peak_pulse_current"}},
         {"igbt", {"vces"}},
+        {"bjt", {"vceo"}},
         {"capacitor", {"voltage", "ripple_current"}},
         {"magnetic", {"saturation_current", "rated_current"}},
         {"chipBead", {"impedance_100mhz", "impedance_peak", "rated_current"}},
@@ -478,6 +530,7 @@ inline std::string primary_rating_label(const std::string& key) {
         {"peak_pulse_power", "peak pulse power"},
         {"peak_pulse_current", "peak pulse current"},
         {"vces", "collector-emitter voltage rating (Vces)"},
+        {"vceo", "collector-emitter voltage rating (Vceo)"},
         {"voltage", "rated voltage"},
         {"rated_current", "rated current"},
         {"clamping_voltage", "clamping voltage"},
@@ -537,6 +590,7 @@ inline bool is_hard_param(const std::string& cat, const std::string& key) {
                                                 "output_type", "enable_function"};
     if (cat == "magnetic" || cat == "chipBead") return magnetic.count(key) > 0;
     if (cat == "mosfet") return key == "channel";
+    if (cat == "bjt") return key == "polarity";  // NPN / PNP, like the MOSFET channel
     if (cat == "connector") return connector.count(key) > 0;
     if (cat == "analog") return analog.count(key) > 0;
     if (cat == "timeBase") return timebase.count(key) > 0;
@@ -1289,6 +1343,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             {"if_avg", {"average forward current rating", "A"}},
             {"voltage", {"rated voltage", "V"}},
             {"vces", {"collector-emitter voltage rating", "V"}},
+            {"vceo", {"collector-emitter voltage rating", "V"}},
             {"ic", {"continuous collector current rating", "A"}},
             {"saturation_current", {"saturation current", "A"}},
             {"rated_current", {"rated current", "A"}},
@@ -3785,7 +3840,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // and the substitute's record does not is UNVERIFIED and noted like the operating
         // range above, with no demotion and no cap (Qarlos 2026-11-09, seeds 20575296 /
         // 20889483; secondary since the owner's rule of the same day).
-        if (cat == "diode") {
+        if (cat == "diode" || cat == "igbt") {
             const auto o_tj = num(original, "tj_max"), s_tj = num(cand, "tj_max");
             const std::string v = verdict_of("tj_max");
             if (v == FAIL && o_tj && s_tj) {
@@ -4582,6 +4637,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 {"if_avg", {"average forward current rating", "A"}},
                 {"voltage", {"rated voltage", "V"}},
                 {"vces", {"collector-emitter voltage rating", "V"}},
+                {"vceo", {"collector-emitter voltage rating", "V"}},
                 {"ic", {"continuous collector current rating", "A"}}};
             const auto it = kWhat.find(r.key);
             const char* what = it != kWhat.end() ? it->second.first : r.key;
@@ -6577,8 +6633,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
 //: 30 V one did — so an unknown category is refused, not ranked.
 inline bool known_category(const std::string& c) {
     static const std::set<std::string> k{"resistor", "capacitor", "magnetic", "chipBead",
-                                         "mosfet", "diode", "igbt", "connector", "analog",
-                                         "timeBase", "varistor"};
+                                         "mosfet", "diode", "igbt", "bjt", "connector",
+                                         "analog", "timeBase", "varistor"};
     return k.count(c) > 0;
 }
 

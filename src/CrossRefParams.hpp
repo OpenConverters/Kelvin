@@ -670,6 +670,34 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
     static const std::vector<ParamSpec> kVaristor = {
         {"clamping_voltage", D::Lower, 1.05, std::nullopt, false, true, nullptr},
         {"peak_surge_current", D::Higher, 0.9, std::nullopt, false, true, nullptr},
+        // Maximum continuous DC voltage (owner 2026-11-15): the working voltage the part
+        // stands without conducting, so the substitute must reach the original's. The band of
+        // the other maximum-voltage ratings (resistor max_voltage_V, connector rated voltage):
+        // equal or higher passes, down to 90 % warns, lower FAILs. Absent -> UNVERIFIED.
+        {"max_continuous_dc_voltage", D::Higher, 0.9, std::nullopt, false, false, nullptr},
+        // Capacitance (owner 2026-11-15): the load the part puts on the line it protects.
+        // Lower is better; the diode junction-capacitance band (up to 2x warns, beyond FAILs).
+        // The records state no measurement frequency / bias for it, so it is compared as stated.
+        {"capacitance", D::Lower, 2.0, std::nullopt, false, false, nullptr},
+    };
+    // An IGBT's ratings Vces / Ic are critical_ratings (CrossRef.hpp). The table grades the
+    // conduction drop and the junction limit (owner 2026-11-15), on the diode's conventions:
+    // Vce(sat) like the diode Vf (lower is better, up to 1.2x warns), Tj max like the diode
+    // tj_max (the substitute must reach it, no band). Vce(sat) is compared as stated: the
+    // shard carries no collector current it is stated at.
+    static const std::vector<ParamSpec> kIgbt = {
+        {"vce_sat", D::Lower, 1.2, std::nullopt, false, false, nullptr},
+        {"tj_max", D::Higher, 0.0, 0.0, false, false, nullptr},
+    };
+    // A BJT (owner 2026-11-15), on the IGBT / MOSFET pattern: Vceo / Ic are critical_ratings
+    // (CrossRef.hpp); the polarity is an identity like the MOSFET channel (an NPN is never a
+    // PNP's substitute); the guaranteed minimum gain and the power rating follow the generic
+    // equal-or-better band (down to 90 % warns), fT the analog bandwidth band (GBW, 0.7).
+    static const std::vector<ParamSpec> kBjt = {
+        {"polarity", D::ExactMatch, 0.0, std::nullopt, false, false, nullptr},
+        {"hfe_min", D::Higher, 0.9, std::nullopt, false, false, nullptr},
+        {"transition_frequency", D::Higher, 0.7, std::nullopt, false, false, nullptr},
+        {"power_dissipation", D::Higher, 0.9, std::nullopt, false, false, nullptr},
     };
     static const std::vector<ParamSpec> kCapacitor = {
         {"esr", D::Lower, 1.5, std::nullopt, false, true, nullptr},
@@ -852,6 +880,9 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
         {"output_stage", D::ExactMatch, 0.0, std::nullopt, false, false, nullptr},
         {"resolution", D::Higher, 1.0, std::nullopt, false, false, nullptr},
         {"sample_rate", D::Higher, 0.9, std::nullopt, false, false, nullptr},
+        // A switch / multiplexer's on-resistance (owner 2026-11-15): lower is better, the
+        // MOSFET Rds(on) band (up to 1.5x warns, beyond FAILs).
+        {"on_resistance", D::Lower, 1.5, std::nullopt, false, false, nullptr},
     };
     static const std::vector<ParamSpec> kTimeBase = {
         {"subtype", D::ExactMatch, 0.0, std::nullopt, false, true, nullptr},
@@ -922,6 +953,8 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
     if (category == "analog") return kAnalog;
     if (category == "timeBase") return kTimeBase;
     if (category == "varistor") return kVaristor;
+    if (category == "igbt") return kIgbt;
+    if (category == "bjt") return kBjt;
     return kEmpty;
 }
 
@@ -971,6 +1004,11 @@ inline std::string param_label(const std::string& key) {
         {"rated_voltage_V", "rated voltage"},
         {"max_voltage_V", "maximum working voltage"},
         {"vz_tolerance_pct", "breakdown-voltage tolerance"},
+        {"vce_sat", "collector-emitter saturation voltage"},
+        {"hfe_min", "minimum DC current gain (hFE)"},
+        {"transition_frequency", "transition frequency (fT)"},
+        {"max_continuous_dc_voltage", "maximum continuous DC voltage"},
+        {"on_resistance", "on-resistance"},
     };
     for (const auto& [k, label] : kLabels)
         if (k == key) return label;

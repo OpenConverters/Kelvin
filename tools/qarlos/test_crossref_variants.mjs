@@ -279,9 +279,9 @@ for (const t of TIMING_TECHNOLOGIES) {
 // the pool is cut at the ranker's own edges: Vces >= 0.9x, Vvar within 0.90-1.10x, the
 // analog channel count exact.
 const { XREF } = await import(pathToFileURL(join(here, '..', '..', 'web', 'src', 'crossref.js')).href)
-for (const k of ['igbt', 'varistor', 'analog']) assert.ok(XREF.some((f) => f.key === k), k)
-// bjt and controller: the ranker has no model (known_category refuses them), so no page.
-for (const k of ['bjt', 'controller']) assert.ok(!XREF.some((f) => f.key === k), k)
+for (const k of ['igbt', 'varistor', 'analog', 'bjt']) assert.ok(XREF.some((f) => f.key === k), k)
+// controller: the ranker has no model (known_category refuses it), so no page.
+assert.ok(!XREF.some((f) => f.key === 'controller'))
 const famCases = [
   ['igbt', { mpn: 'IGBT-A', manufacturer: 'A', vces_rated: 650, ic_continuous: 40, vce_sat: 1.6,
     tj_max: 175, technology: 'si' }, 'igbt',
@@ -299,7 +299,15 @@ const famCases = [
   (q) => { assert.ok(q.filters.channels.min <= 2 && q.filters.channels.max >= 2)
     assert.deepEqual(q.filters.device_type, ['operationalAmplifier']) },
   (s) => { assert.equal(s.subtype, 'operationalAmplifier'); assert.equal(s.channels, 2)
-    assert.equal(s.gbw, 1e6); assert.equal(s.input_offset_voltage, -2e-3); assert.equal(s.cmrr_db, 80) }],
+    assert.equal(s.gbw, 1e6); assert.equal(s.input_offset_voltage, -2e-3); assert.equal(s.cmrr_db, 80)
+    // unstated tri-state / string fields travel as null, never ''
+    assert.equal(s.rail_to_rail_input, null); assert.equal(s.output_stage, null) }],
+  ['bjt', { mpn: 'BJT-A', manufacturer: 'A', vceo_rated: 50, ic_continuous: 0.5, hfe_min: 200,
+    transition_frequency: 6e8, power_dissipation: 0.7, polarity: 'pnp', technology: 'Si' }, 'bjt',
+  (q) => { assert.ok(Math.abs(q.filters.vceo_rated.min - 45) < 1e-9)
+    assert.deepEqual(q.filters.polarity, ['pnp']) },
+  (s) => { assert.equal(s.vceo, 50); assert.equal(s.ic, 0.5); assert.equal(s.hfe_min, 200)
+    assert.equal(s.transition_frequency, 6e8); assert.equal(s.polarity, 'pnp') }],
 ]
 for (const [family, orig, category, checkPool, checkSpec] of famCases) {
   let q = null, seenCat = null, seenOrig = null
