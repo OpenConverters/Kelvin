@@ -991,6 +991,7 @@ std::optional<MosfetRow> extract_mosfet(const json& env) {
     }
     auto status = get_str(*mi, "status");
     r.is_production = status.has_value() && *status == "production";
+    r.status = status.value_or("");  // "" = not stated (v24, every family)
     r.datasheet_usable = !datasheet_unusable(get_str(*mi, "datasheetUrl").value_or(""));
     const json* thermal = obj_get(*di, "thermal");
     if (thermal) {
@@ -1197,6 +1198,7 @@ std::optional<DiodeRow> extract_diode(const json& env) {
     r.qualification = get_str(*part, "qualification").value_or("");
     auto status = get_str(*mi, "status");
     r.is_production = status.has_value() && *status == "production";
+    r.status = status.value_or("");  // "" = not stated (v24, every family)
     const json* thermal = obj_get(*di, "thermal");
     if (thermal) {
         auto rja = get_num(*thermal, "thermalResistanceJunctionAmbient");
@@ -1731,6 +1733,7 @@ std::optional<CapacitorRow> extract_capacitor(const json& env) {
     r.technology = tech;
     auto status = get_str(*mi, "status");
     r.is_production = status.has_value() && *status == "production";
+    r.status = status.value_or("");  // "" = not stated (v24, every family)
     auto rth = get_num(*elec, "thermalResistance");
     if (rth && *rth > 0) r.rth = *rth;
     return r;
@@ -1813,6 +1816,7 @@ std::optional<ResistorRow> extract_resistor(const json& env) {
     if (r.family.empty()) r.family = get_str(*part, "series").value_or("");
     auto status = get_str(*mi, "status");
     r.is_production = status.has_value() && *status == "production";
+    r.status = status.value_or("");  // "" = not stated (v24, every family)
     // The temperature basis of the power rating (v18). A rating is the power the part carries
     // up to a stated ambient; above it the part derates along its curve. Both are carried
     // exactly as stated — absent stays NaN / empty, never a "typical" 70 degC knee.
@@ -1927,6 +1931,7 @@ std::optional<ControllerRow> extract_controller(const json& env) {
     r.mpn = *mpn;
     r.manufacturer = *manuf;
     fill_dimensions(r, *ds, *part);
+    r.status = get_str(*mi, "status").value_or("");  // "" = not stated (v24, every family)
     r.category = get_str(*fn, "category").value_or("");
     const json* topos = obj_get(*fn, "intendedTopologies");
     if (topos && topos->is_array()) {
@@ -1996,6 +2001,7 @@ std::optional<IgbtRow> extract_igbt(const json& env) {
     r.technology = get_str(*refs->part, "technology").value_or("");
     auto st = get_str(*refs->mi, "status");
     r.is_production = st && *st == "production";
+    r.status = st.value_or("");  // "" = not stated (v24, every family)
     const json* dinfo = obj_get(*refs->mi, "datasheetInfo");
     const json* thermal = dinfo ? obj_get(*dinfo, "thermal") : nullptr;
     if (thermal) {
@@ -2050,6 +2056,7 @@ std::optional<BjtRow> extract_bjt(const json& env) {
             if (auto tj = get_num(*th, "junctionTemperatureMax")) r.tj_max = *tj;
     auto st = get_str(*refs->mi, "status");
     r.is_production = st && *st == "production";
+    r.status = st.value_or("");  // "" = not stated (v24, every family)
     return r;
 }
 
@@ -2086,6 +2093,7 @@ std::optional<VaristorRow> extract_varistor(const json& env) {
     r.technology = get_str(*part, "technology").value_or("");
     auto st = get_str(*mi, "status");
     r.is_production = st && *st == "production";
+    r.status = st.value_or("");  // "" = not stated (v24, every family)
     return r;
 }
 
@@ -2713,6 +2721,7 @@ std::optional<MagneticRow> extract_magnetic(const json& env) {
     }
     auto status = get_str(*mi, "status");
     r.is_production = status.has_value() && *status == "production";
+    r.status = status.value_or("");  // "" = not stated (v24, every family)
     return r;
 }
 
@@ -2972,6 +2981,7 @@ std::optional<ConnectorRow> extract_connector(const json& env) {
     r.series = get_str(*part, "series").value_or("");
     auto status = get_str(*mi, "status");
     r.is_production = status.has_value() && *status == "production";
+    r.status = status.value_or("");  // "" = not stated (v24, every family)
     return r;
 }
 

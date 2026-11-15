@@ -137,7 +137,8 @@ if (KELVIN_BUILD_TESTS AND NOT EMSCRIPTEN AND KELVIN_TOP)
         tests/test_magnetic_loss.cpp
         tests/test_capacitor_loss.cpp
         tests/test_curve_shards.cpp
-        tests/test_select_spec.cpp)
+        tests/test_select_spec.cpp
+        tests/test_select_status.cpp)
     target_compile_definitions(test_kelvin PRIVATE
         KELVIN_TEST_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests")
     target_link_libraries(test_kelvin PRIVATE kelvin Catch2::Catch2WithMain)

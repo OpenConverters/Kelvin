@@ -1656,7 +1656,10 @@ def recommend_parts(family: str, requirements: dict, options: dict | None = None
         requirements: that family's designRequirements block, SI units. The keys each family
             reads are listed by describe_family (e.g. mosfet: ratedDrainSourceVoltage,
             ratedContinuousDrainCurrent, maximumOnResistance).
-        options: selector options — tiebreaker, excludeDiscontinued, manufacturerAllowlist,
+        options: selector options — tiebreaker, excludeDiscontinued (default true: a stated
+            non-production lifecycle status drops a part; a record stating none is kept with
+            "status" in its unverified list and ranks after the parts that state one),
+            manufacturerAllowlist,
             maxManufacturerFraction, switchingFrequency, and per-family extras (mosfet qgMax /
             technologyAllowed, diode qrrMax, capacitor capacitanceMin|Max, resistor
             maxValueDeviation|maxTolerance, controller topology + inputVoltage +

@@ -44,6 +44,43 @@ json emit_rejections(const std::map<std::string, uint64_t>& rej) {
     return out;
 }
 
+// ---- Lifecycle: ONE rule for every family (owner 2026-11-15) ---------------------------------
+// Under excludeDiscontinued a STATED non-production status (nrnd, obsolete, preview, ...) drops
+// the part (rejections "discontinued"); a record that states no status is KEPT and counts one
+// more UNVERIFIED item — "status" joins its unverified list, a 'status not stated' note says
+// why, and it ranks after the parts with fewer UNVERIFIED items. With excludeDiscontinued off
+// every part is kept and nothing is counted. Returns false when the part is dropped.
+bool status_gate(const RowBase& r, bool exclude_discontinued, std::map<std::string, uint64_t>& rej) {
+    if (!exclude_discontinued || r.status.empty()) return true;
+    if (r.status != "production") {
+        rej["discontinued"]++;
+        return false;
+    }
+    return true;
+}
+
+// The record states no lifecycle status while excludeDiscontinued is on: one UNVERIFIED item.
+bool status_unverified(const RowBase& r, bool exclude_discontinued) {
+    return exclude_discontinued && r.status.empty();
+}
+
+constexpr const char* kStatusNotStatedNote =
+    "status not stated: the record names no lifecycle status, so it cannot be shown to be in "
+    "production (counts one more UNVERIFIED item)";
+
+// A candidate of a family whose own JSON carries no unverified list: "status" joins (or starts)
+// its unverified list, the note joins its notes, and the sortKey says so — its unverifiedItems
+// (the operating-point ranking's key) counts the item too.
+void mark_status_unverified(json& cd) {
+    cd["unverified"].push_back("status");
+    cd["notes"].push_back(kStatusNotStatedNote);
+    if (!cd.contains("sortKey")) return;  // a family that reports no sortKey (connector)
+    json& sk = cd["sortKey"];
+    sk["statusUnverified"] = true;
+    if (sk.contains("unverifiedItems"))
+        sk["unverifiedItems"] = sk["unverifiedItems"].get<std::size_t>() + 1;
+}
+
 template <class Row>
 json base_candidate(const Row* r, RecordFetcher* fetcher) {
     json c;
@@ -140,7 +177,7 @@ json select_mosfet(const Shard<MosfetRow>& shard, const MosfetConstraints& c, Mo
 
     std::vector<const MosfetRow*> passing;
     for (const auto& m : shard.rows) {
-        if (c.exclude_discontinued && !m.is_production) { rej["discontinued"]++; continue; }
+        if (!status_gate(m, c.exclude_discontinued, rej)) continue;
         if (!c.technology_allowed.empty() &&
             c.technology_allowed.find(m.technology) == c.technology_allowed.end()) {
             rej["technology"]++; continue;
@@ -213,10 +250,13 @@ json select_mosfet(const Shard<MosfetRow>& shard, const MosfetConstraints& c, Mo
     std::map<const MosfetRow*, op_ranking::SizeEvidence> op_size;
     if (op_loss_mode)
         for (const MosfetRow* m : passing) op_size.emplace(m, op_ranking::size_of(board_area_json(*m)));
+    // A record stating no lifecycle status counts one more UNVERIFIED item (owner 2026-11-15,
+    // every family), in every ranking: outside the operating-point loss it is the whole key.
     auto unverified_terms = [&](const MosfetRow* m) -> size_t {
-        return op_loss_mode
-                   ? op_ranking::unverified_items(op_loss.at(m).unverified().size(), op_size.at(m))
-                   : 0;
+        return (op_loss_mode
+                    ? op_ranking::unverified_items(op_loss.at(m).unverified().size(), op_size.at(m))
+                    : 0) +
+               (status_unverified(*m, c.exclude_discontinued) ? 1 : 0);
     };
     // Gross over-rating (owner 2026-11-14): Vds or Id more than kGrossOverRatingFactor (3x)
     // the requirement. Each such axis is one step of a tier just above the metric, so an
@@ -330,6 +370,7 @@ json select_mosfet(const Shard<MosfetRow>& shard, const MosfetConstraints& c, Mo
         } else {
             cd["sortKey"] = {{"metric", to_string(tb)}, {"value", metric(m)}};
         }
+        if (status_unverified(*m, c.exclude_discontinued)) mark_status_unverified(cd);
         cands.push_back(std::move(cd));
     }
     result["candidates"] = std::move(cands);
@@ -410,7 +451,7 @@ json select_diode(const Shard<DiodeRow>& shard, const DiodeConstraints& c, Diode
     rej["unreadable_row"] = shard.meta.unreadable_row_count;
     std::vector<const DiodeRow*> passing;
     for (const auto& d : shard.rows) {
-        if (c.exclude_discontinued && !d.is_production) { rej["discontinued"]++; continue; }
+        if (!status_gate(d, c.exclude_discontinued, rej)) continue;
         // Negated form on purpose: zener/TVS/ESD rows carry NaN where the subtype
         // publishes no forward rating, and `NaN < min` is FALSE — the natural-looking
         // `if (x < min) reject` therefore lets an UNKNOWN value pass a numeric gate.
@@ -461,10 +502,13 @@ json select_diode(const Shard<DiodeRow>& shard, const DiodeConstraints& c, Diode
     std::map<const DiodeRow*, op_ranking::SizeEvidence> op_size;
     if (op_loss_mode)
         for (const DiodeRow* d : passing) op_size.emplace(d, op_ranking::size_of(board_area_json(*d)));
+    // A record stating no lifecycle status counts one more UNVERIFIED item (owner 2026-11-15,
+    // every family), in every ranking: outside the operating-point loss it is the whole key.
     auto unverified_terms = [&](const DiodeRow* d) -> size_t {
-        return op_loss_mode
-                   ? op_ranking::unverified_items(op_loss.at(d).unverified().size(), op_size.at(d))
-                   : 0;
+        return (op_loss_mode
+                    ? op_ranking::unverified_items(op_loss.at(d).unverified().size(), op_size.at(d))
+                    : 0) +
+               (status_unverified(*d, c.exclude_discontinued) ? 1 : 0);
     };
     // Gross over-rating (owner 2026-11-14): Vrrm or If(avg) more than kGrossOverRatingFactor
     // (3x) the requirement. A tier just above the metric under lowest_vf / lowest_qrr; a flag
@@ -556,6 +600,7 @@ json select_diode(const Shard<DiodeRow>& shard, const DiodeConstraints& c, Diode
         } else {
             cd["sortKey"] = {{"metric", to_string(tb)}, {"value", metric(d)}};
         }
+        if (status_unverified(*d, c.exclude_discontinued)) mark_status_unverified(cd);
         cands.push_back(std::move(cd));
     }
     result["candidates"] = std::move(cands);
@@ -672,7 +717,7 @@ json select_capacitor(const Shard<CapacitorRow>& shard, const CapacitorConstrain
     rej["unreadable_row"] = shard.meta.unreadable_row_count;
     std::vector<const CapacitorRow*> passing;
     for (const auto& x : shard.rows) {
-        if (c.exclude_discontinued && !x.is_production) { rej["discontinued"]++; continue; }
+        if (!status_gate(x, c.exclude_discontinued, rej)) continue;
         if (!c.technology_allowed.empty() &&
             c.technology_allowed.find(x.technology) == c.technology_allowed.end()) {
             rej["technology"]++; continue;
@@ -744,10 +789,13 @@ json select_capacitor(const Shard<CapacitorRow>& shard, const CapacitorConstrain
             const auto [area, vol] = capacitor_size_json(*x);
             op_size.emplace(x, op_ranking::size_of(area, &vol));
         }
+    // A record stating no lifecycle status counts one more UNVERIFIED item (owner 2026-11-15,
+    // every family), in every ranking: outside the operating-point loss it is the whole key.
     auto unverified_terms = [&](const CapacitorRow* x) -> size_t {
-        return op_loss_mode
-                   ? op_ranking::unverified_items(op_loss.at(x).unverified().size(), op_size.at(x))
-                   : 0;
+        return (op_loss_mode
+                    ? op_ranking::unverified_items(op_loss.at(x).unverified().size(), op_size.at(x))
+                    : 0) +
+               (status_unverified(*x, c.exclude_discontinued) ? 1 : 0);
     };
     auto fails_ripple = [&](const CapacitorRow* x) -> int {
         return op_loss_mode && op_loss.at(x).fails_ripple_checks() ? 1 : 0;
@@ -855,6 +903,7 @@ json select_capacitor(const Shard<CapacitorRow>& shard, const CapacitorConstrain
         } else {
             cd["sortKey"] = {{"metric", to_string(tb)}, {"value", metric(x)}};
         }
+        if (status_unverified(*x, c.exclude_discontinued)) mark_status_unverified(cd);
         cands.push_back(std::move(cd));
     }
     result["candidates"] = std::move(cands);
@@ -1045,7 +1094,7 @@ json select_igbt(const Shard<IgbtRow>& shard, const IgbtConstraints& c, IgbtTieb
     rej["unreadable_row"] = shard.meta.unreadable_row_count;
     std::vector<const IgbtRow*> passing;
     for (const auto& g : shard.rows) {
-        if (c.exclude_discontinued && !g.is_production) { rej["discontinued"]++; continue; }
+        if (!status_gate(g, c.exclude_discontinued, rej)) continue;
         if (g.vces_rated < c.vces_min) { rej["vces_low"]++; continue; }
         if (g.ic_continuous < c.ic_min) { rej["ic_low"]++; continue; }
         if (c.vce_sat_max.has_value() && g.vce_sat > *c.vce_sat_max) { rej["vce_sat_high"]++; continue; }
@@ -1061,9 +1110,12 @@ json select_igbt(const Shard<IgbtRow>& shard, const IgbtConstraints& c, IgbtTieb
         }
         return 0;
     };
+    // A record stating no lifecycle status is one UNVERIFIED item: it ranks after the parts
+    // stating one (owner 2026-11-15, every family).
+    auto unv = [&](const IgbtRow* r) { return status_unverified(*r, c.exclude_discontinued) ? 1 : 0; };
     std::sort(passing.begin(), passing.end(), [&](const IgbtRow* a, const IgbtRow* b) {
-        return std::make_tuple(a->no_thermal() ? 1 : 0, metric(a), a->lineno) <
-               std::make_tuple(b->no_thermal() ? 1 : 0, metric(b), b->lineno);
+        return std::make_tuple(unv(a), a->no_thermal() ? 1 : 0, metric(a), a->lineno) <
+               std::make_tuple(unv(b), b->no_thermal() ? 1 : 0, metric(b), b->lineno);
     });
     json result;
     result["category"] = "igbt";
@@ -1084,6 +1136,7 @@ json select_igbt(const Shard<IgbtRow>& shard, const IgbtConstraints& c, IgbtTieb
                                                             : json(nullptr)}};
         cd["evidence"] = {{"thermalPresent", !g->no_thermal()}};
         cd["sortKey"] = {{"metric", to_string(tb)}, {"value", metric(g)}};
+        if (status_unverified(*g, c.exclude_discontinued)) mark_status_unverified(cd);
         cands.push_back(std::move(cd));
     }
     result["candidates"] = std::move(cands);
@@ -1097,7 +1150,7 @@ json select_bjt(const Shard<BjtRow>& shard, const BjtConstraints& c, BjtTiebreak
     rej["unreadable_row"] = shard.meta.unreadable_row_count;
     std::vector<const BjtRow*> passing;
     for (const auto& b : shard.rows) {
-        if (c.exclude_discontinued && !b.is_production) { rej["discontinued"]++; continue; }
+        if (!status_gate(b, c.exclude_discontinued, rej)) continue;
         if (c.polarity && b.polarity != *c.polarity) { rej["polarity_mismatch"]++; continue; }
         if (b.vceo_rated < c.vceo_min) { rej["vceo_low"]++; continue; }
         if (b.ic_continuous < c.ic_min) { rej["ic_low"]++; continue; }
@@ -1114,9 +1167,12 @@ json select_bjt(const Shard<BjtRow>& shard, const BjtConstraints& c, BjtTiebreak
         }
         return 0;
     };
+    // A record stating no lifecycle status is one UNVERIFIED item: it ranks after the parts
+    // stating one (owner 2026-11-15, every family).
+    auto unv = [&](const BjtRow* r) { return status_unverified(*r, c.exclude_discontinued) ? 1 : 0; };
     std::sort(passing.begin(), passing.end(), [&](const BjtRow* a, const BjtRow* b) {
-        return std::make_tuple(a->no_thermal() ? 1 : 0, metric(a), a->lineno) <
-               std::make_tuple(b->no_thermal() ? 1 : 0, metric(b), b->lineno);
+        return std::make_tuple(unv(a), a->no_thermal() ? 1 : 0, metric(a), a->lineno) <
+               std::make_tuple(unv(b), b->no_thermal() ? 1 : 0, metric(b), b->lineno);
     });
     json result;
     result["category"] = "bjt";
@@ -1134,6 +1190,7 @@ json select_bjt(const Shard<BjtRow>& shard, const BjtConstraints& c, BjtTiebreak
                          {"ic_margin", b->ic_continuous / c.ic_min},
                          {"hfe", b->hfe_min}};
         cd["sortKey"] = {{"metric", to_string(tb)}, {"value", metric(b)}};
+        if (status_unverified(*b, c.exclude_discontinued)) mark_status_unverified(cd);
         cands.push_back(std::move(cd));
     }
     result["candidates"] = std::move(cands);
@@ -1147,7 +1204,7 @@ json select_varistor(const Shard<VaristorRow>& shard, const VaristorConstraints&
     rej["unreadable_row"] = shard.meta.unreadable_row_count;
     std::vector<const VaristorRow*> passing;
     for (const auto& v : shard.rows) {
-        if (c.exclude_discontinued && !v.is_production) { rej["discontinued"]++; continue; }
+        if (!status_gate(v, c.exclude_discontinued, rej)) continue;
         if (v.max_continuous_dc_voltage < c.rated_continuous_voltage) { rej["vc_low"]++; continue; }
         if (c.max_clamping_voltage.has_value() && v.clamping_voltage > *c.max_clamping_voltage) {
             rej["clamping_high"]++; continue;
@@ -1175,11 +1232,14 @@ json select_varistor(const Shard<VaristorRow>& shard, const VaristorConstraints&
         }
         return {0, 0};
     };
+    // A record stating no lifecycle status is one UNVERIFIED item: it ranks after the parts
+    // stating one (owner 2026-11-15, every family).
+    auto unv = [&](const VaristorRow* r) { return status_unverified(*r, c.exclude_discontinued) ? 1 : 0; };
     std::sort(passing.begin(), passing.end(), [&](const VaristorRow* a, const VaristorRow* b) {
         auto ka = tier_metric(a);
         auto kb = tier_metric(b);
-        return std::make_tuple(std::get<0>(ka), std::get<1>(ka), a->lineno) <
-               std::make_tuple(std::get<0>(kb), std::get<1>(kb), b->lineno);
+        return std::make_tuple(unv(a), std::get<0>(ka), std::get<1>(ka), a->lineno) <
+               std::make_tuple(unv(b), std::get<0>(kb), std::get<1>(kb), b->lineno);
     });
     json result;
     result["category"] = "varistor";
@@ -1204,6 +1264,7 @@ json select_varistor(const Shard<VaristorRow>& shard, const VaristorConstraints&
                                    : json(nullptr)}};
         cd["sortKey"] = {{"clampingVoltage", v->clamping_voltage},
                          {"peakSurgeCurrent", v->peak_surge_current}};
+        if (status_unverified(*v, c.exclude_discontinued)) mark_status_unverified(cd);
         cands.push_back(std::move(cd));
     }
     result["candidates"] = std::move(cands);
@@ -1267,7 +1328,7 @@ json select_connector(const Shard<ConnectorRow>& shard, const ConnectorConstrain
     rej["unreadable_row"] = shard.meta.unreadable_row_count;
     std::vector<const ConnectorRow*> passing;
     for (const auto& v : shard.rows) {
-        if (c.exclude_discontinued && !v.is_production) { rej["discontinued"]++; continue; }
+        if (!status_gate(v, c.exclude_discontinued, rej)) continue;
         if (c.family && v.family != *c.family) { rej["family_mismatch"]++; continue; }
         if (c.polarity && v.polarity != *c.polarity) { rej["polarity_mismatch"]++; continue; }
         // exact contact count: a 10-position part is no substitute for a 26-position need
@@ -1302,11 +1363,14 @@ json select_connector(const Shard<ConnectorRow>& shard, const ConnectorConstrain
         }
         return {0, 0};
     };
+    // A record stating no lifecycle status is one UNVERIFIED item: it ranks after the parts
+    // stating one (owner 2026-11-15, every family).
+    auto unv = [&](const ConnectorRow* r) { return status_unverified(*r, c.exclude_discontinued) ? 1 : 0; };
     std::sort(passing.begin(), passing.end(), [&](const ConnectorRow* a, const ConnectorRow* b) {
         auto ka = tier_metric(a);
         auto kb = tier_metric(b);
-        return std::make_tuple(std::get<0>(ka), std::get<1>(ka), a->lineno) <
-               std::make_tuple(std::get<0>(kb), std::get<1>(kb), b->lineno);
+        return std::make_tuple(unv(a), std::get<0>(ka), std::get<1>(ka), a->lineno) <
+               std::make_tuple(unv(b), std::get<0>(kb), std::get<1>(kb), b->lineno);
     });
     json result;
     result["category"] = "connector";
@@ -1338,6 +1402,7 @@ json select_connector(const Shard<ConnectorRow>& shard, const ConnectorConstrain
             {"ratedVoltage", present(v->rated_voltage) ? json(v->rated_voltage) : json(nullptr)},
             {"isProduction", v->is_production},
         };
+        if (status_unverified(*v, c.exclude_discontinued)) mark_status_unverified(cd);
         cands.push_back(std::move(cd));
     }
     result["candidates"] = std::move(cands);
@@ -1614,7 +1679,7 @@ json select_magnetic_op_loss(const Shard<MagneticRow>& shard, const MagneticCons
     std::vector<const MagneticRow*> passing;
     std::map<const MagneticRow*, MagneticLossBreakdown> loss;
     for (const auto& m : shard.rows) {
-        if (c.exclude_discontinued && !m.is_production) { rej["discontinued"]++; continue; }
+        if (!status_gate(m, c.exclude_discontinued, rej)) continue;
         // Power inductors only: a transformer, coupled inductor, common-mode choke, bead or
         // cable core is not a buck inductor, whatever its inductance.
         if (m.device_type != "inductor") {
@@ -1649,7 +1714,8 @@ json select_magnetic_op_loss(const Shard<MagneticRow>& shard, const MagneticCons
     for (const MagneticRow* m : passing) {
         const json area = mag_board_area_json(*m), vol = mag_volume_json(*m);
         op_size.emplace(m, op_ranking::size_of(area, &vol));
-        unv[m] = op_ranking::unverified_items(loss.at(m).rank_unverified(), op_size.at(m));
+        unv[m] = op_ranking::unverified_items(loss.at(m).rank_unverified(), op_size.at(m)) +
+                 (status_unverified(*m, c.exclude_discontinued) ? 1 : 0);  // owner 2026-11-15
     }
     std::sort(passing.begin(), passing.end(), [&](const MagneticRow* a, const MagneticRow* b) {
         return std::make_tuple(unv.at(a), loss.at(a).computed_sum(), a->lineno) <
@@ -1723,6 +1789,7 @@ json select_magnetic_op_loss(const Shard<MagneticRow>& shard, const MagneticCons
         // (rank_unverified: core loss left out); unverifiedItems adds the size item.
         cd["sortKey"] = {{"metric", "lowest_operating_point_loss"}, {"value", lb.computed_sum()}};
         cd["sortKey"].update(op_ranking::sort_key_fields(lb.rank_unverified(), sz));
+        if (status_unverified(*m, c.exclude_discontinued)) mark_status_unverified(cd);
         cands.push_back(std::move(cd));
     }
     result["candidates"] = std::move(cands);
@@ -1929,26 +1996,6 @@ bool spec_gate(const std::vector<SpecCheck>& checks, std::map<std::string, uint6
     return true;
 }
 
-// Lifecycle gate shared by timing and analog (owner 2026-11-15, decision 8). Under
-// excludeDiscontinued a STATED non-production status (nrnd, obsolete, preview, ...) drops the
-// part; a record that states no status is kept and the caller counts it UNVERIFIED. Returns
-// false when the part is dropped. NOTE: the other families' selectors still drop a part with no
-// stated status (is_production is false for it); this rule is timing / analog only.
-bool status_gate(const std::string& status, bool is_production, bool exclude_discontinued,
-                 std::map<std::string, uint64_t>& rej, bool& status_unverified) {
-    status_unverified = false;
-    if (!exclude_discontinued) return true;
-    if (status.empty()) {
-        status_unverified = true;
-        return true;
-    }
-    if (!is_production) {
-        rej["discontinued"]++;
-        return false;
-    }
-    return true;
-}
-
 template <class Row>
 json spec_candidate(const SpecSurvivor<Row>& s, RecordFetcher* fetcher) {
     json cd = base_candidate(s.row, fetcher);
@@ -1968,9 +2015,7 @@ json spec_candidate(const SpecSurvivor<Row>& s, RecordFetcher* fetcher) {
         op_ranking::sort_key_fields(s.unverified_checks + (s.status_unverified ? 1 : 0), s.size_ev);
     cd["flags"] = s.flags;
     json notes = json(s.notes);
-    if (s.status_unverified)
-        notes.push_back("status not stated: the record names no lifecycle status, so it cannot "
-                        "be shown to be in production (counts one more UNVERIFIED item)");
+    if (s.status_unverified) notes.push_back(kStatusNotStatedNote);
     if (s.size_ev.undetermined) notes.push_back(s.size_ev.note);
     cd["notes"] = std::move(notes);
     return cd;
@@ -2035,9 +2080,8 @@ json select_timing(const Shard<TimingRow>& shard, const TimingConstraints& c,
     std::vector<SpecSurvivor<TimingRow>> passing;
     std::map<const TimingRow*, double> dev_by_row;  // |f_part - f0| / f0 (0 for a programmable blank)
     for (const auto& t : shard.rows) {
-        bool status_unverified = false;
-        if (!status_gate(t.status, t.is_production, c.exclude_discontinued, rej, status_unverified))
-            continue;
+        if (!status_gate(t, c.exclude_discontinued, rej)) continue;
+        const bool status_unv = status_unverified(t, c.exclude_discontinued);
         // Identity gates: the technology and output type asked for are what the part IS.
         if (c.technology && t.technology != *c.technology) { rej["technology_mismatch"]++; continue; }
         if (c.output_type && t.output_type != *c.output_type) { rej["output_type_mismatch"]++; continue; }
@@ -2058,7 +2102,7 @@ json select_timing(const Shard<TimingRow>& shard, const TimingConstraints& c,
         // matches when that span contains the target, and ranks as an exact match.
         SpecSurvivor<TimingRow> s;
         s.row = &t;
-        s.status_unverified = status_unverified;
+        s.status_unverified = status_unv;
         double dev = 0.0;
         if (present(t.frequency)) {
             dev = std::fabs(t.frequency - f0) / f0;
@@ -2209,9 +2253,8 @@ json select_analog(const Shard<AnalogRow>& shard, const AnalogConstraints& c,
     std::map<const AnalogRow*, json> over_by_row;
     for (const auto& a : shard.rows) {
         if (a.device_type != c.device_type) { rej["device_type_mismatch"]++; continue; }
-        bool status_unverified = false;
-        if (!status_gate(a.status, a.is_production, c.exclude_discontinued, rej, status_unverified))
-            continue;
+        if (!status_gate(a, c.exclude_discontinued, rej)) continue;
+        const bool status_unv = status_unverified(a, c.exclude_discontinued);
         std::vector<SpecCheck> checks;
         if (c.channels)
             checks.push_back(check_equal("numberOfChannels", a.channels, *c.channels, "channels_mismatch"));
@@ -2245,7 +2288,7 @@ json select_analog(const Shard<AnalogRow>& shard, const AnalogConstraints& c,
         if (!spec_gate(checks, rej)) continue;
         SpecSurvivor<AnalogRow> s;
         s.row = &a;
-        s.status_unverified = status_unverified;
+        s.status_unverified = status_unv;
         // Decision 3: a GBW, slew rate or sample rate more than kGrossOverRatingFactor (3x) the
         // requirement is FLAGGED on the card. Flag only: it does not change the order.
         json over = json::array();

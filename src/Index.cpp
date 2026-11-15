@@ -163,10 +163,10 @@ constexpr char kCurveMagic[8] = {'K', 'E', 'L', 'V', 'C', 'R', 'V', '\1'};
 // energy_absorption) and the analog fields the cross-reference's kAnalog table already
 // compared but no row carried (AnalogRow.offset_drift, quiescent_current, propagation_delay,
 // rail_to_rail_input / _output, output_stage; owner 2026-11-15).
-// v24 also carries the lifecycle status a timing or analog record states (TimingRow.status /
-// AnalogRow.status, manufacturerInfo.status; "" when none; owner 2026-11-15, timing / analog
-// selectors): the selectors keep a part with no stated status and drop only a stated
-// non-production one, which is_production cannot tell apart. Numbered 24: one above the v23
+// v24 also carries the lifecycle status every record states (RowBase.status,
+// manufacturerInfo.status; "" when none; owner 2026-11-15): under excludeDiscontinued every
+// selector keeps a part with no stated status (one more UNVERIFIED item) and drops only a
+// stated non-production one, which is_production cannot tell apart. Numbered 24: one above the v23
 // curve-shard format; every v23 shard must be rebuilt and both engines redeployed together.
 constexpr uint32_t kFormatVersion = 24;
 
@@ -400,6 +400,7 @@ void io_base(Ar& ar, RowBase& r) {
     ar.boolean(r.box_axes_ambiguous);    // v20
     ar.strvec(r.retracted_fields);       // v22 (owner 2026-11-13, S1)
     ar.str(r.retraction_reason);         // v22
+    ar.str(r.status);                    // v24 (owner 2026-11-15, every family)
 }
 
 template <class Ar>
@@ -627,7 +628,6 @@ void row_io(Ar& ar, AnalogRow& r) {
     ar.str(r.rail_to_rail_output);   // v24
     ar.str(r.output_stage);          // v24
     ar.boolean(r.is_production);
-    ar.str(r.status);  // v24 (owner 2026-11-15)
 }
 
 template <class Ar>
@@ -653,7 +653,6 @@ void row_io(Ar& ar, TimingRow& r) {
     ar.dbl(r.frequency_max);  // v22
     ar.dbl(r.current_consumption);  // v22 (owner 2026-11-13, S3)
     ar.boolean(r.is_production);
-    ar.str(r.status);  // v24 (owner 2026-11-15)
 }
 
 template <class Ar>

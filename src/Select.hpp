@@ -33,6 +33,14 @@ struct NoCandidates : std::runtime_error {
 
 constexpr size_t kDefaultMaxCandidates = 25;
 
+// Lifecycle, every selector that takes excludeDiscontinued (owner 2026-11-15, one rule): a
+// STATED non-production manufacturerInfo.status drops the part (rejections "discontinued"); a
+// record stating no status is kept, "status" joins its unverified list with a 'status not stated'
+// note, and it counts one more UNVERIFIED item — it ranks after the parts with fewer (in the
+// selectors with no other UNVERIFIED item, after every part that states a status). The
+// rank-not-gate magnetic best_fit order and the resistor / controller selectors take no
+// excludeDiscontinued and are unchanged.
+
 json select_mosfet(const Shard<MosfetRow>& shard, const MosfetConstraints& c, MosfetTiebreaker tb,
                    size_t max_candidates = kDefaultMaxCandidates, RecordFetcher* fetcher = nullptr, const MfrPolicy& mfr = {});
 json select_diode(const Shard<DiodeRow>& shard, const DiodeConstraints& c, DiodeTiebreaker tb,
