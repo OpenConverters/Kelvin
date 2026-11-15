@@ -21,7 +21,7 @@ export const FAMILIES = [
       { f: 'family', label: 'Series' },
     ],
     recommend: {
-      intro: 'Rank-not-gate: every part is ranked toward your targets; nothing is silently dropped.',
+      intro: 'Every part is ranked toward your targets — nothing is silently dropped.',
       fields: [
         { key: 'inductance', label: 'Inductance', unit: 'H', dim: true, placeholder: '10u' },
         { key: 'peakCurrent', label: 'Peak current', unit: 'A', placeholder: '3' },
@@ -365,7 +365,7 @@ FAMILIES.push(
       { f: 'series', label: 'Series' },
     ],
     recommend: {
-      intro: 'Positions, family and polarity gate exactly; ratings gate as minimums and rank by headroom. Set at least one gate.',
+      intro: 'Positions, family and polarity must match; ratings are minimums. Set at least one.',
       fields: [
         { key: 'positions', label: 'Positions (exact)', unit: '', placeholder: '26' },
         { key: 'minimumCurrentPerContact', label: 'Current per contact >=', unit: 'A', placeholder: '2' },

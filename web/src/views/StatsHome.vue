@@ -100,8 +100,7 @@ function openFamily(key) {
         </tbody>
       </table>
       <p class="note">
-        Figures are counted over the shipped index at build time. How well the data checks out
-        (provenance, physics, fabrication gates) is on the
+        Counted from the shipped index. How good the data is: see the
         <a href="/quality">data quality page</a>.
       </p>
     </section>

@@ -58,11 +58,8 @@ const fmt = (n) => n.toLocaleString('en-US')
         <p class="section-label">the shared parts librarian · OpenConverters</p>
         <h2>Real parts, ranked the same way every time.</h2>
         <p class="lede">
-          Kelvin is a deterministic component selector over the TAS database of real
-          catalogue parts. Give it a <code>designRequirements</code> block and it returns a
-          ranked, auditable list of candidates — with the margin each part holds against every
-          requirement and a count of why the rest were turned away. No AI in the loop: the same
-          question always gets the same answer.
+          Tell Kelvin what your circuit needs. It ranks real catalogue parts and shows why each
+          one fits — and why the rest didn't. No AI: same question, same answer.
         </p>
         <div class="cta">
           <a class="btn primary" href="#/catalog/magnetic">Browse the catalogue ›</a>
@@ -83,49 +80,31 @@ const fmt = (n) => n.toLocaleString('en-US')
       <article class="panel principle">
         <p class="section-label">deterministic</p>
         <h3>Same question, same answer</h3>
-        <p>
-          Ordering is stable down to the source line number. The same catalogue file builds a
-          byte-identical index shard, and the browser engine returns exactly what the native
-          library does.
-        </p>
+        <p>Same input, same ranking — every time, in every engine.</p>
       </article>
       <article class="panel principle">
         <p class="section-label">auditable</p>
-        <h3>Nothing disappears silently</h3>
-        <p>
-          Every part that does not qualify is counted in a rejection histogram by reason — even
-          a row the index could not read is counted, not hidden. Candidates carry their margins
-          (rated ÷ required) so the ranking can be checked, not trusted.
-        </p>
+        <h3>Nothing hidden</h3>
+        <p>Every rejected part is counted, with its reason. Every pick shows its margins.</p>
       </article>
       <article class="panel principle">
         <p class="section-label">ranked, with verdicts</p>
-        <h3>Imperfect matches still show up</h3>
+        <h3>Near-misses still show up</h3>
         <p>
-          Magnetics are ranked, never gated: the whole catalogue is ordered toward your targets
-          and each dimension gets a
+          Every requirement gets its own
           <span class="verdict-pass">pass</span> / <span class="verdict-marginal">marginal</span> /
-          <span class="verdict-fail">fail</span> verdict. Cross-reference gives every parameter of
-          a substitute its own verdict against the original part.
+          <span class="verdict-fail">fail</span>.
         </p>
       </article>
       <article class="panel principle">
         <p class="section-label">parity-locked</p>
-        <h3>Ported, then proven equal</h3>
-        <p>
-          The MOSFET, diode, capacitor, resistor and controller selectors reproduce Heaviside's
-          Python selector exactly — a differential fuzzer over the full database found 0
-          mismatches. IGBT, BJT and varistor selectors are new and review-gated.
-        </p>
+        <h3>Proven equal</h3>
+        <p>Matches Heaviside's selector exactly: 0 mismatches across the full database.</p>
       </article>
       <article class="panel principle">
         <p class="section-label">in your browser</p>
         <h3>No backend</h3>
-        <p>
-          A compact binary index per family loads into the WASM engine; selection and browsing
-          run locally. A part's full datasheet record crosses the wire only when you open it, as
-          a byte-range slice of a few kilobytes.
-        </p>
+        <p>Runs in your browser. A part's full record loads only when you open it.</p>
       </article>
     </section>
 
@@ -134,9 +113,7 @@ const fmt = (n) => n.toLocaleString('en-US')
       <div class="cat-head">
         <p class="section-label">what the librarian holds</p>
         <p class="cat-note">
-          Figures computed at build time by the Kelvin engine over the index shards this site
-          serves. “Production” = parts whose status is recorded as <code>production</code>;
-          parts with any other or no recorded status count against it.
+          Counted from the index this site serves. “Production” = status recorded as production.
         </p>
       </div>
       <p v-if="drift" class="drift mono">

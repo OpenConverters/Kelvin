@@ -589,7 +589,7 @@ function priceCell(c) {
               </tr>
             </tbody>
           </table>
-          <p class="hint">Hover a cell for its basis. UNVERIFIED = the record (or the operating point) lacks what the term needs; nothing is estimated.</p>
+          <p class="hint">Hover a cell to see where it comes from. UNVERIFIED = data missing; nothing is estimated.</p>
         </div>
 
         <ol class="cand-list">
