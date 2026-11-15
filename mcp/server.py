@@ -1469,17 +1469,6 @@ def part_details(family: str, mpn: str, manufacturer: str | None = None,
         payload)
 
 
-@mcp.tool(
-    annotations=_READ_NOTES,
-    title="Recommend parts for a requirement",
-    description=(
-        "Kelvin's deterministic selector: rank real parts against a designRequirements block "
-        "and return the candidates with the margins that ranked them. Same authority Kirchhoff "
-        "and Heaviside select through — no LLM judgement, reproducible."
-    ),
-    meta=UI_PICKER_META,
-    structured_output=False,
-)
 def _watts(w) -> str:
     return f"{w * 1e3:.3g} mW" if w < 1 else f"{w:.3g} W"
 
@@ -1648,6 +1637,17 @@ def _spec_extras(c: dict) -> str:
     return out
 
 
+@mcp.tool(
+    annotations=_READ_NOTES,
+    title="Recommend parts for a requirement",
+    description=(
+        "Kelvin's deterministic selector: rank real parts against a designRequirements block "
+        "and return the candidates with the margins that ranked them. Same authority Kirchhoff "
+        "and Heaviside select through — no LLM judgement, reproducible."
+    ),
+    meta=UI_PICKER_META,
+    structured_output=False,
+)
 def recommend_parts(family: str, requirements: dict, options: dict | None = None,
                     max_results: int = 12, include_envelope: bool = False) -> CallToolResult:
     """Ranked candidates for one component requirement.
