@@ -241,6 +241,9 @@ function openPart(row) {
 
 @media (max-width: 1100px) {
   .family-strip { grid-template-columns: repeat(3, 1fr); }
-  .workbench { grid-template-columns: 1fr; }
+  /* minmax(0, 1fr), not 1fr: a 1fr track grows to its widest item's min-content (the results
+     table), which made the page ~840 px wide on a phone; the table scrolls inside its panel */
+  .workbench { grid-template-columns: minmax(0, 1fr); }
+  .results { min-width: 0; }
 }
 </style>

@@ -488,6 +488,9 @@ function openPart(r) {
 .fp-different_land_pattern { color: var(--fault); }
 .fp-unknown { color: #4a5b6e; }
 .notes-row td { padding-top: 0; border-bottom: 1px solid var(--line-soft); }
+/* the notes cell spans the row; it wraps (td is nowrap for the value cells), so a long note
+   no longer stretches the table to thousands of pixels */
+.notes-row td.note { white-space: normal; overflow-wrap: anywhere; }
 .note { font-size: calc(10px + var(--fs-bump, 0px)); color: var(--warm); }
 .pin { padding: 1px 7px; border-radius: 999px; font-size: calc(12px + var(--fs-bump, 0px)); }
 .legend { font-size: calc(10px + var(--fs-bump, 0px)); color: var(--ink-dim); margin: 10px 0 0; }
