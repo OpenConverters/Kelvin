@@ -1326,6 +1326,11 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // A primary current rating (MOSFET Id, diode If(AV), IGBT Ic) stated by one record only
     // (owner 2026-11-13, Y1): UNVERIFIED with a note, capped at minor_review.
     bool current_rating_one_sided = false;
+    // A HARD critical rating (critical_ratings, hard = true) the original states and the
+    // substitute's record does not (owner 2026-11-15, Qarlos: varistor 471KD20-P7.5 ->
+    // V300LA20CP was drop_in with its Vdc max unverified and no note). The rule Y1 applies to
+    // the one-sided current ratings: capped at minor_review, with a note naming the rating.
+    bool hard_rating_unverified = false;
     // A cable core's cable diameter or pass count the substitute does not state while the
     // original does (owner 2026-11-14): UNVERIFIED, capped at minor_review.
     bool cable_core_unverified = false;
@@ -4690,6 +4695,24 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                     "weighed against the original's requirement — confirm the "
                                     "original's rating from its datasheet before this swap");
         }
+        if (r.hard && o && !s) {
+            static const std::map<std::string, const char*> kHard = {
+                {"vds", "drain-source voltage rating (Vds)"},
+                {"vrrm", "reverse voltage rating (Vrrm)"},
+                {"voltage", "rated voltage"},
+                {"vces", "collector-emitter voltage rating (Vces)"},
+                {"vceo", "collector-emitter voltage rating (Vceo)"},
+                {"max_continuous_dc_voltage", "maximum continuous DC voltage"},
+                {"max_continuous_ac_voltage", "maximum continuous AC voltage"},
+                {"energy_absorption", "energy rating"}};
+            const auto it = kHard.find(r.key);
+            hard_rating_unverified = true;
+            notes.push_back(std::string("the original states a ") +
+                            (it != kHard.end() ? it->second : r.key) +
+                            "; the substitute's record states none — this hard rating is "
+                            "UNVERIFIED, so the swap cannot be a drop-in; confirm it from the "
+                            "datasheet");
+        }
         // A shortfall that is not a rejection must say so (Qarlos r13 seed 25078643: the
         // 600 V SiHL033N60SF for the 650 V FCH023N65S3L4 carried a 'warn' Vds row and no
         // word about it, so it read as a mild review). The verdict, penalty and grade are
@@ -6612,6 +6635,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //                                                                    2026-11-14 (below)
     //   Id / If(AV) / Ic stated by one record only (owner
     //     2026-11-13, Y1; current_rating_one_sided)           primary    note, cap minor_review
+    //   a HARD critical rating stated by the original only
+    //     (owner 2026-11-15; hard_rating_unverified)          primary    note, cap minor_review
     //   chip-bead rated current, connector rated voltage,
     //     diode power dissipation                             primary    no cap*
     //   a primary RATING stated by the substitute and NOT by
@@ -6661,6 +6686,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                     resistor_connection_unverified || resistor_count_one_sided ||
                                     mount_unverified || timebase_pin_unverified ||
                                     timebase_prog_order || current_rating_one_sided ||
+                                    hard_rating_unverified ||
                                     cable_core_unverified ||
                                     !orig_unstated_primary.empty() ||
                                     !both_unstated_primary.empty() || cand_no_physical_data ||

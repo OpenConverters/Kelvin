@@ -322,3 +322,26 @@ TEST_CASE("bjt: package aliases with identical pads are one land pattern (Qarlos
     CHECK(footprint("BC817-Q", "MMBT100") != "different_case");
     CHECK(footprint("TIP42CG", "MJF127G") == "different_case");
 }
+
+TEST_CASE("a hard rating the substitute does not state caps the grade below drop_in",
+          "[crossref][5fam][varistor][hard-unverified]") {
+    // Qarlos 2026-11-15: YAGEO 471KD20-P7.5 (Vdc max 385 V, 350 J) -> Littelfuse V300LA20CP,
+    // whose record states no Vdc max and no energy rating, came back drop_in with no note.
+    // Real TAS rows, verbatim (tests/fixtures/qarlos_1115_varistor_unverified_hard.ndjson).
+    auto shard = build_varistor_shard(fixtures() + "/qarlos_1115_varistor_unverified_hard.ndjson");
+    json orig = spec_by_mpn("varistor", shard, "471KD20-P7.5");
+    json sub = spec_by_mpn("varistor", shard, "V300LA20CP");
+    REQUIRE(orig.at("max_continuous_dc_voltage") == 385.0);
+    REQUIRE(sub.at("max_continuous_dc_voltage").is_null());
+    Options opt; opt.max_results = 5;
+    json r = cross_reference("varistor", orig, json::array({sub}), opt);
+    const json& c = cand_by_mpn(r, "V300LA20CP");
+    INFO(c.dump());
+    CHECK(param_verdict(c, "max_continuous_dc_voltage") == "unverified");
+    CHECK(c.value("grade", std::string()) == "minor_review");
+    bool named = false;
+    for (const auto& n : c.value("notes", json::array()))
+        if (n.get<std::string>().find("maximum continuous DC voltage") != std::string::npos)
+            named = true;
+    CHECK(named);
+}
