@@ -10,6 +10,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 
+#include "CrossRef.hpp"
 #include "KelvinApi.hpp"
 #include "Select.hpp"
 
@@ -108,6 +109,58 @@ TEST_CASE("select magnetic best_fit: production, then status not stated, then a 
     CHECK(note_has(ns, "status not stated"));
     CHECK(ns.at("sortKey").at("statusUnverified") == true);
     CHECK_FALSE(cand(r, "744043100").contains("unverified"));
+}
+
+// Cross-reference lifecycle (owner 2026-11-15): a substitute whose record states no status is
+// 'status not stated' (UNVERIFIED), not "not marked production"; a stated non-production status
+// keeps the WARN. The browse rows of select_status_all/mosfets.ndjson carry lifecycleStatus and
+// the spec blocks are built from them as web/src/crossref.js base() does.
+TEST_CASE("crossref lifecycle: status not stated is UNVERIFIED, a stated nrnd / obsolete warns",
+          "[crossref][status]") {
+    api::Engine eng(dir("select_status_all"), "", true);
+    const json rows = eng.browse("mosfet", json{{"limit", 10}}).at("rows");
+    REQUIRE(rows.size() == 4);
+    auto spec = [&](const std::string& mpn) {
+        for (const auto& r : rows)
+            if (r.at("mpn") == mpn)
+                return json{{"mpn", mpn},
+                            {"is_production", r.at("is_production")},
+                            {"lifecycle_status", r.at("lifecycleStatus")}};
+        FAIL("browse row " << mpn << " missing");
+        return json();
+    };
+    CHECK(spec("AOGL68910").at("lifecycle_status").is_null());
+    CHECK(spec("XK1R9F10QB").at("lifecycle_status") == "nrnd");
+    CHECK(spec("BSC012N10NS5").at("lifecycle_status") == "production");
+
+    const json r = crossref::cross_reference(
+        "mosfet", spec("BSC012N10NS5"),
+        json::array({spec("AOGL68910"), spec("XK1R9F10QB"), spec("IPI030N10N3 G"),
+                     spec("BSC012N10NS5")}));
+    auto sub = [&](const std::string& mpn) {
+        for (const auto& c : r.at("candidates"))
+            if (c.at("mpn") == mpn) return c;
+        FAIL("candidate " << mpn << " missing");
+        return json();
+    };
+    auto lifecycle = [](const json& c) {
+        for (const auto& p : c.at("params"))
+            if (p.at("name") == "lifecycle") return p.at("verdict").get<std::string>();
+        return std::string();
+    };
+    const json ns = sub("AOGL68910");
+    CHECK(lifecycle(ns) == "unverified");
+    CHECK(note_has(ns, "status not stated"));
+    CHECK_FALSE(note_has(ns, "not marked production"));
+    for (const char* stated : {"XK1R9F10QB", "IPI030N10N3 G"}) {
+        INFO(stated);
+        CHECK(lifecycle(sub(stated)) == "warn");
+        CHECK(note_has(sub(stated), "substitute is not marked production status"));
+    }
+    CHECK(lifecycle(sub("BSC012N10NS5")) == "");
+    // Equal on everything else: the production part ranks ahead of the status-less one.
+    CHECK(r.at("candidates")[0].at("mpn") == "BSC012N10NS5");
+    CHECK(r.at("candidates")[1].at("mpn") == "AOGL68910");
 }
 
 // ---- Unstated BJT / varistor values are NaN, never 0 (owner 2026-11-15) ---------------------

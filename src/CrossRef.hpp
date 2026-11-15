@@ -6278,13 +6278,36 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // Heaviside never consults this; Kelvin's catalogue carries it, so a
     // substitute that is not in production is surfaced rather than silently
     // recommended.
+    //
+    // One status rule (owner 2026-11-15): `lifecycle_status` is manufacturerInfo.status as the
+    // record states it (null or "" = the record states none). A STATED non-production status
+    // keeps the WARN below. A record stating none is not "not marked production" — nothing
+    // says it is out of production either — so its lifecycle verdict is UNVERIFIED with a
+    // 'status not stated' note: no demotion, no grade cap, and the same penalty term, so it
+    // still ranks after an otherwise equal substitute that states production. A caller whose
+    // rows carry only `is_production` (no lifecycle_status key) cannot tell the two apart and
+    // keeps the WARN on is_production == false.
     if (opt.check_lifecycle) {
-        auto it = cand.find("is_production");
-        if (it != cand.end() && it->is_boolean() && !it->get<bool>()) {
+        auto warn_not_production = [&] {
             params.push_back({{"name", "lifecycle"}, {"verdict", WARN}});
             demote();
             penalty += opt.gate_weight * kVerdictWarnPenalty;
             notes.push_back("substitute is not marked production status");
+        };
+        auto ls = cand.find("lifecycle_status");
+        if (ls != cand.end() && (ls->is_string() || ls->is_null())) {
+            const std::string st = ls->is_string() ? ls->get<std::string>() : std::string();
+            if (st.empty()) {
+                params.push_back({{"name", "lifecycle"}, {"verdict", UNVERIFIED}});
+                penalty += opt.gate_weight * kVerdictWarnPenalty;
+                notes.push_back("status not stated: the substitute's record names no lifecycle "
+                                "status, so it cannot be shown to be in production");
+            } else if (st != "production") {
+                warn_not_production();
+            }
+        } else {
+            auto it = cand.find("is_production");
+            if (it != cand.end() && it->is_boolean() && !it->get<bool>()) warn_not_production();
         }
     }
 

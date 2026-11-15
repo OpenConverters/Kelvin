@@ -782,6 +782,9 @@ export function base(r) {
     // null when unstated — the footprint check then cannot pass a leaded part on its box.
     lead_pitch_m: nz(r.leadPitchM),
     is_production: r.is_production,
+    // manufacturerInfo.status as stated (null = not stated; v24, owner 2026-11-15): the ranker
+    // reads null as 'status not stated' (UNVERIFIED), a stated non-production status as a WARN.
+    lifecycle_status: r.lifecycleStatus,
     // Every provenance entry of the record is retracted: the ranker treats its data as
     // unverified (ABT #2035).
     provenance_retracted: r.provenanceRetracted === true,

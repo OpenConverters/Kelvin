@@ -850,6 +850,11 @@ json browse_rows(const Shard<Row>& shard, const json& query) {
         // The reason, for a per-field and for a whole-record retraction alike.
         if (!r.retraction_reason.empty()) o["provenanceRetractionReason"] = r.retraction_reason;
     if (r.box_axes_ambiguous) o["boxAxesAmbiguous"] = true;       // v20, see RowBase
+        // manufacturerInfo.status as stated, null when the record states none (v24, owner
+        // 2026-11-15): the cross-reference tells "status not stated" from a stated
+        // non-production status, which is_production cannot. Not "status": that name is the
+        // cross-reference verdict in the MCP contract.
+        o["lifecycleStatus"] = r.status.empty() ? json(nullptr) : json(r.status);
         for (const auto& [name, mem] : t.nums) {
             double v = r.*mem;
             if (std::isnan(v)) o[name] = nullptr;
