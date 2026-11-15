@@ -86,7 +86,7 @@ body {
 
 .section-label {
   font-family: var(--disp);
-  font-size: 10px;
+  font-size: calc(10px + var(--fs-bump, 0px));
   letter-spacing: 0.22em;
   text-transform: uppercase;
   color: var(--ink-dim);
@@ -96,7 +96,7 @@ body {
 /* ---- controls --------------------------------------------------------------- */
 button, .btn {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: calc(12px + var(--fs-bump, 0px));
   color: var(--ink);
   background: #0b1118;
   border: 1px solid var(--line);
@@ -121,7 +121,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 
 input, select {
   font-family: var(--mono);
-  font-size: 12px;
+  font-size: calc(12px + var(--fs-bump, 0px));
   color: var(--ink);
   background: #0a0f15;
   border: 1px solid var(--line);
@@ -142,7 +142,7 @@ code, .mono { font-family: var(--mono); }
   align-items: center;
   gap: 6px;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: calc(11px + var(--fs-bump, 0px));
   padding: 2px 8px;
   border: 1px solid var(--line);
   border-radius: 999px;

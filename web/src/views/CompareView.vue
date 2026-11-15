@@ -139,29 +139,29 @@ const familyLabel = computed(() =>
 
 <style scoped>
 .compare { display: flex; flex-direction: column; gap: 14px; flex: 1; min-height: 0; overflow-y: auto; }
-.empty { padding: 24px; color: var(--ink-dim); font-size: 13px; max-width: 560px; }
+.empty { padding: 24px; color: var(--ink-dim); font-size: calc(13px + var(--fs-bump, 0px)); max-width: 560px; }
 .cmp-head { display: flex; justify-content: space-between; align-items: center; }
 .pane { padding: 16px; }
 .overlay-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 780px)); justify-content: start; gap: 18px; }
-.note { color: var(--ink-dim); font-size: 12px; }
-.err { color: var(--fault); font-size: 12px; }
+.note { color: var(--ink-dim); font-size: calc(12px + var(--fs-bump, 0px)); }
+.err { color: var(--fault); font-size: calc(12px + var(--fs-bump, 0px)); }
 .spec-head { display: flex; justify-content: space-between; align-items: center; }
-.check { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--ink-dim); cursor: pointer; }
+.check { display: flex; align-items: center; gap: 7px; font-size: calc(11px + var(--fs-bump, 0px)); color: var(--ink-dim); cursor: pointer; }
 .check input { accent-color: var(--k); }
 .spec-scroll { overflow-x: auto; }
-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+table { width: 100%; border-collapse: collapse; font-size: calc(12px + var(--fs-bump, 0px)); }
 th {
   text-align: left;
   padding: 6px 10px;
   border-bottom: 1px solid var(--line);
-  font-size: 11px;
+  font-size: calc(11px + var(--fs-bump, 0px));
   color: var(--ink);
   white-space: nowrap;
 }
-th .mfr { display: block; font-size: 9px; color: var(--ink-dim); font-family: var(--body); }
+th .mfr { display: block; font-size: calc(9px + var(--fs-bump, 0px)); color: var(--ink-dim); font-family: var(--body); }
 td { padding: 4px 10px; border-bottom: 1px solid var(--line-soft); white-space: nowrap; }
 .spec-key { color: var(--ink-dim); }
-.grp { font-size: 9px; color: #4a5b6e; margin-left: 6px; }
+.grp { font-size: calc(9px + var(--fs-bump, 0px)); color: #4a5b6e; margin-left: 6px; }
 tr.diff .val { color: var(--k-hi); }
 tr.diff .spec-key { color: var(--ink); }
 .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }

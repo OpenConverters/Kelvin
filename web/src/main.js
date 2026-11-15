@@ -9,6 +9,7 @@ import '@fontsource/ibm-plex-sans/600.css'
 import '@fontsource/ibm-plex-mono/400.css'
 import '@fontsource/ibm-plex-mono/500.css'
 import './style.css'
+import './theme.css'
 import { initTelemetry, trackEvent } from './telemetry.js'
 
 // Interaction telemetry (production-only; no-ops on localhost / the dev server).

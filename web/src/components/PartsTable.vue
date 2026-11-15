@@ -82,7 +82,7 @@ function sortClass(f) {
 <style scoped>
 .table-wrap { overflow: auto; flex: 1; min-height: 0; }
 .table-wrap.busy { opacity: 0.55; pointer-events: none; }
-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+table { width: 100%; border-collapse: collapse; font-size: calc(12px + var(--fs-bump, 0px)); }
 thead th {
   position: sticky;
   top: 0;
@@ -92,7 +92,7 @@ thead th {
   padding: 8px 10px;
   text-align: left;
   font-family: var(--disp);
-  font-size: 9px;
+  font-size: calc(9px + var(--fs-bump, 0px));
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--ink-dim);
@@ -110,6 +110,6 @@ td { padding: 6px 10px; white-space: nowrap; }
 td.mpn { color: var(--k-hi); }
 td.mfr { color: var(--ink-dim); max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
 .pin-col { width: 34px; padding: 4px 6px; }
-.pin-btn { padding: 1px 6px; font-size: 12px; color: var(--ink-dim); border-radius: 999px; }
+.pin-btn { padding: 1px 6px; font-size: calc(12px + var(--fs-bump, 0px)); color: var(--ink-dim); border-radius: 999px; }
 .empty { text-align: center; color: var(--ink-dim); padding: 30px; }
 </style>

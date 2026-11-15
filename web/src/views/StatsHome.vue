@@ -120,7 +120,7 @@ function openFamily(key) {
 .family-strip { display: flex; flex-wrap: wrap; gap: 6px; }
 .fam-tab {
   font-family: var(--disp);
-  font-size: 10px;
+  font-size: calc(10px + var(--fs-bump, 0px));
   letter-spacing: 0.1em;
   text-transform: uppercase;
   padding: 7px 12px;
@@ -129,26 +129,26 @@ function openFamily(key) {
 .stats-home { display: flex; flex-direction: column; gap: 14px; flex: 1; min-height: 0; overflow-y: auto; }
 .tiles { display: flex; flex-wrap: wrap; gap: 10px; }
 .tile { padding: 12px 18px; display: flex; flex-direction: column; gap: 4px; }
-.tile-label { font-family: var(--disp); font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-dim); }
+.tile-label { font-family: var(--disp); font-size: calc(9px + var(--fs-bump, 0px)); letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-dim); }
 .tile-value { font-size: 22px; color: var(--k-hi); }
 .pane { padding: 16px; }
 .dim { text-transform: none; letter-spacing: 0; color: #4a5b6e; }
 
 .bar-row {
   display: grid; grid-template-columns: 150px 1fr 76px; gap: 10px; align-items: center;
-  width: 100%; padding: 3px 0; font-size: 11px;
+  width: 100%; padding: 3px 0; font-size: calc(11px + var(--fs-bump, 0px));
   background: none; border: 0; text-align: left; cursor: pointer; color: inherit;
 }
 .bar-row:hover .bar-label { color: var(--k-hi); }
 .bar-label { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bar-track { height: 12px; background: var(--bg-deep); border: 1px solid var(--line-soft); border-radius: 3px; overflow: hidden; }
 .bar-track i { display: block; height: 100%; background: var(--s1); border-radius: 2px 0 0 2px; }
-.bar-n { text-align: right; color: var(--ink-dim); font-size: 10px; }
+.bar-n { text-align: right; color: var(--ink-dim); font-size: calc(10px + var(--fs-bump, 0px)); }
 
-.fam-table { width: 100%; border-collapse: collapse; font-size: 12px; }
-.fam-table th { text-align: left; font-family: var(--disp); font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-dim); padding: 4px 10px 6px 0; }
+.fam-table { width: 100%; border-collapse: collapse; font-size: calc(12px + var(--fs-bump, 0px)); }
+.fam-table th { text-align: left; font-family: var(--disp); font-size: calc(9px + var(--fs-bump, 0px)); letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-dim); padding: 4px 10px 6px 0; }
 .fam-table td { padding: 4px 10px 4px 0; border-top: 1px solid var(--line-soft); }
 .fam-table .num { text-align: right; }
-.dim-cell { color: var(--ink-dim); font-size: 11px; }
-.note { font-size: 11px; color: var(--ink-dim); margin: 10px 0 0; }
+.dim-cell { color: var(--ink-dim); font-size: calc(11px + var(--fs-bump, 0px)); }
+.note { font-size: calc(11px + var(--fs-bump, 0px)); color: var(--ink-dim); margin: 10px 0 0; }
 </style>

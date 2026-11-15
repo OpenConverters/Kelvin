@@ -54,7 +54,7 @@ const display = computed(() => {
   grid-template-columns: minmax(90px, 1fr) 120px 64px;
   gap: 8px;
   align-items: center;
-  font-size: 11px;
+  font-size: calc(11px + var(--fs-bump, 0px));
   padding: 2px 0;
 }
 .meter-label { color: var(--ink-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

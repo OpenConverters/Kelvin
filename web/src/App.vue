@@ -215,7 +215,7 @@ const VIEWS = [
 }
 .brand-text p {
   margin: 2px 0 0;
-  font-size: 10px;
+  font-size: calc(10px + var(--fs-bump, 0px));
   letter-spacing: 0.18em;
   text-transform: uppercase;
   color: var(--ink-dim);
@@ -223,7 +223,7 @@ const VIEWS = [
 .modes { display: flex; gap: 6px; margin-left: 10px; }
 .mode {
   font-family: var(--disp);
-  font-size: 10px;
+  font-size: calc(10px + var(--fs-bump, 0px));
   letter-spacing: 0.14em;
   text-transform: uppercase;
   padding: 8px 14px;
@@ -234,14 +234,14 @@ const VIEWS = [
   background: var(--k);
   color: #05121e;
   border-radius: 999px;
-  font-size: 9px;
+  font-size: calc(9px + var(--fs-bump, 0px));
   padding: 0 5px;
   margin-left: 4px;
 }
 .cal { display: flex; gap: 18px; margin: 0 0 0 auto; }
 .cal div { display: flex; flex-direction: column; gap: 1px; }
-.cal dt { font-size: 8px; letter-spacing: 0.2em; color: var(--ink-dim); }
-.cal dd { margin: 0; font-size: 12px; color: var(--k-hi); display: flex; align-items: center; gap: 6px; }
+.cal dt { font-size: calc(8px + var(--fs-bump, 0px)); letter-spacing: 0.2em; color: var(--ink-dim); }
+.cal dd { margin: 0; font-size: calc(12px + var(--fs-bump, 0px)); color: var(--k-hi); display: flex; align-items: center; gap: 6px; }
 .led { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
 .led.ok { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
 .led.warm { background: var(--warm); box-shadow: 0 0 6px var(--warm); animation: blink 1.1s infinite; }
@@ -268,13 +268,13 @@ const VIEWS = [
   right: 8px;
   top: 0;
   line-height: 14px;
-  font-size: 9px;
+  font-size: calc(9px + var(--fs-bump, 0px));
   letter-spacing: 0.1em;
   color: var(--ink-dim);
   text-shadow: 0 0 4px var(--bg-deep);
 }
 
-.boot-error { color: var(--fault); padding: 16px; font-size: 12px; }
+.boot-error { color: var(--fault); padding: 16px; font-size: calc(12px + var(--fs-bump, 0px)); }
 .main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
 /* ── compare tray ─────────────────────────────────────────────────────────── */
@@ -290,7 +290,7 @@ const VIEWS = [
 }
 .tray-label { margin: 0; }
 .tray-chip { max-width: 190px; overflow: hidden; }
-.tray-note, .tray-note-solo { font-size: 11px; color: var(--warm); }
+.tray-note, .tray-note-solo { font-size: calc(11px + var(--fs-bump, 0px)); color: var(--warm); }
 .tray button:last-child { margin-left: 0; }
 .tray .primary { margin-left: auto; }
 .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
@@ -299,7 +299,7 @@ const VIEWS = [
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  font-size: 10px;
+  font-size: calc(10px + var(--fs-bump, 0px));
   color: #4a5b6e;
   padding: 4px 2px 6px;
 }

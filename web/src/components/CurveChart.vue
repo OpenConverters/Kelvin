@@ -221,14 +221,14 @@ function onMove(ev) {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
-  font-size: 12px;
+  font-size: calc(12px + var(--fs-bump, 0px));
   color: var(--ink);
   margin-bottom: 4px;
 }
-.axes-note { font-size: 10px; color: var(--ink-dim); }
+.axes-note { font-size: calc(10px + var(--fs-bump, 0px)); color: var(--ink-dim); }
 svg { width: 100%; display: block; background: var(--bg-deep); border: 1px solid var(--line-soft); border-radius: 4px; }
 .grid { stroke: var(--grat-strong); stroke-width: 1; }
-.ticks text { fill: var(--ink-dim); font-family: var(--mono); font-size: 10px; }
+.ticks text { fill: var(--ink-dim); font-family: var(--mono); font-size: calc(10px + var(--fs-bump, 0px)); }
 .trace {
   fill: none;
   stroke-width: 2;
@@ -236,12 +236,12 @@ svg { width: 100%; display: block; background: var(--bg-deep); border: 1px solid
 }
 .mark { stroke: var(--bg-deep); stroke-width: 1.5; }
 .xhair { stroke: var(--k); stroke-width: 1; stroke-dasharray: 3 3; opacity: 0.8; }
-.curve-empty { color: var(--ink-dim); font-size: 12px; }
+.curve-empty { color: var(--ink-dim); font-size: calc(12px + var(--fs-bump, 0px)); }
 .readout {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
-  font-size: 11px;
+  font-size: calc(11px + var(--fs-bump, 0px));
   color: var(--ink);
   padding: 4px 2px;
 }
@@ -252,7 +252,7 @@ svg { width: 100%; display: block; background: var(--bg-deep); border: 1px solid
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
+  font-size: calc(11px + var(--fs-bump, 0px));
   padding: 2px 8px;
 }
 .legend-item.off { opacity: 0.4; }

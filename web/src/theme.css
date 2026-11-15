@@ -1,0 +1,193 @@
+/* Kelvin look (owner-approved design v7, 2026-11-15). Four CSS layers over the
+   base style, enabled permanently by the classes on <html> in index.html:
+     .q-bg    quieter background
+     .q-lbl   softer labels
+     .q-acc   calmer accent
+     .q-rack  rack layout: the nav is a slim left rail; a bottom icon bar on phones
+   Every rule is prefixed with html.<class> so it outranks the scoped component
+   rule it overrides (one extra class + element over the data-v attribute). */
+/* ── quieter background ─────────────────────────────────────────────── */
+html.q-bg body { background: var(--bg); }
+html.q-bg .panel::before {
+  background: rgba(127, 201, 255, 0.16);
+  inset: 0 6px auto 6px;
+}
+
+/* ── softer labels (Michroma only for the wordmark and the hero headline) */
+html.q-lbl .section-label,
+html.q-lbl .tile-label,
+html.q-lbl .fig-l,
+html.q-lbl .mini-label,
+html.q-lbl .headline dt,
+html.q-lbl .kv-label,
+html.q-lbl .cal dt,
+html.q-lbl .table-wrap thead th,
+html.q-lbl .xref-tbl th,
+html.q-lbl .fam-table th,
+html.q-lbl .fam-tab,
+html.q-lbl .fam-name,
+html.q-lbl .mode,
+html.q-lbl .fam-title h3,
+html.q-lbl .glyph {
+  font-family: var(--body);
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: normal;
+}
+/* sentence case: the sources are lower- or sentence-case already, so only the
+   first letter is raised; acronyms and units (MPN, Rds(on), mΩ) stay as written */
+html.q-lbl .section-label::first-letter,
+html.q-lbl .tile-label::first-letter,
+html.q-lbl .fig-l::first-letter,
+html.q-lbl .mini-label::first-letter,
+html.q-lbl .headline dt::first-letter,
+html.q-lbl .kv-label::first-letter,
+html.q-lbl .table-wrap thead th::first-letter,
+html.q-lbl .xref-tbl th::first-letter,
+html.q-lbl .fam-table th::first-letter { text-transform: uppercase; }
+/* the header sticker is written in capitals (PARTS / FAMILIES / STATUS) */
+html.q-lbl .cal dt { text-transform: lowercase; }
+html.q-lbl .cal dt::first-letter { text-transform: uppercase; }
+/* +1px where Michroma's wide caps were carrying the legibility */
+html.q-lbl .section-label { font-size: calc(11px + var(--fs-bump, 0px)); }
+html.q-lbl .tile-label,
+html.q-lbl .fig-l,
+html.q-lbl .mini-label,
+html.q-lbl .headline dt,
+html.q-lbl .kv-label,
+html.q-lbl .table-wrap thead th,
+html.q-lbl .xref-tbl th,
+html.q-lbl .fam-table th { font-size: calc(10px + var(--fs-bump, 0px)); }
+html.q-lbl .cal dt { font-size: calc(9px + var(--fs-bump, 0px)); }
+html.q-lbl .mode,
+html.q-lbl .fam-tab,
+html.q-lbl .fam-name { font-size: calc(11px + var(--fs-bump, 0px)); }
+html.q-lbl .fam-title h3 { font-size: calc(13px + var(--fs-bump, 0px)); }
+
+/* ── calmer accent ──────────────────────────────────────────────────── */
+html.q-acc {
+  --line: #24303d;
+  --line-soft: #1a232d;
+  --neutral-hi: #3a4858;
+}
+/* panel top edge goes neutral */
+html.q-acc .panel::before { background: rgba(216, 228, 238, 0.07); }
+/* inactive controls: neutral hover, no ice */
+html.q-acc button:hover:not(:disabled):not(.primary),
+html.q-acc .btn:not(.primary):hover { border-color: var(--neutral-hi); color: var(--ink); }
+html.q-acc .chip.on { color: var(--ink); border-color: var(--neutral-hi); }
+/* active nav / tabs / family cards: a 2px underline, no inset glow */
+html.q-acc .mode.active,
+html.q-acc .fam-tab.active,
+html.q-acc .fam-card.active {
+  border-color: var(--line);
+  color: var(--ink);
+  box-shadow: inset 0 -2px 0 var(--k);
+}
+html.q-acc .fam-card.active .fam-name { color: var(--ink); }
+/* glows off */
+html.q-acc .logo { filter: none; }
+html.q-acc .brand-text h1 { text-shadow: none; }
+html.q-acc .hero h2 { text-shadow: none; color: var(--ink); }
+html.q-acc .trace { filter: none; }
+/* figures and headings in ink, not ice */
+html.q-acc .cal dd,
+html.q-acc .headline dd,
+html.q-acc .tile-value,
+html.q-acc .fam-title h3,
+html.q-acc .fam-count,
+html.q-acc .compare thead th,
+html.q-acc .compare tr.total td,
+html.q-acc .kv-value,
+html.q-acc .hist-readout,
+html.q-acc .drawer h2 { color: var(--ink); }
+html.q-acc .principle .section-label { color: var(--ink-dim); }
+html.q-acc .rank { color: var(--ink-dim); }
+html.q-acc .glyph,
+html.q-acc .fam-glyph { color: var(--ink-dim); border-color: var(--line); }
+html.q-acc th.sortable:hover { color: var(--ink); }
+html.q-acc .bar-row:hover .bar-label { color: var(--ink); }
+html.q-acc tbody tr:hover { background: rgba(216, 228, 238, 0.035); }
+html.q-acc tbody tr.pinned { background: rgba(216, 228, 238, 0.05); }
+html.q-acc * { scrollbar-color: #2a3542 var(--bg-deep); }
+html.q-acc *::-webkit-scrollbar-thumb { background: #2a3542; }
+
+/* ── rack layout — the nav becomes a slim left rail; a bottom bar on phones */
+html.q-rack .modes .mode::before {
+  content: '';
+  display: block;
+  width: 20px;
+  height: 20px;
+  background: currentColor;
+  -webkit-mask-position: center; mask-position: center;
+  -webkit-mask-size: contain; mask-size: contain;
+  -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat;
+}
+html.q-rack .modes .mode:nth-child(1)::before { -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 11l8-7 8 7v9h-5v-6h-6v6H4z'/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 11l8-7 8 7v9h-5v-6h-6v6H4z'/%3E%3C/svg%3E"); }
+html.q-rack .modes .mode:nth-child(2)::before { -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 5h16M4 10h16M4 15h16M4 20h10'/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 5h16M4 10h16M4 15h16M4 20h10'/%3E%3C/svg%3E"); }
+html.q-rack .modes .mode:nth-child(3)::before { -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 20v-7M12 20V5M19 20v-10M3 20h18'/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 20v-7M12 20V5M19 20v-10M3 20h18'/%3E%3C/svg%3E"); }
+html.q-rack .modes .mode:nth-child(4)::before { -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 8h15l-3-3M20 16H5l3 3'/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 8h15l-3-3M20 16H5l3 3'/%3E%3C/svg%3E"); }
+html.q-rack .modes .mode:nth-child(5)::before { -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 5h10v10H4zM10 9h10v10H10z'/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 5h10v10H4zM10 9h10v10H10z'/%3E%3C/svg%3E"); }
+html.q-rack .modes .mode:nth-child(6)::before { -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 20h16M6 20v-5M10 20V8M14 20v-11M18 20v-6'/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 20h16M6 20v-5M10 20V8M14 20v-11M18 20v-6'/%3E%3C/svg%3E"); }
+@media (min-width: 721px) {
+  html.q-rack .wrap { max-width: none; padding-left: 136px; }
+  html.q-rack .kv-head {
+    position: fixed;
+    top: 0; bottom: 0; left: 0;
+    width: 118px;
+    z-index: 30;
+    flex-direction: column;
+    flex-wrap: nowrap;
+    align-items: stretch;
+    gap: 20px;
+    padding: 18px 10px 16px;
+    border-width: 0 1px 0 0;
+    border-radius: 0;
+  }
+  html.q-rack .brand { flex-direction: column; gap: 8px; }
+  html.q-rack .brand-text h1 { font-size: calc(14px + var(--fs-bump, 0px)); letter-spacing: 0.22em; padding-left: 0.22em; }
+  html.q-rack .modes { flex-direction: column; flex-wrap: nowrap; gap: 4px; margin: 0; }
+  html.q-rack .mode {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 4px;
+    background: transparent;
+    border-color: transparent;
+  }
+  html.q-rack .mode.active { background: var(--panel-hi); border-color: var(--line); box-shadow: inset 2px 0 0 var(--k); color: var(--ink); }
+  html.q-rack .cal { margin: auto 0 0; flex-direction: column; flex-wrap: nowrap; gap: 10px; padding: 0 8px; }
+}
+@media (max-width: 720px) {
+  html.q-rack .wrap { padding-bottom: 76px; }
+  html.q-rack .modes {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    z-index: 30;
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 2px;
+    margin: 0;
+    padding: 6px 4px calc(6px + env(safe-area-inset-bottom));
+    background: var(--panel);
+    border-top: 1px solid var(--line);
+  }
+  html.q-rack .mode {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 0;
+    min-width: 0;
+    background: transparent;
+    border-color: transparent;
+    white-space: nowrap;
+  }
+  html.q-rack .mode { font-size: calc(10px + var(--fs-bump, 0px)); overflow: hidden; text-overflow: ellipsis; }
+  html.q-rack .mode.active { background: var(--panel-hi); box-shadow: inset 0 2px 0 var(--k); color: var(--ink); }
+}
+
+/* small text one pixel larger (display sizes unchanged); the 8-13 px font sizes
+   across the app are written calc(Npx + var(--fs-bump, 0px)) */
+html.q-rack { --fs-bump: 1px; }

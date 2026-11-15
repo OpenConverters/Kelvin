@@ -170,8 +170,8 @@ onUnmounted(() => window.removeEventListener('keydown', onKey))
   border-bottom: 1px solid var(--line);
 }
 h2 { margin: 0; font-size: 17px; color: var(--k-hi); }
-.sub { margin: 4px 0 0; color: var(--ink-dim); font-size: 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.series { font-size: 11px; }
+.sub { margin: 4px 0 0; color: var(--ink-dim); font-size: calc(12px + var(--fs-bump, 0px)); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.series { font-size: calc(11px + var(--fs-bump, 0px)); }
 .head-actions { display: flex; gap: 8px; flex-shrink: 0; }
 .drawer-body { padding: 16px; overflow-y: auto; display: flex; flex-direction: column; gap: 18px; }
 .kv-strip { display: flex; flex-wrap: wrap; gap: 10px; }
@@ -184,11 +184,11 @@ h2 { margin: 0; font-size: 17px; color: var(--k-hi); }
   flex-direction: column;
   gap: 2px;
 }
-.kv-label { font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-dim); }
-.kv-value { font-size: 13px; color: var(--k-hi); }
-.note { color: var(--ink-dim); font-size: 12px; }
-.err { color: var(--fault); font-size: 12px; }
-.spec-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.kv-label { font-size: calc(9px + var(--fs-bump, 0px)); letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-dim); }
+.kv-value { font-size: calc(13px + var(--fs-bump, 0px)); color: var(--k-hi); }
+.note { color: var(--ink-dim); font-size: calc(12px + var(--fs-bump, 0px)); }
+.err { color: var(--fault); font-size: calc(12px + var(--fs-bump, 0px)); }
+.spec-table { width: 100%; border-collapse: collapse; font-size: calc(12px + var(--fs-bump, 0px)); }
 .spec-table td { padding: 4px 8px; border-bottom: 1px solid var(--line-soft); }
 .spec-key { color: var(--ink-dim); }
 .spec-val { text-align: right; }

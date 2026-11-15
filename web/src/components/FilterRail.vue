@@ -148,25 +148,25 @@ const numericFields = computed(() => props.family.columns.filter((c) => !c.str &
 
 <style scoped>
 .rail { padding: 14px; display: flex; flex-direction: column; gap: 14px; overflow-y: auto; }
-.f-label { display: block; font-size: 11px; color: var(--ink-dim); margin-bottom: 4px; }
+.f-label { display: block; font-size: calc(11px + var(--fs-bump, 0px)); color: var(--ink-dim); margin-bottom: 4px; }
 .mpn-search input { width: 100%; }
 .minmax { display: flex; align-items: center; gap: 6px; }
 .minmax input { width: 100%; min-width: 0; }
 .minmax input.bad { border-color: var(--fault); }
 .dash { color: var(--ink-dim); }
-.hint { display: block; font-size: 10px; color: #4a5b6e; margin-top: 3px; }
+.hint { display: block; font-size: calc(10px + var(--fs-bump, 0px)); color: #4a5b6e; margin-top: 3px; }
 .facet ul { list-style: none; margin: 0; padding: 0; max-height: 300px; overflow-y: auto; }
 .facet label {
   display: flex;
   align-items: center;
   gap: 7px;
   padding: 2px 0;
-  font-size: 12px;
+  font-size: calc(12px + var(--fs-bump, 0px));
   cursor: pointer;
 }
 .facet label.zero { opacity: 0.35; }
 .facet .v { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.facet .count { color: var(--ink-dim); font-size: 10px; }
+.facet .count { color: var(--ink-dim); font-size: calc(10px + var(--fs-bump, 0px)); }
 .facet input[type='checkbox'] { accent-color: var(--k); }
-.more { margin-top: 4px; font-size: 10px; padding: 2px 8px; }
+.more { margin-top: 4px; font-size: calc(10px + var(--fs-bump, 0px)); padding: 2px 8px; }
 </style>

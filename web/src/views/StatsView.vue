@@ -264,46 +264,46 @@ const hoverBucket = ref(null) // {histField, i, ...bar}
 .family-strip { display: flex; flex-wrap: wrap; gap: 6px; }
 .fam-tab {
   font-family: var(--disp);
-  font-size: 10px;
+  font-size: calc(10px + var(--fs-bump, 0px));
   letter-spacing: 0.1em;
   text-transform: uppercase;
   padding: 7px 12px;
 }
 .fam-tab.active { border-color: var(--k-deep); color: var(--k-hi); box-shadow: 0 0 10px rgba(127, 201, 255, 0.1) inset; }
-.err { color: var(--fault); font-size: 12px; }
-.note { color: var(--ink-dim); font-size: 12px; }
+.err { color: var(--fault); font-size: calc(12px + var(--fs-bump, 0px)); }
+.note { color: var(--ink-dim); font-size: calc(12px + var(--fs-bump, 0px)); }
 
 .tiles { display: flex; flex-wrap: wrap; gap: 10px; }
 .tile { padding: 12px 18px; display: flex; flex-direction: column; gap: 4px; }
 .tile.wide { flex: 1; min-width: 340px; }
-.tile-label { font-family: var(--disp); font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-dim); }
+.tile-label { font-family: var(--disp); font-size: calc(9px + var(--fs-bump, 0px)); letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-dim); }
 .tile-value { font-size: 22px; color: var(--k-hi); }
 .cov-row { display: flex; flex-wrap: wrap; gap: 6px 18px; }
-.cov { display: inline-flex; align-items: center; gap: 7px; font-size: 11px; }
+.cov { display: inline-flex; align-items: center; gap: 7px; font-size: calc(11px + var(--fs-bump, 0px)); }
 .cov-label { color: var(--ink-dim); min-width: 52px; }
 .cov-track { width: 90px; height: 8px; background: var(--bg-deep); border: 1px solid var(--line-soft); border-radius: 2px; overflow: hidden; }
 .cov-track i { display: block; height: 100%; background: var(--k-deep); }
-.cov-pct { font-size: 10px; color: var(--ink); }
+.cov-pct { font-size: calc(10px + var(--fs-bump, 0px)); color: var(--ink); }
 
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 14px; }
 .pane { padding: 16px; }
 .dim { text-transform: none; letter-spacing: 0; color: #4a5b6e; }
 
-.bar-row { display: grid; grid-template-columns: 150px 1fr 66px; gap: 10px; align-items: center; padding: 2px 0; font-size: 11px; }
+.bar-row { display: grid; grid-template-columns: 150px 1fr 66px; gap: 10px; align-items: center; padding: 2px 0; font-size: calc(11px + var(--fs-bump, 0px)); }
 .bar-label { color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bar-track { height: 12px; background: var(--bg-deep); border: 1px solid var(--line-soft); border-radius: 3px; overflow: hidden; }
 .bar-track i { display: block; height: 100%; background: var(--s1); border-radius: 2px 0 0 2px; }
-.bar-n { text-align: right; color: var(--ink-dim); font-size: 10px; }
-.bar-rest { font-size: 10px; color: var(--ink-dim); margin: 6px 0 0; }
+.bar-n { text-align: right; color: var(--ink-dim); font-size: calc(10px + var(--fs-bump, 0px)); }
+.bar-rest { font-size: calc(10px + var(--fs-bump, 0px)); color: var(--ink-dim); margin: 6px 0 0; }
 
 .hist-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; }
 .hist { margin: 0; }
-.hist figcaption { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--ink); margin-bottom: 4px; }
-.hist-note { font-size: 10px; color: var(--ink-dim); }
+.hist figcaption { display: flex; justify-content: space-between; gap: 10px; font-size: calc(12px + var(--fs-bump, 0px)); color: var(--ink); margin-bottom: 4px; }
+.hist-note { font-size: calc(10px + var(--fs-bump, 0px)); color: var(--ink-dim); }
 .hist svg { width: 100%; display: block; background: var(--bg-deep); border: 1px solid var(--line-soft); border-radius: 4px; }
 .hbar { fill: var(--s1); opacity: 0.85; }
 .hbar.hot { fill: var(--k); opacity: 1; }
-.ticks text { fill: var(--ink-dim); font-family: var(--mono); font-size: 10px; }
-.hist-readout { font-size: 10px; color: var(--k-hi); min-height: 14px; margin: 3px 0 0; }
+.ticks text { fill: var(--ink-dim); font-family: var(--mono); font-size: calc(10px + var(--fs-bump, 0px)); }
+.hist-readout { font-size: calc(10px + var(--fs-bump, 0px)); color: var(--k-hi); min-height: 14px; margin: 3px 0 0; }
 .bar-label.is-empty { font-style: italic; opacity: .72 }
 </style>

@@ -205,15 +205,15 @@ function openPart(row) {
 .fam-card.active { border-color: var(--k-deep); box-shadow: 0 0 12px rgba(127, 201, 255, 0.12) inset; }
 .fam-card.active .fam-name { color: var(--k-hi); }
 .fam-glyph {
-  font-size: 10px;
+  font-size: calc(10px + var(--fs-bump, 0px));
   color: var(--k);
   border: 1px solid var(--k-deep);
   border-radius: 3px;
   padding: 0 4px;
 }
-.fam-name { font-family: var(--disp); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink); }
-.fam-count { font-size: 11px; color: var(--k); }
-.fam-tag { font-size: 9px; color: var(--ink-dim); line-height: 1.2; }
+.fam-name { font-family: var(--disp); font-size: calc(10px + var(--fs-bump, 0px)); letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink); }
+.fam-count { font-size: calc(11px + var(--fs-bump, 0px)); color: var(--k); }
+.fam-tag { font-size: calc(9px + var(--fs-bump, 0px)); color: var(--ink-dim); line-height: 1.2; }
 
 .workbench {
   display: grid;
@@ -227,7 +227,7 @@ function openPart(row) {
 .results-head { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chips .chip { cursor: pointer; }
-.err { color: var(--fault); font-size: 12px; }
+.err { color: var(--fault); font-size: calc(12px + var(--fs-bump, 0px)); }
 .pager {
   display: flex;
   align-items: center;
@@ -235,7 +235,7 @@ function openPart(row) {
   gap: 14px;
   padding-top: 10px;
   border-top: 1px solid var(--line-soft);
-  font-size: 11px;
+  font-size: calc(11px + var(--fs-bump, 0px));
   color: var(--ink-dim);
 }
 
