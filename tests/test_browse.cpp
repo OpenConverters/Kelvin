@@ -1,7 +1,11 @@
 // [browse] The catalogue-browsing surface (Browse.hpp): filter/sort/facet/paginate over shard
 // rows. Covers the faceted-search "count over all other filters" rule, NaN-last sorting,
 // pagination, the unknown-field guard, and the Engine-level unloaded-shard guard.
+#include <algorithm>
+#include <cctype>
+#include <set>
 #include <string>
+#include <vector>
 
 #include <catch2/catch_test_macros.hpp>
 
@@ -170,6 +174,120 @@ TEST_CASE("browse: unknown filter or sort field throws InvalidOptions", "[browse
         InvalidOptions);
     REQUIRE_THROWS_AS(browse::browse_rows(shard, json{{"sort", {{"field", "nonsense"}}}}),
                       InvalidOptions);
+}
+
+namespace {
+std::string lower(std::string s) {
+    for (auto& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+}
+// Every adjacent pair is in case-folded order (asc or desc), ties broken by lineno asc; and the
+// fixture actually exercises case — at least one adjacent pair is OUT of byte order, so a
+// byte-order sort could not produce this sequence.
+void check_ci_order(const json& rows, const char* key, bool desc) {
+    REQUIRE(rows.size() > 1);
+    bool byte_order_broken = false;
+    for (size_t i = 0; i + 1 < rows.size(); ++i) {
+        const std::string a = rows[i].at(key).get<std::string>();
+        const std::string b = rows[i + 1].at(key).get<std::string>();
+        const std::string la = lower(a), lb = lower(b);
+        INFO(key << " rows " << i << ": '" << a << "' then '" << b << "'");
+        if (la == lb) {
+            REQUIRE(rows[i].at("lineno").get<uint32_t>() < rows[i + 1].at("lineno").get<uint32_t>());
+        } else {
+            REQUIRE((desc ? la > lb : la < lb));
+        }
+        if (desc ? a < b : a > b) byte_order_broken = true;
+    }
+    REQUIRE(byte_order_broken);  // premise: the fixture mixes case across the sort key
+}
+std::vector<uint32_t> linenos(const json& rows) {
+    std::vector<uint32_t> v;
+    for (const auto& r : rows) v.push_back(r.at("lineno").get<uint32_t>());
+    return v;
+}
+}  // namespace
+
+// Owner 2026-11-15: alphabetic columns sort case-insensitively ("SiR680ADP" next to "SIR..",
+// "onsemi" among the O's, not after "Wolfspeed").
+TEST_CASE("browse: mpn sort is case-insensitive, ties by lineno", "[browse][sort]") {
+    auto shard = build_mosfet_shard(fixtures_dir() + "/mosfets.ndjson");
+    json asc = browse::browse_rows(shard, json{{"sort", {{"field", "mpn"}, {"dir", "asc"}}},
+                                               {"limit", 1000}});
+    REQUIRE(asc.at("rows").size() == asc.at("total").get<size_t>());
+    check_ci_order(asc.at("rows"), "mpn", false);
+    json desc = browse::browse_rows(shard, json{{"sort", {{"field", "mpn"}, {"dir", "desc"}}},
+                                                {"limit", 1000}});
+    check_ci_order(desc.at("rows"), "mpn", true);
+}
+
+TEST_CASE("browse: manufacturer sort is case-insensitive, ties by lineno", "[browse][sort]") {
+    auto shard = build_mosfet_shard(fixtures_dir() + "/mosfets.ndjson");
+    json asc = browse::browse_rows(
+        shard, json{{"sort", {{"field", "manufacturer"}, {"dir", "asc"}}}, {"limit", 1000}});
+    REQUIRE(asc.at("rows").size() == asc.at("total").get<size_t>());
+    check_ci_order(asc.at("rows"), "manufacturer", false);
+}
+
+TEST_CASE("browse: random sort is a seeded, deterministic permutation", "[browse][sort]") {
+    auto shard = build_capacitor_shard(fixtures_dir() + "/capacitors.ndjson");
+    auto run = [&](const json& sort, size_t offset, size_t limit) {
+        json q{{"offset", offset}, {"limit", limit}};
+        if (!sort.is_null()) q["sort"] = sort;
+        return browse::browse_rows(shard, q);
+    };
+    const json s42{{"field", "random"}, {"seed", 42}};
+    const json s43{{"field", "random"}, {"seed", 43}};
+    json base = run(nullptr, 0, 1000);
+    json a = run(s42, 0, 1000);
+    json b = run(s42, 0, 1000);
+    json c = run(s43, 0, 1000);
+    REQUIRE(a.at("total") == base.at("total"));
+    REQUIRE(a.at("rows").size() == base.at("rows").size());
+    // Same seed -> same order; different seed -> different order; neither is file order.
+    REQUIRE(linenos(a.at("rows")) == linenos(b.at("rows")));
+    REQUIRE(linenos(a.at("rows")) != linenos(c.at("rows")));
+    REQUIRE(linenos(a.at("rows")) != linenos(base.at("rows")));
+    // Paging under one seed is consistent: pages concatenate to the full order.
+    json p1 = run(s42, 0, 7), p2 = run(s42, 7, 7);
+    std::vector<uint32_t> paged = linenos(p1.at("rows"));
+    for (auto l : linenos(p2.at("rows"))) paged.push_back(l);
+    std::vector<uint32_t> full = linenos(a.at("rows"));
+    REQUIRE(paged == std::vector<uint32_t>(full.begin(), full.begin() + 14));
+}
+
+TEST_CASE("browse: random sort permutes exactly the filtered set", "[browse][sort]") {
+    auto shard = build_mosfet_shard(fixtures_dir() + "/mosfets.ndjson");
+    const json filt{{"vds_rated", {{"min", 100.0}}}};
+    json base = browse::browse_rows(shard, json{{"filters", filt}, {"limit", 1000}});
+    json rnd = browse::browse_rows(
+        shard, json{{"filters", filt}, {"sort", {{"field", "random"}, {"seed", 7}}},
+                    {"limit", 1000}});
+    REQUIRE(base.at("total").get<size_t>() > 1);
+    REQUIRE(rnd.at("total") == base.at("total"));
+    std::vector<uint32_t> x = linenos(rnd.at("rows")), y = linenos(base.at("rows"));
+    REQUIRE(x != y);
+    std::sort(x.begin(), x.end());
+    REQUIRE(x == y);  // base is lineno ascending
+    REQUIRE(std::set<uint32_t>(x.begin(), x.end()).size() == x.size());
+}
+
+TEST_CASE("browse: random sort requires an integer seed and takes no dir", "[browse][sort]") {
+    auto shard = build_mosfet_shard(fixtures_dir() + "/mosfets.ndjson");
+    auto q = [](json sort) { return json{{"sort", sort}}; };
+    REQUIRE_THROWS_AS(browse::browse_rows(shard, q({{"field", "random"}})), InvalidOptions);
+    REQUIRE_THROWS_AS(browse::browse_rows(shard, q({{"field", "random"}, {"seed", "42"}})),
+                      InvalidOptions);
+    REQUIRE_THROWS_AS(browse::browse_rows(shard, q({{"field", "random"}, {"seed", 4.2}})),
+                      InvalidOptions);
+    REQUIRE_THROWS_AS(browse::browse_rows(shard, q({{"field", "random"}, {"seed", nullptr}})),
+                      InvalidOptions);
+    REQUIRE_THROWS_AS(
+        browse::browse_rows(shard, q({{"field", "random"}, {"seed", 1}, {"dir", "asc"}})),
+        InvalidOptions);
+    REQUIRE_NOTHROW(browse::browse_rows(shard, q({{"field", "random"}, {"seed", -5}})));
+    REQUIRE_NOTHROW(
+        browse::browse_rows(shard, q({{"field", "random"}, {"seed", 4294967295ULL}})));
 }
 
 TEST_CASE("browse: controller topologies list facet + filter", "[browse]") {

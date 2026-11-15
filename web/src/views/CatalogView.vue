@@ -17,7 +17,12 @@ const props = defineProps({
 const family = computed(() => familyByKey(store.family))
 
 const filters = ref({ mpn: '', num: {}, sel: {} })
-const sort = ref({ field: 'lineno', dir: 'asc' })
+// Default order is RANDOM until a column header is clicked (owner 2026-11-15). One seed per
+// page load keeps paging consistent within a visit; the engine orders by a seeded hash, so the
+// same seed always gives the same order. 'random' matches no column, so no header shows an arrow.
+const RANDOM_SEED = crypto.getRandomValues(new Uint32Array(1))[0]
+const randomSort = () => ({ field: 'random', seed: RANDOM_SEED })
+const sort = ref(randomSort())
 const page = ref(0)
 const PAGE = 50
 
@@ -27,7 +32,7 @@ const error = ref('')
 
 watch(() => store.family, () => {
   filters.value = { mpn: '', num: {}, sel: {} }
-  sort.value = { field: 'lineno', dir: 'asc' }
+  sort.value = randomSort()
   page.value = 0
 })
 
