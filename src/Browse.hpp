@@ -195,7 +195,8 @@ inline const FieldTable<IgbtRow>& fields<IgbtRow>() {
          {"ic_continuous", &IgbtRow::ic_continuous},
          {"vce_sat", &IgbtRow::vce_sat},
          {"rth_jc", &IgbtRow::rth_jc},
-         {"tj_max", &IgbtRow::tj_max}},
+         {"tj_max", &IgbtRow::tj_max},
+         {"vce_sat_ic", &IgbtRow::vce_sat_ic}},
         {{"technology", &IgbtRow::technology}},
         {{"is_production", &IgbtRow::is_production}},
         {}};
@@ -208,7 +209,11 @@ inline const FieldTable<BjtRow>& fields<BjtRow>() {
          {"ic_continuous", &BjtRow::ic_continuous},
          {"hfe_min", &BjtRow::hfe_min},
          {"power_dissipation", &BjtRow::power_dissipation},
-         {"tj_max", &BjtRow::tj_max}},
+         {"tj_max", &BjtRow::tj_max},
+         {"transition_frequency", &BjtRow::transition_frequency},
+         {"vce_sat", &BjtRow::vce_sat},
+         {"vce_sat_ic", &BjtRow::vce_sat_ic},
+         {"hfe_ic", &BjtRow::hfe_ic}},
         {{"technology", &BjtRow::technology},
          {"polarity", &BjtRow::polarity}},
         {{"is_production", &BjtRow::is_production}},
@@ -222,7 +227,9 @@ inline const FieldTable<VaristorRow>& fields<VaristorRow>() {
          {"clamping_voltage", &VaristorRow::clamping_voltage},
          {"peak_surge_current", &VaristorRow::peak_surge_current},
          {"max_continuous_dc_voltage", &VaristorRow::max_continuous_dc_voltage},
-         {"capacitance", &VaristorRow::capacitance}},
+         {"capacitance", &VaristorRow::capacitance},
+         {"max_continuous_ac_voltage", &VaristorRow::max_continuous_ac_voltage},
+         {"energy_absorption", &VaristorRow::energy_absorption}},
         {{"technology", &VaristorRow::technology}},
         {{"is_production", &VaristorRow::is_production}},
         {}};
@@ -269,10 +276,16 @@ inline const FieldTable<AnalogRow>& fields<AnalogRow>() {
          {"vsupply_max", &AnalogRow::vsupply_max},
          {"resolution", &AnalogRow::resolution},
          {"sample_rate", &AnalogRow::sample_rate},
-         {"on_resistance", &AnalogRow::on_resistance}},
+         {"on_resistance", &AnalogRow::on_resistance},
+         {"offset_drift", &AnalogRow::offset_drift},
+         {"quiescent_current", &AnalogRow::quiescent_current},
+         {"propagation_delay", &AnalogRow::propagation_delay}},
         {{"device_type", &AnalogRow::device_type},
          {"architecture", &AnalogRow::architecture},
-         {"input_stage", &AnalogRow::input_stage}},
+         {"input_stage", &AnalogRow::input_stage},
+         {"rail_to_rail_input", &AnalogRow::rail_to_rail_input},
+         {"rail_to_rail_output", &AnalogRow::rail_to_rail_output},
+         {"output_stage", &AnalogRow::output_stage}},
         {{"is_production", &AnalogRow::is_production}},
         {}};
     return t;
@@ -837,6 +850,11 @@ json browse_rows(const Shard<Row>& shard, const json& query) {
         // The reason, for a per-field and for a whole-record retraction alike.
         if (!r.retraction_reason.empty()) o["provenanceRetractionReason"] = r.retraction_reason;
     if (r.box_axes_ambiguous) o["boxAxesAmbiguous"] = true;       // v20, see RowBase
+        // manufacturerInfo.status as stated, null when the record states none (v24, owner
+        // 2026-11-15): the cross-reference tells "status not stated" from a stated
+        // non-production status, which is_production cannot. Not "status": that name is the
+        // cross-reference verdict in the MCP contract.
+        o["lifecycleStatus"] = r.status.empty() ? json(nullptr) : json(r.status);
         for (const auto& [name, mem] : t.nums) {
             double v = r.*mem;
             if (std::isnan(v)) o[name] = nullptr;

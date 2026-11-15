@@ -99,19 +99,28 @@ FAMILY_NOTES = {
     "varistor": ("MOV / TVS surge protectors", ["ratedVoltage", "maximumClampingVoltage"]),
     "magnetic": ("inductors, transformers, chokes and ferrite beads",
                  ["magnetizingInductance", "peakCurrent (via options)", "rmsCurrent (via options)"]),
-    "analog": ("analog ICs — browse only, no selector yet", []),
-    "timing": ("crystals, oscillators and resonators — browse only, no selector yet", []),
+    "analog": ("analog ICs: op-amps, comparators, ADC, DAC, switches, multiplexers, ...",
+               ["deviceType", "numberOfChannels", "supplyVoltage", "maximumInputOffsetVoltage",
+                "maximumInputBiasCurrent", "minimumGainBandwidthProduct", "minimumSlewRate",
+                "minimumCommonModeRejectionRatio", "minimumResolution", "minimumSampleRate",
+                "maximumOnResistance", "architecture", "inputStage"]),
+    "timing": ("crystals, oscillators and resonators",
+               ["frequency", "maximumFrequencyDeviation", "maximumFrequencyTolerance",
+                "maximumFrequencyStability", "loadCapacitance", "supplyVoltage",
+                "minimumOperatingTemperature", "maximumOperatingTemperature", "maximumLength",
+                "maximumWidth", "maximumHeight", "technology", "outputType"]),
     "connector": ("connectors and terminal blocks",
                   ["positions", "family", "minimumCurrentPerContact", "minimumRatedVoltage"]),
 }
 
 # Families select() refuses: no requirements emitter, so no selection semantics to
-# invent. They are fully browsable.
-BROWSE_ONLY = ("analog", "timing")
+# invent. They are fully browsable. Empty since analog and timing gained selectors (2026-11-15).
+BROWSE_ONLY: tuple[str, ...] = ()
 
 # Families the substitute ranker (CrossRef.hpp) has a parameter model for. The rest are refused
 # by name, never ranked with another family's model — say so up front instead of at call time.
-XREF_FAMILIES = ("magnetic", "capacitor", "resistor", "mosfet", "timing", "connector", "diode")
+XREF_FAMILIES = ("magnetic", "capacitor", "resistor", "mosfet", "timing", "connector", "diode",
+                 "igbt", "varistor", "analog", "bjt")
 
 # A public server must not be a bulk-export endpoint: the catalogue is searched with filters, not
 # paged end to end. A caller who needs more narrows the filters (facet counts say how).
@@ -1620,6 +1629,25 @@ def _magnetic_extras(c: dict) -> str:
     return out
 
 
+def _spec_extras(c: dict) -> str:
+    """Timing / analog candidate: the requirements its record does not state (UNVERIFIED, the
+    first ranking key) and its board area."""
+    out = ""
+    unverified = c.get("unverified") or []
+    if unverified:
+        out += f" | UNVERIFIED: {', '.join(unverified)}"
+    flags = c.get("flags") or []
+    if "programmable" in flags:
+        out += " | PROGRAMMABLE: order or program it for the asked frequency"
+    for o in c.get("overRated") or []:
+        out += f" | over-rated {o['key']} {o['ratio']:.1f}x (flag only)"
+    area = c.get("boardArea")
+    if area:
+        out += (f" | board {area['mm2']:.1f} mm2" if area.get("mm2") is not None
+                else " | board area not stated")
+    return out
+
+
 def recommend_parts(family: str, requirements: dict, options: dict | None = None,
                     max_results: int = 12, include_envelope: bool = False) -> CallToolResult:
     """Ranked candidates for one component requirement.
@@ -1628,7 +1656,13 @@ def recommend_parts(family: str, requirements: dict, options: dict | None = None
         requirements: that family's designRequirements block, SI units. The keys each family
             reads are listed by describe_family (e.g. mosfet: ratedDrainSourceVoltage,
             ratedContinuousDrainCurrent, maximumOnResistance).
-        options: selector options — tiebreaker, excludeDiscontinued, manufacturerAllowlist,
+        options: selector options — tiebreaker, excludeDiscontinued (default true, every
+            family that takes it: a stated non-production lifecycle status drops a part; a
+            record stating none is kept, "status" joins its unverified list with a 'status not
+            stated' note, and it counts one more UNVERIFIED item. The UNVERIFIED count is the
+            FIRST sort key, so a status-less part ranks after the parts that state production,
+            whatever its other merits),
+            manufacturerAllowlist,
             maxManufacturerFraction, switchingFrequency, and per-family extras (mosfet qgMax /
             technologyAllowed, diode qrrMax, capacitor capacitanceMin|Max, resistor
             maxValueDeviation|maxTolerance, controller topology + inputVoltage +
@@ -1695,6 +1729,36 @@ def recommend_parts(family: str, requirements: dict, options: dict | None = None
             core loss is UNVERIFIED (no catalogue model; not counted in the order). Each
             candidate carries ratings, overRating (Isat or rated current > 3x the need; ccm: L
             above 2x the required: flag only), boardArea, volume and price.
+            timing requirements: frequency (Hz) and maximumFrequencyDeviation (fraction; 0 =
+            exact) are required — a part must state a frequency within that deviation; a
+            programmable blank stating only a range matches when the range contains the
+            frequency (flag 'programmable': it must be ordered or programmed for it). Optional:
+            maximumFrequencyTolerance / maximumFrequencyStability (fractions, 20 ppm = 20e-6;
+            an oscillator stating only an all-inclusive stability is judged on it against the
+            tolerance limit), loadCapacitance (F, equal; asks for a crystal, so oscillators
+            are rejected), supplyVoltage (V, inside the part's supply range; asks for an
+            oscillator, so passive crystals / resonators are rejected),
+            minimumOperatingTemperature / maximumOperatingTemperature (degC, covered by the
+            part's range), maximumLength + maximumWidth (m, together, rotation-free),
+            maximumHeight (m), technology, outputType (exact). analog requirements: deviceType
+            (required: operationalAmplifier, comparator, instrumentationAmplifier,
+            programmableGainAmplifier, differenceAmplifier, buffer, multiplier, adc, dac,
+            analogSwitch, multiplexer) and per type numberOfChannels (exact), supplyVoltage,
+            maximumInputOffsetVoltage, maximumInputBiasCurrent, minimumGainBandwidthProduct,
+            minimumSlewRate, minimumCommonModeRejectionRatio (dB), minimumResolution (bits),
+            minimumSampleRate, maximumOnResistance, architecture, inputStage; a key that does not
+            apply to the type is refused. For both: a value the record states and fails rejects
+            the part; one it does not state passes UNVERIFIED and ranks after every part with
+            fewer UNVERIFIED items (a size that cannot be determined counts one more, and so
+            does a lifecycle status the record does not state; only a stated non-production
+            status drops a part). Then timing: nearest frequency, tightest stated stability,
+            smallest board area; analog: the type's key figure (op-amp / comparator / in-amp /
+            PGA lowest |Vos|, ADC highest sample rate, DAC highest resolution, switch / mux
+            lowest on-resistance; not stated sorts last), smallest board area; then file
+            order. An analog GBW, slew rate or sample rate more than 3x the requirement is
+            flagged overRated (no effect on order). Each candidate carries checks [{key,
+            verdict, required, stated}], unverified, flags, notes and boardArea. No
+            tiebreaker option.
         include_envelope: attach each candidate's full datasheet record (large).
     """
     key = _family(family)
@@ -1719,6 +1783,13 @@ def recommend_parts(family: str, requirements: dict, options: dict | None = None
                or "(none recorded)")) from error
     cands = result.get("candidates") or []
     lines = []
+    # Timing / analog print their whole unverified list (_spec_extras); every other family says
+    # here when its record states no lifecycle status, the reason it ranks after the parts that
+    # state production (owner 2026-11-15).
+    def _status_extra(c: dict) -> str:
+        if key in ("timing", "analog") or "status" not in (c.get("unverified") or []):
+            return ""
+        return " | STATUS NOT STATED (one more UNVERIFIED item: ranks after parts stating production)"
     for c in cands[:15]:
         # A margin the record could not state is null, not 0 — it has no place in a
         # "tightest margin" comparison, and ranking it as the smallest would report an
@@ -1734,7 +1805,9 @@ def recommend_parts(family: str, requirements: dict, options: dict | None = None
                      + (f" | tightest margin {worst[0]} {worst[1]:.2f}x" if worst else "")
                      + (_capacitor_extras(c) if key == "capacitor" else
                         _diode_extras(c) if key == "diode" else
-                        _magnetic_extras(c) if key == "magnetic" else _mosfet_extras(c)))
+                        _magnetic_extras(c) if key == "magnetic" else
+                        _spec_extras(c) if key in ("timing", "analog") else _mosfet_extras(c))
+                     + _status_extra(c))
     rejected = result.get("rejections") or {}
     return _result(
         f"{len(cands)} {key} candidate(s), best first "

@@ -274,4 +274,70 @@ for (const t of TIMING_TECHNOLOGIES) {
   if (t !== 'programmable') assert.ok(!timingTechnologiesAdmitted(t).includes('programmable'), t)
 }
 
+// IGBT, varistor and analog cross-reference (the ranker's igbt / varistor / analog models).
+// Each reaches the ranker under its own category, with the spec keys that model reads, and
+// the pool is cut at the ranker's own edges: Vces >= 0.9x, Vvar within 0.90-1.10x, the
+// analog channel count exact.
+const { XREF } = await import(pathToFileURL(join(here, '..', '..', 'web', 'src', 'crossref.js')).href)
+for (const k of ['igbt', 'varistor', 'analog', 'bjt']) assert.ok(XREF.some((f) => f.key === k), k)
+// controller: the ranker has no model (known_category refuses it), so no page.
+assert.ok(!XREF.some((f) => f.key === 'controller'))
+const famCases = [
+  ['igbt', { mpn: 'IGBT-A', manufacturer: 'A', vces_rated: 650, ic_continuous: 40, vce_sat: 1.6,
+    vce_sat_ic: 40, tj_max: 175, technology: 'si' }, 'igbt',
+  (q) => assert.ok(Math.abs(q.filters.vces_rated.min - 585) < 1e-9),
+  (s) => { assert.equal(s.vces, 650); assert.equal(s.ic, 40); assert.equal(s.technology, 'si')
+    assert.equal(s.vce_sat, 1.6); assert.equal(s.vce_sat_ic, 40) }],
+  ['varistor', { mpn: 'MOV-A', manufacturer: 'A', varistor_voltage: 430, clamping_voltage: 710,
+    peak_surge_current: 6500, max_continuous_dc_voltage: 350, max_continuous_ac_voltage: 275,
+    energy_absorption: 190, capacitance: 4e-10, technology: 'mov' }, 'varistor',
+  (q) => { assert.ok(Math.abs(q.filters.varistor_voltage.min - 387) < 1e-9)
+    assert.ok(Math.abs(q.filters.varistor_voltage.max - 473) < 1e-9)
+    // the hard working-voltage / energy gates are not pool filters (an omission is UNVERIFIED)
+    assert.equal(q.filters.max_continuous_dc_voltage, undefined)
+    assert.equal(q.filters.energy_absorption, undefined) },
+  (s) => { assert.equal(s.value_si, 430); assert.equal(s.clamping_voltage, 710)
+    assert.equal(s.peak_surge_current, 6500); assert.equal(s.max_continuous_ac_voltage, 275)
+    assert.equal(s.energy_absorption, 190) }],
+  ['analog', { mpn: 'OPA-A', manufacturer: 'A', device_type: 'operationalAmplifier', channels: 2,
+    gain_bandwidth: 1e6, slew_rate: 5e5, input_offset_voltage: -2e-3, input_bias_current: 2e-8,
+    cmrr: 80, vsupply_min: 3, vsupply_max: 32 }, 'analog',
+  (q) => { assert.ok(q.filters.channels.min <= 2 && q.filters.channels.max >= 2)
+    assert.deepEqual(q.filters.device_type, ['operationalAmplifier']) },
+  (s) => { assert.equal(s.subtype, 'operationalAmplifier'); assert.equal(s.channels, 2)
+    assert.equal(s.gbw, 1e6); assert.equal(s.input_offset_voltage, -2e-3); assert.equal(s.cmrr_db, 80)
+    // unstated tri-state / string fields travel as null, never ''
+    assert.equal(s.rail_to_rail_input, null); assert.equal(s.output_stage, null)
+    // package fit is the footprint gate on the case code, not a spec key (owner 2026-11-15)
+    assert.equal(s.package, undefined) }],
+  ['bjt', { mpn: 'BJT-A', manufacturer: 'A', vceo_rated: 50, ic_continuous: 0.5, hfe_min: 200,
+    transition_frequency: 6e8, power_dissipation: 0.7, polarity: 'pnp', technology: 'Si',
+    vce_sat: 0.25, tj_max: 150 }, 'bjt',
+  (q) => { assert.ok(Math.abs(q.filters.vceo_rated.min - 45) < 1e-9)
+    assert.deepEqual(q.filters.polarity, ['pnp']) },
+  (s) => { assert.equal(s.vceo, 50); assert.equal(s.ic, 0.5); assert.equal(s.hfe_min, 200)
+    assert.equal(s.transition_frequency, 6e8); assert.equal(s.polarity, 'pnp')
+    assert.equal(s.vce_sat, 0.25); assert.equal(s.tj_max, 150) }],
+]
+for (const [family, orig, category, checkPool, checkSpec] of famCases) {
+  let q = null, seenCat = null, seenOrig = null
+  const eng = {
+    async browse(_f, query) { q = query; return { total: 1, rows: [{ ...orig, mpn: 'SUB', manufacturer: 'B' }] } },
+    async crossReference(cat, o) { seenCat = cat; seenOrig = o; return { candidates: [] } },
+  }
+  const res = await runCrossRef({ family, original: orig, manufacturers: ['B'], engine: eng })
+  assert.equal(seenCat, category, family)
+  checkPool(q)
+  checkSpec(seenOrig)
+  assert.deepEqual(res.missing, [], family)
+}
+// Varistor energy is a hard key for a metal-oxide original only (varistor_energy_applies).
+assert.ok(famFor('varistor', { technology: 'metalOxide' }).hardKeys.includes('energy_absorption'))
+assert.ok(!famFor('varistor', { technology: 'multiLayer' }).hardKeys.includes('energy_absorption'))
+assert.deepEqual(famFor('varistor', { technology: 'multiLayer' }).spec({ mpn: 'X' }).energy_absorption, null)
+// An analog record with no device type: the identity the ranker turns on is unknown, so
+// the original is not verified (subtype null, never '').
+const noType = famFor('analog', {}).spec({ mpn: 'X', channels: 1 })
+assert.equal(noType.subtype, null)
+
 console.log('crossref variants: all checks passed')

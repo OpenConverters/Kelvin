@@ -1,4 +1,4 @@
-// The five parametric selectors. Each filters the shard rows (exact Python order + rejection
+// The parametric selectors. Each filters the shard rows (exact Python order + rejection
 // keys), ranks the survivors by the tiebreaker tuple with source line number as the final key
 // (reproduces Python min()/max() first-in-file-order-wins semantics), and returns a
 // SelectionResult JSON. Throws NoCandidates (carrying the rejection histogram) when none pass.
@@ -33,6 +33,15 @@ struct NoCandidates : std::runtime_error {
 
 constexpr size_t kDefaultMaxCandidates = 25;
 
+// Lifecycle, every selector that takes excludeDiscontinued (owner 2026-11-15, one rule): a
+// STATED non-production manufacturerInfo.status drops the part (rejections "discontinued"); a
+// record stating no status is kept, "status" joins its unverified list with a 'status not stated'
+// note, and it counts one more UNVERIFIED item — it ranks after the parts with fewer (in the
+// selectors with no other UNVERIFIED item, after every part that states a status). The
+// rank-not-gate magnetic best_fit order applies the same gate and note, and orders production <
+// status not stated < stated non-production right after its structural fit. The resistor /
+// controller selectors take no excludeDiscontinued and are unchanged.
+
 json select_mosfet(const Shard<MosfetRow>& shard, const MosfetConstraints& c, MosfetTiebreaker tb,
                    size_t max_candidates = kDefaultMaxCandidates, RecordFetcher* fetcher = nullptr, const MfrPolicy& mfr = {});
 json select_diode(const Shard<DiodeRow>& shard, const DiodeConstraints& c, DiodeTiebreaker tb,
@@ -63,6 +72,24 @@ json select_varistor(const Shard<VaristorRow>& shard, const VaristorConstraints&
 json select_connector(const Shard<ConnectorRow>& shard, const ConnectorConstraints& c,
                       ConnectorTiebreaker tb, size_t max_candidates = kDefaultMaxCandidates,
                       RecordFetcher* fetcher = nullptr, const MfrPolicy& mfr = {});
+
+// ---- Timing and analog ICs (owner-approved 2026-11-15) ----------------------
+// A requirement the record states and fails rejects the part (its own rejection bucket); one it
+// does not state passes UNVERIFIED; under excludeDiscontinued a part stating no lifecycle status
+// is kept and counts one more UNVERIFIED item (only a STATED non-production status drops it).
+// Order (owner 2026-11-15): fewer UNVERIFIED items first (an undeterminable size counts one
+// more, OpRanking.hpp); timing then the nearer frequency, the tightest stated stability, the
+// smallest board area; analog then the type's key figure (op-amp / comparator / in-amp / PGA
+// lowest |Vos|, ADC highest sample rate, DAC highest resolution, switch / mux lowest Ron; a part
+// not stating it after those that do), the smallest board area; both then file order. Every
+// candidate carries its checks {key, verdict, required, stated[, basis]}, the unverified list,
+// flags (programmable, overRated), notes, its boardArea and evidence.
+json select_timing(const Shard<TimingRow>& shard, const TimingConstraints& c,
+                   size_t max_candidates = kDefaultMaxCandidates,
+                   RecordFetcher* fetcher = nullptr, const MfrPolicy& mfr = {});
+json select_analog(const Shard<AnalogRow>& shard, const AnalogConstraints& c,
+                   size_t max_candidates = kDefaultMaxCandidates,
+                   RecordFetcher* fetcher = nullptr, const MfrPolicy& mfr = {});
 
 // ---- Magnetic (from-spec, rank-not-gate) -----------------------------------
 // Unlike every other selector this one NEVER hard-gates: it ranks the whole catalogue toward the

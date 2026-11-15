@@ -101,17 +101,45 @@ test.describe('kelvin site', () => {
     await expect(page.locator('.cand').first().locator('.meter').first()).toBeVisible()
   })
 
-  test('browse-only families: timing catalogue browses, recommender hides them', async ({ page }) => {
+  // Rewritten 2026-11-15 (owner-approved): timing and analog gained selectors, so their
+  // Recommend tabs exist and a submit ranks real parts (it used to assert the tabs were hidden).
+  test('timing and analog: catalogue browses, Recommend tabs rank parts', async ({ page }) => {
+    const errors = []
+    page.on('pageerror', (e) => errors.push(String(e)))
+    page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
     await page.goto('/#/catalog/timing')
     await expect(page.locator('tbody tr .mpn').first()).toBeVisible({ timeout: 20_000 })
-    // technology facet from the live shard
     await expect(page.locator('.facet label', { hasText: 'quartzCrystal' })).toBeVisible()
-    // the recommender strip offers no browse-only family
+
     await page.goto('/#/recommend/mosfet')
     await page.reload()
     await expect(page.getByRole('button', { name: 'Find parts' })).toBeVisible({ timeout: 20_000 })
-    await expect(page.locator('.fam-tab', { hasText: 'Timing' })).toHaveCount(0)
-    await expect(page.locator('.fam-tab', { hasText: 'Analog' })).toHaveCount(0)
+    await expect(page.locator('.fam-tab', { hasText: 'Timing' })).toHaveCount(1)
+    await expect(page.locator('.fam-tab', { hasText: 'Analog' })).toHaveCount(1)
+
+    // timing: a 16 MHz crystal, tolerance <= 30 ppm, 18 pF load
+    await page.locator('.fam-tab', { hasText: 'Timing' }).click()
+    const field = (re) => page.locator('label.field', { hasText: re }).locator('input')
+    await field(/^\s*Frequency \(Hz\)/).fill('16M')
+    await field(/Frequency match within/).fill('0')
+    await field(/Frequency tolerance/).fill('30')
+    await field(/Load capacitance/).fill('18p')
+    await page.getByRole('button', { name: 'Find parts' }).click()
+    await expect(page.locator('.cand').first()).toBeVisible({ timeout: 30_000 })
+    expect(await page.locator('.cand').count()).toBeGreaterThan(1)
+    await expect(page.locator('.cand .rank').first()).toBeVisible()
+
+    // analog: a dual op-amp, GBW >= 10 MHz
+    await page.locator('.fam-tab', { hasText: 'Analog' }).click()
+    const typeSelect = page.locator('label.field', { hasText: 'Device type' }).locator('select')
+    await expect(typeSelect.locator('option', { hasText: 'operationalAmplifier' })).toHaveCount(1, { timeout: 15_000 })
+    await typeSelect.selectOption('operationalAmplifier')
+    await field(/Channels/).fill('2')
+    await field(/GBW/).fill('10M')
+    await page.getByRole('button', { name: 'Find parts' }).click()
+    await expect(page.locator('.cand').first()).toBeVisible({ timeout: 30_000 })
+    expect(await page.locator('.cand').count()).toBeGreaterThan(1)
+    expect(errors).toEqual([])
   })
 
   test('connectors browse with family facet', async ({ page }) => {

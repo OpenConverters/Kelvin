@@ -38,6 +38,17 @@ VaristorConstraints varistor_constraints(const json& req);
 // family, matingPolarity|polarity. At least one gating key is required (validate()).
 ConnectorConstraints connector_constraints(const json& req);
 
+// Timing requirements -> constraints (owner-approved 2026-11-15). Required: frequency
+// (dimensionWithTolerance, resolved) and maximumFrequencyDeviation (fraction, 0 = exact).
+// Optional: maximumFrequencyTolerance, maximumFrequencyStability (fractions), loadCapacitance
+// (F), supplyVoltage (V), minimumOperatingTemperature / maximumOperatingTemperature (degC),
+// maximumLength + maximumWidth (m, together), maximumHeight (m), technology, outputType.
+TimingConstraints timing_constraints(const json& req);
+
+// Analog requirements -> constraints (owner-approved 2026-11-15). Required: deviceType; the
+// rest per type (analog_requirement_keys); a key that does not apply to the type throws.
+AnalogConstraints analog_constraints(const json& req);
+
 // Magnetic design requirements -> targets. Target inductance is the MAS `magnetizingInductance`
 // (falling back to `inductance` / `desiredInductance`), resolved from a dimensionWithTolerance.
 // Operating-point currents are read best-effort (peak/rms) — all fields are optional and this

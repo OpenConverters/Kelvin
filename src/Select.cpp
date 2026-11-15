@@ -12,6 +12,7 @@
 #include <limits>
 #include <map>
 #include <set>
+#include <sstream>
 #include <tuple>
 #include <vector>
 
@@ -41,6 +42,44 @@ json emit_rejections(const std::map<std::string, uint64_t>& rej) {
     for (const auto& kv : rej)
         if (kv.second > 0) out[kv.first] = kv.second;
     return out;
+}
+
+// ---- Lifecycle: ONE rule for every family (owner 2026-11-15) ---------------------------------
+// Under excludeDiscontinued a STATED non-production status (nrnd, obsolete, preview, ...) drops
+// the part (rejections "discontinued"); a record that states no status is KEPT and counts one
+// more UNVERIFIED item — "status" joins its unverified list, a 'status not stated' note says
+// why, and it ranks after the parts with fewer UNVERIFIED items. With excludeDiscontinued off
+// every part is kept and nothing is counted. Returns false when the part is dropped.
+bool status_gate(const RowBase& r, bool exclude_discontinued, std::map<std::string, uint64_t>& rej) {
+    if (!exclude_discontinued || r.status.empty()) return true;
+    if (r.status != "production") {
+        rej["discontinued"]++;
+        return false;
+    }
+    return true;
+}
+
+// The record states no lifecycle status while excludeDiscontinued is on: one UNVERIFIED item.
+bool status_unverified(const RowBase& r, bool exclude_discontinued) {
+    return exclude_discontinued && r.status.empty();
+}
+
+constexpr const char* kStatusNotStatedNote =
+    "status not stated: the record names no lifecycle status, so it cannot be shown to be in "
+    "production (counts one more UNVERIFIED item; the UNVERIFIED count is the first sort key, so "
+    "it ranks after the parts that state production)";
+
+// A candidate of a family whose own JSON carries no unverified list: "status" joins (or starts)
+// its unverified list, the note joins its notes, and the sortKey says so — its unverifiedItems
+// (the operating-point ranking's key) counts the item too.
+void mark_status_unverified(json& cd) {
+    cd["unverified"].push_back("status");
+    cd["notes"].push_back(kStatusNotStatedNote);
+    if (!cd.contains("sortKey")) return;  // a family that reports no sortKey (connector)
+    json& sk = cd["sortKey"];
+    sk["statusUnverified"] = true;
+    if (sk.contains("unverifiedItems"))
+        sk["unverifiedItems"] = sk["unverifiedItems"].get<std::size_t>() + 1;
 }
 
 template <class Row>
@@ -139,7 +178,7 @@ json select_mosfet(const Shard<MosfetRow>& shard, const MosfetConstraints& c, Mo
 
     std::vector<const MosfetRow*> passing;
     for (const auto& m : shard.rows) {
-        if (c.exclude_discontinued && !m.is_production) { rej["discontinued"]++; continue; }
+        if (!status_gate(m, c.exclude_discontinued, rej)) continue;
         if (!c.technology_allowed.empty() &&
             c.technology_allowed.find(m.technology) == c.technology_allowed.end()) {
             rej["technology"]++; continue;
@@ -212,10 +251,13 @@ json select_mosfet(const Shard<MosfetRow>& shard, const MosfetConstraints& c, Mo
     std::map<const MosfetRow*, op_ranking::SizeEvidence> op_size;
     if (op_loss_mode)
         for (const MosfetRow* m : passing) op_size.emplace(m, op_ranking::size_of(board_area_json(*m)));
+    // A record stating no lifecycle status counts one more UNVERIFIED item (owner 2026-11-15,
+    // every family), in every ranking: outside the operating-point loss it is the whole key.
     auto unverified_terms = [&](const MosfetRow* m) -> size_t {
-        return op_loss_mode
-                   ? op_ranking::unverified_items(op_loss.at(m).unverified().size(), op_size.at(m))
-                   : 0;
+        return (op_loss_mode
+                    ? op_ranking::unverified_items(op_loss.at(m).unverified().size(), op_size.at(m))
+                    : 0) +
+               (status_unverified(*m, c.exclude_discontinued) ? 1 : 0);
     };
     // Gross over-rating (owner 2026-11-14): Vds or Id more than kGrossOverRatingFactor (3x)
     // the requirement. Each such axis is one step of a tier just above the metric, so an
@@ -329,6 +371,7 @@ json select_mosfet(const Shard<MosfetRow>& shard, const MosfetConstraints& c, Mo
         } else {
             cd["sortKey"] = {{"metric", to_string(tb)}, {"value", metric(m)}};
         }
+        if (status_unverified(*m, c.exclude_discontinued)) mark_status_unverified(cd);
         cands.push_back(std::move(cd));
     }
     result["candidates"] = std::move(cands);
@@ -409,7 +452,7 @@ json select_diode(const Shard<DiodeRow>& shard, const DiodeConstraints& c, Diode
     rej["unreadable_row"] = shard.meta.unreadable_row_count;
     std::vector<const DiodeRow*> passing;
     for (const auto& d : shard.rows) {
-        if (c.exclude_discontinued && !d.is_production) { rej["discontinued"]++; continue; }
+        if (!status_gate(d, c.exclude_discontinued, rej)) continue;
         // Negated form on purpose: zener/TVS/ESD rows carry NaN where the subtype
         // publishes no forward rating, and `NaN < min` is FALSE — the natural-looking
         // `if (x < min) reject` therefore lets an UNKNOWN value pass a numeric gate.
@@ -460,10 +503,13 @@ json select_diode(const Shard<DiodeRow>& shard, const DiodeConstraints& c, Diode
     std::map<const DiodeRow*, op_ranking::SizeEvidence> op_size;
     if (op_loss_mode)
         for (const DiodeRow* d : passing) op_size.emplace(d, op_ranking::size_of(board_area_json(*d)));
+    // A record stating no lifecycle status counts one more UNVERIFIED item (owner 2026-11-15,
+    // every family), in every ranking: outside the operating-point loss it is the whole key.
     auto unverified_terms = [&](const DiodeRow* d) -> size_t {
-        return op_loss_mode
-                   ? op_ranking::unverified_items(op_loss.at(d).unverified().size(), op_size.at(d))
-                   : 0;
+        return (op_loss_mode
+                    ? op_ranking::unverified_items(op_loss.at(d).unverified().size(), op_size.at(d))
+                    : 0) +
+               (status_unverified(*d, c.exclude_discontinued) ? 1 : 0);
     };
     // Gross over-rating (owner 2026-11-14): Vrrm or If(avg) more than kGrossOverRatingFactor
     // (3x) the requirement. A tier just above the metric under lowest_vf / lowest_qrr; a flag
@@ -555,6 +601,7 @@ json select_diode(const Shard<DiodeRow>& shard, const DiodeConstraints& c, Diode
         } else {
             cd["sortKey"] = {{"metric", to_string(tb)}, {"value", metric(d)}};
         }
+        if (status_unverified(*d, c.exclude_discontinued)) mark_status_unverified(cd);
         cands.push_back(std::move(cd));
     }
     result["candidates"] = std::move(cands);
@@ -671,7 +718,7 @@ json select_capacitor(const Shard<CapacitorRow>& shard, const CapacitorConstrain
     rej["unreadable_row"] = shard.meta.unreadable_row_count;
     std::vector<const CapacitorRow*> passing;
     for (const auto& x : shard.rows) {
-        if (c.exclude_discontinued && !x.is_production) { rej["discontinued"]++; continue; }
+        if (!status_gate(x, c.exclude_discontinued, rej)) continue;
         if (!c.technology_allowed.empty() &&
             c.technology_allowed.find(x.technology) == c.technology_allowed.end()) {
             rej["technology"]++; continue;
@@ -743,10 +790,13 @@ json select_capacitor(const Shard<CapacitorRow>& shard, const CapacitorConstrain
             const auto [area, vol] = capacitor_size_json(*x);
             op_size.emplace(x, op_ranking::size_of(area, &vol));
         }
+    // A record stating no lifecycle status counts one more UNVERIFIED item (owner 2026-11-15,
+    // every family), in every ranking: outside the operating-point loss it is the whole key.
     auto unverified_terms = [&](const CapacitorRow* x) -> size_t {
-        return op_loss_mode
-                   ? op_ranking::unverified_items(op_loss.at(x).unverified().size(), op_size.at(x))
-                   : 0;
+        return (op_loss_mode
+                    ? op_ranking::unverified_items(op_loss.at(x).unverified().size(), op_size.at(x))
+                    : 0) +
+               (status_unverified(*x, c.exclude_discontinued) ? 1 : 0);
     };
     auto fails_ripple = [&](const CapacitorRow* x) -> int {
         return op_loss_mode && op_loss.at(x).fails_ripple_checks() ? 1 : 0;
@@ -854,6 +904,7 @@ json select_capacitor(const Shard<CapacitorRow>& shard, const CapacitorConstrain
         } else {
             cd["sortKey"] = {{"metric", to_string(tb)}, {"value", metric(x)}};
         }
+        if (status_unverified(*x, c.exclude_discontinued)) mark_status_unverified(cd);
         cands.push_back(std::move(cd));
     }
     result["candidates"] = std::move(cands);
@@ -1044,25 +1095,35 @@ json select_igbt(const Shard<IgbtRow>& shard, const IgbtConstraints& c, IgbtTieb
     rej["unreadable_row"] = shard.meta.unreadable_row_count;
     std::vector<const IgbtRow*> passing;
     for (const auto& g : shard.rows) {
-        if (c.exclude_discontinued && !g.is_production) { rej["discontinued"]++; continue; }
+        if (!status_gate(g, c.exclude_discontinued, rej)) continue;
         if (g.vces_rated < c.vces_min) { rej["vces_low"]++; continue; }
         if (g.ic_continuous < c.ic_min) { rej["ic_low"]++; continue; }
-        if (c.vce_sat_max.has_value() && g.vce_sat > *c.vce_sat_max) { rej["vce_sat_high"]++; continue; }
+        // A Vce(sat) ceiling is vacuous for an unstated value (NaN), as it was for the 0 the
+        // row used to hold — the BJT / varistor ceilings' rule (6857e89).
+        if (c.vce_sat_max.has_value() && present(g.vce_sat) && g.vce_sat > *c.vce_sat_max) {
+            rej["vce_sat_high"]++; continue;
+        }
         passing.push_back(&g);
     }
     if (passing.empty())
         throw NoCandidates("IgbtConstraints", emit_rejections(rej), shard.meta.source_line_count);
     auto metric = [&](const IgbtRow* g) -> double {
         switch (tb) {
-            case IgbtTiebreaker::LowestVceSat: return g->vce_sat;
+            // An unstated Vce(sat) (NaN) must not reach the sort (strict weak ordering): it
+            // sorts LAST (owner 2026-11-15) — the 0 it used to hold sorted it first.
+            case IgbtTiebreaker::LowestVceSat:
+                return present(g->vce_sat) ? g->vce_sat : std::numeric_limits<double>::infinity();
             case IgbtTiebreaker::HighestVcesMargin: return -g->vces_rated / c.vces_min;
             case IgbtTiebreaker::HighestIcMargin: return -g->ic_continuous / c.ic_min;
         }
         return 0;
     };
+    // A record stating no lifecycle status is one UNVERIFIED item: it ranks after the parts
+    // stating one (owner 2026-11-15, every family).
+    auto unv = [&](const IgbtRow* r) { return status_unverified(*r, c.exclude_discontinued) ? 1 : 0; };
     std::sort(passing.begin(), passing.end(), [&](const IgbtRow* a, const IgbtRow* b) {
-        return std::make_tuple(a->no_thermal() ? 1 : 0, metric(a), a->lineno) <
-               std::make_tuple(b->no_thermal() ? 1 : 0, metric(b), b->lineno);
+        return std::make_tuple(unv(a), a->no_thermal() ? 1 : 0, metric(a), a->lineno) <
+               std::make_tuple(unv(b), b->no_thermal() ? 1 : 0, metric(b), b->lineno);
     });
     json result;
     result["category"] = "igbt";
@@ -1079,10 +1140,12 @@ json select_igbt(const Shard<IgbtRow>& shard, const IgbtConstraints& c, IgbtTieb
         cd["margins"] = {{"vces_margin", g->vces_rated / c.vces_min},
                          {"ic_margin", g->ic_continuous / c.ic_min},
                          {"vce_sat_headroom",
-                          (c.vce_sat_max && g->vce_sat > 0) ? num_or_null(*c.vce_sat_max / g->vce_sat)
+                          (c.vce_sat_max && present(g->vce_sat) && g->vce_sat > 0)
+                              ? num_or_null(*c.vce_sat_max / g->vce_sat)
                                                             : json(nullptr)}};
         cd["evidence"] = {{"thermalPresent", !g->no_thermal()}};
         cd["sortKey"] = {{"metric", to_string(tb)}, {"value", metric(g)}};
+        if (status_unverified(*g, c.exclude_discontinued)) mark_status_unverified(cd);
         cands.push_back(std::move(cd));
     }
     result["candidates"] = std::move(cands);
@@ -1096,10 +1159,13 @@ json select_bjt(const Shard<BjtRow>& shard, const BjtConstraints& c, BjtTiebreak
     rej["unreadable_row"] = shard.meta.unreadable_row_count;
     std::vector<const BjtRow*> passing;
     for (const auto& b : shard.rows) {
-        if (c.exclude_discontinued && !b.is_production) { rej["discontinued"]++; continue; }
+        if (!status_gate(b, c.exclude_discontinued, rej)) continue;
         if (c.polarity && b.polarity != *c.polarity) { rej["polarity_mismatch"]++; continue; }
         if (b.vceo_rated < c.vceo_min) { rej["vceo_low"]++; continue; }
         if (b.ic_continuous < c.ic_min) { rej["ic_low"]++; continue; }
+        // An unstated hFE (NaN) does not meet a gain floor — not read as passing (NaN < x is
+        // false) nor as 0; it has its own bucket, as the MOSFET's unstated Id.
+        if (c.hfe_min.has_value() && !present(b.hfe_min)) { rej["hfe_unstated"]++; continue; }
         if (c.hfe_min.has_value() && b.hfe_min < *c.hfe_min) { rej["hfe_low"]++; continue; }
         passing.push_back(&b);
     }
@@ -1107,15 +1173,21 @@ json select_bjt(const Shard<BjtRow>& shard, const BjtConstraints& c, BjtTiebreak
         throw NoCandidates("BjtConstraints", emit_rejections(rej), shard.meta.source_line_count);
     auto metric = [&](const BjtRow* b) -> double {
         switch (tb) {
-            case BjtTiebreaker::HighestHfe: return -b->hfe_min;
+            // An unstated hFE (NaN) must not reach the sort (strict weak ordering): it sorts
+            // LAST, as the 0 it used to hold did.
+            case BjtTiebreaker::HighestHfe:
+                return present(b->hfe_min) ? -b->hfe_min : std::numeric_limits<double>::infinity();
             case BjtTiebreaker::HighestVceoMargin: return -b->vceo_rated / c.vceo_min;
             case BjtTiebreaker::HighestIcMargin: return -b->ic_continuous / c.ic_min;
         }
         return 0;
     };
+    // A record stating no lifecycle status is one UNVERIFIED item: it ranks after the parts
+    // stating one (owner 2026-11-15, every family).
+    auto unv = [&](const BjtRow* r) { return status_unverified(*r, c.exclude_discontinued) ? 1 : 0; };
     std::sort(passing.begin(), passing.end(), [&](const BjtRow* a, const BjtRow* b) {
-        return std::make_tuple(a->no_thermal() ? 1 : 0, metric(a), a->lineno) <
-               std::make_tuple(b->no_thermal() ? 1 : 0, metric(b), b->lineno);
+        return std::make_tuple(unv(a), a->no_thermal() ? 1 : 0, metric(a), a->lineno) <
+               std::make_tuple(unv(b), b->no_thermal() ? 1 : 0, metric(b), b->lineno);
     });
     json result;
     result["category"] = "bjt";
@@ -1131,8 +1203,9 @@ json select_bjt(const Shard<BjtRow>& shard, const BjtConstraints& c, BjtTiebreak
         json cd = base_candidate(b, fetcher);
         cd["margins"] = {{"vceo_margin", b->vceo_rated / c.vceo_min},
                          {"ic_margin", b->ic_continuous / c.ic_min},
-                         {"hfe", b->hfe_min}};
+                         {"hfe", num_or_null(b->hfe_min)}};
         cd["sortKey"] = {{"metric", to_string(tb)}, {"value", metric(b)}};
+        if (status_unverified(*b, c.exclude_discontinued)) mark_status_unverified(cd);
         cands.push_back(std::move(cd));
     }
     result["candidates"] = std::move(cands);
@@ -1146,10 +1219,18 @@ json select_varistor(const Shard<VaristorRow>& shard, const VaristorConstraints&
     rej["unreadable_row"] = shard.meta.unreadable_row_count;
     std::vector<const VaristorRow*> passing;
     for (const auto& v : shard.rows) {
-        if (c.exclude_discontinued && !v.is_production) { rej["discontinued"]++; continue; }
+        if (!status_gate(v, c.exclude_discontinued, rej)) continue;
+        // An unstated value (NaN) never meets a gated limit (NaN compares false both ways):
+        // Vdc and the surge floor get their own *_unstated buckets, as the 0 they used to hold
+        // was rejected. A clamping / capacitance ceiling stays vacuous for an unstated value,
+        // as it was for the 0.
+        if (!present(v.max_continuous_dc_voltage)) { rej["vc_unstated"]++; continue; }
         if (v.max_continuous_dc_voltage < c.rated_continuous_voltage) { rej["vc_low"]++; continue; }
         if (c.max_clamping_voltage.has_value() && v.clamping_voltage > *c.max_clamping_voltage) {
             rej["clamping_high"]++; continue;
+        }
+        if (c.min_peak_surge_current.has_value() && !present(v.peak_surge_current)) {
+            rej["surge_unstated"]++; continue;
         }
         if (c.min_peak_surge_current.has_value() && v.peak_surge_current < *c.min_peak_surge_current) {
             rej["surge_low"]++; continue;
@@ -1162,23 +1243,30 @@ json select_varistor(const Shard<VaristorRow>& shard, const VaristorConstraints&
     if (passing.empty())
         throw NoCandidates("VaristorConstraints", emit_rejections(rej),
                            shard.meta.source_line_count);
-    // Parts missing the ranked datum are deprioritised (clamping/capacitance 0 = unknown, not best).
+    // Parts missing the ranked datum (NaN) are deprioritised — unknown, not best — and their
+    // metric is 0 so no NaN reaches the sort.
     auto tier_metric = [&](const VaristorRow* v) -> std::tuple<int, double> {
+        auto tm = [](double x, double key) -> std::tuple<int, double> {
+            return present(x) ? std::tuple<int, double>{0, key} : std::tuple<int, double>{1, 0.0};
+        };
         switch (tb) {
             case VaristorTiebreaker::LowestClampingVoltage:
-                return {v->clamping_voltage <= 0 ? 1 : 0, v->clamping_voltage};
+                return tm(v->clamping_voltage, v->clamping_voltage);
             case VaristorTiebreaker::HighestSurge:
-                return {v->peak_surge_current <= 0 ? 1 : 0, -v->peak_surge_current};
+                return tm(v->peak_surge_current, -v->peak_surge_current);
             case VaristorTiebreaker::LowestCapacitance:
-                return {v->capacitance <= 0 ? 1 : 0, v->capacitance};
+                return tm(v->capacitance, v->capacitance);
         }
         return {0, 0};
     };
+    // A record stating no lifecycle status is one UNVERIFIED item: it ranks after the parts
+    // stating one (owner 2026-11-15, every family).
+    auto unv = [&](const VaristorRow* r) { return status_unverified(*r, c.exclude_discontinued) ? 1 : 0; };
     std::sort(passing.begin(), passing.end(), [&](const VaristorRow* a, const VaristorRow* b) {
         auto ka = tier_metric(a);
         auto kb = tier_metric(b);
-        return std::make_tuple(std::get<0>(ka), std::get<1>(ka), a->lineno) <
-               std::make_tuple(std::get<0>(kb), std::get<1>(kb), b->lineno);
+        return std::make_tuple(unv(a), std::get<0>(ka), std::get<1>(ka), a->lineno) <
+               std::make_tuple(unv(b), std::get<0>(kb), std::get<1>(kb), b->lineno);
     });
     json result;
     result["category"] = "varistor";
@@ -1195,14 +1283,15 @@ json select_varistor(const Shard<VaristorRow>& shard, const VaristorConstraints&
         cd["margins"] = {
             {"vc_margin", v->max_continuous_dc_voltage / c.rated_continuous_voltage},
             {"clamping_headroom",
-             (c.max_clamping_voltage && v->clamping_voltage > 0)
+             (c.max_clamping_voltage && present(v->clamping_voltage))
                  ? num_or_null(*c.max_clamping_voltage / v->clamping_voltage)
                  : json(nullptr)},
             {"surge_headroom", (c.min_peak_surge_current && *c.min_peak_surge_current > 0)
                                    ? num_or_null(v->peak_surge_current / *c.min_peak_surge_current)
                                    : json(nullptr)}};
-        cd["sortKey"] = {{"clampingVoltage", v->clamping_voltage},
-                         {"peakSurgeCurrent", v->peak_surge_current}};
+        cd["sortKey"] = {{"clampingVoltage", num_or_null(v->clamping_voltage)},
+                         {"peakSurgeCurrent", num_or_null(v->peak_surge_current)}};
+        if (status_unverified(*v, c.exclude_discontinued)) mark_status_unverified(cd);
         cands.push_back(std::move(cd));
     }
     result["candidates"] = std::move(cands);
@@ -1266,7 +1355,7 @@ json select_connector(const Shard<ConnectorRow>& shard, const ConnectorConstrain
     rej["unreadable_row"] = shard.meta.unreadable_row_count;
     std::vector<const ConnectorRow*> passing;
     for (const auto& v : shard.rows) {
-        if (c.exclude_discontinued && !v.is_production) { rej["discontinued"]++; continue; }
+        if (!status_gate(v, c.exclude_discontinued, rej)) continue;
         if (c.family && v.family != *c.family) { rej["family_mismatch"]++; continue; }
         if (c.polarity && v.polarity != *c.polarity) { rej["polarity_mismatch"]++; continue; }
         // exact contact count: a 10-position part is no substitute for a 26-position need
@@ -1301,11 +1390,14 @@ json select_connector(const Shard<ConnectorRow>& shard, const ConnectorConstrain
         }
         return {0, 0};
     };
+    // A record stating no lifecycle status is one UNVERIFIED item: it ranks after the parts
+    // stating one (owner 2026-11-15, every family).
+    auto unv = [&](const ConnectorRow* r) { return status_unverified(*r, c.exclude_discontinued) ? 1 : 0; };
     std::sort(passing.begin(), passing.end(), [&](const ConnectorRow* a, const ConnectorRow* b) {
         auto ka = tier_metric(a);
         auto kb = tier_metric(b);
-        return std::make_tuple(std::get<0>(ka), std::get<1>(ka), a->lineno) <
-               std::make_tuple(std::get<0>(kb), std::get<1>(kb), b->lineno);
+        return std::make_tuple(unv(a), std::get<0>(ka), std::get<1>(ka), a->lineno) <
+               std::make_tuple(unv(b), std::get<0>(kb), std::get<1>(kb), b->lineno);
     });
     json result;
     result["category"] = "connector";
@@ -1337,6 +1429,7 @@ json select_connector(const Shard<ConnectorRow>& shard, const ConnectorConstrain
             {"ratedVoltage", present(v->rated_voltage) ? json(v->rated_voltage) : json(nullptr)},
             {"isProduction", v->is_production},
         };
+        if (status_unverified(*v, c.exclude_discontinued)) mark_status_unverified(cd);
         cands.push_back(std::move(cd));
     }
     result["candidates"] = std::move(cands);
@@ -1351,10 +1444,13 @@ json select_magnetic(const Shard<MagneticRow>& shard, const MagneticConstraints&
 
     // RANK-NOT-GATE: every readable row is a candidate. We never drop a part for missing a spec —
     // each instead carries per-dimension margins + a pass/marginal/fail verdict so the UI can show
-    // even imperfect matches. (There are no rejection buckets beyond the index-time unreadable count.)
+    // even imperfect matches. The one gate is the lifecycle rule every selector shares (owner
+    // 2026-11-15): under excludeDiscontinued a STATED non-production status drops the part
+    // ("discontinued"); a record stating none is kept as one more UNVERIFIED item.
     std::vector<const MagneticRow*> all;
     all.reserve(shard.rows.size());
-    for (const auto& m : shard.rows) all.push_back(&m);
+    for (const auto& m : shard.rows)
+        if (status_gate(m, c.exclude_discontinued, rej)) all.push_back(&m);
     if (all.empty())
         throw NoCandidates("MagneticConstraints", emit_rejections(rej), shard.meta.source_line_count);
 
@@ -1398,11 +1494,19 @@ json select_magnetic(const Shard<MagneticRow>& shard, const MagneticConstraints&
     auto dcr_key = [](const MagneticRow* m) {
         return present(m->dcr) ? m->dcr : std::numeric_limits<double>::infinity();
     };
-    // Ascending tuple: (structural fit, fit penalty, production first, lower DCR, source line) —
-    // deterministic.
+    // Lifecycle tier (owner 2026-11-15): production < status not stated < a stated
+    // non-production status (only reachable with excludeDiscontinued off, which drops none). A
+    // part stating no status must not tie with an obsolete one.
+    auto lifecycle_tier = [](const MagneticRow* m) {
+        return m->status == "production" ? 0 : m->status.empty() ? 1 : 2;
+    };
+    // Ascending tuple: (structural fit, lifecycle tier, fit penalty, lower DCR, source line) —
+    // deterministic. The lifecycle tier is the first key among the parts that can be wired, as
+    // the +1 UNVERIFIED of a status-less part is the first key of every other selector: it
+    // ranks after the parts that state production.
     std::sort(all.begin(), all.end(), [&](const MagneticRow* a, const MagneticRow* b) {
-        return std::make_tuple(structure_fail(a), penalty(a), a->is_production ? 0 : 1, dcr_key(a), a->lineno) <
-               std::make_tuple(structure_fail(b), penalty(b), b->is_production ? 0 : 1, dcr_key(b), b->lineno);
+        return std::make_tuple(structure_fail(a), lifecycle_tier(a), penalty(a), dcr_key(a), a->lineno) <
+               std::make_tuple(structure_fail(b), lifecycle_tier(b), penalty(b), dcr_key(b), b->lineno);
     });
 
     json result;
@@ -1475,6 +1579,7 @@ json select_magnetic(const Shard<MagneticRow>& shard, const MagneticConstraints&
                           {"dcr", num_or_null(m->dcr)},
                           {"selfResonantFrequency", num_or_null(m->srf)}};
         cd["sortKey"] = {{"metric", "best_fit"}, {"penalty", penalty(m)}};
+        if (status_unverified(*m, c.exclude_discontinued)) mark_status_unverified(cd);
         cands.push_back(std::move(cd));
     }
     result["candidates"] = std::move(cands);
@@ -1613,7 +1718,7 @@ json select_magnetic_op_loss(const Shard<MagneticRow>& shard, const MagneticCons
     std::vector<const MagneticRow*> passing;
     std::map<const MagneticRow*, MagneticLossBreakdown> loss;
     for (const auto& m : shard.rows) {
-        if (c.exclude_discontinued && !m.is_production) { rej["discontinued"]++; continue; }
+        if (!status_gate(m, c.exclude_discontinued, rej)) continue;
         // Power inductors only: a transformer, coupled inductor, common-mode choke, bead or
         // cable core is not a buck inductor, whatever its inductance.
         if (m.device_type != "inductor") {
@@ -1648,7 +1753,8 @@ json select_magnetic_op_loss(const Shard<MagneticRow>& shard, const MagneticCons
     for (const MagneticRow* m : passing) {
         const json area = mag_board_area_json(*m), vol = mag_volume_json(*m);
         op_size.emplace(m, op_ranking::size_of(area, &vol));
-        unv[m] = op_ranking::unverified_items(loss.at(m).rank_unverified(), op_size.at(m));
+        unv[m] = op_ranking::unverified_items(loss.at(m).rank_unverified(), op_size.at(m)) +
+                 (status_unverified(*m, c.exclude_discontinued) ? 1 : 0);  // owner 2026-11-15
     }
     std::sort(passing.begin(), passing.end(), [&](const MagneticRow* a, const MagneticRow* b) {
         return std::make_tuple(unv.at(a), loss.at(a).computed_sum(), a->lineno) <
@@ -1722,6 +1828,584 @@ json select_magnetic_op_loss(const Shard<MagneticRow>& shard, const MagneticCons
         // (rank_unverified: core loss left out); unverifiedItems adds the size item.
         cd["sortKey"] = {{"metric", "lowest_operating_point_loss"}, {"value", lb.computed_sum()}};
         cd["sortKey"].update(op_ranking::sort_key_fields(lb.rank_unverified(), sz));
+        if (status_unverified(*m, c.exclude_discontinued)) mark_status_unverified(cd);
+        cands.push_back(std::move(cd));
+    }
+    result["candidates"] = std::move(cands);
+    return result;
+}
+
+// ---- Timing and analog ICs (owner-approved 2026-11-15) ------------------------------------
+// Both rank by evidence, the way every operating-point ranking does: a requirement the record
+// states and fails rejects the part (its own rejection bucket); one the record does not state
+// lets it through UNVERIFIED, and a candidate ranks after every candidate with fewer UNVERIFIED
+// items. A size nobody can determine counts one more UNVERIFIED item (OpRanking.hpp), so a part
+// that cannot be sized never ranks ahead of one that can. Nothing is defaulted or guessed.
+namespace {
+
+// A stated "15 ppm" reads back as 1.4999999999999999e-05: compare stated limits with a relative
+// slack at the floating-point level, far below any real datasheet step.
+constexpr double kSpecRelEps = 1e-9;
+bool at_most(double v, double limit) { return v <= limit + std::fabs(limit) * kSpecRelEps; }
+bool at_least(double v, double limit) { return v >= limit - std::fabs(limit) * kSpecRelEps; }
+bool same_value(double a, double b) {
+    return std::fabs(a - b) <= kSpecRelEps * std::max(std::fabs(a), std::fabs(b));
+}
+
+enum class SpecVerdict { Pass, Fail, Unverified };
+const char* to_string(SpecVerdict v) {
+    switch (v) {
+        case SpecVerdict::Pass: return "pass";
+        case SpecVerdict::Fail: return "fail";
+        case SpecVerdict::Unverified: return "unverified";
+    }
+    return "";
+}
+
+// One judged requirement. `stated` / `stated_hi` are the record's value(s) (NaN = not stated),
+// `stated_s` a categorical one ("" = not stated). `bucket` names the rejection on a fail.
+struct SpecCheck {
+    std::string key;
+    SpecVerdict verdict = SpecVerdict::Unverified;
+    double stated = kNaN();
+    double stated_hi = kNaN();
+    std::string stated_s;
+    json required;
+    const char* bucket = "";
+    bool categorical = false;
+    bool range = false;
+    // What the stated value is, when it is not the quantity the key names (an oscillator's
+    // all-inclusive stability judged against a tolerance limit, decision 5). "" = the key's own.
+    std::string basis;
+};
+
+SpecCheck check_max(const char* key, double stated, double limit, const char* bucket) {
+    SpecCheck k{key};
+    k.stated = stated, k.required = {{"maximum", limit}}, k.bucket = bucket;
+    k.verdict = !present(stated)          ? SpecVerdict::Unverified
+                : at_most(stated, limit)  ? SpecVerdict::Pass
+                                          : SpecVerdict::Fail;
+    return k;
+}
+SpecCheck check_min(const char* key, double stated, double limit, const char* bucket) {
+    SpecCheck k{key};
+    k.stated = stated, k.required = {{"minimum", limit}}, k.bucket = bucket;
+    k.verdict = !present(stated)          ? SpecVerdict::Unverified
+                : at_least(stated, limit) ? SpecVerdict::Pass
+                                          : SpecVerdict::Fail;
+    return k;
+}
+SpecCheck check_equal(const char* key, double stated, double want, const char* bucket) {
+    SpecCheck k{key};
+    k.stated = stated, k.required = {{"equal", want}}, k.bucket = bucket;
+    k.verdict = !present(stated)            ? SpecVerdict::Unverified
+                : same_value(stated, want)  ? SpecVerdict::Pass
+                                            : SpecVerdict::Fail;
+    return k;
+}
+SpecCheck check_category(const char* key, const std::string& stated, const std::string& want,
+                         const char* bucket) {
+    SpecCheck k{key};
+    k.stated_s = stated, k.required = {{"equal", want}}, k.bucket = bucket, k.categorical = true;
+    k.verdict = stated.empty() ? SpecVerdict::Unverified
+                : stated == want ? SpecVerdict::Pass
+                                 : SpecVerdict::Fail;
+    return k;
+}
+// The asked voltage must lie inside the part's [min, max] supply. A stated end that excludes it
+// fails; with one end unstated and the other passing, the part is UNVERIFIED.
+SpecCheck check_supply(double lo, double hi, double v) {
+    SpecCheck k{"supplyVoltage"};
+    k.stated = lo, k.stated_hi = hi, k.required = {{"value", v}}, k.bucket = "supply_out_of_range";
+    k.range = true;
+    if ((present(lo) && !at_most(lo, v)) || (present(hi) && !at_least(hi, v)))
+        k.verdict = SpecVerdict::Fail;
+    else if (present(lo) && present(hi)) k.verdict = SpecVerdict::Pass;
+    else k.verdict = SpecVerdict::Unverified;
+    return k;
+}
+// The part's operating-temperature range must cover the asked end(s). Temperatures are plain
+// degC (negative and zero are ordinary values), compared exactly.
+SpecCheck check_temperature(double lo, double hi, std::optional<double> want_lo,
+                            std::optional<double> want_hi) {
+    SpecCheck k{"operatingTemperature"};
+    k.stated = lo, k.stated_hi = hi, k.bucket = "temperature_range_short", k.range = true;
+    k.required = json::object();
+    if (want_lo) k.required["minimum"] = *want_lo;
+    if (want_hi) k.required["maximum"] = *want_hi;
+    bool unverified = false;
+    if (want_lo) {
+        if (!present(lo)) unverified = true;
+        else if (lo > *want_lo) { k.verdict = SpecVerdict::Fail; return k; }
+    }
+    if (want_hi) {
+        if (!present(hi)) unverified = true;
+        else if (hi < *want_hi) { k.verdict = SpecVerdict::Fail; return k; }
+    }
+    k.verdict = unverified ? SpecVerdict::Unverified : SpecVerdict::Pass;
+    return k;
+}
+
+json spec_check_json(const SpecCheck& k) {
+    json j = {{"key", k.key}, {"verdict", to_string(k.verdict)}, {"required", k.required}};
+    if (k.categorical) j["stated"] = k.stated_s.empty() ? json(nullptr) : json(k.stated_s);
+    else if (k.range)
+        j["stated"] = {{"minimum", present(k.stated) ? json(k.stated) : json(nullptr)},
+                       {"maximum", present(k.stated_hi) ? json(k.stated_hi) : json(nullptr)}};
+    else j["stated"] = present(k.stated) ? json(k.stated) : json(nullptr);
+    if (!k.basis.empty()) j["basis"] = k.basis;
+    return j;
+}
+
+// The size of a timing / analog part: the land the cross-reference resolves for it (the
+// record's drawn L x W, else the case table's outline for its case code) and its DRAWN height
+// (never a table height: a code fixes a land, not one vendor's body height).
+struct SpecSize {
+    std::optional<crossref::Dims> dims;
+    json area;  // {mm2, basis}
+};
+SpecSize spec_size(const RowBase& r, const char* category) {
+    json p = json::object();
+    if (present(r.length_m)) p["length_m"] = r.length_m;
+    if (present(r.width_m)) p["width_m"] = r.width_m;
+    if (present(r.height_m)) p["height_m"] = r.height_m;
+    if (!r.case_code.empty()) p["case_code"] = r.case_code;
+    if (!r.mount.empty()) p["mount"] = r.mount;
+    SpecSize s;
+    s.dims = crossref::dims_of(p, category);
+    if (!s.dims || !crossref::has_land(*s.dims))
+        s.area = {{"mm2", nullptr},
+                  {"basis", "not stated: no drawn L x W and no resolvable case code" +
+                                (r.case_code.empty() ? std::string()
+                                                     : " ('" + r.case_code + "')")}};
+    else
+        s.area = {{"mm2", *s.dims->length * *s.dims->width * 1e6},
+                  {"basis", s.dims->land_from_table ? s.dims->land_source
+                                                    : std::string("the record's drawn length x width")}};
+    return s;
+}
+
+// Footprint limit, rotation-free: the longer side against the longer limit, the shorter
+// against the shorter. Not judged (UNVERIFIED) without both land axes — that unknown size is the
+// one UNVERIFIED size item, not a second one.
+SpecCheck check_footprint(const SpecSize& s, double max_l, double max_w) {
+    SpecCheck k{"footprint"};
+    const double big = std::max(max_l, max_w), small = std::min(max_l, max_w);
+    k.required = {{"maximumLength", big}, {"maximumWidth", small}};
+    k.bucket = "footprint_too_large", k.range = true;
+    if (!s.dims || !crossref::has_land(*s.dims)) return k;  // Unverified
+    const double pl = std::max(*s.dims->length, *s.dims->width);
+    const double pw = std::min(*s.dims->length, *s.dims->width);
+    k.stated = pl, k.stated_hi = pw;
+    k.verdict = at_most(pl, big) && at_most(pw, small) ? SpecVerdict::Pass : SpecVerdict::Fail;
+    return k;
+}
+SpecCheck check_height(const SpecSize& s, double max_h) {
+    double h = kNaN();
+    if (s.dims && s.dims->height && !s.dims->height_from_table && *s.dims->height > 0)
+        h = *s.dims->height;
+    return check_max("height", h, max_h, "too_tall");
+}
+
+// A survivor: its checks, the size evidence and the UNVERIFIED count the ranking reads.
+template <class Row>
+struct SpecSurvivor {
+    const Row* row = nullptr;
+    std::vector<SpecCheck> checks;
+    SpecSize size;
+    op_ranking::SizeEvidence size_ev;
+    size_t unverified_checks = 0;  // excluding the footprint check (that is the size item)
+    // The record states no lifecycle status while excludeDiscontinued is on (decision 8): the
+    // part is kept and this counts one more UNVERIFIED item.
+    bool status_unverified = false;
+    std::vector<std::string> flags;  // "programmable", "overRated" (no effect on order)
+    std::vector<std::string> notes;
+    size_t unverified_items() const {
+        return op_ranking::unverified_items(unverified_checks + (status_unverified ? 1 : 0), size_ev);
+    }
+};
+
+// Judge one row's checks: the first failing check names the rejection; false = rejected.
+bool spec_gate(const std::vector<SpecCheck>& checks, std::map<std::string, uint64_t>& rej) {
+    for (const SpecCheck& k : checks)
+        if (k.verdict == SpecVerdict::Fail) {
+            rej[k.bucket]++;
+            return false;
+        }
+    return true;
+}
+
+template <class Row>
+json spec_candidate(const SpecSurvivor<Row>& s, RecordFetcher* fetcher) {
+    json cd = base_candidate(s.row, fetcher);
+    json checks = json::array(), unverified = json::array();
+    for (const SpecCheck& k : s.checks) {
+        checks.push_back(spec_check_json(k));
+        if (k.verdict == SpecVerdict::Unverified) unverified.push_back(k.key);
+    }
+    if (s.status_unverified) unverified.push_back("status");
+    if (s.size_ev.undetermined && std::find(unverified.begin(), unverified.end(), json("footprint")) ==
+                                      unverified.end())
+        unverified.push_back("size");
+    cd["checks"] = std::move(checks);
+    cd["unverified"] = std::move(unverified);
+    cd["boardArea"] = s.size.area;
+    cd["sortKey"] =
+        op_ranking::sort_key_fields(s.unverified_checks + (s.status_unverified ? 1 : 0), s.size_ev);
+    cd["flags"] = s.flags;
+    json notes = json(s.notes);
+    if (s.status_unverified) notes.push_back(kStatusNotStatedNote);
+    if (s.size_ev.undetermined) notes.push_back(s.size_ev.note);
+    cd["notes"] = std::move(notes);
+    return cd;
+}
+
+// Margins (the meters): limit / stated for a maximum, stated / limit for a minimum; null when
+// the record does not state the value.
+json spec_margins(const std::vector<SpecCheck>& checks) {
+    json m = json::object();
+    for (const SpecCheck& k : checks) {
+        if (k.categorical || k.range || !k.required.is_object()) continue;
+        std::string name = k.key + "_headroom";
+        if (k.required.contains("maximum")) {
+            const double lim = k.required.at("maximum").get<double>();
+            m[name] = present(k.stated) && k.stated > 0 ? num_or_null(lim / k.stated) : json(nullptr);
+        } else if (k.required.contains("minimum")) {
+            const double lim = k.required.at("minimum").get<double>();
+            m[name] = present(k.stated) && lim > 0 ? num_or_null(k.stated / lim) : json(nullptr);
+        }
+    }
+    return m;
+}
+
+// The board area as an ascending sort key: a part whose area is not determined sorts after
+// every part whose area is (it already counts one more UNVERIFIED item; this only orders
+// among parts with equal counts).
+std::pair<int, double> area_key(const SpecSize& s) {
+    const json& mm2 = s.area.at("mm2");
+    if (mm2.is_null()) return {1, 0.0};
+    return {0, mm2.get<double>()};
+}
+
+std::string fmt_num(double v) {
+    std::ostringstream o;
+    o.precision(4);
+    o << v;
+    return o.str();
+}
+
+// Timing part kinds (decisions 5 and 6): a passive resonator (crystal or ceramic resonator)
+// needs a load capacitance and no supply; an oscillator needs a supply and has no load
+// capacitance. Anything else (a 555 timer, an unstated technology) is neither, and is judged
+// by the requirement checks alone.
+enum class TimingKind { Passive, Oscillator, Other };
+TimingKind timing_kind(const std::string& technology) {
+    static const std::set<std::string> kPassive{"quartzCrystal", "ceramicResonator"};
+    static const std::set<std::string> kOscillator{"crystalOscillator", "mems", "tcxo",
+                                                   "ocxo",  "vcxo", "programmable"};
+    if (kPassive.count(technology)) return TimingKind::Passive;
+    if (kOscillator.count(technology)) return TimingKind::Oscillator;
+    return TimingKind::Other;
+}
+
+}  // namespace
+
+json select_timing(const Shard<TimingRow>& shard, const TimingConstraints& c,
+                   size_t max_candidates, RecordFetcher* fetcher, const MfrPolicy& mfr) {
+    c.validate();
+    const double f0 = *c.frequency, dev_max = *c.max_frequency_deviation;
+    std::map<std::string, uint64_t> rej;
+    rej["unreadable_row"] = shard.meta.unreadable_row_count;
+    std::vector<SpecSurvivor<TimingRow>> passing;
+    std::map<const TimingRow*, double> dev_by_row;  // |f_part - f0| / f0 (0 for a programmable blank)
+    for (const auto& t : shard.rows) {
+        if (!status_gate(t, c.exclude_discontinued, rej)) continue;
+        const bool status_unv = status_unverified(t, c.exclude_discontinued);
+        // Identity gates: the technology and output type asked for are what the part IS.
+        if (c.technology && t.technology != *c.technology) { rej["technology_mismatch"]++; continue; }
+        if (c.output_type && t.output_type != *c.output_type) { rej["output_type_mismatch"]++; continue; }
+        // Decision 6: a requirement that only one kind of part has names the kind wanted. A
+        // load capacitance asks for a crystal (oscillators rejected); a supply voltage asks for
+        // an oscillator (passive crystals / resonators rejected).
+        const TimingKind kind = timing_kind(t.technology);
+        if (c.load_capacitance && kind == TimingKind::Oscillator) {
+            rej["oscillator_for_load_capacitance"]++;
+            continue;
+        }
+        if (c.supply_voltage && kind == TimingKind::Passive) {
+            rej["passive_for_supply_voltage"]++;
+            continue;
+        }
+        // The frequency is the part's identity: it must be stated and within the asked deviation.
+        // Decision 7: a programmable blank that states only the span it can be ordered at
+        // matches when that span contains the target, and ranks as an exact match.
+        SpecSurvivor<TimingRow> s;
+        s.row = &t;
+        s.status_unverified = status_unv;
+        double dev = 0.0;
+        if (present(t.frequency)) {
+            dev = std::fabs(t.frequency - f0) / f0;
+            if (!at_most(dev, dev_max)) { rej["frequency_off"]++; continue; }
+        } else if (present(t.frequency_min) && present(t.frequency_max)) {
+            if (!(at_least(f0, t.frequency_min) && at_most(f0, t.frequency_max))) {
+                rej["frequency_outside_programmable_range"]++;
+                continue;
+            }
+            s.flags.push_back("programmable");
+            s.notes.push_back("programmable: states no fixed frequency, only the range " +
+                              fmt_num(t.frequency_min) + " Hz to " + fmt_num(t.frequency_max) +
+                              " Hz; it must be ordered or programmed for " + fmt_num(f0) + " Hz");
+        } else {
+            rej["frequency_not_stated"]++;
+            continue;
+        }
+        std::vector<SpecCheck> checks;
+        if (c.max_tolerance) {
+            // Decision 5: an oscillator whose record states no tolerance but an all-inclusive
+            // stability (initial tolerance + temperature + ageing ...) is judged on that
+            // stability against the tolerance limit: the stated figure bounds the tolerance.
+            if (!present(t.frequency_tolerance) && kind == TimingKind::Oscillator &&
+                present(t.frequency_stability)) {
+                SpecCheck k = check_max("frequencyTolerance", t.frequency_stability, *c.max_tolerance,
+                                        "tolerance_loose");
+                k.basis = "frequencyStability (all-inclusive)";
+                checks.push_back(std::move(k));
+                s.notes.push_back("tolerance judged on the stated all-inclusive stability (" +
+                                  fmt_num(t.frequency_stability * 1e6) +
+                                  " ppm): the record states no separate tolerance");
+            } else {
+                checks.push_back(check_max("frequencyTolerance", t.frequency_tolerance,
+                                           *c.max_tolerance, "tolerance_loose"));
+            }
+        }
+        if (c.max_stability)
+            checks.push_back(check_max("frequencyStability", t.frequency_stability, *c.max_stability,
+                                       "stability_loose"));
+        if (c.load_capacitance)
+            checks.push_back(check_equal("loadCapacitance", t.load_capacitance, *c.load_capacitance,
+                                         "load_capacitance_mismatch"));
+        if (c.supply_voltage) checks.push_back(check_supply(t.vsupply_min, t.vsupply_max, *c.supply_voltage));
+        if (c.temp_min_c || c.temp_max_c)
+            checks.push_back(check_temperature(t.temp_min_c, t.temp_max_c, c.temp_min_c, c.temp_max_c));
+        if (!spec_gate(checks, rej)) continue;
+        s.size = spec_size(t, "timeBase");
+        if (c.max_length) checks.push_back(check_footprint(s.size, *c.max_length, *c.max_width));
+        if (c.max_height) checks.push_back(check_height(s.size, *c.max_height));
+        if (!spec_gate(checks, rej)) continue;
+        s.checks = std::move(checks);
+        s.size_ev = op_ranking::size_of(s.size.area);
+        for (const SpecCheck& k : s.checks)
+            if (k.verdict == SpecVerdict::Unverified && k.key != "footprint") ++s.unverified_checks;
+        dev_by_row[&t] = dev;
+        passing.push_back(std::move(s));
+    }
+    if (passing.empty())
+        throw NoCandidates("TimingConstraints", emit_rejections(rej), shard.meta.source_line_count);
+
+    // Decision 1: fewest UNVERIFIED items; then the nearest frequency; then the TIGHTEST stated
+    // stability (a part stating none after every part that states one); then the smallest board
+    // area (undetermined last); then file order.
+    auto stab_key = [](const TimingRow* t) {
+        return present(t->frequency_stability) ? std::pair{0, t->frequency_stability}
+                                               : std::pair{1, 0.0};
+    };
+    std::sort(passing.begin(), passing.end(), [&](const auto& a, const auto& b) {
+        return std::make_tuple(a.unverified_items(), dev_by_row.at(a.row), stab_key(a.row),
+                               area_key(a.size), a.row->lineno) <
+               std::make_tuple(b.unverified_items(), dev_by_row.at(b.row), stab_key(b.row),
+                               area_key(b.size), b.row->lineno);
+    });
+    std::vector<const TimingRow*> rows;
+    rows.reserve(passing.size());
+    for (const auto& s : passing) rows.push_back(s.row);
+    std::map<const TimingRow*, const SpecSurvivor<TimingRow>*> by_row;
+    for (const auto& s : passing) by_row[s.row] = &s;
+
+    json result;
+    result["category"] = "timing";
+    result["tiebreaker"] = "fewest_unverified";
+    result["order"] = {"unverifiedItems", "frequencyDeviation", "frequencyStability", "boardArea",
+                       "fileOrder"};
+    result["totalRowsConsidered"] = shard.meta.source_line_count;
+    result["alternativesConsidered"] = passing.size();
+    result["rejections"] = emit_rejections(rej);
+    result["manufacturers"] = manufacturer_facet(rows);
+    json cands = json::array();
+    for (const TimingRow* t : apply_mfr_policy(rows, max_candidates, mfr)) {
+        const SpecSurvivor<TimingRow>& s = *by_row.at(t);
+        json cd = spec_candidate(s, fetcher);
+        // signed fraction; 0 for a programmable blank (it is ordered at the target)
+        cd["frequencyDeviation"] = present(t->frequency) ? (t->frequency - f0) / f0 : 0.0;
+        cd["sortKey"]["frequencyDeviation"] = dev_by_row.at(t);
+        cd["sortKey"]["frequencyStability"] =
+            present(t->frequency_stability) ? json(t->frequency_stability) : json(nullptr);
+        cd["sortKey"]["boardAreaMm2"] = s.size.area.at("mm2");
+        cd["margins"] = spec_margins(s.checks);
+        cd["evidence"] = {
+            {"deviceType", t->device_type},
+            {"technology", t->technology},
+            {"outputType", t->output_type},
+            {"frequency", present(t->frequency) ? json(t->frequency) : json(nullptr)},
+            {"frequencyRange",
+             present(t->frequency_min) ? json{{"minimum", t->frequency_min}, {"maximum", t->frequency_max}}
+                                       : json(nullptr)},
+            {"frequencyTolerance", present(t->frequency_tolerance) ? json(t->frequency_tolerance) : json(nullptr)},
+            {"frequencyStability", present(t->frequency_stability) ? json(t->frequency_stability) : json(nullptr)},
+            {"loadCapacitance", present(t->load_capacitance) ? json(t->load_capacitance) : json(nullptr)},
+            {"status", t->status.empty() ? json(nullptr) : json(t->status)},
+            {"isProduction", t->is_production},
+        };
+        cands.push_back(std::move(cd));
+    }
+    result["candidates"] = std::move(cands);
+    return result;
+}
+
+namespace {
+// Decision 2: the per-type key figure that orders fully-judged analog parts. `lower` = smaller is
+// better. Types without one (difference amplifier, buffer, multiplier) skip the step.
+struct AnalogKeyFigure {
+    const char* name;
+    double AnalogRow::*field;
+    bool lower;
+};
+std::optional<AnalogKeyFigure> analog_key_figure(const std::string& type) {
+    if (type == "operationalAmplifier" || type == "comparator" ||
+        type == "instrumentationAmplifier" || type == "programmableGainAmplifier")
+        return AnalogKeyFigure{"inputOffsetVoltage", &AnalogRow::input_offset_voltage, true};
+    if (type == "adc") return AnalogKeyFigure{"sampleRate", &AnalogRow::sample_rate, false};
+    if (type == "dac") return AnalogKeyFigure{"resolution", &AnalogRow::resolution, false};
+    if (type == "analogSwitch" || type == "multiplexer")
+        return AnalogKeyFigure{"onResistance", &AnalogRow::on_resistance, true};
+    return std::nullopt;
+}
+}  // namespace
+
+json select_analog(const Shard<AnalogRow>& shard, const AnalogConstraints& c,
+                   size_t max_candidates, RecordFetcher* fetcher, const MfrPolicy& mfr) {
+    c.validate();
+    (void)analog_requirement_keys(c.device_type);  // throws for a type with no selector
+    const std::optional<AnalogKeyFigure> key_fig = analog_key_figure(c.device_type);
+    std::map<std::string, uint64_t> rej;
+    rej["unreadable_row"] = shard.meta.unreadable_row_count;
+    std::vector<SpecSurvivor<AnalogRow>> passing;
+    std::map<const AnalogRow*, json> over_by_row;
+    for (const auto& a : shard.rows) {
+        if (a.device_type != c.device_type) { rej["device_type_mismatch"]++; continue; }
+        if (!status_gate(a, c.exclude_discontinued, rej)) continue;
+        const bool status_unv = status_unverified(a, c.exclude_discontinued);
+        std::vector<SpecCheck> checks;
+        if (c.channels)
+            checks.push_back(check_equal("numberOfChannels", a.channels, *c.channels, "channels_mismatch"));
+        if (c.supply_voltage) checks.push_back(check_supply(a.vsupply_min, a.vsupply_max, *c.supply_voltage));
+        if (c.max_input_offset_voltage)
+            checks.push_back(check_max("inputOffsetVoltage", a.input_offset_voltage,
+                                       *c.max_input_offset_voltage, "offset_voltage_high"));
+        if (c.max_input_bias_current)
+            checks.push_back(check_max("inputBiasCurrent", a.input_bias_current,
+                                       *c.max_input_bias_current, "bias_current_high"));
+        if (c.min_gain_bandwidth)
+            checks.push_back(check_min("gainBandwidthProduct", a.gain_bandwidth, *c.min_gain_bandwidth,
+                                       "gain_bandwidth_low"));
+        if (c.min_slew_rate)
+            checks.push_back(check_min("slewRate", a.slew_rate, *c.min_slew_rate, "slew_rate_low"));
+        if (c.min_cmrr)
+            checks.push_back(check_min("commonModeRejectionRatio", a.cmrr, *c.min_cmrr, "cmrr_low"));
+        if (c.min_resolution)
+            checks.push_back(check_min("resolution", a.resolution, *c.min_resolution, "resolution_low"));
+        if (c.min_sample_rate)
+            checks.push_back(check_min("sampleRate", a.sample_rate, *c.min_sample_rate, "sample_rate_low"));
+        if (c.max_on_resistance)
+            checks.push_back(check_max("onResistance", a.on_resistance, *c.max_on_resistance,
+                                       "on_resistance_high"));
+        if (c.architecture)
+            checks.push_back(check_category("architecture", a.architecture, *c.architecture,
+                                            "architecture_mismatch"));
+        if (c.input_stage)
+            checks.push_back(check_category("inputStage", a.input_stage, *c.input_stage,
+                                            "input_stage_mismatch"));
+        if (!spec_gate(checks, rej)) continue;
+        SpecSurvivor<AnalogRow> s;
+        s.row = &a;
+        s.status_unverified = status_unv;
+        // Decision 3: a GBW, slew rate or sample rate more than kGrossOverRatingFactor (3x) the
+        // requirement is FLAGGED on the card. Flag only: it does not change the order.
+        json over = json::array();
+        for (const SpecCheck& k : checks) {
+            if (k.key != "gainBandwidthProduct" && k.key != "slewRate" && k.key != "sampleRate")
+                continue;
+            if (k.verdict != SpecVerdict::Pass) continue;
+            const double need = k.required.at("minimum").get<double>();
+            if (k.stated > crossref::kGrossOverRatingFactor * need) {
+                over.push_back({{"key", k.key}, {"stated", k.stated}, {"required", need},
+                                {"ratio", k.stated / need}});
+                s.notes.push_back("over-rated: " + k.key + " " + fmt_num(k.stated) + " is " +
+                                  fmt_num(k.stated / need) + "x the " + fmt_num(need) +
+                                  " asked (flag only, no effect on the order)");
+            }
+        }
+        if (!over.empty()) s.flags.push_back("overRated");
+        over_by_row[&a] = std::move(over);
+        s.checks = std::move(checks);
+        s.size = spec_size(a, "analog");
+        s.size_ev = op_ranking::size_of(s.size.area);
+        for (const SpecCheck& k : s.checks)
+            if (k.verdict == SpecVerdict::Unverified) ++s.unverified_checks;
+        passing.push_back(std::move(s));
+    }
+    if (passing.empty())
+        throw NoCandidates("AnalogConstraints", emit_rejections(rej), shard.meta.source_line_count);
+
+    // Decision 2: fewest UNVERIFIED items; then the type's key figure (best first; a part that
+    // does not state it after every part that does; skipped for types without one); then the
+    // smallest board area (undetermined last); then file order.
+    auto fig_key = [&](const AnalogRow* a) -> std::pair<int, double> {
+        if (!key_fig) return {0, 0.0};
+        const double v = a->*(key_fig->field);
+        if (!present(v)) return {1, 0.0};
+        return {0, key_fig->lower ? std::fabs(v) : -v};
+    };
+    std::sort(passing.begin(), passing.end(), [&](const auto& x, const auto& y) {
+        return std::make_tuple(x.unverified_items(), fig_key(x.row), area_key(x.size), x.row->lineno) <
+               std::make_tuple(y.unverified_items(), fig_key(y.row), area_key(y.size), y.row->lineno);
+    });
+    std::vector<const AnalogRow*> rows;
+    rows.reserve(passing.size());
+    for (const auto& s : passing) rows.push_back(s.row);
+    std::map<const AnalogRow*, const SpecSurvivor<AnalogRow>*> by_row;
+    for (const auto& s : passing) by_row[s.row] = &s;
+
+    json result;
+    result["category"] = "analog";
+    result["deviceType"] = c.device_type;
+    result["tiebreaker"] = "fewest_unverified";
+    json order = json::array({"unverifiedItems"});
+    if (key_fig)
+        order.push_back(std::string(key_fig->lower ? "lowest " : "highest ") + key_fig->name);
+    order.push_back("boardArea");
+    order.push_back("fileOrder");
+    result["order"] = std::move(order);
+    result["totalRowsConsidered"] = shard.meta.source_line_count;
+    result["alternativesConsidered"] = passing.size();
+    result["rejections"] = emit_rejections(rej);
+    result["manufacturers"] = manufacturer_facet(rows);
+    json cands = json::array();
+    for (const AnalogRow* a : apply_mfr_policy(rows, max_candidates, mfr)) {
+        const SpecSurvivor<AnalogRow>& s = *by_row.at(a);
+        json cd = spec_candidate(s, fetcher);
+        cd["margins"] = spec_margins(s.checks);
+        cd["overRated"] = over_by_row.at(a);
+        if (key_fig) {
+            const double v = a->*(key_fig->field);
+            cd["sortKey"]["keyFigure"] = {{"name", key_fig->name},
+                                          {"value", present(v) ? json(v) : json(nullptr)}};
+        }
+        cd["sortKey"]["boardAreaMm2"] = s.size.area.at("mm2");
+        cd["evidence"] = {{"deviceType", a->device_type},
+                          {"architecture", a->architecture},
+                          {"inputStage", a->input_stage},
+                          {"status", a->status.empty() ? json(nullptr) : json(a->status)},
+                          {"isProduction", a->is_production}};
         cands.push_back(std::move(cd));
     }
     result["candidates"] = std::move(cands);

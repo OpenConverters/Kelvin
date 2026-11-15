@@ -1060,9 +1060,12 @@ inline const std::vector<std::vector<std::string>>& diode_case_groups() {
         {"DO221BC", "SMPA"},     {"TO277A", "SMPC"},     {"TO263AC", "SMPD"}};
     return kGroups;
 }
-inline std::string canonical_diode_case(const std::string& s) {
-    const auto& kGroups = diode_case_groups();
-    const std::string plain = canonical_case_in(kGroups, s);
+// onsemi's "<name> LxW[xH][, pitchP]" form (see diode_case_groups above), for any group table:
+// `plain` is the identity of the whole string, returned unless the suffix is a body that
+// agrees with the named group's table outline.
+inline std::string canonical_case_with_body_suffix(
+    const std::vector<std::vector<std::string>>& kGroups, const std::string& s,
+    const std::string& plain) {
     // onsemi's "<name> LxW[xH][, pitchP]" form (see above).
     static const std::regex onsemi_body(
         R"(^\s*(.*\S)\s+(\d+(?:\.\d+)?)\s*[xX]\s*(\d+(?:\.\d+)?)(?:\s*[xX]\s*\d+(?:\.\d+)?)?(?:\s*,\s*\d+(?:\.\d+)?\s*P)?\s*$)");
@@ -1088,6 +1091,61 @@ inline std::string canonical_diode_case(const std::string& s) {
     const bool agrees = (near(l, body->l) && near(w, body->w)) ||
                         (near(l, body->w) && near(w, body->l));
     return agrees ? c : plain;
+}
+inline std::string canonical_diode_case(const std::string& s) {
+    const auto& kGroups = diode_case_groups();
+    return canonical_case_with_body_suffix(kGroups, s, canonical_case_in(kGroups, s));
+}
+
+// BJT / IGBT package identity (Qarlos 2026-11-15). Both families compared case codes as plain
+// normalised strings, so TIP42C-S 'TO-220' against TIP42CG 'TO-220-3' and BC817-Q 'SOT23'
+// against MMBT100 'SOT-23 (TO-236) 2.90x1.30x1.00, 1.90P' were "a different land pattern"
+// with identical pads. They now read the MOSFET outline table (mosfet_case_groups: the same
+// JEDEC TO / SOT outlines) plus three small-signal outlines, with three rules:
+//   1. case and punctuation folding (normalize_case_code);
+//   2. a pin-count suffix that EQUALS the outline's standard pin count is the outline itself
+//      ('TO-220-3', 'SOT-23-3', 'SOT-223-4', 'TO-92-3'); any other count is another package
+//      ('SOT-23-5', 'SOT-23-6', 'TO-247-4' stay themselves);
+//   3. JEDEC registrations of the same outline, from JEDEC JEP95 (Registered and Standard
+//      Outlines for Semiconductor Devices) as cross-referenced in the manufacturers' package
+//      drawings: SOT-23 = TO-236AB, SOT-223 = TO-261AA, DPAK = TO-252AA, D2PAK = TO-263AB,
+//      TO-220 = TO-220AB, TO-247 = TO-247AC/AD (mosfet_case_groups), and here
+//      TO-92 = TO-226AA, SOT-89 = TO-243AA, TO-126 = TO-225AA.
+// Different pad layouts are never folded: the full-pack TO-220 (TO-220F / FP / FullPAK) is its
+// own group, and vendor outlines (TO-220SIS, TO-220NIS, TSOT-23-6, SOT-23F) stay themselves.
+inline const std::vector<std::vector<std::string>>& transistor_case_groups() {
+    static const std::vector<std::vector<std::string>> kGroups = [] {
+        auto g = mosfet_case_groups();
+        g.push_back({"TO92", "TO226AA"});
+        g.push_back({"SOT89", "TO243AA"});
+        g.push_back({"TO126", "TO225AA"});
+        return g;
+    }();
+    return kGroups;
+}
+// The standard pin count of each outline the pin-count rule applies to (by group front).
+inline const std::map<std::string, int>& transistor_case_pin_counts() {
+    static const std::map<std::string, int> k = {
+        {"DPAK", 3},  {"D2PAK", 3},  {"IPAK", 3},  {"I2PAK", 3}, {"TO220", 3},
+        {"TO220FP", 3}, {"TO247", 3}, {"SOT23", 3}, {"SOT223", 4}, {"SC70", 3},
+        {"TO92", 3},  {"SOT89", 3},  {"TO126", 3}};
+    return k;
+}
+inline std::string canonical_transistor_case(const std::string& s) {
+    if (s.find('+') != std::string::npos) return normalize_case_code(s) + "+";
+    const auto& kGroups = transistor_case_groups();
+    std::string plain = canonical_case_in(kGroups, s);
+    const bool in_group = std::any_of(kGroups.begin(), kGroups.end(),
+                                      [&](const auto& g) { return g.front() == plain; });
+    if (!in_group) {
+        for (const auto& g : kGroups) {
+            const auto pc = transistor_case_pin_counts().find(g.front());
+            if (pc == transistor_case_pin_counts().end()) continue;
+            for (const auto& m : g)
+                if (plain == m + std::to_string(pc->second)) return g.front();
+        }
+    }
+    return canonical_case_with_body_suffix(kGroups, s, plain);
 }
 
 // Chip-passive case identity with EXPLICITLY marked metric codes resolved to their imperial
@@ -1205,12 +1263,13 @@ inline std::string canonical_chip_case(const std::string& s_in) {
     return imperial;
 }
 
-// The identity a case-kept gate compares: the alias-resolved form for diodes and MOSFETs,
+// The identity a case-kept gate compares: the alias-resolved form for diodes, MOSFETs, BJTs and IGBTs,
 // the metric-resolved chip code for chip passives (capacitors, resistors), the plain
 // normalised code everywhere else (an 'SMA' connector is an RF interface, not DO-214AC).
 inline std::string case_identity(const std::string& category, const std::string& s) {
     if (category == "diode") return canonical_diode_case(s);
     if (category == "mosfet") return canonical_mosfet_case(s);
+    if (category == "bjt" || category == "igbt") return canonical_transistor_case(s);
     if (category == "capacitor" || category == "resistor") return canonical_chip_case(s);
     return normalize_case_code(s);
 }

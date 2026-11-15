@@ -991,6 +991,7 @@ std::optional<MosfetRow> extract_mosfet(const json& env) {
     }
     auto status = get_str(*mi, "status");
     r.is_production = status.has_value() && *status == "production";
+    r.status = status.value_or("");  // "" = not stated (v24, every family)
     r.datasheet_usable = !datasheet_unusable(get_str(*mi, "datasheetUrl").value_or(""));
     const json* thermal = obj_get(*di, "thermal");
     if (thermal) {
@@ -1197,6 +1198,7 @@ std::optional<DiodeRow> extract_diode(const json& env) {
     r.qualification = get_str(*part, "qualification").value_or("");
     auto status = get_str(*mi, "status");
     r.is_production = status.has_value() && *status == "production";
+    r.status = status.value_or("");  // "" = not stated (v24, every family)
     const json* thermal = obj_get(*di, "thermal");
     if (thermal) {
         auto rja = get_num(*thermal, "thermalResistanceJunctionAmbient");
@@ -1731,6 +1733,7 @@ std::optional<CapacitorRow> extract_capacitor(const json& env) {
     r.technology = tech;
     auto status = get_str(*mi, "status");
     r.is_production = status.has_value() && *status == "production";
+    r.status = status.value_or("");  // "" = not stated (v24, every family)
     auto rth = get_num(*elec, "thermalResistance");
     if (rth && *rth > 0) r.rth = *rth;
     return r;
@@ -1796,7 +1799,8 @@ std::optional<ResistorRow> extract_resistor(const json& env) {
     auto tol_o = get_num(*elec, "tolerance");
     double tol = (tol_o && *tol_o > 0) ? *tol_o : kNaN();
     auto pw_o = get_num(*elec, "powerRating");
-    double pw = (pw_o && *pw_o > 0) ? *pw_o : 0.0;
+    // Power rating likewise: unstated (or non-positive) stays NaN, never 0 (owner 2026-11-15).
+    double pw = (pw_o && *pw_o > 0) ? *pw_o : kNaN();
 
     ResistorRow r;
     r.mpn = *mpn;
@@ -1813,6 +1817,7 @@ std::optional<ResistorRow> extract_resistor(const json& env) {
     if (r.family.empty()) r.family = get_str(*part, "series").value_or("");
     auto status = get_str(*mi, "status");
     r.is_production = status.has_value() && *status == "production";
+    r.status = status.value_or("");  // "" = not stated (v24, every family)
     // The temperature basis of the power rating (v18). A rating is the power the part carries
     // up to a stated ambient; above it the part derates along its curve. Both are carried
     // exactly as stated — absent stays NaN / empty, never a "typical" 70 degC knee.
@@ -1927,6 +1932,7 @@ std::optional<ControllerRow> extract_controller(const json& env) {
     r.mpn = *mpn;
     r.manufacturer = *manuf;
     fill_dimensions(r, *ds, *part);
+    r.status = get_str(*mi, "status").value_or("");  // "" = not stated (v24, every family)
     r.category = get_str(*fn, "category").value_or("");
     const json* topos = obj_get(*fn, "intendedTopologies");
     if (topos && topos->is_array()) {
@@ -1989,10 +1995,16 @@ std::optional<IgbtRow> extract_igbt(const json& env) {
     if (dinfo_dims) fill_dimensions(r, *dinfo_dims, *refs->part);
     r.vces_rated = *vces;
     r.ic_continuous = *ic;
-    r.vce_sat = get_num(*refs->elec, "collectorEmitterSaturation").value_or(0.0);
+    // Unstated Vce(sat) stays NaN, never 0 (owner 2026-11-15): a 0 ranked first under
+    // lowest_vce_sat and matched a browse filter starting at 0.
+    if (auto vs = get_num(*refs->elec, "collectorEmitterSaturation")) r.vce_sat = *vs;
+    // The current Vce(sat) is stated at (v24). Unstated stays NaN: unknown, never 0.
+    if (auto ic_sat = get_num(*refs->elec, "collectorEmitterSaturationIc"); pos(ic_sat))
+        r.vce_sat_ic = *ic_sat;
     r.technology = get_str(*refs->part, "technology").value_or("");
     auto st = get_str(*refs->mi, "status");
     r.is_production = st && *st == "production";
+    r.status = st.value_or("");  // "" = not stated (v24, every family)
     const json* dinfo = obj_get(*refs->mi, "datasheetInfo");
     const json* thermal = dinfo ? obj_get(*dinfo, "thermal") : nullptr;
     if (thermal) {
@@ -2025,13 +2037,30 @@ std::optional<BjtRow> extract_bjt(const json& env) {
     r.vceo_rated = *vceo;
     r.ic_continuous = *ic;
     // dcCurrentGain: {minimum,maximum} or scalar -> the guaranteed MINIMUM gain.
-    r.hfe_min = resolve_field(*refs->elec, "dcCurrentGain", PEAS::DimensionalValues::MINIMUM)
-                    .value_or(0.0);
-    r.power_dissipation = get_num(*refs->elec, "powerDissipation").value_or(0.0);
+    // Unstated stays NaN (owner 2026-11-15): unknown, never 0.
+    if (auto h = resolve_field(*refs->elec, "dcCurrentGain", PEAS::DimensionalValues::MINIMUM); pos(h))
+        r.hfe_min = *h;
+    if (auto pd = get_num(*refs->elec, "powerDissipation"); pos(pd)) r.power_dissipation = *pd;
     r.technology = get_str(*refs->part, "technology").value_or("");
     r.polarity = polarity;
+    // fT, Hz (v24). Unstated stays NaN: unknown, never 0.
+    if (auto ft = get_num(*refs->elec, "transitionFrequency"); ft && *ft > 0)
+        r.transition_frequency = *ft;
+    // Vce(sat), V (v24), a magnitude like the ratings above (a PNP's may be stated negative).
+    if (auto vs = rating_magnitude(get_num(*refs->elec, "saturationVoltage"), pnp); pos(vs))
+        r.vce_sat = *vs;
+    // The collector currents Vce(sat) and hFE are stated at (v24, SAS dd9d6e2), magnitudes.
+    if (auto i = rating_magnitude(get_num(*refs->elec, "saturationVoltageIc"), pnp); pos(i))
+        r.vce_sat_ic = *i;
+    if (auto i = rating_magnitude(get_num(*refs->elec, "dcCurrentGainIc"), pnp); pos(i))
+        r.hfe_ic = *i;
+    // The junction limit (v24; the row had the field and never filled it), as for the IGBT.
+    if (const json* bdi = obj_get(*refs->mi, "datasheetInfo"))
+        if (const json* th = obj_get(*bdi, "thermal"))
+            if (auto tj = get_num(*th, "junctionTemperatureMax")) r.tj_max = *tj;
     auto st = get_str(*refs->mi, "status");
     r.is_production = st && *st == "production";
+    r.status = st.value_or("");  // "" = not stated (v24, every family)
     return r;
 }
 
@@ -2058,13 +2087,18 @@ std::optional<VaristorRow> extract_varistor(const json& env) {
     r.manufacturer = *manuf;
     fill_dimensions(r, *di, *part);
     r.varistor_voltage = *vnom;
-    r.clamping_voltage = get_num(*elec, "clampingVoltage").value_or(0.0);
-    r.peak_surge_current = get_num(*elec, "peakSurgeCurrent").value_or(0.0);
-    r.max_continuous_dc_voltage = get_num(*elec, "maxContinuousDcVoltage").value_or(0.0);
-    r.capacitance = get_num(*elec, "capacitance").value_or(0.0);
+    // Unstated stays NaN (owner 2026-11-15): unknown, never 0.
+    if (auto x = get_num(*elec, "clampingVoltage"); pos(x)) r.clamping_voltage = *x;
+    if (auto x = get_num(*elec, "peakSurgeCurrent"); pos(x)) r.peak_surge_current = *x;
+    if (auto x = get_num(*elec, "maxContinuousDcVoltage"); pos(x)) r.max_continuous_dc_voltage = *x;
+    if (auto x = get_num(*elec, "capacitance"); pos(x)) r.capacitance = *x;
+    if (auto vac = get_num(*elec, "maxContinuousAcVoltage"); pos(vac))  // v24
+        r.max_continuous_ac_voltage = *vac;
+    if (auto e = get_num(*elec, "energyAbsorption"); pos(e)) r.energy_absorption = *e;  // v24
     r.technology = get_str(*part, "technology").value_or("");
     auto st = get_str(*mi, "status");
     r.is_production = st && *st == "production";
+    r.status = st.value_or("");  // "" = not stated (v24, every family)
     return r;
 }
 
@@ -2692,13 +2726,14 @@ std::optional<MagneticRow> extract_magnetic(const json& env) {
     }
     auto status = get_str(*mi, "status");
     r.is_production = status.has_value() && *status == "production";
+    r.status = status.value_or("");  // "" = not stated (v24, every family)
     return r;
 }
 
-// ---- browse-only families (analog ICs / timing devices) --------------------
+// ---- analog ICs / timing devices -------------------------------------------
 // Both envelopes carry a VARIABLE subtype key (analog.<subtype> / timeBase.<subtype>), so the
 // walk takes the first object member carrying a manufacturerInfo. Identity is required; every
-// electrical datum is optional (NaN when absent) — these rows browse, they never gate.
+// electrical datum is optional (NaN when absent): the selectors judge an absent one UNVERIFIED.
 namespace {
 struct SubtypeNode {
     std::string subtype;
@@ -2757,16 +2792,30 @@ std::optional<AnalogRow> extract_analog(const json& env) {
         set_if_pos(r.resolution, get_num(*elec, "resolution"));
         set_if_pos(r.sample_rate, get_num(*elec, "sampleRate"));
         set_if_pos(r.on_resistance, get_num(*elec, "onResistance"));
+        set_if_pos(r.offset_drift, get_num(*elec, "inputOffsetVoltageDrift"));
+        set_if_pos(r.propagation_delay, get_num(*elec, "propagationDelay"));
         const json* supply = obj_get(*elec, "supply");
         if (supply) {
             set_if_pos(r.vsupply_min, get_num(*supply, "minimumSupplyVoltage"));
             set_if_pos(r.vsupply_max, get_num(*supply, "maximumSupplyVoltage"));
+            set_if_pos(r.quiescent_current, get_num(*supply, "quiescentCurrentPerChannel"));
         }
         r.architecture = get_str(*elec, "architecture").value_or("");
         r.input_stage = get_str(*elec, "inputStage").value_or("");
+        r.output_stage = get_str(*elec, "outputStage").value_or("");
+        // Tri-state (v24): a stated boolean becomes "yes" / "no" (the ranker's yes_no_rank),
+        // an absent or non-boolean value stays "" — unstated is never "no".
+        auto yes_no = [&](const char* key) -> std::string {
+            const json* b = obj_get(*elec, key);
+            if (!b || !b->is_boolean()) return "";
+            return b->get<bool>() ? "yes" : "no";
+        };
+        r.rail_to_rail_input = yes_no("railToRailInput");
+        r.rail_to_rail_output = yes_no("railToRailOutput");
     }
     auto status = get_str(*node->mi, "status");
     r.is_production = status.has_value() && *status == "production";
+    r.status = status.value_or("");  // "" = not stated (v24)
     return r;
 }
 
@@ -2827,6 +2876,7 @@ std::optional<TimingRow> extract_timing(const json& env) {
     }
     auto status = get_str(*node->mi, "status");
     r.is_production = status.has_value() && *status == "production";
+    r.status = status.value_or("");  // "" = not stated (v24)
     return r;
 }
 
@@ -2936,6 +2986,7 @@ std::optional<ConnectorRow> extract_connector(const json& env) {
     r.series = get_str(*part, "series").value_or("");
     auto status = get_str(*mi, "status");
     r.is_production = status.has_value() && *status == "production";
+    r.status = status.value_or("");  // "" = not stated (v24, every family)
     return r;
 }
 

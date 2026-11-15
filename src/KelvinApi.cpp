@@ -362,10 +362,6 @@ void Engine::publish_index(const std::string& family) {
 
 json Engine::select(const std::string& category, const json& req, const json& options) {
     Family f = family_from_string(category);
-    // Browse-only families: no requirements emitter → no selector. Refuse loudly rather than
-    // invent selection semantics (they get one when a review-gated selector lands).
-    if (f == Family::Analog || f == Family::Timing)
-        throw InvalidOptions("no selector for '" + category + "' — browse-only family (use browse)");
     size_t max_cand = opt_size(options, "maxCandidates", kDefaultMaxCandidates);
     // Optional manufacturer controls (settings today, GUI-wired later; default
     // off = parity-locked to the Python selector). maxManufacturerFraction caps
@@ -381,6 +377,29 @@ json Engine::select(const std::string& category, const json& req, const json& op
     // fetches the chosen record itself (HTTP Range).
     bool include_env = opt_bool(options, "includeEnvelope", true) && !data_dir_.empty();
 
+    // Timing and analog ICs (owner-approved 2026-11-15): requirement-gated, evidence-ranked.
+    if (f == Family::Timing) {
+        TimingConstraints c = timing_constraints(req);
+        c.exclude_discontinued = opt_bool(options, "excludeDiscontinued", true);
+        if (opt_str(options, "tiebreaker"))
+            throw InvalidOptions("timing has one order (fewest UNVERIFIED, nearest frequency, "
+                                 "tightest stability, smallest board area): no tiebreaker option");
+        const Shard<TimingRow>& sh = timing_shard();
+        std::optional<FileRecordFetcher> fetch;
+        if (include_env) fetch.emplace(ndjson_path(Family::Timing), sh.meta.source_size);
+        return select_timing(sh, c, max_cand, include_env ? &*fetch : nullptr, mfr);
+    }
+    if (f == Family::Analog) {
+        AnalogConstraints c = analog_constraints(req);
+        c.exclude_discontinued = opt_bool(options, "excludeDiscontinued", true);
+        if (opt_str(options, "tiebreaker"))
+            throw InvalidOptions("analog has one order (fewest UNVERIFIED, the type's key figure, "
+                                 "smallest board area): no tiebreaker option");
+        const Shard<AnalogRow>& sh = analog_shard();
+        std::optional<FileRecordFetcher> fetch;
+        if (include_env) fetch.emplace(ndjson_path(Family::Analog), sh.meta.source_size);
+        return select_analog(sh, c, max_cand, include_env ? &*fetch : nullptr, mfr);
+    }
     if (f == Family::Connector) {
         ConnectorConstraints c = connector_constraints(req);
         c.exclude_discontinued = opt_bool(options, "excludeDiscontinued", true);

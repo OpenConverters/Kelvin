@@ -82,6 +82,28 @@ json spec_for(const std::string& cat, const json& row) {
         o["subtype"] = s("device_type"); o["channels"] = num("channels");
         o["supply_max_V"] = num("vsupply_max"); o["gbw"] = num("gain_bandwidth");
         o["slew_rate"] = num("slew_rate");
+    } else if (cat == "igbt") {
+        // web/src/crossref.js XREF igbt (owner 2026-11-15)
+        o["vces"] = num("vces_rated"); o["ic"] = num("ic_continuous");
+        o["vce_sat"] = num("vce_sat"); o["vce_sat_ic"] = num("vce_sat_ic");
+        o["tj_max"] = num("tj_max"); o["technology"] = s("technology");
+    } else if (cat == "bjt") {
+        // web/src/crossref.js XREF bjt (owner 2026-11-15)
+        o["vceo"] = num("vceo_rated"); o["ic"] = num("ic_continuous");
+        o["hfe_min"] = num("hfe_min"); o["transition_frequency"] = num("transition_frequency");
+        o["power_dissipation"] = num("power_dissipation");
+        o["vce_sat"] = num("vce_sat"); o["vce_sat_ic"] = num("vce_sat_ic");
+        o["tj_max"] = num("tj_max");
+        if (!s("polarity").empty()) o["polarity"] = s("polarity");
+        o["technology"] = s("technology");
+    } else if (cat == "varistor") {
+        // web/src/crossref.js XREF varistor (owner 2026-11-15)
+        o["value_si"] = num("varistor_voltage"); o["clamping_voltage"] = num("clamping_voltage");
+        o["peak_surge_current"] = num("peak_surge_current");
+        o["max_continuous_dc_voltage"] = num("max_continuous_dc_voltage");
+        o["capacitance"] = num("capacitance"); o["technology"] = s("technology");
+        o["max_continuous_ac_voltage"] = num("max_continuous_ac_voltage");
+        o["energy_absorption"] = num("energy_absorption");
     }
     return o;
 }
@@ -167,4 +189,159 @@ TEST_CASE("fuzz: connector ranker holds its invariants over real rows", "[crossr
 }
 TEST_CASE("fuzz: analog ranker holds its invariants over real rows", "[crossref][fuzz]") {
     fuzz_family("analog", build_analog_shard(fixtures() + "/analog_ics.ndjson"));
+}
+TEST_CASE("fuzz: igbt ranker holds its invariants over real rows", "[crossref][fuzz]") {
+    fuzz_family("igbt", build_igbt_shard(fixtures() + "/igbts.ndjson"));
+}
+TEST_CASE("fuzz: bjt ranker holds its invariants over real rows", "[crossref][fuzz]") {
+    fuzz_family("bjt", build_bjt_shard(fixtures() + "/bjts.ndjson"));
+}
+TEST_CASE("fuzz: varistor ranker holds its invariants over real rows", "[crossref][fuzz]") {
+    fuzz_family("varistor", build_varistor_shard(fixtures() + "/varistors.ndjson"));
+}
+
+// ── IGBT / BJT / varistor guards on real records (owner 2026-11-15) ──────────────────────
+// Each case takes real TAS rows through the same browse row -> spec path as the fuzz pass
+// and asserts the one rule it guards, so reverting that rule fails here.
+namespace {
+template <class Row>
+json spec_by_mpn(const std::string& cat, const Shard<Row>& shard, const std::string& mpn) {
+    json all = browse::browse_rows(shard, json{{"limit", 1000}, {"curves", true}});
+    for (const auto& r : all.at("rows"))
+        if (r.value("mpn", std::string()) == mpn) return spec_for(cat, r);
+    FAIL("fixture row " << mpn << " not found");
+    return json();
+}
+const json& cand_by_mpn(const json& result, const std::string& mpn) {
+    for (const auto& c : result.at("candidates"))
+        if (c.value("mpn", std::string()) == mpn) return c;
+    FAIL("candidate " << mpn << " missing from the result");
+    static json none;
+    return none;
+}
+std::string param_verdict(const json& c, const std::string& name) {
+    for (const auto& p : c.at("params"))
+        if (p.value("name", std::string()) == name) return p.value("verdict", std::string());
+    return "";
+}
+}  // namespace
+
+TEST_CASE("varistor: a substitute rated below the original's Vdc max is refused",
+          "[crossref][5fam][varistor]") {
+    // TDK B72500E0140S260 (Vdc max 18 V) and B72500E1140S260 (16 V): same 24.5 V varistor
+    // voltage, clamping voltage, surge current, Vac max and 0603 case. 16 V < 18 V: the hard
+    // working-voltage gate (factor 1.0) rejects it; the original's own copy passes.
+    auto shard = build_varistor_shard(fixtures() + "/varistors.ndjson");
+    json orig = spec_by_mpn("varistor", shard, "B72500E0140S260");
+    json lower = spec_by_mpn("varistor", shard, "B72500E1140S260");
+    REQUIRE(orig.at("max_continuous_dc_voltage") == 18.0);
+    REQUIRE(lower.at("max_continuous_dc_voltage") == 16.0);
+    json self = orig;
+    self["_key"] = "SELF_COPY";
+    Options opt; opt.max_results = 5;
+    json r = cross_reference("varistor", orig, json::array({lower, self}), opt);
+    const json& c = cand_by_mpn(r, "B72500E1140S260");
+    INFO(c.dump());
+    CHECK(c.value("status", std::string()) == "no_substitute");
+    CHECK(param_verdict(c, "max_continuous_dc_voltage") == "fail");
+}
+
+TEST_CASE("igbt: Vce(sat) is compared only on a common collector current",
+          "[crossref][5fam][igbt]") {
+    // Real TAS 06fed09 rows, all 650 V / 100 A TO247. Original AOK50B65M2: 1.72 V at 50 A.
+    //   AOK50B65H1       1.90 V at 50 A  -> same basis, compared (1.10x: within the 1.2x band)
+    //   FGH4L50T65MQDC50 1.45 V at 50 A  -> same basis, compared (lower: pass)
+    //   STGW100H65FB2-4  1.55 V at 100 A -> different current: UNVERIFIED + vce_sat_basis
+    //   IKZA100N65EH7    1.40 V, no Ic   -> only one side states it: UNVERIFIED + vce_sat_basis
+    auto shard = build_igbt_shard(fixtures() + "/igbts_vce_sat_basis.ndjson");
+    json orig = spec_by_mpn("igbt", shard, "AOK50B65M2");
+    REQUIRE(orig.at("vce_sat_ic") == 50.0);
+    json pool = json::array();
+    for (const char* m : {"AOK50B65H1", "FGH4L50T65MQDC50", "STGW100H65FB2-4", "IKZA100N65EH7XKSA1"})
+        pool.push_back(spec_by_mpn("igbt", shard, m));
+    Options opt; opt.max_results = 10;
+    json r = cross_reference("igbt", orig, pool, opt);
+    {
+        const json& c = cand_by_mpn(r, "AOK50B65H1");
+        INFO(c.dump());
+        CHECK(param_verdict(c, "vce_sat") == "warn");
+        CHECK(param_verdict(c, "vce_sat_basis") == "");
+    }
+    {
+        const json& c = cand_by_mpn(r, "FGH4L50T65MQDC50");
+        INFO(c.dump());
+        CHECK(param_verdict(c, "vce_sat") == "pass");
+        CHECK(param_verdict(c, "vce_sat_basis") == "");
+    }
+    for (const char* m : {"STGW100H65FB2-4", "IKZA100N65EH7XKSA1"}) {
+        const json& c = cand_by_mpn(r, m);
+        INFO(c.dump());
+        CHECK(param_verdict(c, "vce_sat") == "unverified");
+        CHECK(param_verdict(c, "vce_sat_basis") == "unverified");
+    }
+}
+
+TEST_CASE("bjt: an NPN is never a PNP's substitute", "[crossref][5fam][bjt]") {
+    // onsemi MJ15003G (NPN) and its complement MJ15004G (PNP): identical 140 V / 20 A / 250 W
+    // ratings, gain and fT in the same TO-204 case. Only the polarity differs, and it rejects.
+    auto shard = build_bjt_shard(fixtures() + "/bjts.ndjson");
+    json npn = spec_by_mpn("bjt", shard, "MJ15003G");
+    json pnp = spec_by_mpn("bjt", shard, "MJ15004G");
+    REQUIRE(npn.at("polarity") == "npn");
+    REQUIRE(pnp.at("polarity") == "pnp");
+    json self = npn;
+    self["_key"] = "SELF_COPY";
+    Options opt; opt.max_results = 5;
+    json r = cross_reference("bjt", npn, json::array({pnp, self}), opt);
+    const json& c = cand_by_mpn(r, "MJ15004G");
+    INFO(c.dump());
+    CHECK(c.value("status", std::string()) == "no_substitute");
+    CHECK(param_verdict(c, "polarity") == "fail");
+}
+
+TEST_CASE("bjt: package aliases with identical pads are one land pattern (Qarlos 2026-11-15)",
+          "[crossref][5fam][bjt][case-alias]") {
+    // Real TAS rows (tests/fixtures/qarlos_1115_bjt_case_aliases.ndjson, verbatim):
+    //   TIP42C-S (Bourns, 'TO-220')  -> TIP42CG (onsemi, 'TO-220-3'): the 3-lead TO-220 under
+    //     its pin-count suffix, one land pattern;
+    //   BC817-Q (Nexperia, 'SOT23')  -> MMBT100 (onsemi, 'SOT-23 (TO-236) 2.90x1.30x1.00,
+    //     1.90P'): SOT-23 is JEDEC TO-236AB, the same pads;
+    //   negative: TIP42CG ('TO-220-3') -> MJF127G ('TO-220-3 FullPak'): the fully isolated
+    //     TO-220 is a different outline and must stay a different case.
+    auto shard = build_bjt_shard(fixtures() + "/qarlos_1115_bjt_case_aliases.ndjson");
+    auto footprint = [&](const char* o, const char* s) {
+        json orig = spec_by_mpn("bjt", shard, o);
+        json sub = spec_by_mpn("bjt", shard, s);
+        Options opt; opt.max_results = 5;
+        json r = cross_reference("bjt", orig, json::array({sub}), opt);
+        const json& c = cand_by_mpn(r, s);
+        INFO(o << " -> " << s << ": " << c.dump());
+        return c.value("footprint", std::string());
+    };
+    CHECK(footprint("TIP42C-S", "TIP42CG") != "different_case");
+    CHECK(footprint("BC817-Q", "MMBT100") != "different_case");
+    CHECK(footprint("TIP42CG", "MJF127G") == "different_case");
+}
+
+TEST_CASE("a hard rating the substitute does not state caps the grade below drop_in",
+          "[crossref][5fam][varistor][hard-unverified]") {
+    // Qarlos 2026-11-15: YAGEO 471KD20-P7.5 (Vdc max 385 V, 350 J) -> Littelfuse V300LA20CP,
+    // whose record states no Vdc max and no energy rating, came back drop_in with no note.
+    // Real TAS rows, verbatim (tests/fixtures/qarlos_1115_varistor_unverified_hard.ndjson).
+    auto shard = build_varistor_shard(fixtures() + "/qarlos_1115_varistor_unverified_hard.ndjson");
+    json orig = spec_by_mpn("varistor", shard, "471KD20-P7.5");
+    json sub = spec_by_mpn("varistor", shard, "V300LA20CP");
+    REQUIRE(orig.at("max_continuous_dc_voltage") == 385.0);
+    REQUIRE(sub.at("max_continuous_dc_voltage").is_null());
+    Options opt; opt.max_results = 5;
+    json r = cross_reference("varistor", orig, json::array({sub}), opt);
+    const json& c = cand_by_mpn(r, "V300LA20CP");
+    INFO(c.dump());
+    CHECK(param_verdict(c, "max_continuous_dc_voltage") == "unverified");
+    CHECK(c.value("grade", std::string()) == "minor_review");
+    bool named = false;
+    for (const auto& n : c.value("notes", json::array()))
+        if (n.get<std::string>().find("maximum continuous DC voltage") != std::string::npos)
+            named = true;
+    CHECK(named);
 }

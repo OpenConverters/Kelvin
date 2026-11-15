@@ -720,7 +720,6 @@
    "expect": {
     "subtype": "pass",
     "channels": "pass",
-    "package": "pass",
     "supply_min_V": "warn",
     "gbw": "pass",
     "input_offset_voltage": "pass",

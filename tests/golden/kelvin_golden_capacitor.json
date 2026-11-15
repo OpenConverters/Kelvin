@@ -670,11 +670,15 @@
     "v_rated_min": 5.0
    },
    "expect": {
-    "rejections": {
-     "discontinued": 3500
-    },
-    "total": 3500
+    "alternatives": 142,
+    "chosen": "860010275020",
+    "margins": {
+     "capacitance_ratio": 2.0370370370370368,
+     "ripple_headroom": null,
+     "v_margin": 2.0
+    }
    },
+   "ownerDecision": "owner decision 2026-11-15: a part whose record states no lifecycle status is kept under excludeDiscontinued (one more UNVERIFIED item), so this case no longer rejects every status-less fixture row as discontinued. Expectation generated from Kelvin's own output (gen_kelvin_golden.py refuses to run: Heaviside's select_capacitor delegates to Kelvin).",
    "tiebreaker": "lowest_esr"
   },
   {
@@ -687,11 +691,15 @@
     "v_rated_min": 1.0
    },
    "expect": {
-    "rejections": {
-     "discontinued": 3500
-    },
-    "total": 3500
+    "alternatives": 4,
+    "chosen": "850617021004",
+    "margins": {
+     "capacitance_ratio": 10.0,
+     "ripple_headroom": null,
+     "v_margin": 2.7
+    }
    },
+   "ownerDecision": "owner decision 2026-11-15: a part whose record states no lifecycle status is kept under excludeDiscontinued (one more UNVERIFIED item), so this case no longer rejects every status-less fixture row as discontinued. Expectation generated from Kelvin's own output (gen_kelvin_golden.py refuses to run: Heaviside's select_capacitor delegates to Kelvin).",
    "tiebreaker": "lowest_esr"
   }
  ],

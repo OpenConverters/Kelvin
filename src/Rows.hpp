@@ -31,8 +31,8 @@ enum class Family : uint32_t {
     // Magnetic (from-spec): unlike the parametric families this one RANKS the whole catalogue
     // and returns the top-N even when nothing meets the spec (no hard gate) — see select_magnetic.
     Magnetic = 9,
-    // Browse-only families (no requirements emitter → no selector yet; the Kelvin site
-    // catalogues them and select() refuses them loudly).
+    // Analog ICs and timing devices: browse families that gained a requirement-gated,
+    // evidence-ranked selector on 2026-11-15 (select_analog / select_timing).
     Analog = 10,
     Timing = 11,
     Connector = 12,
@@ -360,11 +360,18 @@ struct RowBase {
     // then left unfilled (length/width/height NaN) and the cross-reference reports the
     // footprint UNVERIFIED with a note instead of guessing an orientation.
     bool box_axes_ambiguous = false;
+    // v24 (owner 2026-11-15) — manufacturerInfo.status as stated, every family ("" when the
+    // record states none). The selectors' lifecycle rule (select_status_gate, Select.cpp) reads
+    // it: under excludeDiscontinued a STATED non-production status drops the part, a missing one
+    // keeps it as one more UNVERIFIED item. is_production (status == "production") cannot tell
+    // those two apart.
+    std::string status;
 };
 
 struct MosfetRow : RowBase {
-    // Required by the extractor (a record lacking one is unreadable), so never absent.
-    double vds_rated = 0, rds_on = 0;
+    // Required by the extractor (a record lacking one is unreadable), so never absent. NaN by
+    // default all the same (owner 2026-11-15, no defaults): a row nobody filled is not stated.
+    double vds_rated = kNaN(), rds_on = kNaN();
     // NaN when unstated: only a multi-die record whose dies state no Id (see extract_mosfet,
     // owner 2026-11-13 V1). Never 0 — a filter or margin must read it as not stated.
     double id_continuous = kNaN();
@@ -445,7 +452,8 @@ struct MosfetRow : RowBase {
 };
 
 struct DiodeRow : RowBase {
-    double vrrm_rated = 0, if_avg_rated = 0, vf_typ = 0;
+    // NaN by default (owner 2026-11-15, no defaults); the extractor sets each one it reads.
+    double vrrm_rated = kNaN(), if_avg_rated = kNaN(), vf_typ = kNaN();
     // NOT 0. Most of the catalogue publishes no reverse recovery at all — 15,165 of the
     // 17,888 diode records state neither, and only 719 state a charge — and writing 0 for
     // "not stated" is an in-band sentinel: it is the ideal diode, and the same bits the
@@ -532,7 +540,7 @@ struct DiodeRow : RowBase {
 };
 
 struct CapacitorRow : RowBase {
-    double capacitance = 0;
+    double capacitance = kNaN();  // NaN by default (owner 2026-11-15); the extractor requires it
     // DC rating. ABSENT (NaN) on a part rated for AC only (line-safety X/Y and AC film
     // capacitors), which then carries v_rated_ac instead; every indexed row has one of the two.
     double v_rated = kNaN();
@@ -632,7 +640,9 @@ struct CapacitorRow : RowBase {
 };
 
 struct ResistorRow : RowBase {
-    double resistance = 0, tolerance = 0, power_rating = 0;
+    // NaN = not stated, never 0 (owner 2026-11-15). The extractor requires resistance and
+    // leaves tolerance / power_rating NaN when the record states none (or a non-positive one).
+    double resistance = kNaN(), tolerance = kNaN(), power_rating = kNaN();
     // manufacturerInfo.family, else part.series — the ONLY device-class evidence a RAS
     // resistor record carries (the schema has no element- or terminal-count field). A chip
     // resistor ARRAY ("Chip Resistor Array", "Chip Resistor Networks", YAGEO YC/TC) is N
@@ -684,25 +694,45 @@ struct ResistorRow : RowBase {
 };
 
 struct IgbtRow : RowBase {
-    double vces_rated = 0, ic_continuous = 0, vce_sat = 0;
+    // NaN = not stated, never 0 (owner 2026-11-15). Vces / Ic are required by the extractor;
+    // vce_sat stays NaN when the record states no collectorEmitterSaturation.
+    double vces_rated = kNaN(), ic_continuous = kNaN(), vce_sat = kNaN();
     double rth_jc = kNaN(), tj_max = kNaN();
+    // A — the collector current Vce(sat) is stated at (electrical.collectorEmitterSaturationIc);
+    // NaN when unstated. v24: the cross-reference compares two Vce(sat) only at one current.
+    double vce_sat_ic = kNaN();
     std::string technology;  // Si / SiC (part.technology)
     bool is_production = false;
     bool no_thermal() const { return !present(tj_max); }
 };
 
 struct BjtRow : RowBase {
-    double vceo_rated = 0, ic_continuous = 0, hfe_min = 0, power_dissipation = 0;
+    // NaN = not stated (owner 2026-11-15): a 0 default showed a missing hFE or Pd as "0" in
+    // browse rows and on cards. Vceo and Ic are required by the extractor, so always set.
+    double vceo_rated = kNaN(), ic_continuous = kNaN(), hfe_min = kNaN(), power_dissipation = kNaN();
     double tj_max = kNaN();
     std::string technology;
     std::string polarity;  // part.subType: npn / pnp; ratings above are magnitudes for both
+    double transition_frequency = kNaN();  // Hz — electrical.transitionFrequency (fT); v24
+    // V — electrical.saturationVoltage (v24), with the collector current it is stated at
+    // (electrical.saturationVoltageIc, SAS dd9d6e2) and the current hFE is stated at
+    // (electrical.dcCurrentGainIc; carried, not graded yet). NaN when unstated.
+    double vce_sat = kNaN();
+    double vce_sat_ic = kNaN();
+    double hfe_ic = kNaN();
     bool is_production = false;
     bool no_thermal() const { return !present(tj_max); }
 };
 
 struct VaristorRow : RowBase {
-    double varistor_voltage = 0, clamping_voltage = 0, peak_surge_current = 0;
-    double max_continuous_dc_voltage = 0, capacitance = 0;
+    // NaN = not stated (owner 2026-11-15): a 0 default showed a missing clamping voltage,
+    // surge current, Vdc or capacitance as "0" in browse rows and on cards. The varistor
+    // voltage is required by the extractor, so always set.
+    double varistor_voltage = kNaN(), clamping_voltage = kNaN(), peak_surge_current = kNaN();
+    double max_continuous_dc_voltage = kNaN(), capacitance = kNaN();
+    // v24 (owner 2026-11-15): RAS electrical.maxContinuousAcVoltage (V rms) and
+    // electrical.energyAbsorption (J, 10/1000 us single pulse). NaN when unstated.
+    double max_continuous_ac_voltage = kNaN(), energy_absorption = kNaN();
     std::string technology;
     bool is_production = false;
 };
@@ -824,9 +854,18 @@ struct AnalogRow : RowBase {
     double resolution = kNaN();           // bits (ADC/DAC)
     double sample_rate = kNaN();          // S/s (ADC)
     double on_resistance = kNaN();        // Ω (switch/mux)
+    // v24: the rest of what the cross-reference's kAnalog table compares.
+    double offset_drift = kNaN();         // V/K — inputOffsetVoltageDrift
+    double quiescent_current = kNaN();    // A per channel — supply.quiescentCurrentPerChannel
+    double propagation_delay = kNaN();    // s — propagationDelay (comparators)
     std::string device_type;              // the analog.<subtype> key (operationalAmplifier, adc, …)
     std::string architecture;
     std::string input_stage;
+    // railToRailInput / railToRailOutput: "yes" / "no" as stated, "" when unstated (tri-state:
+    // unstated is never "no").
+    std::string rail_to_rail_input;
+    std::string rail_to_rail_output;
+    std::string output_stage;             // outputStage (comparators: pushPull / openDrain …)
     bool is_production = false;
 };
 

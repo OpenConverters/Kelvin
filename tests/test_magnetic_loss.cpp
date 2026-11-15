@@ -545,10 +545,23 @@ TEST_CASE("magnetic curves: thermal FAIL from the record's rated-current points"
     CHECK(has(t.thermal.basis, "rated current 1.8 A at a 40 K rise"));
     CHECK(has(t.thermal.basis, "ambient not stated: read as room temperature"));
     CHECK(magnetic_loss(crow("DRQ127-221-R"), su36(), 166.7e-6).thermal.failed());
+    // Three parts reach the thermal gate and fail it (owner 2026-11-15: 2 -> 3, named by MPN).
+    // The third, 1110-221K (Bourns 220 uH, only 1.6 A at a 50 K rise, see the next case), states
+    // no lifecycle status: under the one status rule it is kept (one more UNVERIFIED item)
+    // instead of being dropped as "discontinued", so it now reaches the thermal gate. Each of
+    // the three passes the inductance and saturation gates, so with the count at 3 the thermal
+    // gate rejects exactly these three.
     const json r = select_magnetic_op_loss(curves_shard(), su_constraints(), 30);
-    CHECK(r.at("rejections").value("rated_current_below_rms", 0) == 2);
-    CHECK(pos_in(r, "MSS1583-224KED") == static_cast<long>(mpns(r).size()));
-    CHECK(pos_in(r, "DRQ127-221-R") == static_cast<long>(mpns(r).size()));
+    CHECK(r.at("rejections").value("rated_current_below_rms", 0) == 3);
+    for (const char* mpn : {"MSS1583-224KED", "DRQ127-221-R", "1110-221K"}) {
+        INFO(mpn);
+        const auto b = magnetic_loss(crow(mpn), su36(), 166.7e-6);
+        CHECK_FALSE(b.inductance_gate.failed());
+        CHECK_FALSE(b.saturation.failed());
+        CHECK(b.thermal.failed());
+        CHECK(pos_in(r, mpn) == static_cast<long>(mpns(r).size()));
+    }
+    CHECK(crow("1110-221K").status.empty());
 }
 
 TEST_CASE("magnetic curves: a rated current only above a 40 K rise is an upper bound",

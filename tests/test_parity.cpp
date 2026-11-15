@@ -168,6 +168,13 @@ TEST_CASE("parity: diode", "[parity][diode]") {
     }
 }
 
+// Capacitor cases 33 and 34 (the only two with excludeDiscontinued on) were re-pinned on
+// 2026-11-15 by owner decision: a part whose record states no lifecycle status is kept (one more
+// UNVERIFIED item), so they no longer reject all 3500 status-less fixture rows as
+// "discontinued". gen_kelvin_golden.py refuses to run (Heaviside delegates to Kelvin), so the two
+// expectations are Kelvin's own output, checked against the fixture: case 33 picks what case 0
+// (same constraints, excludeDiscontinued off) picks, case 34 the lowest-ESR 1-10 F part. Each
+// carries an "ownerDecision" field saying so; the other cases are untouched.
 TEST_CASE("parity: capacitor", "[parity][capacitor]") {
     auto golden = load_json(golden_dir() + "/kelvin_golden_capacitor.json");
     auto shard = build_capacitor_shard(fixtures_dir() + "/capacitors.ndjson");

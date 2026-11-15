@@ -7,6 +7,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace kelvin {
 
@@ -467,5 +468,90 @@ struct MagneticConstraints {
     bool exclude_discontinued = true;
     void validate() const {}                   // never throws — imperfect matches are still returned
 };
+
+// ---- Timing (crystals / resonators / XO / TCXO / MEMS; owner-approved 2026-11-15) -------------
+// The frequency is the part's identity: a part matches when its stated nominal frequency lies
+// within the caller's stated deviation of the target (maximumFrequencyDeviation, a fraction —
+// 0 asks for the exact value). Every other requirement is optional and judged three ways: a part
+// whose record states the value and fails it is rejected (counted); one whose record does not
+// state it passes UNVERIFIED and ranks after every part that states it and passes.
+struct TimingConstraints {
+    std::optional<double> frequency;                // Hz (required)
+    std::optional<double> max_frequency_deviation;  // fraction, |f_part - f| / f (required, >= 0)
+    std::optional<double> max_tolerance;            // fraction — frequencyTolerance must be <=
+    std::optional<double> max_stability;            // fraction — frequencyStability must be <=
+    std::optional<double> load_capacitance;         // F — loadCapacitance must equal
+    std::optional<double> supply_voltage;           // V — inside [min, max] supply
+    std::optional<double> temp_min_c, temp_max_c;   // degC — the part's range must cover these
+    // m — the part's land (rotation-free: longer side vs the longer limit) and drawn height
+    std::optional<double> max_length, max_width, max_height;
+    std::optional<std::string> technology;          // exact (quartzCrystal, mems, tcxo, ...)
+    std::optional<std::string> output_type;         // exact (cmos, lvds, none, ...)
+    bool exclude_discontinued = true;
+    void validate() const {
+        if (!frequency || !(*frequency > 0))
+            throw InvalidOptions("TimingConstraints.frequency is required and must be positive");
+        if (!max_frequency_deviation || !(*max_frequency_deviation >= 0))
+            throw InvalidOptions("TimingConstraints.max_frequency_deviation is required and must "
+                                 "be >= 0 (a fraction: 0 = the exact frequency)");
+        for (auto [v, name] : {std::pair{&max_tolerance, "max_tolerance"},
+                               std::pair{&max_stability, "max_stability"},
+                               std::pair{&load_capacitance, "load_capacitance"},
+                               std::pair{&supply_voltage, "supply_voltage"},
+                               std::pair{&max_length, "max_length"},
+                               std::pair{&max_width, "max_width"},
+                               std::pair{&max_height, "max_height"}})
+            if (*v && !(**v > 0))
+                throw InvalidOptions(std::string("TimingConstraints.") + name + " must be positive");
+        if (max_length.has_value() != max_width.has_value())
+            throw InvalidOptions("TimingConstraints: maximumLength and maximumWidth go together "
+                                 "(a footprint is judged on both sides)");
+        if (temp_min_c && temp_max_c && !(*temp_min_c < *temp_max_c))
+            throw InvalidOptions("TimingConstraints: minimumOperatingTemperature must be below "
+                                 "maximumOperatingTemperature");
+    }
+};
+
+// ---- Analog ICs (owner-approved 2026-11-15) ------------------------------------------------------
+// The family is mixed, so the device type (the analog.<subtype> key) is required and decides
+// which requirements apply: only quantities the index carries for that type are offered
+// (analog_requirement_keys). A key that does not apply to the asked type is refused, never
+// ignored. Judged like timing: stated-and-failing rejects, unstated passes UNVERIFIED.
+struct AnalogConstraints {
+    std::string device_type;                        // required (operationalAmplifier, adc, ...)
+    std::optional<double> channels;                 // exact count (numberOfChannels)
+    std::optional<double> supply_voltage;           // V — inside [min, max] supply
+    std::optional<double> max_input_offset_voltage; // V
+    std::optional<double> max_input_bias_current;   // A
+    std::optional<double> min_gain_bandwidth;       // Hz
+    std::optional<double> min_slew_rate;            // V/s
+    std::optional<double> min_cmrr;                 // dB
+    std::optional<double> min_resolution;           // bits
+    std::optional<double> min_sample_rate;          // S/s
+    std::optional<double> max_on_resistance;        // ohm
+    std::optional<std::string> architecture;        // exact
+    std::optional<std::string> input_stage;         // exact
+    bool exclude_discontinued = true;
+    void validate() const {
+        if (device_type.empty())
+            throw InvalidOptions("AnalogConstraints.device_type is required");
+        for (auto [v, name] : {std::pair{&channels, "channels"},
+                               std::pair{&supply_voltage, "supply_voltage"},
+                               std::pair{&max_input_offset_voltage, "max_input_offset_voltage"},
+                               std::pair{&max_input_bias_current, "max_input_bias_current"},
+                               std::pair{&min_gain_bandwidth, "min_gain_bandwidth"},
+                               std::pair{&min_slew_rate, "min_slew_rate"},
+                               std::pair{&min_resolution, "min_resolution"},
+                               std::pair{&min_sample_rate, "min_sample_rate"},
+                               std::pair{&max_on_resistance, "max_on_resistance"}})
+            if (*v && !(**v > 0))
+                throw InvalidOptions(std::string("AnalogConstraints.") + name + " must be positive");
+    }
+};
+
+// The designRequirements keys the analog selector reads for one device type — only quantities the
+// analog index (AnalogRow) carries and the catalogue populates for that type. Throws for a type
+// with no selector (unknown, or one whose populated data the index does not carry).
+const std::set<std::string>& analog_requirement_keys(const std::string& device_type);
 
 }  // namespace kelvin

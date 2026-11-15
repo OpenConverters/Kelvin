@@ -1,6 +1,8 @@
 #include "Requirements.hpp"
 
 #include <cmath>
+#include <map>
+#include <set>
 
 #include "DimensionJson.hpp"  // PEAS::resolve_dimensional_values
 
@@ -38,6 +40,26 @@ std::string opt_str(const json& req, const char* key) {
     if (req.is_object() && req.contains(key) && req.at(key).is_string())
         return req.at(key).get<std::string>();
     return std::string();
+}
+
+// Optional inputs of the selectors added 2026-11-15 (timing, analog). Absent or null = not
+// given; present with the wrong type is a caller error and throws — never skipped silently.
+std::optional<double> given_num(const json& req, const char* key) {
+    if (!req.is_object() || !req.contains(key) || req.at(key).is_null()) return std::nullopt;
+    if (!req.at(key).is_number())
+        throw InvalidOptions(std::string("designRequirements '") + key + "' must be a number");
+    return req.at(key).get<double>();
+}
+std::optional<double> given_dim(const json& req, const char* key) {
+    if (!req.is_object() || !req.contains(key) || req.at(key).is_null()) return std::nullopt;
+    return req_dim(req, key);
+}
+std::optional<std::string> given_str(const json& req, const char* key) {
+    if (!req.is_object() || !req.contains(key) || req.at(key).is_null()) return std::nullopt;
+    if (!req.at(key).is_string() || req.at(key).get<std::string>().empty())
+        throw InvalidOptions(std::string("designRequirements '") + key +
+                             "' must be a non-empty string");
+    return req.at(key).get<std::string>();
 }
 
 }  // namespace
@@ -144,6 +166,105 @@ ConnectorConstraints connector_constraints(const json& req) {
     std::string pol = opt_str(req, "matingPolarity");
     if (pol.empty()) pol = opt_str(req, "polarity");
     if (!pol.empty()) c.polarity = pol;
+    return c;
+}
+
+TimingConstraints timing_constraints(const json& req) {
+    TimingConstraints c;
+    c.frequency = req_dim(req, "frequency");
+    c.max_frequency_deviation = req_num(req, "maximumFrequencyDeviation");
+    c.max_tolerance = given_num(req, "maximumFrequencyTolerance");
+    c.max_stability = given_num(req, "maximumFrequencyStability");
+    c.load_capacitance = given_dim(req, "loadCapacitance");
+    c.supply_voltage = given_dim(req, "supplyVoltage");
+    c.temp_min_c = given_num(req, "minimumOperatingTemperature");
+    c.temp_max_c = given_num(req, "maximumOperatingTemperature");
+    c.max_length = given_num(req, "maximumLength");
+    c.max_width = given_num(req, "maximumWidth");
+    c.max_height = given_num(req, "maximumHeight");
+    c.technology = given_str(req, "technology");
+    c.output_type = given_str(req, "outputType");
+    c.validate();
+    return c;
+}
+
+namespace {
+// designRequirements key -> applies to which analog device types. Only quantities AnalogRow
+// carries, offered for a type only where the catalogue populates them (coverage audit
+// 2026-11-15 over analog_ics.ndjson: e.g. GBW 93 % of op-amps, resolution 100 % of ADC/DAC,
+// on-resistance 61 % of switches / multiplexers).
+const std::map<std::string, std::set<std::string>>& analog_keys_by_type() {
+    static const std::map<std::string, std::set<std::string>> m{
+        {"operationalAmplifier",
+         {"numberOfChannels", "supplyVoltage", "maximumInputOffsetVoltage",
+          "maximumInputBiasCurrent", "minimumGainBandwidthProduct", "minimumSlewRate",
+          "minimumCommonModeRejectionRatio", "inputStage"}},
+        {"comparator",
+         {"numberOfChannels", "supplyVoltage", "maximumInputOffsetVoltage",
+          "maximumInputBiasCurrent"}},
+        {"instrumentationAmplifier",
+         {"numberOfChannels", "supplyVoltage", "maximumInputOffsetVoltage",
+          "maximumInputBiasCurrent", "minimumSlewRate", "minimumCommonModeRejectionRatio"}},
+        {"programmableGainAmplifier",
+         {"numberOfChannels", "supplyVoltage", "maximumInputOffsetVoltage", "minimumSlewRate"}},
+        {"differenceAmplifier",
+         {"numberOfChannels", "supplyVoltage", "minimumSlewRate",
+          "minimumCommonModeRejectionRatio"}},
+        {"buffer", {"numberOfChannels", "supplyVoltage"}},
+        {"multiplier", {"numberOfChannels", "supplyVoltage"}},
+        {"adc",
+         {"numberOfChannels", "supplyVoltage", "minimumResolution", "minimumSampleRate",
+          "architecture"}},
+        {"dac", {"minimumResolution", "architecture"}},
+        {"analogSwitch", {"supplyVoltage", "maximumOnResistance"}},
+        {"multiplexer", {"numberOfChannels", "supplyVoltage", "maximumOnResistance"}},
+    };
+    return m;
+}
+}  // namespace
+
+const std::set<std::string>& analog_requirement_keys(const std::string& device_type) {
+    const auto& m = analog_keys_by_type();
+    auto it = m.find(device_type);
+    if (it != m.end()) return it->second;
+    if (device_type == "digitalIsolator")
+        throw InvalidOptions("analog deviceType 'digitalIsolator' has no selector: its populated "
+                             "data (channel directions, isolation rating, data rate) is not in "
+                             "the analog index — browse it");
+    std::string known;
+    for (const auto& kv : m) known += (known.empty() ? "" : ", ") + kv.first;
+    throw InvalidOptions("unknown analog deviceType '" + device_type + "' (" + known + ")");
+}
+
+AnalogConstraints analog_constraints(const json& req) {
+    auto type = given_str(req, "deviceType");
+    if (!type) throw InvalidOptions("designRequirements missing 'deviceType' (analog)");
+    const std::set<std::string>& keys = analog_requirement_keys(*type);
+    // Every analog requirement key: one that does not apply to the asked type is refused.
+    static const char* const kAll[] = {
+        "numberOfChannels", "supplyVoltage", "maximumInputOffsetVoltage",
+        "maximumInputBiasCurrent", "minimumGainBandwidthProduct", "minimumSlewRate",
+        "minimumCommonModeRejectionRatio", "minimumResolution", "minimumSampleRate",
+        "maximumOnResistance", "architecture", "inputStage"};
+    for (const char* k : kAll)
+        if (req.contains(k) && !req.at(k).is_null() && !keys.count(k))
+            throw InvalidOptions(std::string("designRequirements '") + k +
+                                 "' does not apply to analog deviceType '" + *type + "'");
+    AnalogConstraints c;
+    c.device_type = *type;
+    c.channels = given_num(req, "numberOfChannels");
+    c.supply_voltage = given_dim(req, "supplyVoltage");
+    c.max_input_offset_voltage = given_num(req, "maximumInputOffsetVoltage");
+    c.max_input_bias_current = given_num(req, "maximumInputBiasCurrent");
+    c.min_gain_bandwidth = given_num(req, "minimumGainBandwidthProduct");
+    c.min_slew_rate = given_num(req, "minimumSlewRate");
+    c.min_cmrr = given_num(req, "minimumCommonModeRejectionRatio");
+    c.min_resolution = given_num(req, "minimumResolution");
+    c.min_sample_rate = given_num(req, "minimumSampleRate");
+    c.max_on_resistance = given_num(req, "maximumOnResistance");
+    c.architecture = given_str(req, "architecture");
+    c.input_stage = given_str(req, "inputStage");
+    c.validate();
     return c;
 }
 

@@ -342,6 +342,56 @@ inline std::vector<std::string> comparison_source_fields(const std::string& cat,
         if (name == "temp_min_C" || name == "temp_max_C") return {"environmental.operatingTemperature"};
         return {};
     }
+    if (cat == "igbt") {
+        if (name == "vces") return {"electrical.collectorEmitterVoltage"};
+        if (name == "ic") return {"electrical.continuousCollectorCurrent"};
+        if (name == "vce_sat" || name == "vce_sat_basis")
+            return {"electrical.collectorEmitterSaturation",
+                    "electrical.collectorEmitterSaturationIc"};
+        if (name == "tj_max") return {"thermal.junctionTemperatureMax"};
+        if (name == "process") return {"part.technology"};
+        return {};
+    }
+    if (cat == "bjt") {
+        if (name == "vceo") return {"electrical.collectorEmitterVoltage"};
+        if (name == "ic") return {"electrical.collectorCurrent"};
+        if (name == "hfe_min") return {"electrical.dcCurrentGain"};
+        if (name == "transition_frequency") return {"electrical.transitionFrequency"};
+        if (name == "power_dissipation") return {"electrical.powerDissipation"};
+        if (name == "vce_sat" || name == "vce_sat_basis") return {"electrical.saturationVoltage"};
+        if (name == "tj_max") return {"thermal.junctionTemperatureMax"};
+        if (name == "polarity") return {"part.subType"};
+        return {};
+    }
+    if (cat == "varistor") {
+        if (name == "value") return {"electrical.varistorVoltage"};
+        if (name == "clamping_voltage") return {"electrical.clampingVoltage"};
+        if (name == "peak_surge_current") return {"electrical.peakSurgeCurrent"};
+        if (name == "max_continuous_dc_voltage") return {"electrical.maxContinuousDcVoltage"};
+        if (name == "max_continuous_ac_voltage") return {"electrical.maxContinuousAcVoltage"};
+        if (name == "energy_absorption") return {"electrical.energyAbsorption"};
+        if (name == "capacitance") return {"electrical.capacitance"};
+        return {};
+    }
+    if (cat == "analog") {
+        if (name == "channels") return {"electrical.numberOfChannels"};
+        if (name == "supply_min_V" || name == "supply_max_V" || name == "quiescent_current")
+            return {"electrical.supply"};
+        if (name == "gbw") return {"electrical.gainBandwidthProduct"};
+        if (name == "slew_rate") return {"electrical.slewRate"};
+        if (name == "input_offset_voltage") return {"electrical.inputOffsetVoltage"};
+        if (name == "offset_drift") return {"electrical.inputOffsetVoltageDrift"};
+        if (name == "input_bias_current") return {"electrical.inputBiasCurrent"};
+        if (name == "cmrr_db") return {"electrical.commonModeRejectionRatio"};
+        if (name == "rail_to_rail_input") return {"electrical.railToRailInput"};
+        if (name == "rail_to_rail_output") return {"electrical.railToRailOutput"};
+        if (name == "propagation_delay") return {"electrical.propagationDelay"};
+        if (name == "output_stage") return {"electrical.outputStage"};
+        if (name == "resolution") return {"electrical.resolution"};
+        if (name == "sample_rate") return {"electrical.sampleRate"};
+        if (name == "on_resistance") return {"electrical.onResistance"};
+        return {};
+    }
     if (cat == "timeBase") {
         if (name == "frequency") return {"electrical.frequency"};
         if (name == "tolerance_ppm") return {"electrical.frequencyTolerance"};
@@ -386,6 +436,21 @@ inline std::vector<Rating> critical_ratings(const std::string& cat) {
     if (cat == "igbt")
         return {{"vces", Mode::HigherBetter, 0.95, 0.9, true},
                 {"ic", Mode::HigherBetter, 0.9, 0.7, false}};
+    // A BJT: the IGBT's ratings under the BJT's names (owner 2026-11-15). Vceo is the hard
+    // gate, Ic the soft one; both are magnitudes (a PNP's are stated negative, the shard
+    // stores their magnitude).
+    if (cat == "bjt")
+        return {{"vceo", Mode::HigherBetter, 0.95, 0.9, true},
+                {"ic", Mode::HigherBetter, 0.9, 0.7, false}};
+    // A varistor's working voltages and energy rating (owner 2026-11-15): hard, higher is
+    // better, and ANY value below the original's rejects (warn and gate factor 1.0) — below
+    // its maximum continuous voltage the original never conducts, and a substitute rated
+    // lower conducts on the original's line. A record that omits one is UNVERIFIED, never
+    // refused (score_directional).
+    if (cat == "varistor")
+        return {{"max_continuous_dc_voltage", Mode::HigherBetter, 1.0, 1.0, true},
+                {"max_continuous_ac_voltage", Mode::HigherBetter, 1.0, 1.0, true},
+                {"energy_absorption", Mode::HigherBetter, 1.0, 1.0, true}};
     return {};
 }
 
@@ -405,11 +470,13 @@ inline bool is_primary_rating(const std::string& cat, const std::string& key) {
         {"mosfet", {"vds", "rds_on"}},
         {"diode", {"vrrm", "power_dissipation", "peak_pulse_power", "peak_pulse_current"}},
         {"igbt", {"vces"}},
+        {"bjt", {"vceo"}},
         {"capacitor", {"voltage", "ripple_current"}},
         {"magnetic", {"saturation_current", "rated_current"}},
         {"chipBead", {"impedance_100mhz", "impedance_peak", "rated_current"}},
         {"connector", {"rated_current_A", "rated_voltage_V"}},
-        {"varistor", {"clamping_voltage", "peak_surge_current"}},
+        {"varistor", {"clamping_voltage", "peak_surge_current", "max_continuous_dc_voltage",
+                      "max_continuous_ac_voltage", "energy_absorption"}},
         {"resistor", {"power_rating"}}};
     const auto it = k.find(cat);
     return it != k.end() && it->second.count(key);
@@ -469,6 +536,15 @@ inline bool both_unknown_cap_applies(const std::string& cat, const std::string& 
     }
     return false;
 }
+// The varistor energy rating (RAS electrical.energyAbsorption, 10/1000 us) as a hard gate
+// (owner 2026-11-15) applies only to the technologies that publish it: the disc / block
+// metal-oxide varistor (RAS part.technology 'metalOxide'). NOT a multilayer chip varistor
+// ('multiLayer'), which is specified by its 8/20 us surge current instead. An original whose
+// technology is not stated gets no energy gate: no technology is assumed (the
+// both_unknown_cap_applies rule).
+inline bool varistor_energy_applies(const std::string& original_technology) {
+    return original_technology == "metalOxide";
+}
 inline std::string primary_rating_label(const std::string& key) {
     static const std::map<std::string, std::string> k = {
         {"vds", "drain-source voltage rating (Vds)"},
@@ -478,10 +554,14 @@ inline std::string primary_rating_label(const std::string& key) {
         {"peak_pulse_power", "peak pulse power"},
         {"peak_pulse_current", "peak pulse current"},
         {"vces", "collector-emitter voltage rating (Vces)"},
+        {"vceo", "collector-emitter voltage rating (Vceo)"},
         {"voltage", "rated voltage"},
         {"rated_current", "rated current"},
         {"clamping_voltage", "clamping voltage"},
         {"peak_surge_current", "peak surge current"},
+        {"max_continuous_dc_voltage", "maximum continuous DC voltage"},
+        {"max_continuous_ac_voltage", "maximum continuous AC voltage"},
+        {"energy_absorption", "energy rating (10/1000 us)"},
         {"power_rating", "power rating"}};
     const auto it = k.find(key);
     return it != k.end() ? it->second : param_label(key);
@@ -537,6 +617,7 @@ inline bool is_hard_param(const std::string& cat, const std::string& key) {
                                                 "output_type", "enable_function"};
     if (cat == "magnetic" || cat == "chipBead") return magnetic.count(key) > 0;
     if (cat == "mosfet") return key == "channel";
+    if (cat == "bjt") return key == "polarity";  // NPN / PNP, like the MOSFET channel
     if (cat == "connector") return connector.count(key) > 0;
     if (cat == "analog") return analog.count(key) > 0;
     if (cat == "timeBase") return timebase.count(key) > 0;
@@ -1245,6 +1326,11 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // A primary current rating (MOSFET Id, diode If(AV), IGBT Ic) stated by one record only
     // (owner 2026-11-13, Y1): UNVERIFIED with a note, capped at minor_review.
     bool current_rating_one_sided = false;
+    // A HARD critical rating (critical_ratings, hard = true) the original states and the
+    // substitute's record does not (owner 2026-11-15, Qarlos: varistor 471KD20-P7.5 ->
+    // V300LA20CP was drop_in with its Vdc max unverified and no note). The rule Y1 applies to
+    // the one-sided current ratings: capped at minor_review, with a note naming the rating.
+    bool hard_rating_unverified = false;
     // A cable core's cable diameter or pass count the substitute does not state while the
     // original does (owner 2026-11-14): UNVERIFIED, capped at minor_review.
     bool cable_core_unverified = false;
@@ -1289,7 +1375,11 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             {"if_avg", {"average forward current rating", "A"}},
             {"voltage", {"rated voltage", "V"}},
             {"vces", {"collector-emitter voltage rating", "V"}},
+            {"vceo", {"collector-emitter voltage rating", "V"}},
             {"ic", {"continuous collector current rating", "A"}},
+            {"max_continuous_dc_voltage", {"maximum continuous DC voltage", "V"}},
+            {"max_continuous_ac_voltage", {"maximum continuous AC voltage", "V"}},
+            {"energy_absorption", {"energy rating", "J"}},
             {"saturation_current", {"saturation current", "A"}},
             {"rated_current", {"rated current", "A"}},
             {"rated_current_A", {"rated current", "A"}},
@@ -2586,6 +2676,36 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         }
     }
 
+    // ── IGBT / BJT Vce(sat) basis (owner 2026-11-15) ─────────────────────────
+    // Vce(sat) rises with the collector current. The diode Vf rule (owner 2026-11-15): two
+    // values are compared when both records state the same current (within the representation
+    // epsilon) or neither states one; when the stated currents differ or only one side states
+    // one, the vce_sat row is UNVERIFIED, with a vce_sat_basis row and a note, and no penalty.
+    // BJT: electrical.saturationVoltageIc (SAS dd9d6e2).
+    bool vce_sat_basis_unverified = false;
+    if (cat == "igbt" || cat == "bjt") {
+        const auto ov = num(original, "vce_sat"), sv = num(cand, "vce_sat");
+        const auto oi = num(original, "vce_sat_ic"), si = num(cand, "vce_sat_ic");
+        const bool same_basis =
+            (!oi && !si) ||
+            (oi && si && std::fabs(*oi - *si) <= 1e-9 * std::max(std::fabs(*oi), std::fabs(*si)));
+        if (ov && sv && !same_basis) {
+            vce_sat_basis_unverified = true;
+            params.push_back({{"name", "vce_sat_basis"}, {"verdict", UNVERIFIED}});
+            char si_o[48] = "no stated collector current", si_s[48] = "no stated collector current";
+            if (oi) std::snprintf(si_o, sizeof si_o, "%g A", *oi);
+            if (si) std::snprintf(si_s, sizeof si_s, "%g A", *si);
+            char buf[400];
+            std::snprintf(buf, sizeof buf,
+                          "collector-emitter saturation voltage not on a common basis "
+                          "(original %g V at %s, substitute %g V at %s) — Vce(sat) rises with "
+                          "the collector current; confirm the substitute's Vce(sat) at the "
+                          "original's current from its datasheet",
+                          *ov, si_o, *sv, si_s);
+            notes.push_back(buf);
+        }
+    }
+
     // ── capacitance tolerance (the band each record guarantees) ─────────────
     // A capacitor's tolerance is the band the circuit was designed around, exactly as a
     // resistor's is: a +/-5 % C0G is not a drop-in for a +/-1 % one in a filter or timing
@@ -2730,7 +2850,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                     (ripple_basis_unverified || ripple_temp_basis_unverified)) ||
                                    (spec.key == "esr" && esr_basis_unverified));
         const bool coss_blind = (cat == "mosfet" && spec.key == "coss" && coss_basis_unverified) ||
-                                (cat == "diode" && spec.key == "vf" && vf_basis_unverified);
+                                (cat == "diode" && spec.key == "vf" && vf_basis_unverified) ||
+                                (spec.key == "vce_sat" && vce_sat_basis_unverified);
         const bool work_v_basis = spec.key == "max_voltage_V" && work_v.applies;
         // A diode's breakdown grade is DERIVED, (Vz max - Vz min) / (Vz max + Vz min), from two
         // window figures the datasheet states to 0.1 V. Two 5 % TVS grades therefore come out
@@ -3785,7 +3906,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // and the substitute's record does not is UNVERIFIED and noted like the operating
         // range above, with no demotion and no cap (Qarlos 2026-11-09, seeds 20575296 /
         // 20889483; secondary since the owner's rule of the same day).
-        if (cat == "diode") {
+        if (cat == "diode" || cat == "igbt" || cat == "bjt") {
             const auto o_tj = num(original, "tj_max"), s_tj = num(cand, "tj_max");
             const std::string v = verdict_of("tj_max");
             if (v == FAIL && o_tj && s_tj) {
@@ -4511,6 +4632,12 @@ inline json score_candidate(const std::string& cat, const json& original, const 
 
     // ── critical ratings (Vds / Vrrm / rated voltage / Id / If) ──────────────
     for (const auto& r : critical_ratings(cat)) {
+        // A varistor's energy rating is a datasheet rating of the disc / block MOVs only
+        // (varistor_energy_applies): a multilayer chip varistor publishes none, so for any
+        // other original the axis is not compared and nothing is penalised (owner 2026-11-15).
+        if (cat == "varistor" && std::string(r.key) == "energy_absorption" &&
+            !varistor_energy_applies(str(original, "technology")))
+            continue;
         auto o = num(original, r.key), s = num(cand, r.key);
         if (!o && !s) {
             both_unstated(r.key);  // owner 2026-11-14
@@ -4568,6 +4695,24 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                     "weighed against the original's requirement — confirm the "
                                     "original's rating from its datasheet before this swap");
         }
+        if (r.hard && o && !s) {
+            static const std::map<std::string, const char*> kHard = {
+                {"vds", "drain-source voltage rating (Vds)"},
+                {"vrrm", "reverse voltage rating (Vrrm)"},
+                {"voltage", "rated voltage"},
+                {"vces", "collector-emitter voltage rating (Vces)"},
+                {"vceo", "collector-emitter voltage rating (Vceo)"},
+                {"max_continuous_dc_voltage", "maximum continuous DC voltage"},
+                {"max_continuous_ac_voltage", "maximum continuous AC voltage"},
+                {"energy_absorption", "energy rating"}};
+            const auto it = kHard.find(r.key);
+            hard_rating_unverified = true;
+            notes.push_back(std::string("the original states a ") +
+                            (it != kHard.end() ? it->second : r.key) +
+                            "; the substitute's record states none — this hard rating is "
+                            "UNVERIFIED, so the swap cannot be a drop-in; confirm it from the "
+                            "datasheet");
+        }
         // A shortfall that is not a rejection must say so (Qarlos r13 seed 25078643: the
         // 600 V SiHL033N60SF for the 650 V FCH023N65S3L4 carried a 'warn' Vds row and no
         // word about it, so it read as a mild review). The verdict, penalty and grade are
@@ -4582,7 +4727,11 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 {"if_avg", {"average forward current rating", "A"}},
                 {"voltage", {"rated voltage", "V"}},
                 {"vces", {"collector-emitter voltage rating", "V"}},
-                {"ic", {"continuous collector current rating", "A"}}};
+                {"vceo", {"collector-emitter voltage rating", "V"}},
+                {"ic", {"continuous collector current rating", "A"}},
+                {"max_continuous_dc_voltage", {"maximum continuous DC voltage", "V"}},
+                {"max_continuous_ac_voltage", {"maximum continuous AC voltage", "V"}},
+                {"energy_absorption", {"energy rating", "J"}}};
             const auto it = kWhat.find(r.key);
             const char* what = it != kWhat.end() ? it->second.first : r.key;
             const char* unit = it != kWhat.end() ? it->second.second : "";
@@ -6152,13 +6301,36 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // Heaviside never consults this; Kelvin's catalogue carries it, so a
     // substitute that is not in production is surfaced rather than silently
     // recommended.
+    //
+    // One status rule (owner 2026-11-15): `lifecycle_status` is manufacturerInfo.status as the
+    // record states it (null or "" = the record states none). A STATED non-production status
+    // keeps the WARN below. A record stating none is not "not marked production" — nothing
+    // says it is out of production either — so its lifecycle verdict is UNVERIFIED with a
+    // 'status not stated' note: no demotion, no grade cap, and the same penalty term, so it
+    // still ranks after an otherwise equal substitute that states production. A caller whose
+    // rows carry only `is_production` (no lifecycle_status key) cannot tell the two apart and
+    // keeps the WARN on is_production == false.
     if (opt.check_lifecycle) {
-        auto it = cand.find("is_production");
-        if (it != cand.end() && it->is_boolean() && !it->get<bool>()) {
+        auto warn_not_production = [&] {
             params.push_back({{"name", "lifecycle"}, {"verdict", WARN}});
             demote();
             penalty += opt.gate_weight * kVerdictWarnPenalty;
             notes.push_back("substitute is not marked production status");
+        };
+        auto ls = cand.find("lifecycle_status");
+        if (ls != cand.end() && (ls->is_string() || ls->is_null())) {
+            const std::string st = ls->is_string() ? ls->get<std::string>() : std::string();
+            if (st.empty()) {
+                params.push_back({{"name", "lifecycle"}, {"verdict", UNVERIFIED}});
+                penalty += opt.gate_weight * kVerdictWarnPenalty;
+                notes.push_back("status not stated: the substitute's record names no lifecycle "
+                                "status, so it cannot be shown to be in production");
+            } else if (st != "production") {
+                warn_not_production();
+            }
+        } else {
+            auto it = cand.find("is_production");
+            if (it != cand.end() && it->is_boolean() && !it->get<bool>()) warn_not_production();
         }
     }
 
@@ -6463,6 +6635,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //                                                                    2026-11-14 (below)
     //   Id / If(AV) / Ic stated by one record only (owner
     //     2026-11-13, Y1; current_rating_one_sided)           primary    note, cap minor_review
+    //   a HARD critical rating stated by the original only
+    //     (owner 2026-11-15; hard_rating_unverified)          primary    note, cap minor_review
     //   chip-bead rated current, connector rated voltage,
     //     diode power dissipation                             primary    no cap*
     //   a primary RATING stated by the substitute and NOT by
@@ -6512,6 +6686,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                     resistor_connection_unverified || resistor_count_one_sided ||
                                     mount_unverified || timebase_pin_unverified ||
                                     timebase_prog_order || current_rating_one_sided ||
+                                    hard_rating_unverified ||
                                     cable_core_unverified ||
                                     !orig_unstated_primary.empty() ||
                                     !both_unstated_primary.empty() || cand_no_physical_data ||
@@ -6577,8 +6752,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
 //: 30 V one did — so an unknown category is refused, not ranked.
 inline bool known_category(const std::string& c) {
     static const std::set<std::string> k{"resistor", "capacitor", "magnetic", "chipBead",
-                                         "mosfet", "diode", "igbt", "connector", "analog",
-                                         "timeBase", "varistor"};
+                                         "mosfet", "diode", "igbt", "bjt", "connector",
+                                         "analog", "timeBase", "varistor"};
     return k.count(c) > 0;
 }
 
