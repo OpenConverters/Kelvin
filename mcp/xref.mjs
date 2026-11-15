@@ -259,7 +259,10 @@ const canon = (s) => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
 // Every family the catalogue holds, read off the shard directory — the families this worker
 // can actually open, which is what "search every family" has to mean.
 function allFamilies() {
-  return readdirSync(SHARDS).filter((f) => f.endsWith('.kidx')).map((f) => f.slice(0, -5)).sort()
+  // base shards only: <family>.curves.kidx (v23) holds a family's measured curves, not a family
+  return readdirSync(SHARDS)
+    .filter((f) => f.endsWith('.kidx') && !f.endsWith('.curves.kidx'))
+    .map((f) => f.slice(0, -5)).sort()
 }
 
 // The value string: "100n", "4u7", "2k2", "3R3", "0.1uF", "2.2µF 16V X7R", "10uF/25V", "1M".
