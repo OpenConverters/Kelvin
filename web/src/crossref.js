@@ -709,6 +709,15 @@ export function famFor(familyKey, original) {
   return v ? { ...f, ...v } : f
 }
 
+// The same catalogue row (by lineno) read again with its measured curves (v23).
+async function withCurves(browse, family, row) {
+  const page = await browse(family, { filters: { mpn: row.mpn, manufacturer: [row.manufacturer] },
+                                      sort: { field: 'lineno', dir: 'asc' }, limit: 1000, curves: true })
+  const hit = page.rows.find((r) => r.lineno === row.lineno)
+  if (!hit) throw new Error(`${row.mpn} (${row.manufacturer}): row ${row.lineno} not found again to read its curves`)
+  return hit
+}
+
 // Run the real cross-reference for one original against one or more target
 // manufacturers. Returns exactly what the view renders — no UI state, no refs —
 // so a headless caller gets the same verdicts a user sees.
@@ -716,6 +725,11 @@ export async function runCrossRef({ family, original, manufacturers, sameType = 
                                     maxResults = 25, poolLimit = POOL_LIMIT,
                                     engine = browserEngine }) {
   const { browse, crossReference } = engine
+  // v23 (owner 2026-11-15): the curve verdicts need every row's measured curves, which live in
+  // the family's curve shard and come on a browse row only when asked for (curves: true). An
+  // original picked off a plain browse carries "curvesOmitted": read it again with its curves,
+  // the same row (lineno), rather than rank it as a record stating no curve.
+  if (original?.curvesOmitted) original = await withCurves(browse, family, original)
   const f = famFor(family, original)
   const origSpec = f.spec(original)
   if (f.primary && origSpec.value_si == null) {
@@ -754,20 +768,22 @@ export async function runCrossRef({ family, original, manufacturers, sameType = 
     filters[f.sameFacet.f] = f.sameFacet.values ? f.sameFacet.values(original) : [original[f.sameFacet.f]]
   }
 
-  const pool = await browse(f.key, { filters, sort: { field: 'lineno', dir: 'asc' }, limit: poolLimit })
+  const pool = await browse(f.key, { filters, sort: { field: 'lineno', dir: 'asc' }, limit: poolLimit, curves: true })
   // A second pool a family adds beside the first (timing: programmable blanks whose range
   // holds a programmable original's frequency). Merged by key; its count is reported too.
   const extra = f.extraPool?.(original, filters)
   let poolRows = pool.rows
   let poolTotal = pool.total
   if (extra) {
-    const more = await browse(f.key, { filters: extra.filters, sort: { field: 'lineno', dir: 'asc' }, limit: poolLimit })
+    const more = await browse(f.key, { filters: extra.filters, sort: { field: 'lineno', dir: 'asc' }, limit: poolLimit, curves: true })
     const seen = new Set(poolRows.map(keyOf))
     const add = more.rows.filter((r) => extra.keep(r) && !seen.has(keyOf(r)))
     poolRows = poolRows.concat(add)
     poolTotal += add.length
   }
   const rows = poolRows.filter((r) => !(r.mpn === original.mpn && r.manufacturer === original.manufacturer))
+  const omitted = rows.find((r) => r.curvesOmitted)
+  if (omitted) throw new Error(`${omitted.mpn}: browse row carries no curves (curvesOmitted) — the cross-reference needs them`)
   const rowByKey = new Map(rows.map((r) => [keyOf(r), r]))
   const missing = originalMissing(f, origSpec)
   // An original whose every source is retracted is not a verified spec either (ABT #2035).

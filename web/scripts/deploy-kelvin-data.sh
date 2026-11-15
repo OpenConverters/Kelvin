@@ -69,6 +69,16 @@ for family in families:
     if size != entry["sourceSize"]:
         bad.append(f"{family}: ndjson {size} B != manifest sourceSize {entry['sourceSize']} B "
                    "(rebuild shards — they were indexed against a different catalogue)")
+    # v23: a family with curves ships its curve shard with the base; the engine refuses a
+    # curve shard of another build, so the pair must be the one the manifest names.
+    curves = entry.get("curves")
+    if curves:
+        cp = os.path.join(src, curves["shard"])
+        if not os.path.exists(cp):
+            bad.append(f"{family}: curve shard {cp} missing")
+        elif os.path.getsize(cp) != curves["size"]:
+            bad.append(f"{family}: curve shard {os.path.getsize(cp)} B != manifest curves.size "
+                       f"{curves['size']} B (rebuild shards)")
 if bad:
     sys.exit("REFUSING to deploy:\n  " + "\n  ".join(bad))
 print(f"local set consistent for: {', '.join(families)}")
@@ -187,7 +197,11 @@ fi
 # 3. Stage (‑‑copy-links: public/kelvin/*.ndjson are symlinks into the TAS checkout).
 echo "staging ${#FAMILIES[@]} families -> $STAGE"
 FILES=(manifest.json)
-for family in "${FAMILIES[@]}"; do FILES+=("$family.kidx" "$family.ndjson"); done
+for family in "${FAMILIES[@]}"; do
+  FILES+=("$family.kidx" "$family.ndjson")
+  # v23: the family's curve shard (gzip sidecar regenerated below with the rest).
+  [[ -f "$SRC/$family.curves.kidx" ]] && FILES+=("$family.curves.kidx")
+done
 (cd "$SRC" && rsync -az --copy-links -e "$SSH" "${FILES[@]}" \
   "$HOST:$STAGE/" --rsync-path="mkdir -p $STAGE && rsync")
 

@@ -71,10 +71,11 @@ async function manifestEntry(family) {
 // ── shard loading, cache-busted by buildId in Cache Storage ──────────────────
 const _shards = new Map() // family -> Promise<meta>
 
-// load progress events for the header's temperature rail: {family, phase: loading|loaded|error}
+// load progress events for the header's temperature rail:
+// {family, phase: loading|loaded|error, kind: 'base'|'curves'}
 export const shardEvents = new EventTarget()
-function emitShard(family, phase) {
-  shardEvents.dispatchEvent(new CustomEvent('shard', { detail: { family, phase } }))
+function emitShard(family, phase, kind = 'base') {
+  shardEvents.dispatchEvent(new CustomEvent('shard', { detail: { family, phase, kind } }))
 }
 
 // The shard layout this engine build reads, asked of the engine itself so it
@@ -85,7 +86,7 @@ function shardFormatVersion() {
   return _fmtPromise
 }
 
-async function fetchShardBytes(family, buildId, { skipCache = false } = {}) {
+async function fetchShardBytes(family, buildId, { skipCache = false, file = `${family}.kidx` } = {}) {
   // buildId hashes the serialized ROWS, and nothing else. A format bump that
   // leaves a family's rows byte-identical therefore leaves its buildId — and so
   // its URL — unchanged, while .kidx is served "public, immutable" for a year:
@@ -95,7 +96,7 @@ async function fetchShardBytes(family, buildId, { skipCache = false } = {}) {
   // engine expects is part of what makes a response acceptable, so it belongs
   // in the URL alongside the build.
   const fmt = await shardFormatVersion()
-  const url = `${KELVIN_BASE}/${family}.kidx?b=${buildId}&v=${fmt}`
+  const url = `${KELVIN_BASE}/${file}?b=${buildId}&v=${fmt}`
   // `.kidx` is served public, immutable for a year, so the browser's OWN http
   // cache will answer this URL for a year too — including with bytes that were
   // stored under it while the wrong file was being served. Clearing Cache
@@ -105,7 +106,7 @@ async function fetchShardBytes(family, buildId, { skipCache = false } = {}) {
   const init = skipCache ? { cache: 'reload' } : undefined
   if (typeof caches === 'undefined') {
     const res = await fetch(url, init)
-    if (!res.ok) throw new Error(`Kelvin shard '${family}' not hosted (HTTP ${res.status})`)
+    if (!res.ok) throw new Error(`Kelvin shard '${file}' not hosted (HTTP ${res.status})`)
     return new Uint8Array(await res.arrayBuffer())
   }
   const cache = await caches.open('kelvin-shards')
@@ -113,11 +114,11 @@ async function fetchShardBytes(family, buildId, { skipCache = false } = {}) {
   const hit = skipCache ? null : await cache.match(url)
   if (hit) return new Uint8Array(await hit.arrayBuffer())
   for (const req of await cache.keys()) {            // drop older builds of this family
-    if (req.url.includes(`/${family}.kidx?`) && req.url !== new Request(url).url)
+    if (req.url.includes(`/${file}?`) && req.url !== new Request(url).url)
       await cache.delete(req)
   }
   const res = await fetch(url, init)
-  if (!res.ok) throw new Error(`Kelvin shard '${family}' not hosted (HTTP ${res.status})`)
+  if (!res.ok) throw new Error(`Kelvin shard '${file}' not hosted (HTTP ${res.status})`)
   // The cache is an OPTIMISATION. Its failure must cost speed, never correctness:
   // the bytes are already in `res`, so a shard that cannot be cached still loads.
   // Unguarded, this put took the whole family down — Chrome refuses Cache entries
@@ -128,7 +129,7 @@ async function fetchShardBytes(family, buildId, { skipCache = false } = {}) {
   try {
     await cache.put(url, res.clone())
   } catch (e) {
-    console.warn(`Kelvin: shard '${family}' not cached (${e.name}); loading without cache`)
+    console.warn(`Kelvin: shard '${file}' not cached (${e.name}); loading without cache`)
   }
   return new Uint8Array(await res.arrayBuffer())
 }
@@ -184,9 +185,58 @@ export function shardLoaded(family) {
   return _shards.has(family)
 }
 
+// ── curve shards (v23, owner 2026-11-15) ─────────────────────────────────────
+// A family's measured curves (ESR / |Z| / L(I) / Coss / Vf ... curves) are a separate file,
+// <family>.curves.kidx, fetched only when something reads curves: the cross-reference
+// (browse with curves: true) and the operating-point loss ranking (select with a
+// lossOperatingPoint). Catalogue browsing, stats and the home view never load them. The
+// engine refuses a curve shard of another build (it names the base build it pairs with), and
+// a curve read before the curve shard is loaded throws — never an empty curve.
+const _curves = new Map() // family -> Promise<meta>
+
+export function ensureCurves(family) {
+  if (!_curves.has(family)) {
+    _curves.set(family, (async () => {
+      await ensureShard(family)
+      const entry = await manifestEntry(family)
+      if (!entry.curves) return null // a family without curves (resistor, timing, ...)
+      emitShard(family, 'loading', 'curves')
+      const load = async (opts) => {
+        const bytes = await fetchShardBytes(family, entry.curves.buildId,
+          { ...opts, file: entry.curves.shard })
+        const meta = await callJson('load_curve_shard', family, bytes)
+        if (String(meta.curvesBuildId) !== String(entry.curves.buildId)) {
+          throw new Error(`${family}: curve shard is build ${meta.curvesBuildId} but the manifest `
+            + `asks for ${entry.curves.buildId}. Redeploy the shards and manifest together.`)
+        }
+        return meta
+      }
+      try {
+        let meta
+        try {
+          meta = await load()
+        } catch (first) {
+          // As for the base shard: one retry past every cache, then the truth.
+          meta = await load({ skipCache: true }).catch(() => { throw first })
+        }
+        emitShard(family, 'loaded', 'curves')
+        return meta
+      } catch (e) {
+        emitShard(family, 'error', 'curves')
+        throw e
+      }
+    })().catch((e) => {
+      _curves.delete(family) // a failed load is retryable, not cached
+      throw e
+    }))
+  }
+  return _curves.get(family)
+}
+
 // ── browse: filter/sort/facet/paginate over the loaded shard (see Browse.hpp) ─
 export async function browse(family, query = {}) {
   await ensureShard(family)
+  if (query.curves) await ensureCurves(family)
   return callJson('browse', family, JSON.stringify(query))
 }
 
@@ -194,6 +244,9 @@ export async function browse(family, query = {}) {
 //    {error:'NoCandidates', rejections, ...} — the caller renders both honestly. ─
 export async function select(family, requirements, options = {}) {
   await ensureShard(family)
+  // The operating-point loss reads the candidates' curves (Coss(Vds), Rds(on)(Tj), ESR(f),
+  // L(I), Vf(If) ...): load them first. Without it the engine throws "curve shard not loaded".
+  if (options.lossOperatingPoint) await ensureCurves(family)
   return callJson('select', family, JSON.stringify(requirements), JSON.stringify(options))
 }
 

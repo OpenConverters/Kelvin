@@ -22,11 +22,14 @@ const buildTag = ref('')
 
 const shardState = reactive({ loading: new Set(), loaded: new Set() })
 shardEvents.addEventListener('shard', (ev) => {
-  const { family, phase } = ev.detail
-  if (phase === 'loading') shardState.loading.add(family)
+  const { family, phase, kind } = ev.detail
+  // v23: a family's curve shard loads on its own (cross-reference, operating-point loss); it
+  // shows in the same progress line but is not one of the twelve family shards counted.
+  const label = kind === 'curves' ? `${family} curves` : family
+  if (phase === 'loading') shardState.loading.add(label)
   else {
-    shardState.loading.delete(family)
-    if (phase === 'loaded') shardState.loaded.add(family)
+    shardState.loading.delete(label)
+    if (phase === 'loaded' && kind !== 'curves') shardState.loaded.add(family)
   }
 })
 

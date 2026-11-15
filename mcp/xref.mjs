@@ -39,9 +39,9 @@ const SHARDS = resolve(arg('shards', join(KELVIN, 'web', 'public', 'kelvin')))
 const wasm = await import(pathToFileURL(join(KELVIN, 'web', 'public', 'kelvin.js')).href)
 const M = await wasm.default()
 
-const loaded = new Set()
+const loaded = new Map() // family -> load_shard meta
 function ensureShard(family) {
-  if (loaded.has(family)) return
+  if (loaded.has(family)) return loaded.get(family)
   const p = join(SHARDS, `${family}.kidx`)
   if (!existsSync(p)) {
     throw new Error(`no shard for '${family}' at ${p} — run web/scripts/build-kelvin-shards.sh`)
@@ -50,7 +50,27 @@ function ensureShard(family) {
   if (typeof out === 'string' && out.startsWith('Exception: ')) {
     throw new Error(`${family}: ${out.slice('Exception: '.length)}`)
   }
-  loaded.add(family)
+  const meta = JSON.parse(out)
+  loaded.set(family, meta)
+  return meta
+}
+
+// v23: a family's measured curves are its own file (<family>.curves.kidx), loaded the first
+// time a browse asks for curves (the cross-reference does). A base shard that names a curve
+// shard and has none beside it is an error, never "no curves".
+const curvesLoaded = new Set()
+function ensureCurves(family) {
+  const meta = ensureShard(family)
+  if (curvesLoaded.has(family) || meta.curvesBuildId === undefined) return
+  const p = join(SHARDS, `${family}.curves.kidx`)
+  if (!existsSync(p)) {
+    throw new Error(`no curve shard for '${family}' at ${p} — run web/scripts/build-kelvin-shards.sh`)
+  }
+  const out = M.load_curve_shard(family, readFileSync(p))
+  if (typeof out === 'string' && out.startsWith('Exception: ')) {
+    throw new Error(`${family}: ${out.slice('Exception: '.length)}`)
+  }
+  curvesLoaded.add(family)
 }
 
 function callJson(fn, ...args) {
@@ -81,6 +101,7 @@ function rawRecord(family, row) {
 const engine = {
   async browse(family, query = {}) {
     ensureShard(family)
+    if (query.curves) ensureCurves(family)
     return callJson('browse', family, JSON.stringify(query))
   },
   async crossReference(category, original, candidates, options = {}) {

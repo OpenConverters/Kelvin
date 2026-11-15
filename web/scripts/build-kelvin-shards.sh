@@ -97,5 +97,24 @@ if bad:
 print("public strip guard: clean")
 PY
 
+# v23: every family the manifest says has curves must have its curve shard beside the base.
+python3 - "$OUT" <<'PY'
+import json, os, sys
+out = sys.argv[1]
+m = json.load(open(os.path.join(out, "manifest.json")))["families"]
+bad = []
+for fam, e in sorted(m.items()):
+    c = e.get("curves")
+    line = f"  {fam:<11} base {e.get('shardSize', 0)/1e6:8.1f} MB"
+    if c:
+        p = os.path.join(out, c["shard"])
+        if not os.path.exists(p) or os.path.getsize(p) != c["size"]:
+            bad.append(f"{fam}: curve shard {p} missing or not the size the manifest names")
+        line += f"   curves {c['size']/1e6:8.1f} MB"
+    print(line)
+if bad:
+    sys.exit("REFUSING: " + "; ".join(bad))
+PY
+
 echo "Kelvin shards + NDJSON written to $OUT"
 ls -la "$OUT"
