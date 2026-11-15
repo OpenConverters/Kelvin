@@ -92,7 +92,8 @@ json spec_for(const std::string& cat, const json& row) {
         o["vceo"] = num("vceo_rated"); o["ic"] = num("ic_continuous");
         o["hfe_min"] = num("hfe_min"); o["transition_frequency"] = num("transition_frequency");
         o["power_dissipation"] = num("power_dissipation");
-        o["vce_sat"] = num("vce_sat"); o["tj_max"] = num("tj_max");
+        o["vce_sat"] = num("vce_sat"); o["vce_sat_ic"] = num("vce_sat_ic");
+        o["tj_max"] = num("tj_max");
         if (!s("polarity").empty()) o["polarity"] = s("polarity");
         o["technology"] = s("technology");
     } else if (cat == "varistor") {

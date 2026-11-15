@@ -700,9 +700,12 @@ struct BjtRow : RowBase {
     std::string technology;
     std::string polarity;  // part.subType: npn / pnp; ratings above are magnitudes for both
     double transition_frequency = kNaN();  // Hz — electrical.transitionFrequency (fT); v24
-    // V — electrical.saturationVoltage (v24). SAS bjt.json states no collector current for it,
-    // so the cross-reference cannot put two on one basis and reports it UNVERIFIED.
+    // V — electrical.saturationVoltage (v24), with the collector current it is stated at
+    // (electrical.saturationVoltageIc, SAS dd9d6e2) and the current hFE is stated at
+    // (electrical.dcCurrentGainIc; carried, not graded yet). NaN when unstated.
     double vce_sat = kNaN();
+    double vce_sat_ic = kNaN();
+    double hfe_ic = kNaN();
     bool is_production = false;
     bool no_thermal() const { return !present(tj_max); }
 };

@@ -681,9 +681,9 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
     // An IGBT's ratings Vces / Ic are critical_ratings (CrossRef.hpp). The table grades the
     // conduction drop and the junction limit (owner 2026-11-15), on the diode's conventions:
     // Vce(sat) like the diode Vf (lower is better, up to 1.2x warns), Tj max like the diode
-    // tj_max (the substitute must reach it, no band). Vce(sat) is compared only when both
-    // records state it at the same collector current (vce_sat_ic); otherwise CrossRef.hpp
-    // reports it UNVERIFIED (owner 2026-11-15).
+    // tj_max (the substitute must reach it, no band). Vce(sat) is compared when both records
+    // state the same collector current (vce_sat_ic) or neither states one; otherwise
+    // CrossRef.hpp reports it UNVERIFIED (owner 2026-11-15, the diode Vf rule).
     static const std::vector<ParamSpec> kIgbt = {
         {"vce_sat", D::Lower, 1.2, std::nullopt, false, false, nullptr},
         {"tj_max", D::Higher, 0.0, 0.0, false, false, nullptr},
@@ -692,8 +692,7 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
     // (CrossRef.hpp); the polarity is an identity like the MOSFET channel (an NPN is never a
     // PNP's substitute); the guaranteed minimum gain warns down to 0.7x, fT too (the GBW
     // band), the power rating down to 0.9x; Vce(sat) and Tj max as for the IGBT (Vce(sat)
-    // only at a common collector current, which SAS bjt.json cannot state today — so it reads
-    // UNVERIFIED whenever both records state one).
+    // compared on a common collector current or when neither states one, CrossRef.hpp).
     static const std::vector<ParamSpec> kBjt = {
         {"polarity", D::ExactMatch, 0.0, std::nullopt, false, false, nullptr},
         {"hfe_min", D::Higher, 0.7, std::nullopt, false, false, nullptr},

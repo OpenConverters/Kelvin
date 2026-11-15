@@ -2039,6 +2039,11 @@ std::optional<BjtRow> extract_bjt(const json& env) {
     // Vce(sat), V (v24), a magnitude like the ratings above (a PNP's may be stated negative).
     if (auto vs = rating_magnitude(get_num(*refs->elec, "saturationVoltage"), pnp); pos(vs))
         r.vce_sat = *vs;
+    // The collector currents Vce(sat) and hFE are stated at (v24, SAS dd9d6e2), magnitudes.
+    if (auto i = rating_magnitude(get_num(*refs->elec, "saturationVoltageIc"), pnp); pos(i))
+        r.vce_sat_ic = *i;
+    if (auto i = rating_magnitude(get_num(*refs->elec, "dcCurrentGainIc"), pnp); pos(i))
+        r.hfe_ic = *i;
     // The junction limit (v24; the row had the field and never filled it), as for the IGBT.
     if (const json* bdi = obj_get(*refs->mi, "datasheetInfo"))
         if (const json* th = obj_get(*bdi, "thermal"))

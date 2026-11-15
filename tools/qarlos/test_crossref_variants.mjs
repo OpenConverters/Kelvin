@@ -331,6 +331,10 @@ for (const [family, orig, category, checkPool, checkSpec] of famCases) {
   checkSpec(seenOrig)
   assert.deepEqual(res.missing, [], family)
 }
+// Varistor energy is a hard key for a metal-oxide original only (varistor_energy_applies).
+assert.ok(famFor('varistor', { technology: 'metalOxide' }).hardKeys.includes('energy_absorption'))
+assert.ok(!famFor('varistor', { technology: 'multiLayer' }).hardKeys.includes('energy_absorption'))
+assert.deepEqual(famFor('varistor', { technology: 'multiLayer' }).spec({ mpn: 'X' }).energy_absorption, null)
 // An analog record with no device type: the identity the ranker turns on is unknown, so
 // the original is not verified (subtype null, never '').
 const noType = famFor('analog', {}).spec({ mpn: 'X', channels: 1 })

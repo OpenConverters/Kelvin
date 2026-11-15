@@ -536,6 +536,15 @@ inline bool both_unknown_cap_applies(const std::string& cat, const std::string& 
     }
     return false;
 }
+// The varistor energy rating (RAS electrical.energyAbsorption, 10/1000 us) as a hard gate
+// (owner 2026-11-15) applies only to the technologies that publish it: the disc / block
+// metal-oxide varistor (RAS part.technology 'metalOxide'). NOT a multilayer chip varistor
+// ('multiLayer'), which is specified by its 8/20 us surge current instead. An original whose
+// technology is not stated gets no energy gate: no technology is assumed (the
+// both_unknown_cap_applies rule).
+inline bool varistor_energy_applies(const std::string& original_technology) {
+    return original_technology == "metalOxide";
+}
 inline std::string primary_rating_label(const std::string& key) {
     static const std::map<std::string, std::string> k = {
         {"vds", "drain-source voltage rating (Vds)"},
@@ -2663,18 +2672,18 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     }
 
     // ── IGBT / BJT Vce(sat) basis (owner 2026-11-15) ─────────────────────────
-    // Vce(sat) rises with the collector current, so two values are compared only when BOTH
-    // records state the current they are quoted at and it is the same one (within the
-    // representation epsilon). Otherwise — a current on one side only, two different
-    // currents, or none stated — the vce_sat row is UNVERIFIED, with a vce_sat_basis row and
-    // a note, and no penalty (the diode Vf basis rule, without a curve to read across).
-    // SAS bjt.json has no field for the BJT's test current, so a BJT pair always lands here.
+    // Vce(sat) rises with the collector current. The diode Vf rule (owner 2026-11-15): two
+    // values are compared when both records state the same current (within the representation
+    // epsilon) or neither states one; when the stated currents differ or only one side states
+    // one, the vce_sat row is UNVERIFIED, with a vce_sat_basis row and a note, and no penalty.
+    // BJT: electrical.saturationVoltageIc (SAS dd9d6e2).
     bool vce_sat_basis_unverified = false;
     if (cat == "igbt" || cat == "bjt") {
         const auto ov = num(original, "vce_sat"), sv = num(cand, "vce_sat");
         const auto oi = num(original, "vce_sat_ic"), si = num(cand, "vce_sat_ic");
         const bool same_basis =
-            oi && si && std::fabs(*oi - *si) <= 1e-9 * std::max(std::fabs(*oi), std::fabs(*si));
+            (!oi && !si) ||
+            (oi && si && std::fabs(*oi - *si) <= 1e-9 * std::max(std::fabs(*oi), std::fabs(*si)));
         if (ov && sv && !same_basis) {
             vce_sat_basis_unverified = true;
             params.push_back({{"name", "vce_sat_basis"}, {"verdict", UNVERIFIED}});
@@ -4618,6 +4627,12 @@ inline json score_candidate(const std::string& cat, const json& original, const 
 
     // ── critical ratings (Vds / Vrrm / rated voltage / Id / If) ──────────────
     for (const auto& r : critical_ratings(cat)) {
+        // A varistor's energy rating is a datasheet rating of the disc / block MOVs only
+        // (varistor_energy_applies): a multilayer chip varistor publishes none, so for any
+        // other original the axis is not compared and nothing is penalised (owner 2026-11-15).
+        if (cat == "varistor" && std::string(r.key) == "energy_absorption" &&
+            !varistor_energy_applies(str(original, "technology")))
+            continue;
         auto o = num(original, r.key), s = num(cand, r.key);
         if (!o && !s) {
             both_unstated(r.key);  // owner 2026-11-14

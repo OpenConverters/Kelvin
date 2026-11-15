@@ -541,6 +541,8 @@ void row_io(Ar& ar, BjtRow& r) {
     ar.str(r.polarity);     // v14
     ar.dbl(r.transition_frequency);  // v24
     ar.dbl(r.vce_sat);               // v24
+    ar.dbl(r.vce_sat_ic);            // v24
+    ar.dbl(r.hfe_ic);                // v24
     ar.boolean(r.is_production);
 }
 

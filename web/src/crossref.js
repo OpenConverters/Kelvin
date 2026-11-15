@@ -428,7 +428,7 @@ export const XREF = [
     key: 'igbt', label: 'IGBTs', category: 'igbt',
     // The ranker's IGBT model (owner 2026-11-15): Vces is the hard gate (below 0.9x
     // rejects), Ic a soft one (critical_ratings("igbt")), Vce(sat) lower-is-better — compared
-    // only when both records state it at the same collector current, UNVERIFIED otherwise —
+    // at a common collector current or when neither states one, UNVERIFIED otherwise —
     // and Tj max must be reached (kIgbt), plus the Si / SiC process check shared with the
     // MOSFET and the diode.
     primary: null,
@@ -451,13 +451,18 @@ export const XREF = [
     // The varistor voltage is the primary value (primary_value_spec("varistor"): PASS within
     // +/-5 %, accept +/-10 %, the marking's own tolerance); the clamping voltage must not
     // rise, the surge current must not fall and the capacitance must not grow (kVaristor).
-    // The maximum continuous DC and AC voltages and the energy rating are hard gates (owner
-    // 2026-11-15, critical_ratings("varistor")): any value below the original's rejects. They
+    // The maximum continuous DC and AC voltages are hard gates for every varistor, the energy
+    // rating for a metal-oxide (disc / block) original only (owner 2026-11-15,
+    // critical_ratings / varistor_energy_applies): any value below the original's rejects. They
     // are NOT pre-gated in the pool: a candidate whose record omits one is UNVERIFIED in the
     // ranker, not refused, and a range filter would drop it.
     primary: { row: 'varistor_voltage', label: 'V varistor', unit: 'V', acceptLo: 0.90, acceptHi: 1.10 },
     sameFacet: { f: 'technology', label: 'type' },
-    hardKeys: ['max_continuous_dc_voltage', 'max_continuous_ac_voltage', 'energy_absorption'],
+    hardKeys: ['max_continuous_dc_voltage', 'max_continuous_ac_voltage'],
+    // The ranker's varistor_energy_applies: energy is a hard key for a metalOxide original only.
+    variantFor: (orig) => (orig?.technology === 'metalOxide'
+      ? { hardKeys: ['max_continuous_dc_voltage', 'max_continuous_ac_voltage', 'energy_absorption'] }
+      : null),
     spec: (r) => ({ ...base(r), value_si: nz(r.varistor_voltage),
       clamping_voltage: nz(r.clamping_voltage), peak_surge_current: nz(r.peak_surge_current),
       max_continuous_dc_voltage: nz(r.max_continuous_dc_voltage), capacitance: nz(r.capacitance),
@@ -529,8 +534,8 @@ export const XREF = [
     // The ranker's BJT model (owner 2026-11-15), on the IGBT / MOSFET pattern: Vceo is the
     // hard gate (below 0.9x rejects), Ic a soft one (critical_ratings("bjt")); the polarity is
     // an identity (an NPN never substitutes for a PNP), so the pool keeps to the original's;
-    // the guaranteed minimum hFE, fT, the power rating, Vce(sat) (at a common collector current
-    // only, which no BJT record states today, so UNVERIFIED) and Tj max are graded (kBjt). The
+    // the guaranteed minimum hFE, fT, the power rating, Vce(sat) (at a common collector current,
+    // or when neither record states one) and Tj max are graded (kBjt). The
     // package is the shared footprint / mount gate on the case code (owner 2026-11-15).
     primary: null,
     sameFacet: null,
@@ -540,7 +545,7 @@ export const XREF = [
     spec: (r) => ({ ...base(r), vceo: nz(r.vceo_rated), ic: nz(r.ic_continuous),
       hfe_min: nz(r.hfe_min), transition_frequency: nz(r.transition_frequency),
       power_dissipation: nz(r.power_dissipation), polarity: r.polarity || null,
-      vce_sat: nz(r.vce_sat),
+      vce_sat: nz(r.vce_sat), vce_sat_ic: nz(r.vce_sat_ic),
       // Raw, NOT through nz(): 0 degC would be a stated value. Absent -> null.
       tj_max: r.tj_max ?? null,
       technology: r.technology ?? '' }),
