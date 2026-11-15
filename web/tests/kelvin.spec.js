@@ -71,8 +71,9 @@ test.describe('kelvin site', () => {
     await inputs.nth(2).fill('100m')
     await page.getByRole('button', { name: 'Find parts' }).click()
     await expect(page.locator('.cand').first()).toBeVisible({ timeout: 30_000 })
-    // deterministic engine: same question, same answer
-    await expect(page.locator('.cand').first().locator('.mpn-link')).toHaveText('CSD18536KCS')
+    // deterministic engine: same question, same answer. XP10TN028YT since TAS 6bcb7bb corrected
+    // the TI NexFET records (ABT #2426; owner-approved expectation change, 2026-11-15)
+    await expect(page.locator('.cand').first().locator('.mpn-link')).toHaveText('XP10TN028YT')
     await expect(page.locator('.cand').first().locator('.meter.pass').first()).toBeVisible()
   })
 
@@ -212,6 +213,14 @@ test.describe('kelvin site', () => {
     await expect(page.locator('.chips .chip.on')).toHaveCount(1)
     // wait for the FILTERED rows (pinning the stale pre-filter rows would compare inductors)
     await expect(page.locator('tbody tr .mpn').first()).not.toHaveText(firstBefore, { timeout: 10_000 })
+    // the catalogue's default order is random (owner, 2026-11-15): narrow to the Würth 742792
+    // beads the test pinned in file order before, and sort by MPN so the same two are pinned
+    // every run (owner-approved test change, 2026-11-15)
+    await page.getByPlaceholder('search part number').fill('742792')
+    await expect(page.locator('tbody tr .mpn').first()).toContainText('742792', { timeout: 10_000 })
+    await page.locator('th.sortable', { hasText: 'MPN' }).click()
+    await expect(page.locator('th.sorted-asc', { hasText: 'MPN' })).toBeVisible()
+    await page.waitForLoadState('networkidle')
     await page.locator('tbody tr .pin-btn').nth(0).click()
     await page.locator('tbody tr .pin-btn').nth(1).click()
     await page.getByRole('button', { name: /overlay curves/ }).click()
