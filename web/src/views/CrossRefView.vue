@@ -202,7 +202,7 @@ function openPart(r) {
       <section class="setup panel">
         <p class="section-label">Original part — {{ fam.label }}</p>
         <p class="intro">Pick the part to replace and the makers you'd accept. Kelvin ranks their
-        parts against it — published rules, no AI.</p>
+        parts against it.</p>
         <p v-if="fam.caveat" class="caveat">{{ fam.caveat }}</p>
 
         <label class="field">

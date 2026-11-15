@@ -505,8 +505,7 @@ function priceCell(c) {
         <p v-if="errorMsg" class="err mono">{{ errorMsg }}</p>
 
         <div v-if="!ran" class="idle">
-          <p>Set the requirement and <b>Find parts</b>. Selection runs the same deterministic
-          Kelvin engine Kirchhoff and Heaviside use — same question, same answer.</p>
+          <p>Set the requirement and <b>Find parts</b>.</p>
         </div>
 
         <!-- NoCandidates: the rejection histogram is the answer, not a failure page -->

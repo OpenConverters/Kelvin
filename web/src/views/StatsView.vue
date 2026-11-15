@@ -225,7 +225,7 @@ const hoverBucket = ref(null) // {histField, i, ...bar}
 
       <!-- spec distributions -->
       <section v-if="hists.length" class="panel pane">
-        <p class="section-label">Spec distributions <span class="dim">— computed live over the loaded shard; undocumented parts counted as absent</span></p>
+        <p class="section-label">Spec distributions</p>
         <div class="hist-grid">
           <figure v-for="h in hists" :key="h.field" class="hist">
             <figcaption>

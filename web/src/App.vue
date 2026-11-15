@@ -41,7 +41,7 @@ const railLabel = computed(() => {
   if (boot.error) return 'FAULT'
   if (boot.phase !== 'ready') return boot.detail
   if (shardState.loading.size) return `cooling ${[...shardState.loading].join(', ')} shard…`
-  return `${shardState.loaded.size}/${FAMILIES.length} shards at operating temperature`
+  return `${shardState.loaded.size}/${FAMILIES.length} shards loaded`
 })
 
 onMounted(async () => {
@@ -109,7 +109,6 @@ const VIEWS = [
         </svg>
         <div class="brand-text">
           <h1>KELVIN</h1>
-          <p>deterministic parts librarian</p>
         </div>
       </a>
 
@@ -171,7 +170,6 @@ const VIEWS = [
     <p v-else-if="store.pinNote" class="tray-note-solo mono">{{ store.pinNote }}</p>
 
     <footer class="foot">
-      <span>same question, same answer — selection is deterministic and runs entirely in your browser</span>
       <span class="foot-links">
         sibling of
         <a href="https://kirchhoff.openconverters.com" target="_blank" rel="noopener">Kirchhoff</a> ·

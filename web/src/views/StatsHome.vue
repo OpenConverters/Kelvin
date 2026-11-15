@@ -63,7 +63,7 @@ function openFamily(key) {
     </div>
 
     <section class="panel pane">
-      <p class="section-label">Parts per family <span class="dim">— click a family for its full survey</span></p>
+      <p class="section-label">Parts per family</p>
       <button
         v-for="r in rows" :key="r.key"
         class="bar-row" type="button"

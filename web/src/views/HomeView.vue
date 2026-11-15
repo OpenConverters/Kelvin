@@ -55,11 +55,10 @@ const fmt = (n) => n.toLocaleString('en-US')
     <!-- ── purpose ─────────────────────────────────────────────────────────── -->
     <section class="hero panel">
       <div class="hero-text">
-        <p class="section-label">the shared parts librarian · OpenConverters</p>
         <h2>Real parts, ranked the same way every time.</h2>
         <p class="lede">
           Tell Kelvin what your circuit needs. It ranks real catalogue parts and shows why each
-          one fits — and why the rest didn't. No AI: same question, same answer.
+          one fits, and why the rest didn't.
         </p>
         <div class="cta">
           <a class="btn primary" href="#/catalog/magnetic">Browse the catalogue ›</a>
@@ -78,17 +77,14 @@ const fmt = (n) => n.toLocaleString('en-US')
     <!-- ── principles ──────────────────────────────────────────────────────── -->
     <section class="principles" aria-label="what Kelvin guarantees">
       <article class="panel principle">
-        <p class="section-label">deterministic</p>
         <h3>Same question, same answer</h3>
-        <p>Same input, same ranking — every time, in every engine.</p>
+        <p>Same input, same ranking, in the browser and in the native library.</p>
       </article>
       <article class="panel principle">
-        <p class="section-label">auditable</p>
         <h3>Nothing hidden</h3>
         <p>Every rejected part is counted, with its reason. Every pick shows its margins.</p>
       </article>
       <article class="panel principle">
-        <p class="section-label">ranked, with verdicts</p>
         <h3>Near-misses still show up</h3>
         <p>
           Every requirement gets its own
@@ -97,12 +93,10 @@ const fmt = (n) => n.toLocaleString('en-US')
         </p>
       </article>
       <article class="panel principle">
-        <p class="section-label">parity-locked</p>
         <h3>Proven equal</h3>
         <p>Matches Heaviside's selector exactly: 0 mismatches across the full database.</p>
       </article>
       <article class="panel principle">
-        <p class="section-label">in your browser</p>
         <h3>No backend</h3>
         <p>Runs in your browser. A part's full record loads only when you open it.</p>
       </article>
@@ -111,9 +105,9 @@ const fmt = (n) => n.toLocaleString('en-US')
     <!-- ── catalogue summary ───────────────────────────────────────────────── -->
     <section class="catalogue" aria-label="catalogue summary">
       <div class="cat-head">
-        <p class="section-label">what the librarian holds</p>
+        <p class="section-label">Catalogue</p>
         <p class="cat-note">
-          Counted from the index this site serves. “Production” = status recorded as production.
+          “Production” = status recorded as production.
         </p>
       </div>
       <p v-if="drift" class="drift mono">
@@ -162,7 +156,7 @@ const fmt = (n) => n.toLocaleString('en-US')
           </template>
 
           <p v-if="c.unreadableRows" class="unreadable">
-            + {{ fmt(c.unreadableRows) }} of {{ fmt(c.sourceLines) }} source rows unreadable by the index — counted, not indexed
+            {{ fmt(c.unreadableRows) }} of {{ fmt(c.sourceLines) }} source rows unreadable
           </p>
 
           <nav class="fam-links" :aria-label="`${c.label} views`">

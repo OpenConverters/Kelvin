@@ -21,7 +21,7 @@ export const FAMILIES = [
       { f: 'family', label: 'Series' },
     ],
     recommend: {
-      intro: 'Every part is ranked toward your targets — nothing is silently dropped.',
+      intro: 'Every part is ranked toward your targets. Nothing is dropped silently.',
       fields: [
         { key: 'inductance', label: 'Inductance', unit: 'H', dim: true, placeholder: '10u' },
         { key: 'peakCurrent', label: 'Peak current', unit: 'A', placeholder: '3' },
