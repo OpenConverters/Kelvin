@@ -339,5 +339,13 @@ assert.deepEqual(famFor('varistor', { technology: 'multiLayer' }).spec({ mpn: 'X
 // the original is not verified (subtype null, never '').
 const noType = famFor('analog', {}).spec({ mpn: 'X', channels: 1 })
 assert.equal(noType.subtype, null)
+// An ADC's conversion architecture reaches the ranker and is a hard key for an ADC original
+// only (Qarlos 2026-11-20, MAX1305 SAR -> AD9228 pipeline); '' -> null, never ''.
+const max1305 = { mpn: 'MAX1305', manufacturer: 'Maxim Integrated', device_type: 'adc',
+  channels: 4, resolution: 12, sample_rate: 1080000, architecture: 'SAR' }
+assert.equal(famFor('analog', max1305).spec(max1305).architecture, 'SAR')
+assert.ok(famFor('analog', max1305).hardKeys.includes('architecture'))
+assert.ok(!famFor('analog', { device_type: 'operationalAmplifier' }).hardKeys.includes('architecture'))
+assert.equal(famFor('analog', max1305).spec({ ...max1305, architecture: '' }).architecture, null)
 
 console.log('crossref variants: all checks passed')

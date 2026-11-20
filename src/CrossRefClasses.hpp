@@ -951,6 +951,87 @@ inline std::string diode_configuration_conflict(const std::string& original_case
            ratings;
 }
 
+// ── IGBT power module vs discrete IGBT (Qarlos 2026-11-20) ───────────────────
+// SAS igbt.json describes a DISCRETE IGBT: part.dieConfiguration admits only "single" ("absent
+// also means one die"), and a multi-die IGBT package is a power module, described by
+// module.json. A record in the IGBT catalogue is therefore a discrete unless it SAYS otherwise —
+// and what says otherwise is its case string (part.case / mechanical.case, the row's
+// case_code): 143 IGBT records state the case "Module" outright, others name a power-module
+// outline (ACEPACK, INT-A-PAK, EconoPACK, EasyPACK, PrimePACK, 62mm, SEMITRANS / SEMITOP /
+// SKiiP, EMIPAK, Vishay MTP, Infineon IHM / IHV, Microchip SP1-SP6). Such a part was offered as
+// a minor-review substitute for a discrete: DF100R07W1H5FPB53BPSA2 (case "Module") for
+// NGTB35N65FL2WG. Only outlines that exist solely as multi-chip modules are listed; a SOT-227 /
+// ISOTOP carries one IGBT die as often as not and is NOT a module here (its board attach is the
+// mount gate's business). An unstated or unreadable case ("Unknown", "-", none) declares
+// nothing, so the record is the discrete its schema defines it to be.
+inline bool declares_igbt_module(const std::string& case_code) {
+    std::string u;
+    for (char ch : case_code) {
+        const auto c = static_cast<unsigned char>(ch);
+        if (c >= 0x80) continue;  // "ACEPACK(TM) 1", "SEMITOP(R)2": the mark is not the outline
+        u += static_cast<char>(std::toupper(c));
+    }
+    static const char* kModuleOutlines[] = {"MODULE",    "ACEPACK",  "INT-A-PAK", "ECONO",
+                                            "EASYPACK",  "AG-EASY",  "PRIMEPACK", "AG-PRIME",
+                                            "62MM",      "SEMITRANS", "SEMITOP",  "SKIIP",
+                                            "EMIPAK",    "AG-IHM",   "AG-IHV"};
+    for (const char* o : kModuleOutlines)
+        if (u.find(o) != std::string::npos) return true;
+    // Vishay's MTP module ("MTP", "12-MTP") as a whole word, and Microchip's SP1 ... SP6 outlines
+    // ("SP3F", "SP6-P") as the whole case string.
+    static const std::regex mtp(R"((^|[^A-Z])MTP([^A-Z]|$))");
+    static const std::regex sp(R"(^\s*SP[1-6]F?(-P)?\s*$)");
+    return std::regex_search(u, mtp) || std::regex_match(u, sp);
+}
+
+// The DISCRETE side of the comparison: a case string naming a discrete power outline (TO-xxx,
+// D2PAK / DPAK / I2PAK / IPAK / H2PAK, PLUS220/247/264, ISOPLUS, MAX247, T-MAX, SOT-223, an
+// Infineon PG-TO / PG-HSIP package, TO-LL, PQFN), or a record that states no case at all
+// ("", "Unknown", "-", "Package Unavailable") — the discrete its schema defines it to be. Any
+// other case string ("M274", "D3", "F2", "SOT-227", "SMPD", ...) is unknown: it is neither listed
+// as a module nor read as a discrete, so it raises no conflict either way. Without that third
+// state a Fuji 2MBI module whose case reads "M274" was taken for a discrete and every real
+// module offered for it was flagged.
+inline bool declares_igbt_discrete(const std::string& case_code) {
+    std::string u;
+    for (char ch : case_code) {
+        const auto c = static_cast<unsigned char>(ch);
+        if (c >= 0x80) continue;
+        u += static_cast<char>(std::toupper(c));
+    }
+    const auto b = u.find_first_not_of(" \t");
+    if (b == std::string::npos) return true;  // no case on record
+    u = u.substr(b, u.find_last_not_of(" \t") - b + 1);
+    if (u == "UNKNOWN" || u == "-" || u == "PACKAGE UNAVAILABLE") return true;
+    if (declares_igbt_module(u)) return false;
+    static const std::regex discrete(
+        R"((^|[^A-Z])(TO-?\d|D2PAK|D3PAK|DPAK|I2PAK|IPAK|H2PAK|PLUS2(20|47|64)|ISOPLUS ?(2|I4|I5)|MAX247|T-MAX|SOT-?223|PG-TO|PG-HSIP|TO-LL|PQFN))");
+    return std::regex_search(u, discrete);
+}
+
+// Why a module <-> discrete IGBT swap is not a substitution, phrased for the direction it
+// happened in. Empty when the two sides agree, or when either side's case is neither a module
+// outline nor a discrete one (declares_igbt_discrete).
+inline std::string igbt_configuration_conflict(const std::string& original_case,
+                                               const std::string& substitute_case) {
+    const bool o_mod = declares_igbt_module(original_case);
+    const bool s_mod = declares_igbt_module(substitute_case);
+    if (o_mod == s_mod) return "";
+    if (o_mod ? !declares_igbt_discrete(substitute_case) : !declares_igbt_discrete(original_case))
+        return "";
+    const std::string ratings =
+        "its Vces, Ic and Vce(sat) are the module's per-switch ratings, compared here against a "
+        "single discrete die, and its board attach, isolation, thermal path and gate drive are a "
+        "different design";
+    if (s_mod)
+        return "this is a multi-chip IGBT POWER MODULE (case '" + substitute_case +
+               "'), and the original is a discrete IGBT: no land pattern makes it sit on the "
+               "original's pads, and " + ratings;
+    return "the original is a multi-chip IGBT POWER MODULE (case '" + original_case +
+           "'), and this is a discrete IGBT: it replaces at most one switch of the module, on a "
+           "different board and heatsink layout, and " + ratings;
+}
+
 // ── Quartz crystal load capacitance ──────────────────────────────────────────
 // A crystal does not have a frequency on its own: it has a frequency AT a
 // specified load capacitance. The board's load network (two capacitors plus

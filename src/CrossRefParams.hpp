@@ -869,6 +869,16 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
     static const std::vector<ParamSpec> kAnalog = {
         {"subtype", D::ExactMatch, 0.0, std::nullopt, false, true, nullptr},
         {"channels", D::ExactMatch, 0.0, std::nullopt, false, true, nullptr},
+        // An ADC's conversion architecture (AAS adc electrical.architecture: SAR / deltaSigma /
+        // pipeline / flash / dualSlope / folding) is an identity (Qarlos 2026-11-20): a 65 MSPS
+        // pipeline AD9228 for a SAR MAX1305 has a different latency, input structure and
+        // clocking, and a delta-sigma converter (AD7150, a capacitance-to-digital converter its
+        // record files as an adc) is no drop-in for a pipeline one. A hard key: both stated and
+        // different rejects; one side unstated is UNVERIFIED, noted and capped below drop_in
+        // (CrossRef.hpp). Compared for ADC originals only — on the other analog subtypes the
+        // field is stated for a few special cases (zeroDrift / currentFeedback op-amps) and its
+        // absence there says nothing.
+        {"architecture", D::ExactMatch, 0.0, std::nullopt, false, false, nullptr},
         {"supply_min_V", D::Lower, 0.0, 0.3, false, false, nullptr},
         {"supply_max_V", D::Higher, 0.9, std::nullopt, false, false, nullptr},
         {"gbw", D::Higher, 0.7, std::nullopt, false, false, nullptr},
@@ -1015,6 +1025,7 @@ inline std::string param_label(const std::string& key) {
         {"max_continuous_ac_voltage", "maximum continuous AC voltage"},
         {"energy_absorption", "energy rating"},
         {"on_resistance", "on-resistance"},
+        {"architecture", "conversion architecture"},
     };
     for (const auto& [k, label] : kLabels)
         if (k == key) return label;

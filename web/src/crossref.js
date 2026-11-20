@@ -508,9 +508,18 @@ export const XREF = [
       propagation_delay: nz(r.propagation_delay), on_resistance: nz(r.on_resistance),
       rail_to_rail_input: r.rail_to_rail_input || null,
       rail_to_rail_output: r.rail_to_rail_output || null,
-      output_stage: r.output_stage || null }),
+      output_stage: r.output_stage || null,
+      // An ADC's conversion architecture (SAR / deltaSigma / pipeline ...): an identity for an
+      // ADC original (is_hard_param("analog"); Qarlos 2026-11-20). '' -> null, NOT '' (ABT #505).
+      architecture: r.architecture || null }),
+    // For an ADC original the architecture is a hard key too, so an ADC that does not state it
+    // is not a verified original (the FAE honesty rule). Other subtypes do not compare it.
+    variantFor: (orig) => (orig?.device_type === 'adc'
+      ? { hardKeys: ['subtype', 'channels', 'architecture'] }
+      : null),
     params: [
       { key: 'channels', label: 'ch', row: 'channels', unit: '' },
+      { key: 'architecture', label: 'arch', row: 'architecture', str: true },
       { key: 'supply_min_V', label: 'Vsup min', row: 'vsupply_min', unit: 'V' },
       { key: 'supply_max_V', label: 'Vsup max', row: 'vsupply_max', unit: 'V' },
       { key: 'gbw', label: 'GBW', row: 'gain_bandwidth', unit: 'Hz' },

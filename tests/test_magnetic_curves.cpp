@@ -52,6 +52,7 @@ json spec_of(const kelvin::MagneticRow& r, bool bead = false) {
            {"length_m", nz(r.length_m)}, {"width_m", nz(r.width_m)},
            {"height_m", nz(r.height_m)}, {"case_code", r.case_code}, {"mount", r.mount},
            {"lead_pitch_m", nz(r.lead_pitch_m)}, {"is_production", r.is_production},
+           {"lifecycle_status", r.status.empty() ? json(nullptr) : json(r.status)},
            {"provenance_retracted", r.provenance_retracted},
            {"rated_current", nz(r.rated_current)}, {"dcr", nz(r.dcr)}, {"srf", nz(r.srf)},
            {"temp_min_C", raw(r.temp_min_c)}, {"temp_max_C", raw(r.temp_max_c)},

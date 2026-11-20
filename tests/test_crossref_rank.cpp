@@ -9,7 +9,7 @@ using namespace kelvin::crossref;
 
 namespace {
 json mag(const std::string& mpn, double L, double isat, double irms = 5.0, double dcr = 0.02) {
-    return {{"mpn", mpn}, {"value_si", L}, {"saturation_current", isat},
+    return {{"mpn", mpn}, {"lifecycle_status", "production"}, {"value_si", L}, {"saturation_current", isat},
             {"rated_current", irms}, {"dcr", dcr}};
 }
 }  // namespace
@@ -65,7 +65,7 @@ TEST_CASE("ranking: right-sized outranks grossly-oversized, wrong-value sinks", 
 TEST_CASE("capacitor max-temp downgrade demotes to partial", "[crossref][rank]") {
     json original = {{"mpn", "O"}, {"value_si", 1e-7}, {"voltage", 16.0}, {"temp_max_C", 125.0}};
     json cands = json::array({
-        {{"mpn", "X5R"}, {"value_si", 1e-7}, {"voltage", 25.0}, {"temp_max_C", 85.0}}});
+        {{"mpn", "X5R"}, {"lifecycle_status", "production"}, {"value_si", 1e-7}, {"voltage", 25.0}, {"temp_max_C", 85.0}}});
     Options opt; opt.original_verified = true;
     auto r = cross_reference("capacitor", original, cands, opt);
     REQUIRE(r["candidates"][0]["status"] == "partial");
@@ -85,6 +85,7 @@ TEST_CASE("a substitute with no ESR reads unverified, not failed", "[crossref][r
                      {"temp_min_C", -55.0}, {"temp_max_C", 135.0}};
     json blind = original;  // identical part, minus the ESR its record never states
     blind["mpn"] = "DCP4L053507ID2JSC9";
+    blind["lifecycle_status"] = "production";
     blind["esr"] = nullptr;
     blind["esr_frequency"] = nullptr;
     json measured = blind;
@@ -147,9 +148,9 @@ TEST_CASE("a shifted resistor value cannot tie its exact-value siblings, and say
     json original = {{"mpn", "ERA2AEC2152X"}, {"value_si", 21500.0}, {"power_rating", 0.063},
                      {"tolerance_pct", 0.25}, {"case_code", "0402"}};
     json cands = json::array({
-        {{"mpn", "RT0402BRD0721K3L"}, {"value_si", 21300.0}, {"power_rating", 0.063},
+        {{"mpn", "RT0402BRD0721K3L"}, {"lifecycle_status", "production"}, {"value_si", 21300.0}, {"power_rating", 0.063},
          {"tolerance_pct", 0.1}, {"case_code", "0402"}},
-        {{"mpn", "RT0402BRD0721K5L"}, {"value_si", 21500.0}, {"power_rating", 0.063},
+        {{"mpn", "RT0402BRD0721K5L"}, {"lifecycle_status", "production"}, {"value_si", 21500.0}, {"power_rating", 0.063},
          {"tolerance_pct", 0.1}, {"case_code", "0402"}},
     });
     auto r = cross_reference("resistor", original, cands, Options{});
@@ -225,7 +226,7 @@ TEST_CASE("an unknown category is refused, not ranked", "[crossref][rank]") {
 
 TEST_CASE("a varistor is matched on its varistor voltage", "[crossref][rank]") {
     json original = {{"mpn", "O"}, {"value_si", 30.0}};
-    json cands = json::array({{{"mpn", "same"}, {"value_si", 30.0}},
+    json cands = json::array({{{"mpn", "same"}, {"lifecycle_status", "production"}, {"value_si", 30.0}},
                               {{"mpn", "tenfold"}, {"value_si", 300.0}}});
     auto r = cross_reference("varistor", original, cands);
     REQUIRE(r["candidates"][0]["mpn"] == "same");
@@ -243,7 +244,7 @@ TEST_CASE("a ceramic of unstated class is not replaced by a film capacitor", "[c
     json original = {{"mpn", "O"}, {"value_si", 1e-7}, {"voltage", 100.0}, {"technology", "ceramic"}};
     json cands = json::array({{{"mpn", "film"}, {"value_si", 1e-7}, {"voltage", 100.0},
                                {"technology", "film-polypropylene"}},
-                              {{"mpn", "mlcc"}, {"value_si", 1e-7}, {"voltage", 100.0},
+                              {{"mpn", "mlcc"}, {"lifecycle_status", "production"}, {"value_si", 1e-7}, {"voltage", 100.0},
                                {"technology", "ceramic-class-2"}}});
     auto r = cross_reference("capacitor", original, cands);
     REQUIRE(r["candidates"][0]["mpn"] == "mlcc");
@@ -252,7 +253,7 @@ TEST_CASE("a ceramic of unstated class is not replaced by a film capacitor", "[c
 
 TEST_CASE("a bead a few percent under the original's impedance is the same bead", "[crossref][rank]") {
     json original = {{"mpn", "O"}, {"value_si", 618.0}, {"impedance_100mhz", 618.0}};
-    json cands = json::array({{{"mpn", "B600"}, {"value_si", 600.0}, {"impedance_100mhz", 600.0}}});
+    json cands = json::array({{{"mpn", "B600"}, {"lifecycle_status", "production"}, {"value_si", 600.0}, {"impedance_100mhz", 600.0}}});
     auto r = cross_reference("chipBead", original, cands);
     for (const auto& p : r["candidates"][0]["params"])
         if (p["name"] == "impedance_100mhz") REQUIRE(p["verdict"] == "pass");
@@ -261,15 +262,15 @@ TEST_CASE("a bead a few percent under the original's impedance is the same bead"
 TEST_CASE("a capacitor well above the original's value is not a drop-in", "[crossref][rank]") {
     json original = {{"mpn", "O"}, {"value_si", 33e-6}, {"voltage", 100.0}};
     auto r = cross_reference("capacitor", original,
-                             json::array({{{"mpn", "47u"}, {"value_si", 47e-6}, {"voltage", 100.0}}}));
+                             json::array({{{"mpn", "47u"}, {"lifecycle_status", "production"}, {"value_si", 47e-6}, {"voltage", 100.0}}}));
     REQUIRE(r["candidates"][0]["status"] == "partial");
 }
 
 TEST_CASE("with no stated temperature grade the 125 C part wins a tie", "[crossref][rank]") {
     json original = {{"mpn", "O"}, {"value_si", 22e-6}, {"technology", "ceramic"}};
     json cands = json::array(
-        {{{"mpn", "x5r"}, {"value_si", 22e-6}, {"technology", "ceramic-class-2"}, {"temp_max_C", 85.0}},
-         {{"mpn", "x7r"}, {"value_si", 22e-6}, {"technology", "ceramic-class-2"}, {"temp_max_C", 125.0}}});
+        {{{"mpn", "x5r"}, {"lifecycle_status", "production"}, {"value_si", 22e-6}, {"technology", "ceramic-class-2"}, {"temp_max_C", 85.0}},
+         {{"mpn", "x7r"}, {"lifecycle_status", "production"}, {"value_si", 22e-6}, {"technology", "ceramic-class-2"}, {"temp_max_C", 125.0}}});
     auto r = cross_reference("capacitor", original, cands);
     REQUIRE(r["candidates"][0]["mpn"] == "x7r");
 }
@@ -281,9 +282,9 @@ TEST_CASE("a connector of the other gender is refused; another pitch is a redesi
     json cands = json::array(
         {{{"mpn", "female"}, {"family", "pinHeaderSocket"}, {"positions", 6},
           {"polarity", "female"}, {"pitch_mm", 2.54}},
-         {{"mpn", "2mm"}, {"family", "pinHeaderSocket"}, {"positions", 6},
+         {{"mpn", "2mm"}, {"lifecycle_status", "production"}, {"family", "pinHeaderSocket"}, {"positions", 6},
           {"polarity", "male"}, {"pitch_mm", 2.0}},
-         {{"mpn", "silent"}, {"family", "pinHeaderSocket"}, {"positions", 6}}});
+         {{"mpn", "silent"}, {"lifecycle_status", "production"}, {"family", "pinHeaderSocket"}, {"positions", 6}}});
     auto r = cross_reference("connector", o, cands);
     for (const auto& c : r["candidates"]) {
         if (c["mpn"] == "female") REQUIRE(c["status"] == "no_substitute");
@@ -299,4 +300,33 @@ TEST_CASE("the crystal load-capacitance gate reads CL stated in pF", "[crossref]
                                {"frequency", 16e6}, {"load_capacitance_pF", 18.0}}});
     auto r = cross_reference("timeBase", o, cands);
     REQUIRE(r["candidates"][0]["status"] == "no_substitute");
+}
+
+// ABT #2432: a substitute spec must carry `lifecycle_status` (its record's
+// manufacturerInfo.status, null when the record states none). Without it the ranker used to
+// fall back to `is_production`, which cannot tell "not stated" from a stated non-production
+// status; now the spec is refused, loudly, naming the part and the key.
+TEST_CASE("a substitute spec without lifecycle_status throws", "[crossref][rank][abt2432]") {
+    json original = {{"mpn", "O"}, {"value_si", 1e-7}, {"voltage", 50.0}};
+    json bare = {{"mpn", "NO-KEY"}, {"value_si", 1e-7}, {"voltage", 50.0}, {"is_production", false}};
+    try {
+        cross_reference("capacitor", original, json::array({bare}), Options{});
+        FAIL("a spec without lifecycle_status was ranked");
+    } catch (const std::invalid_argument& e) {
+        const std::string msg = e.what();
+        CHECK(msg.find("'NO-KEY'") != std::string::npos);
+        CHECK(msg.find("'lifecycle_status'") != std::string::npos);
+    }
+    json wrong_type = bare;
+    wrong_type["lifecycle_status"] = false;
+    CHECK_THROWS_AS(cross_reference("capacitor", original, json::array({wrong_type}), Options{}),
+                    std::invalid_argument);
+    // A record that states no status is null, not absent: UNVERIFIED, never a throw.
+    json unstated = bare;
+    unstated["lifecycle_status"] = nullptr;
+    const json r = cross_reference("capacitor", original, json::array({unstated}), Options{});
+    bool unverified = false;
+    for (const auto& p : r["candidates"][0]["params"])
+        if (p["name"] == "lifecycle") unverified = p["verdict"] == "unverified";
+    CHECK(unverified);
 }

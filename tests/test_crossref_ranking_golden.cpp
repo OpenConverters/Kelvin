@@ -52,10 +52,10 @@ TEST_CASE("golden: MOSFET ranking is value-then-headroom, current shortfall sink
     //                rather than being rejected outright.
     json original = {{"mpn", "O"}, {"vds", 60.0}, {"id", 100.0}, {"rds_on", 0.002}};
     json cands = json::array({
-        {{"mpn", "BIG_VDS"}, {"vds", 650.0}, {"id", 100.0}, {"rds_on", 0.002}},
-        {{"mpn", "WEAK_I"}, {"vds", 60.0}, {"id", 30.0}, {"rds_on", 0.002}},
-        {{"mpn", "EXACT"}, {"vds", 60.0}, {"id", 100.0}, {"rds_on", 0.002}},
-        {{"mpn", "BETTER"}, {"vds", 75.0}, {"id", 100.0}, {"rds_on", 0.0015}},
+        {{"mpn", "BIG_VDS"}, {"lifecycle_status", "production"}, {"vds", 650.0}, {"id", 100.0}, {"rds_on", 0.002}},
+        {{"mpn", "WEAK_I"}, {"lifecycle_status", "production"}, {"vds", 60.0}, {"id", 30.0}, {"rds_on", 0.002}},
+        {{"mpn", "EXACT"}, {"lifecycle_status", "production"}, {"vds", 60.0}, {"id", 100.0}, {"rds_on", 0.002}},
+        {{"mpn", "BETTER"}, {"lifecycle_status", "production"}, {"vds", 75.0}, {"id", 100.0}, {"rds_on", 0.0015}},
     });
     auto o = order("mosfet", original, cands);
     REQUIRE(o.size() == 4);
@@ -75,9 +75,9 @@ TEST_CASE("golden: capacitor dielectric + family ordering", "[crossref][golden]"
     json cands = json::array({
         {{"mpn", "TANT"}, {"value_si", 1e-7}, {"voltage", 50.0},
          {"technology", "tantalum-mno2"}},
-        {{"mpn", "X5R"}, {"value_si", 1e-7}, {"voltage", 50.0}, {"package", "0603"},
+        {{"mpn", "X5R"}, {"lifecycle_status", "production"}, {"value_si", 1e-7}, {"voltage", 50.0}, {"package", "0603"},
          {"technology", "ceramic-class-2"}, {"dielectric_code", "X5R"}},
-        {{"mpn", "X7R_SAME"}, {"value_si", 1e-7}, {"voltage", 50.0}, {"package", "0603"},
+        {{"mpn", "X7R_SAME"}, {"lifecycle_status", "production"}, {"value_si", 1e-7}, {"voltage", 50.0}, {"package", "0603"},
          {"technology", "ceramic-class-2"}, {"dielectric_code", "X7R"}},
     });
     auto o = order("capacitor", original, cands);
@@ -95,8 +95,8 @@ TEST_CASE("golden: diode voltage ordering", "[crossref][golden]") {
     json original = {{"mpn", "O"}, {"vrrm", 100.0}, {"if_avg", 3.0}, {"technology", "schottky"}};
     json cands = json::array({
         {{"mpn", "UNDER_V"}, {"vrrm", 60.0}, {"if_avg", 3.0}, {"technology", "schottky"}},
-        {{"mpn", "SAME"}, {"vrrm", 100.0}, {"if_avg", 3.0}, {"technology", "schottky"}},
-        {{"mpn", "HIGHER_V"}, {"vrrm", 150.0}, {"if_avg", 3.0}, {"technology", "schottky"}},
+        {{"mpn", "SAME"}, {"lifecycle_status", "production"}, {"vrrm", 100.0}, {"if_avg", 3.0}, {"technology", "schottky"}},
+        {{"mpn", "HIGHER_V"}, {"lifecycle_status", "production"}, {"vrrm", 150.0}, {"if_avg", 3.0}, {"technology", "schottky"}},
     });
     auto o = order("diode", original, cands);
     REQUIRE(o.size() == 3);
@@ -112,10 +112,10 @@ TEST_CASE("golden: ferrite bead curve ordering", "[crossref][golden]") {
     json original = {{"mpn", "O"}, {"impedance_100mhz", 151.0}, {"impedance_peak", 939.0},
                      {"impedance_peak_freq", 1038e6}, {"dcr", 0.325}, {"rated_current", 0.85}};
     json cands = json::array({
-        {{"mpn", "NO_CURVE"}, {"dcr", 0.05}, {"rated_current", 5.0}},
-        {{"mpn", "WRONG_BAND"}, {"impedance_100mhz", 151.0}, {"impedance_peak", 15000.0},
+        {{"mpn", "NO_CURVE"}, {"lifecycle_status", "production"}, {"dcr", 0.05}, {"rated_current", 5.0}},
+        {{"mpn", "WRONG_BAND"}, {"lifecycle_status", "production"}, {"impedance_100mhz", 151.0}, {"impedance_peak", 15000.0},
          {"impedance_peak_freq", 46e6}, {"dcr", 0.3}, {"rated_current", 0.9}},
-        {{"mpn", "CURVE_MATCH"}, {"impedance_100mhz", 150.0}, {"impedance_peak", 950.0},
+        {{"mpn", "CURVE_MATCH"}, {"lifecycle_status", "production"}, {"impedance_100mhz", 150.0}, {"impedance_peak", 950.0},
          {"impedance_peak_freq", 1000e6}, {"dcr", 0.3}, {"rated_current", 0.9}},
     });
     auto o = order("chipBead", original, cands);
@@ -132,7 +132,7 @@ TEST_CASE("golden: crystal load-capacitance ordering", "[crossref][golden]") {
     json cands = json::array({
         {{"mpn", "WRONG_CL"}, {"technology", "quartzCrystal"}, {"subtype", "crystal"},
          {"frequency", 16e6}, {"load_capacitance", 12e-12}},
-        {{"mpn", "MATCH_CL"}, {"technology", "quartzCrystal"}, {"subtype", "crystal"},
+        {{"mpn", "MATCH_CL"}, {"lifecycle_status", "production"}, {"technology", "quartzCrystal"}, {"subtype", "crystal"},
          {"frequency", 16e6}, {"load_capacitance", 18e-12}},
     });
     auto o = order("timeBase", original, cands);
@@ -159,7 +159,7 @@ TEST_CASE("golden: a magnetic with no mechanical dimensions is excluded from cro
         {{"mpn", "7847709047"}, {"value_si", 4.7e-6}, {"saturation_current", 9.0},
          {"rated_current", 7.0}, {"dcr", 0.026}, {"case_code", "1210"}},
         // Same electricals WITH an explicit matching footprint — the honest drop-in.
-        {{"mpn", "SAME_SIZE"}, {"value_si", 4.7e-6}, {"saturation_current", 9.0},
+        {{"mpn", "SAME_SIZE"}, {"lifecycle_status", "production"}, {"value_si", 4.7e-6}, {"saturation_current", 9.0},
          {"rated_current", 7.0}, {"dcr", 0.026}, {"length_m", 0.0073}, {"width_m", 0.0073},
          {"height_m", 0.0043}},
     });
@@ -198,11 +198,11 @@ TEST_CASE("golden: keeping the case is the true drop-in and ranks above a smalle
                      {"width_m", 0.0073},    {"height_m", 0.0043}};
     json cands = json::array({
         // Materially smaller body — fits inside the area but changes the pads.
-        {{"mpn", "SMALLER"}, {"value_si", 4.7e-6}, {"saturation_current", 9.0},
+        {{"mpn", "SMALLER"}, {"lifecycle_status", "production"}, {"value_si", 4.7e-6}, {"saturation_current", 9.0},
          {"rated_current", 7.0}, {"dcr", 0.026}, {"length_m", 0.0044}, {"width_m", 0.0044},
          {"height_m", 0.003}},
         // Same body — the case kept, the honest drop-in.
-        {{"mpn", "CASE_KEPT"}, {"value_si", 4.7e-6}, {"saturation_current", 9.0},
+        {{"mpn", "CASE_KEPT"}, {"lifecycle_status", "production"}, {"value_si", 4.7e-6}, {"saturation_current", 9.0},
          {"rated_current", 7.0}, {"dcr", 0.026}, {"length_m", 0.0073}, {"width_m", 0.0073},
          {"height_m", 0.0043}},
     });
@@ -224,10 +224,10 @@ TEST_CASE("golden: a different IC package is a substitute, not a drop-in",
                      {"technology", "schottky"}, {"case_code", "DO-214AB"}};
     json cands = json::array({
         // Different package — electrically strong, but the land pattern changes.
-        {{"mpn", "B340A"}, {"vrrm", 40.0}, {"if_avg", 3.0}, {"technology", "schottky"},
+        {{"mpn", "B340A"}, {"lifecycle_status", "production"}, {"vrrm", 40.0}, {"if_avg", 3.0}, {"technology", "schottky"},
          {"case_code", "SMA"}},
         // Same package (spelled with a dash) — the genuine drop-in.
-        {{"mpn", "SAME_PKG"}, {"vrrm", 40.0}, {"if_avg", 3.0}, {"technology", "schottky"},
+        {{"mpn", "SAME_PKG"}, {"lifecycle_status", "production"}, {"vrrm", 40.0}, {"if_avg", 3.0}, {"technology", "schottky"},
          {"case_code", "DO214AB"}},
     });
     auto o = order("diode", original, cands);
@@ -254,11 +254,11 @@ TEST_CASE("golden: an established land-pattern change never outranks an unverifi
                      {"width_m", 0.0005}};
     json cands = json::array({
         // 0102 MELF: a different land pattern AND +2.33 % on a 0.25 % part.
-        {{"mpn", "SMM01020E2202BB300"}, {"value_si", 22000.0}, {"power_rating", 0.2},
+        {{"mpn", "SMM01020E2202BB300"}, {"lifecycle_status", "production"}, {"value_si", 22000.0}, {"power_rating", 0.2},
          {"tolerance_pct", 0.1}, {"case_code", "0102"}},
         // Exact value, exact power, same stated length — but no width and no case
         // code on record, so its fit cannot be verified.
-        {{"mpn", "AT0402BRD0721K5L"}, {"value_si", 21500.0}, {"power_rating", 0.063},
+        {{"mpn", "AT0402BRD0721K5L"}, {"lifecycle_status", "production"}, {"value_si", 21500.0}, {"power_rating", 0.063},
          {"tolerance_pct", 0.1}, {"length_m", 0.001}},
     });
     auto o = order("resistor", original, cands);
@@ -279,15 +279,15 @@ TEST_CASE("golden: the footprint ladder is monotone — fits < unverified < esta
                      {"tolerance_pct", 1.0}, {"case_code", "0402"}, {"length_m", 0.001},
                      {"width_m", 0.0005}};
     json cands = json::array({
-        {{"mpn", "OVERHANGS"}, {"value_si", 21500.0}, {"power_rating", 0.063},
+        {{"mpn", "OVERHANGS"}, {"lifecycle_status", "production"}, {"value_si", 21500.0}, {"power_rating", 0.063},
          {"tolerance_pct", 1.0}, {"length_m", 0.0032}, {"width_m", 0.0016}},
-        {{"mpn", "DIFFERENT_CASE"}, {"value_si", 21500.0}, {"power_rating", 0.063},
+        {{"mpn", "DIFFERENT_CASE"}, {"lifecycle_status", "production"}, {"value_si", 21500.0}, {"power_rating", 0.063},
          {"tolerance_pct", 1.0}, {"case_code", "0603"}},
-        {{"mpn", "UNVERIFIED"}, {"value_si", 21500.0}, {"power_rating", 0.063},
+        {{"mpn", "UNVERIFIED"}, {"lifecycle_status", "production"}, {"value_si", 21500.0}, {"power_rating", 0.063},
          {"tolerance_pct", 1.0}},
-        {{"mpn", "SMALLER_BODY"}, {"value_si", 21500.0}, {"power_rating", 0.063},
+        {{"mpn", "SMALLER_BODY"}, {"lifecycle_status", "production"}, {"value_si", 21500.0}, {"power_rating", 0.063},
          {"tolerance_pct", 1.0}, {"length_m", 0.0006}, {"width_m", 0.0003}},
-        {{"mpn", "FITS"}, {"value_si", 21500.0}, {"power_rating", 0.063},
+        {{"mpn", "FITS"}, {"lifecycle_status", "production"}, {"value_si", 21500.0}, {"power_rating", 0.063},
          {"tolerance_pct", 1.0}, {"case_code", "0402"}, {"length_m", 0.001},
          {"width_m", 0.0005}},
     });
@@ -350,20 +350,20 @@ TEST_CASE("golden: land and height are two verdicts, not one — ABT #513",
                      {"width_m", 0.0104},         {"height_m", 0.004}};
     json cands = json::array({
         // 39% of the land, +50% height — a new land pattern plus a clearance check.
-        {{"mpn", "74439346100"}, {"value_si", 1e-5}, {"saturation_current", 5.05},
+        {{"mpn", "74439346100"}, {"lifecycle_status", "production"}, {"value_si", 1e-5}, {"saturation_current", 5.05},
          {"rated_current", 5.0}, {"dcr", 0.02915}, {"length_m", 0.00636},
          {"width_m", 0.00656}, {"height_m", 0.006}},
         // Essentially the original's land, 1 mm taller — the pads keep, the height
         // does not.
-        {{"mpn", "7847714100"}, {"value_si", 1e-5}, {"saturation_current", 4.4},
+        {{"mpn", "7847714100"}, {"lifecycle_status", "production"}, {"value_si", 1e-5}, {"saturation_current", 4.4},
          {"rated_current", 4.4}, {"dcr", 0.035}, {"length_m", 0.01}, {"width_m", 0.01},
          {"height_m", 0.005}},
         // Larger on all three axes — the only one "one case size larger" describes.
-        {{"mpn", "784771100"}, {"value_si", 1e-5}, {"saturation_current", 4.4},
+        {{"mpn", "784771100"}, {"lifecycle_status", "production"}, {"value_si", 1e-5}, {"saturation_current", 4.4},
          {"rated_current", 4.4}, {"dcr", 0.035}, {"length_m", 0.012}, {"width_m", 0.012},
          {"height_m", 0.006}},
         // The case kept in every axis — the true drop-in.
-        {{"mpn", "CASE_KEPT"}, {"value_si", 1e-5}, {"saturation_current", 4.4},
+        {{"mpn", "CASE_KEPT"}, {"lifecycle_status", "production"}, {"value_si", 1e-5}, {"saturation_current", 4.4},
          {"rated_current", 4.4}, {"dcr", 0.035}, {"length_m", 0.0103}, {"width_m", 0.0104},
          {"height_m", 0.004}},
     });
@@ -427,10 +427,10 @@ TEST_CASE("golden: one missing axis on the original does not blank the footprint
     json original = {{"mpn", "C0805C103M5GECTU"}, {"value_si", 1e-8},   {"voltage", 50.0},
                      {"technology", "ceramic-class-1"}, {"length_m", 0.002}};
     json cands = json::array({
-        {{"mpn", "GRM3195C1H153JA01"}, {"value_si", 1e-8}, {"voltage", 50.0},
+        {{"mpn", "GRM3195C1H153JA01"}, {"lifecycle_status", "production"}, {"value_si", 1e-8}, {"voltage", 50.0},
          {"technology", "ceramic-class-1"}, {"case_code", "3216M/1206"}, {"length_m", 0.0032},
          {"width_m", 0.0016}},
-        {{"mpn", "GRM2195C1H153JA01"}, {"value_si", 1e-8}, {"voltage", 50.0},
+        {{"mpn", "GRM2195C1H153JA01"}, {"lifecycle_status", "production"}, {"value_si", 1e-8}, {"voltage", 50.0},
          {"technology", "ceramic-class-1"}, {"case_code", "2012M/0805"}, {"length_m", 0.002},
          {"width_m", 0.00125}},
     });
@@ -488,13 +488,13 @@ TEST_CASE("golden: an original with no land pattern still reports the package ax
     json original = {{"mpn", "BSCH0010050533NJCP"}, {"value_si", 3.3e-8}, {"dcr", 0.58}};
     json cands = json::array({
         // Same size as the original — but nothing on record says so.
-        {{"mpn", "LQG15HS33NH02D"}, {"value_si", 3.3e-8}, {"dcr", 0.58},
+        {{"mpn", "LQG15HS33NH02D"}, {"lifecycle_status", "production"}, {"value_si", 3.3e-8}, {"dcr", 0.58},
          {"case_code", "0402 (1005 Metric)"}, {"length_m", 0.001}, {"width_m", 0.0005}},
         // Two case sizes down: 0.4 x 0.2 mm, stated as a case code only.
-        {{"mpn", "LQP02HQ30NHZ2E"}, {"value_si", 3.0e-8}, {"dcr", 0.58},
+        {{"mpn", "LQP02HQ30NHZ2E"}, {"lifecycle_status", "production"}, {"value_si", 3.0e-8}, {"dcr", 0.58},
          {"case_code", "01005 (0402 Metric)"}},
         // Neither side states a package: the gap is the catalogue's, not the part's.
-        {{"mpn", "NO_PACKAGE"}, {"value_si", 3.3e-8}, {"dcr", 0.58}},
+        {{"mpn", "NO_PACKAGE"}, {"lifecycle_status", "production"}, {"value_si", 3.3e-8}, {"dcr", 0.58}},
     });
     Options opt;
     opt.max_results = 50;
@@ -561,9 +561,9 @@ TEST_CASE("golden: with no drawing on either side, the kept case IS the land pat
     json original = {{"mpn", "MBRS340"}, {"vrrm", 40.0}, {"if_avg", 3.0},
                      {"technology", "schottky"}, {"case_code", "DO-214AB"}};
     json cands = json::array({
-        {{"mpn", "SAME_PKG"}, {"vrrm", 40.0}, {"if_avg", 3.0}, {"technology", "schottky"},
+        {{"mpn", "SAME_PKG"}, {"lifecycle_status", "production"}, {"vrrm", 40.0}, {"if_avg", 3.0}, {"technology", "schottky"},
          {"case_code", "DO214AB"}},
-        {{"mpn", "NO_PKG"}, {"vrrm", 40.0}, {"if_avg", 3.0}, {"technology", "schottky"}},
+        {{"mpn", "NO_PKG"}, {"lifecycle_status", "production"}, {"vrrm", 40.0}, {"if_avg", 3.0}, {"technology", "schottky"}},
     });
     Options opt;
     opt.max_results = 50;
@@ -585,7 +585,7 @@ TEST_CASE("golden: with no drawing on either side, the kept case IS the land pat
 
     // The magnetic exclusion holds: identical codes, still unverified.
     json m_orig = {{"mpn", "O"}, {"value_si", 4.7e-6}, {"case_code", "1210"}};
-    json m_cands = json::array({{{"mpn", "SAME_CODE"}, {"value_si", 4.7e-6}, {"case_code", "1210"}}});
+    json m_cands = json::array({{{"mpn", "SAME_CODE"}, {"lifecycle_status", "production"}, {"value_si", 4.7e-6}, {"case_code", "1210"}}});
     auto rm = cross_reference("magnetic", m_orig, m_cands, opt);
     CHECK(rm["candidates"][0]["footprint"] == "unknown");
     CHECK(rm["candidates"][0]["grade"] != "drop_in");
@@ -606,13 +606,13 @@ TEST_CASE("golden: the footprint note names what is missing, not 'no dimensions'
                      {"width_m", 0.0005},     {"height_m", 0.00035}};
     json cands = json::array({
         // The ticket's part: length and height stated, width and case code absent.
-        {{"mpn", "AT0402BRD0721K5L"}, {"value_si", 21500.0}, {"tolerance_pct", 0.1},
+        {{"mpn", "AT0402BRD0721K5L"}, {"lifecycle_status", "production"}, {"value_si", 21500.0}, {"tolerance_pct", 0.1},
          {"power_rating", 0.063}, {"length_m", 0.001}, {"height_m", 0.0003}},
         // A height and no land at all — 1,167 catalogue rows look like this.
-        {{"mpn", "HEIGHT_ONLY"}, {"value_si", 21500.0}, {"tolerance_pct", 0.1},
+        {{"mpn", "HEIGHT_ONLY"}, {"lifecycle_status", "production"}, {"value_si", 21500.0}, {"tolerance_pct", 0.1},
          {"power_rating", 0.063}, {"height_m", 0.0009}},
         // Nothing on record: the canned sentence is TRUE here and must stay.
-        {{"mpn", "NO_DIMS"}, {"value_si", 21500.0}, {"tolerance_pct", 0.1},
+        {{"mpn", "NO_DIMS"}, {"lifecycle_status", "production"}, {"value_si", 21500.0}, {"tolerance_pct", 0.1},
          {"power_rating", 0.063}},
     });
     Options opt;

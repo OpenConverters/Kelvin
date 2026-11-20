@@ -306,7 +306,7 @@ TEST_CASE("a mount-type mismatch rejects the candidate", "[crossref][rank][dims]
 TEST_CASE("an oversize part is demoted to partial, not dropped", "[crossref][rank][dims]") {
     json original = {{"mpn", "O"}, {"value_si", 1e-7}, {"voltage", 50.0}, {"package", "0402"}};
     json cands = json::array({
-        {{"mpn", "BIG"}, {"value_si", 1e-7}, {"voltage", 50.0}, {"package", "1206"}}});
+        {{"mpn", "BIG"}, {"lifecycle_status", "production"}, {"value_si", 1e-7}, {"voltage", 50.0}, {"package", "1206"}}});
     auto r = cross_reference("capacitor", original, cands, Options{});
     // still offered — it is a real part that works electrically
     CHECK(r["candidates"][0]["status"] == "partial");
@@ -316,8 +316,8 @@ TEST_CASE("an oversize part is demoted to partial, not dropped", "[crossref][ran
 TEST_CASE("a fitting part outranks an oversize one", "[crossref][rank][dims]") {
     json original = {{"mpn", "O"}, {"value_si", 1e-7}, {"voltage", 50.0}, {"package", "0805"}};
     json cands = json::array({
-        {{"mpn", "BIG"}, {"value_si", 1e-7}, {"voltage", 50.0}, {"package", "1210"}},
-        {{"mpn", "FITS"}, {"value_si", 1e-7}, {"voltage", 50.0}, {"package", "0603"}}});
+        {{"mpn", "BIG"}, {"lifecycle_status", "production"}, {"value_si", 1e-7}, {"voltage", 50.0}, {"package", "1210"}},
+        {{"mpn", "FITS"}, {"lifecycle_status", "production"}, {"value_si", 1e-7}, {"voltage", 50.0}, {"package", "0603"}}});
     auto r = cross_reference("capacitor", original, cands, Options{});
     CHECK(r["candidates"][0]["mpn"] == "FITS");
 }
@@ -326,7 +326,7 @@ TEST_CASE("an automotive original is not silently replaced by a commercial part"
           "[crossref][rank][decode]") {
     json original = {{"mpn", "GCM188R71H104KA57D"}, {"value_si", 1e-7}, {"voltage", 50.0}};
     json cands = json::array({
-        {{"mpn", "GRM188R71H104KA93D"}, {"value_si", 1e-7}, {"voltage", 50.0}}});
+        {{"mpn", "GRM188R71H104KA93D"}, {"lifecycle_status", nullptr}, {"value_si", 1e-7}, {"voltage", 50.0}}});
     auto r = cross_reference("capacitor", original, cands, Options{});
     CHECK(r["candidates"][0]["status"] == "partial");
 }
@@ -334,7 +334,7 @@ TEST_CASE("an automotive original is not silently replaced by a commercial part"
 TEST_CASE("a non-production substitute is surfaced", "[crossref][rank]") {
     json original = {{"mpn", "O"}, {"value_si", 1e-7}, {"voltage", 50.0}};
     json cands = json::array({
-        {{"mpn", "EOL"}, {"value_si", 1e-7}, {"voltage", 50.0}, {"is_production", false}}});
+        {{"mpn", "EOL"}, {"lifecycle_status", "obsolete"}, {"value_si", 1e-7}, {"voltage", 50.0}, {"is_production", false}}});
     auto r = cross_reference("capacitor", original, cands, Options{});
     CHECK(r["candidates"][0]["status"] == "partial");
 }
@@ -343,7 +343,7 @@ TEST_CASE("a dielectric class regression is caught", "[crossref][rank]") {
     // C0G -> X5R is a real regression: far worse temperature and bias behaviour.
     json original = {{"mpn", "O"}, {"value_si", 1e-9}, {"voltage", 50.0}, {"technology", "C0G"}};
     json cands = json::array({
-        {{"mpn", "X5R"}, {"value_si", 1e-9}, {"voltage", 50.0}, {"technology", "X5R"}}});
+        {{"mpn", "X5R"}, {"lifecycle_status", "production"}, {"value_si", 1e-9}, {"voltage", 50.0}, {"technology", "X5R"}}});
     auto r = cross_reference("capacitor", original, cands, Options{});
     CHECK(r["candidates"][0]["status"] != "recommended");
 }
@@ -352,7 +352,7 @@ TEST_CASE("connectors and analog parts now rank (previously uncovered)", "[cross
     json original = {{"mpn", "O"}, {"family", "terminalBlock"}, {"positions", 6},
                      {"rated_current_A", 10.0}};
     json cands = json::array({
-        {{"mpn", "SAME"}, {"family", "terminalBlock"}, {"positions", 6}, {"rated_current_A", 12.0}},
+        {{"mpn", "SAME"}, {"lifecycle_status", "production"}, {"family", "terminalBlock"}, {"positions", 6}, {"rated_current_A", 12.0}},
         {{"mpn", "WRONGPOS"}, {"family", "terminalBlock"}, {"positions", 4},
          {"rated_current_A", 12.0}}});
     auto r = cross_reference("connector", original, cands, Options{});
@@ -494,7 +494,7 @@ TEST_CASE("caller identity travels in `_key`, leaving `mpn` decodable", "[crossr
     json original = {{"mpn", "GCM188R71H104KA57D"}, {"_key", "Murata|GCM188R71H104KA57D"},
                      {"value_si", 1e-7}, {"voltage", 50.0}};
     json cands = json::array({
-        {{"mpn", "GRM188R71H104KA93D"}, {"_key", "Murata|GRM188R71H104KA93D"},
+        {{"mpn", "GRM188R71H104KA93D"}, {"lifecycle_status", nullptr}, {"_key", "Murata|GRM188R71H104KA93D"},
          {"value_si", 1e-7}, {"voltage", 50.0}}});
     auto r = cross_reference("capacitor", original, cands, Options{});
     const json& c = r["candidates"][0];
@@ -513,9 +513,9 @@ TEST_CASE("a caller identity key never masks a physical parameter", "[crossref][
     json original = {{"mpn", "ORIG"}, {"_key", "TI|ORIG"}, {"vds", 60.0}, {"id", 200.0},
                      {"rds_on", 0.00065}};
     json cands = json::array({
-        {{"mpn", "WEAK"}, {"_key", "Infineon|WEAK"}, {"vds", 650.0}, {"id", 31.0},
+        {{"mpn", "WEAK"}, {"lifecycle_status", "production"}, {"_key", "Infineon|WEAK"}, {"vds", 650.0}, {"id", 31.0},
          {"rds_on", 0.099}},
-        {{"mpn", "STRONG"}, {"_key", "TI|STRONG"}, {"vds", 100.0}, {"id", 200.0},
+        {{"mpn", "STRONG"}, {"lifecycle_status", "production"}, {"_key", "TI|STRONG"}, {"vds", 100.0}, {"id", 200.0},
          {"rds_on", 0.0009}}});
     auto r = cross_reference("mosfet", original, cands, Options{});
     CHECK(r["candidates"][0]["mpn"] == "STRONG");

@@ -57,7 +57,7 @@ TEST_CASE("same family passes the family gate", "[crossref][classes][rank]") {
     json original = {{"mpn", "A"}, {"value_si", 1e-7}, {"voltage", 50.0},
                      {"technology", "ceramic-class-2"}};
     json cands = json::array({
-        {{"mpn", "B"}, {"value_si", 1e-7}, {"voltage", 50.0}, {"technology", "ceramic-class-2"}}});
+        {{"mpn", "B"}, {"lifecycle_status", "production"}, {"value_si", 1e-7}, {"voltage", 50.0}, {"technology", "ceramic-class-2"}}});
     auto r = cross_reference("capacitor", original, cands, Options{});
     CHECK(r["candidates"][0]["status"] != "no_substitute");
 }
@@ -120,7 +120,7 @@ TEST_CASE("a substitute whose series names no class is reported unverified, not 
     json original = {{"mpn", "MKX1"}, {"value_si", 3.3e-7}, {"voltage", 440.0},
                      {"technology", "film-polypropylene"}, {"family", "MKP-X1 R"}};
     json cands = json::array({
-        {{"mpn", "R46"}, {"value_si", 4.7e-7}, {"voltage", 560.0},
+        {{"mpn", "R46"}, {"lifecycle_status", "production"}, {"value_si", 4.7e-7}, {"voltage", 560.0},
          {"technology", "film-polypropylene"}, {"family", "R46 275 VAC"}}});
     auto r = cross_reference("capacitor", original, cands, Options{});
     const auto& c = r["candidates"][0];
@@ -146,7 +146,7 @@ TEST_CASE("an equal or higher safety class passes without a caveat",
     json original = {{"mpn", "MKX1"}, {"value_si", 3.3e-7}, {"voltage", 440.0},
                      {"technology", "film-polypropylene"}, {"family", "MKP-X1 R"}};
     json cands = json::array({
-        {{"mpn", "R47X1"}, {"value_si", 3.3e-7}, {"voltage", 1000.0},
+        {{"mpn", "R47X1"}, {"lifecycle_status", "production"}, {"value_si", 3.3e-7}, {"voltage", 1000.0},
          {"technology", "film-polypropylene"}, {"family", "R47 X1 440 VAC"}}});
     auto r = cross_reference("capacitor", original, cands, Options{});
     const auto& c = r["candidates"][0];
@@ -163,7 +163,7 @@ TEST_CASE("the safety gate engages only when the ORIGINAL names a class",
     json original = {{"mpn", "PLAIN"}, {"value_si", 1e-7}, {"voltage", 50.0},
                      {"technology", "ceramic-class-2"}, {"family", "GRM188"}};
     json cands = json::array({
-        {{"mpn", "SAFE"}, {"value_si", 1e-7}, {"voltage", 50.0},
+        {{"mpn", "SAFE"}, {"lifecycle_status", "production"}, {"value_si", 1e-7}, {"voltage", 50.0},
          {"technology", "ceramic-class-2"}, {"family", "GA3 X1"}}});
     auto r = cross_reference("capacitor", original, cands, Options{});
     const auto& c = r["candidates"][0];
@@ -227,7 +227,7 @@ TEST_CASE("a SiC part offered for a Si original is not silently recommended",
     json original = {{"mpn", "SI"}, {"vds", 650.0}, {"id", 20.0}, {"rds_on", 0.1},
                      {"technology", "Si"}};
     json cands = json::array({
-        {{"mpn", "SIC"}, {"vds", 650.0}, {"id", 20.0}, {"rds_on", 0.05}, {"technology", "SiC"}}});
+        {{"mpn", "SIC"}, {"lifecycle_status", "production"}, {"vds", 650.0}, {"id", 20.0}, {"rds_on", 0.05}, {"technology", "SiC"}}});
     auto r = cross_reference("mosfet", original, cands, Options{});
     CHECK(r["candidates"][0]["status"] == "partial");
 }
@@ -241,7 +241,7 @@ TEST_CASE("a standard-level FET for a logic-level original is flagged",
     json original = {{"mpn", "LOGIC"}, {"vds", 60.0}, {"id", 10.0}, {"rds_on", 0.01},
                      {"vgs_threshold_max", 1.5}};
     json cands = json::array({
-        {{"mpn", "STD"}, {"vds", 60.0}, {"id", 10.0}, {"rds_on", 0.01},
+        {{"mpn", "STD"}, {"lifecycle_status", "production"}, {"vds", 60.0}, {"id", 10.0}, {"rds_on", 0.01},
          {"vgs_threshold_max", 4.0}}});
     auto r = cross_reference("mosfet", original, cands, Options{});
     CHECK(r["candidates"][0]["status"] == "partial");
@@ -260,12 +260,12 @@ TEST_CASE("a higher threshold whose Rds(on) is guaranteed at the original's own 
     json original = {{"mpn", "IPW80R280P7"}, {"vds", 800.0}, {"id", 16.0}, {"rds_on", 0.28},
                      {"vgs_threshold_max", 2.5}, {"rds_on_vgs", 10.0}};
     json cands = json::array({
-        {{"mpn", "FCB290N80"}, {"vds", 800.0}, {"id", 17.0}, {"rds_on", 0.29},
+        {{"mpn", "FCB290N80"}, {"lifecycle_status", "production"}, {"vds", 800.0}, {"id", 17.0}, {"rds_on", 0.29},
          {"vgs_threshold_max", 4.5}, {"rds_on_vgs", 10.0}},
-        {{"mpn", "SiHG15N80AEF"}, {"vds", 800.0}, {"id", 15.0}, {"rds_on", 0.3},
+        {{"mpn", "SiHG15N80AEF"}, {"lifecycle_status", "production"}, {"vds", 800.0}, {"id", 15.0}, {"rds_on", 0.3},
          {"vgs_threshold_max", 4.0}},
         // threshold climbed into the drive itself: it may not turn on at all
-        {{"mpn", "NO_ENHANCE"}, {"vds", 800.0}, {"id", 15.0}, {"rds_on", 0.3},
+        {{"mpn", "NO_ENHANCE"}, {"lifecycle_status", "production"}, {"vds", 800.0}, {"id", 15.0}, {"rds_on", 0.3},
          {"vgs_threshold_max", 10.0}, {"rds_on_vgs", 10.0}}});
     auto r = cross_reference("mosfet", original, cands, Options{});
     auto candidate = [&](const char* mpn) {
@@ -302,7 +302,7 @@ TEST_CASE("Rds(on) quoted at a higher Vgs is flagged as not comparable",
     json original = {{"mpn", "A"}, {"vds", 30.0}, {"id", 10.0}, {"rds_on", 0.01},
                      {"rds_on_vgs", 4.5}};
     json cands = json::array({
-        {{"mpn", "B"}, {"vds", 30.0}, {"id", 10.0}, {"rds_on", 0.01}, {"rds_on_vgs", 10.0}}});
+        {{"mpn", "B"}, {"lifecycle_status", "production"}, {"vds", 30.0}, {"id", 10.0}, {"rds_on", 0.01}, {"rds_on_vgs", 10.0}}});
     auto r = cross_reference("mosfet", original, cands, Options{});
     CHECK(r["candidates"][0]["status"] == "partial");
 }
@@ -310,7 +310,7 @@ TEST_CASE("Rds(on) quoted at a higher Vgs is flagged as not comparable",
 TEST_CASE("a lower Vgs(max) rating is surfaced", "[crossref][classes][rank]") {
     json original = {{"mpn", "A"}, {"vds", 30.0}, {"id", 10.0}, {"rds_on", 0.01}, {"vgs_max", 20.0}};
     json cands = json::array({
-        {{"mpn", "B"}, {"vds", 30.0}, {"id", 10.0}, {"rds_on", 0.01}, {"vgs_max", 12.0}}});
+        {{"mpn", "B"}, {"lifecycle_status", "production"}, {"vds", 30.0}, {"id", 10.0}, {"rds_on", 0.01}, {"vgs_max", 12.0}}});
     auto r = cross_reference("mosfet", original, cands, Options{});
     CHECK(r["candidates"][0]["status"] == "partial");
 }
@@ -323,7 +323,7 @@ TEST_CASE("ESR quoted at different frequencies is not compared as a bare number"
     json original = {{"mpn", "A"}, {"value_si", 1e-4}, {"voltage", 25.0}, {"esr", 0.5},
                      {"esr_frequency", 120.0}, {"technology", "aluminum-electrolytic-wet"}};
     json cands = json::array({
-        {{"mpn", "B"}, {"value_si", 1e-4}, {"voltage", 25.0}, {"esr", 0.03},
+        {{"mpn", "B"}, {"lifecycle_status", "production"}, {"value_si", 1e-4}, {"voltage", 25.0}, {"esr", 0.03},
          {"esr_frequency", 100000.0}, {"technology", "aluminum-electrolytic-wet"}}});
     auto r = cross_reference("capacitor", original, cands, Options{});
     const json& c = r["candidates"][0];
@@ -337,7 +337,7 @@ TEST_CASE("operating temperature range must be covered", "[crossref][classes][ra
     json original = {{"mpn", "WIDE"}, {"value_si", 1e-7}, {"voltage", 50.0},
                      {"technology", "ceramic-class-2"}, {"temp_min_C", -55.0}};
     json cands = json::array({
-        {{"mpn", "NARROW"}, {"value_si", 1e-7}, {"voltage", 50.0},
+        {{"mpn", "NARROW"}, {"lifecycle_status", "production"}, {"value_si", 1e-7}, {"voltage", 50.0},
          {"technology", "ceramic-class-2"}, {"temp_min_C", -20.0}}});
     auto r = cross_reference("capacitor", original, cands, Options{});
     CHECK(r["candidates"][0]["status"] == "partial");
@@ -349,7 +349,7 @@ TEST_CASE("a clean same-size match grades drop_in", "[crossref][classes][rank]")
     json original = {{"mpn", "A"}, {"value_si", 1e-7}, {"voltage", 50.0}, {"package", "0603"},
                      {"technology", "ceramic-class-2"}};
     json cands = json::array({
-        {{"mpn", "B"}, {"value_si", 1e-7}, {"voltage", 50.0}, {"package", "0603"},
+        {{"mpn", "B"}, {"lifecycle_status", "production"}, {"value_si", 1e-7}, {"voltage", 50.0}, {"package", "0603"},
          {"technology", "ceramic-class-2"}}});
     auto r = cross_reference("capacitor", original, cands, Options{});
     CHECK(r["candidates"][0]["grade"] == "drop_in");
@@ -359,7 +359,7 @@ TEST_CASE("an oversize part grades redesign, not drop_in", "[crossref][classes][
     json original = {{"mpn", "A"}, {"value_si", 1e-7}, {"voltage", 50.0}, {"package", "0402"},
                      {"technology", "ceramic-class-2"}};
     json cands = json::array({
-        {{"mpn", "BIG"}, {"value_si", 1e-7}, {"voltage", 50.0}, {"package", "1206"},
+        {{"mpn", "BIG"}, {"lifecycle_status", "production"}, {"value_si", 1e-7}, {"voltage", 50.0}, {"package", "1206"},
          {"technology", "ceramic-class-2"}}});
     auto r = cross_reference("capacitor", original, cands, Options{});
     CHECK(r["candidates"][0]["grade"] == "redesign");
@@ -369,15 +369,15 @@ TEST_CASE("direction reports upgrade, downgrade and mixed honestly",
           "[crossref][classes][rank]") {
     json original = {{"mpn", "O"}, {"vds", 60.0}, {"id", 10.0}, {"rds_on", 0.010}};
     // strictly better: more voltage headroom, more current, lower Rds(on)
-    json up = json::array({{{"mpn", "UP"}, {"vds", 100.0}, {"id", 20.0}, {"rds_on", 0.005}}});
+    json up = json::array({{{"mpn", "UP"}, {"lifecycle_status", "production"}, {"vds", 100.0}, {"id", 20.0}, {"rds_on", 0.005}}});
     CHECK(cross_reference("mosfet", original, up, Options{})["candidates"][0]["direction"] ==
           "upgrade");
     // better on current, worse on Rds(on)
-    json mix = json::array({{{"mpn", "MIX"}, {"vds", 60.0}, {"id", 20.0}, {"rds_on", 0.030}}});
+    json mix = json::array({{{"mpn", "MIX"}, {"lifecycle_status", "production"}, {"vds", 60.0}, {"id", 20.0}, {"rds_on", 0.030}}});
     CHECK(cross_reference("mosfet", original, mix, Options{})["candidates"][0]["direction"] ==
           "mixed");
     // nothing clearly leads
-    json same = json::array({{{"mpn", "SAME"}, {"vds", 60.0}, {"id", 10.0}, {"rds_on", 0.010}}});
+    json same = json::array({{{"mpn", "SAME"}, {"lifecycle_status", "production"}, {"vds", 60.0}, {"id", 10.0}, {"rds_on", 0.010}}});
     CHECK(cross_reference("mosfet", original, same, Options{})["candidates"][0]["direction"] ==
           "equivalent");
 }
@@ -390,7 +390,7 @@ TEST_CASE("direction is not a verdict when the deciding axis was never compared"
     // to: the axis the match turns on was never on the table. (Answered directly to the
     // reader as "unknown" rather than left as a flattering default.)
     json blind = {{"mpn", "O"}, {"value_si", 1e-5}, {"dcr", 0.050}, {"device_type", "inductor"}};
-    json better = json::array({{{"mpn", "B"},
+    json better = json::array({{{"mpn", "B"}, {"lifecycle_status", "production"},
                                 {"value_si", 1e-5},
                                 {"dcr", 0.020},
                                 {"saturation_current", 8.0},
@@ -408,7 +408,7 @@ TEST_CASE("direction is not a verdict when the deciding axis was never compared"
     // Same shape on a critical rating (capacitor voltage), which is a separate code path.
     json no_v = {{"mpn", "O"}, {"value_si", 1e-7}, {"package", "0603"},
                  {"technology", "ceramic-class-2"}};
-    json with_v = json::array({{{"mpn", "B"},
+    json with_v = json::array({{{"mpn", "B"}, {"lifecycle_status", "production"},
                                 {"value_si", 1e-7},
                                 {"voltage", 100.0},
                                 {"package", "0603"},
@@ -418,7 +418,7 @@ TEST_CASE("direction is not a verdict when the deciding axis was never compared"
 
     // Two things it must NOT do. A regression we DID measure survives — blindness on one
     // axis cannot erase evidence from another...
-    json worse_dcr = json::array({{{"mpn", "W"},
+    json worse_dcr = json::array({{{"mpn", "W"}, {"lifecycle_status", "production"},
                                    {"value_si", 1e-5},
                                    {"dcr", 0.200},
                                    {"saturation_current", 8.0},
@@ -429,7 +429,7 @@ TEST_CASE("direction is not a verdict when the deciding axis was never compared"
     // Owner, 2026-11-13 (approved assertion change): when that axis is a magnetic's saturation
     // current, an 'upgrade' would claim the comparison the match turns on, so the reading is
     // 'unknown' (neither record here states Isat).
-    json also_blind = json::array({{{"mpn", "N"},
+    json also_blind = json::array({{{"mpn", "N"}, {"lifecycle_status", "production"},
                                     {"value_si", 1e-5},
                                     {"dcr", 0.020},
                                     {"device_type", "inductor"}}});
@@ -529,7 +529,7 @@ TEST_CASE("a crystal for a different load capacitance is rejected", "[crossref][
     json cands = json::array({
         {{"mpn", "X12"}, {"technology", "quartzCrystal"}, {"device_type", "crystal"},
          {"subtype", "crystal"}, {"frequency", 16e6}, {"load_capacitance", 12e-12}},
-        {{"mpn", "X18B"}, {"technology", "quartzCrystal"}, {"device_type", "crystal"},
+        {{"mpn", "X18B"}, {"lifecycle_status", "production"}, {"technology", "quartzCrystal"}, {"device_type", "crystal"},
          {"subtype", "crystal"}, {"frequency", 16e6}, {"load_capacitance", 18e-12}}});
     auto r = cross_reference("timeBase", original, cands, Options{});
     // the matching-CL part wins; the mismatched one is not a substitute
@@ -557,14 +557,14 @@ TEST_CASE("crystal mode and oscillator output type never cross", "[crossref][cla
     json xo = {{"mpn", "A"}, {"technology", "crystalOscillator"}, {"subtype", "oscillator"},
                {"frequency", 25e6}, {"output_type", "LVDS"}};
     json other = json::array({
-        {{"mpn", "B"}, {"technology", "crystalOscillator"}, {"subtype", "oscillator"},
+        {{"mpn", "B"}, {"lifecycle_status", "production"}, {"technology", "crystalOscillator"}, {"subtype", "oscillator"},
          {"frequency", 25e6}, {"output_type", "HCSL"}}});
     CHECK(cross_reference("timeBase", xo, other, Options{})["candidates"][0]["status"] ==
           "no_substitute");
 
     // Same output type still crosses.
     json same = json::array({
-        {{"mpn", "C"}, {"technology", "crystalOscillator"}, {"subtype", "oscillator"},
+        {{"mpn", "C"}, {"lifecycle_status", "production"}, {"technology", "crystalOscillator"}, {"subtype", "oscillator"},
          {"frequency", 25e6}, {"output_type", "LVDS"}}});
     CHECK(cross_reference("timeBase", xo, same, Options{})["candidates"][0]["status"] !=
           "no_substitute");
@@ -582,9 +582,9 @@ TEST_CASE("beads with equal Z@100MHz but different curves are separated",
                      {"dcr", 0.1}, {"rated_current", 2.0}};
     json cands = json::array({
         // same headline impedance, same DCR, same current — different curve
-        {{"mpn", "SAME_CURVE"}, {"impedance_100mhz", 120.0}, {"impedance_peak", 690.0},
+        {{"mpn", "SAME_CURVE"}, {"lifecycle_status", "production"}, {"impedance_100mhz", 120.0}, {"impedance_peak", 690.0},
          {"impedance_peak_freq", 690e6}, {"dcr", 0.1}, {"rated_current", 2.0}},
-        {{"mpn", "WRONG_BAND"}, {"impedance_100mhz", 120.0}, {"impedance_peak", 150.0},
+        {{"mpn", "WRONG_BAND"}, {"lifecycle_status", "production"}, {"impedance_100mhz", 120.0}, {"impedance_peak", 150.0},
          {"impedance_peak_freq", 400e6}, {"dcr", 0.1}, {"rated_current", 2.0}}});
     auto r = cross_reference("chipBead", original, cands, Options{});
     // the curve-matched part must win
@@ -603,8 +603,8 @@ TEST_CASE("a bead with no impedance data never outranks a curve-matched one",
     json original = {{"mpn", "ORIG"}, {"impedance_100mhz", 151.0}, {"impedance_peak", 939.0},
                      {"impedance_peak_freq", 1038e6}, {"dcr", 0.325}, {"rated_current", 0.85}};
     json cands = json::array({
-        {{"mpn", "NO_DATA"}, {"dcr", 0.009}, {"rated_current", 6.0}},
-        {{"mpn", "CURVE_MATCH"}, {"impedance_100mhz", 150.0}, {"impedance_peak", 950.0},
+        {{"mpn", "NO_DATA"}, {"lifecycle_status", "production"}, {"dcr", 0.009}, {"rated_current", 6.0}},
+        {{"mpn", "CURVE_MATCH"}, {"lifecycle_status", "production"}, {"impedance_100mhz", 150.0}, {"impedance_peak", 950.0},
          {"impedance_peak_freq", 1000e6}, {"dcr", 0.17}, {"rated_current", 0.9}}});
     auto r = cross_reference("chipBead", original, cands, Options{});
     CHECK(r["candidates"][0]["mpn"] == "CURVE_MATCH");
@@ -623,8 +623,8 @@ TEST_CASE("a partial-curve candidate still beats a no-data one", "[crossref][cla
     json original = {{"mpn", "ORIG"}, {"impedance_100mhz", 151.0}, {"impedance_peak", 939.0},
                      {"impedance_peak_freq", 1038e6}, {"dcr", 0.325}, {"rated_current", 0.85}};
     json cands = json::array({
-        {{"mpn", "NO_DATA"}, {"dcr", 0.009}, {"rated_current", 6.0}},
-        {{"mpn", "CURVE_ONLY"}, {"impedance_peak", 950.0}, {"impedance_peak_freq", 1000e6},
+        {{"mpn", "NO_DATA"}, {"lifecycle_status", "production"}, {"dcr", 0.009}, {"rated_current", 6.0}},
+        {{"mpn", "CURVE_ONLY"}, {"lifecycle_status", "production"}, {"impedance_peak", 950.0}, {"impedance_peak_freq", 1000e6},
          {"dcr", 0.17}, {"rated_current", 0.9}}});
     auto r = cross_reference("chipBead", original, cands, Options{});
     CHECK(r["candidates"][0]["mpn"] == "CURVE_ONLY");
@@ -640,7 +640,7 @@ TEST_CASE("a blank optional identity field is unknown, not a mismatch",
     json original = {{"mpn", "A"}, {"family", "terminalBlock"}, {"positions", 9},
                      {"interface_standard", ""}, {"rated_current_A", 18.0}};
     json cands = json::array({
-        {{"mpn", "B"}, {"family", "terminalBlock"}, {"positions", 9},
+        {{"mpn", "B"}, {"lifecycle_status", "production"}, {"family", "terminalBlock"}, {"positions", 9},
          {"interface_standard", ""}, {"rated_current_A", 18.0}}});
     auto r = cross_reference("connector", original, cands, Options{});
     const json& c = r["candidates"][0];
@@ -657,7 +657,7 @@ TEST_CASE("a connector current shortfall demotes, it does not reject",
     json original = {{"mpn", "O"}, {"family", "terminalBlock"}, {"positions", 9},
                      {"rated_current_A", 18.0}};
     json cands = json::array({
-        {{"mpn", "LOWER_I"}, {"family", "terminalBlock"}, {"positions", 9},
+        {{"mpn", "LOWER_I"}, {"lifecycle_status", "production"}, {"family", "terminalBlock"}, {"positions", 9},
          {"rated_current_A", 15.0}},
         {{"mpn", "WRONG_POS"}, {"family", "terminalBlock"}, {"positions", 6},
          {"rated_current_A", 18.0}}});
@@ -685,13 +685,13 @@ TEST_CASE("a connector pitch mismatch is a footprint failure, never a drop_in",
                      {"positions", 13}, {"polarity", "male"}, {"pitch_mm", 2.0},
                      {"rated_current_A", 3.9}};
     json cands = json::array({
-        {{"mpn", "SAME_PITCH"}, {"family", "boardToBoard"}, {"positions", 13},
+        {{"mpn", "SAME_PITCH"}, {"lifecycle_status", "production"}, {"family", "boardToBoard"}, {"positions", 13},
          {"polarity", "male"}, {"pitch_mm", 2.0}, {"rated_current_A", 5.0}},
-        {{"mpn", "P254"}, {"family", "boardToBoard"}, {"positions", 13},
+        {{"mpn", "P254"}, {"lifecycle_status", "production"}, {"family", "boardToBoard"}, {"positions", 13},
          {"polarity", "male"}, {"pitch_mm", 2.54}, {"rated_current_A", 5.0}},
-        {{"mpn", "P500"}, {"family", "boardToBoard"}, {"positions", 13},
+        {{"mpn", "P500"}, {"lifecycle_status", "production"}, {"family", "boardToBoard"}, {"positions", 13},
          {"polarity", "male"}, {"pitch_mm", 5.0}, {"rated_current_A", 5.0}},
-        {{"mpn", "NO_PITCH"}, {"family", "boardToBoard"}, {"positions", 13},
+        {{"mpn", "NO_PITCH"}, {"lifecycle_status", "production"}, {"family", "boardToBoard"}, {"positions", 13},
          {"polarity", "male"}, {"rated_current_A", 5.0}}});
     auto r = cross_reference("connector", original, cands, Options{});
     auto by_mpn = [&](const char* m) {
@@ -752,16 +752,16 @@ TEST_CASE("a connector rated 20 degC cooler than the original is not an upgrade"
                      {"rated_current_A", 3.0},       {"rated_voltage_V", 600.0},
                      {"temp_min_C", -55.0},          {"temp_max_C", 125.0}};
     json cands = json::array({
-        {{"mpn", "SAME_RANGE"}, {"family", "dataInterface"}, {"positions", 25},
+        {{"mpn", "SAME_RANGE"}, {"lifecycle_status", "production"}, {"family", "dataInterface"}, {"positions", 25},
          {"polarity", "male"}, {"rated_current_A", 5.0}, {"rated_voltage_V", 600.0},
          {"temp_min_C", -55.0}, {"temp_max_C", 125.0}},
-        {{"mpn", "DERATED_105"}, {"family", "dataInterface"}, {"positions", 25},
+        {{"mpn", "DERATED_105"}, {"lifecycle_status", "production"}, {"family", "dataInterface"}, {"positions", 25},
          {"polarity", "male"}, {"rated_current_A", 5.0}, {"rated_voltage_V", 600.0},
          {"temp_min_C", -55.0}, {"temp_max_C", 105.0}},
-        {{"mpn", "COLD_SHORT"}, {"family", "dataInterface"}, {"positions", 25},
+        {{"mpn", "COLD_SHORT"}, {"lifecycle_status", "production"}, {"family", "dataInterface"}, {"positions", 25},
          {"polarity", "male"}, {"rated_current_A", 5.0}, {"rated_voltage_V", 600.0},
          {"temp_min_C", -25.0}, {"temp_max_C", 125.0}},
-        {{"mpn", "NO_TEMP"}, {"family", "dataInterface"}, {"positions", 25},
+        {{"mpn", "NO_TEMP"}, {"lifecycle_status", "production"}, {"family", "dataInterface"}, {"positions", 25},
          {"polarity", "male"}, {"rated_current_A", 5.0}, {"rated_voltage_V", 600.0}}});
     auto r = cross_reference("connector", original, cands, Options{});
     auto by_mpn = [&](const char* m) {
@@ -832,19 +832,19 @@ TEST_CASE("a connector that changes the mating interface is judged, not caveated
                      {"contact_plating", "au-gold"}, {"termination", "crimp"},
                      {"mating_cycles", 500.0}};
     json cands = json::array({
-        {{"mpn", "SAME_IFACE"}, {"family", "boardToBoard"}, {"positions", 13},
+        {{"mpn", "SAME_IFACE"}, {"lifecycle_status", "production"}, {"family", "boardToBoard"}, {"positions", 13},
          {"polarity", "male"}, {"pitch_mm", 2.0}, {"rated_current_A", 5.0},
          {"contact_plating", "au-gold"}, {"termination", "crimp"}, {"mating_cycles", 500.0}},
-        {{"mpn", "TIN"}, {"family", "boardToBoard"}, {"positions", 13},
+        {{"mpn", "TIN"}, {"lifecycle_status", "production"}, {"family", "boardToBoard"}, {"positions", 13},
          {"polarity", "male"}, {"pitch_mm", 2.0}, {"rated_current_A", 5.0},
          {"contact_plating", "sn-tin"}, {"termination", "crimp"}, {"mating_cycles", 500.0}},
         {{"mpn", "IDC"}, {"family", "boardToBoard"}, {"positions", 13},
          {"polarity", "male"}, {"pitch_mm", 2.0}, {"rated_current_A", 5.0},
          {"contact_plating", "au-gold"}, {"termination", "idc"}, {"mating_cycles", 500.0}},
-        {{"mpn", "WORN"}, {"family", "boardToBoard"}, {"positions", 13},
+        {{"mpn", "WORN"}, {"lifecycle_status", "production"}, {"family", "boardToBoard"}, {"positions", 13},
          {"polarity", "male"}, {"pitch_mm", 2.0}, {"rated_current_A", 5.0},
          {"contact_plating", "au-gold"}, {"termination", "crimp"}, {"mating_cycles", 30.0}},
-        {{"mpn", "NO_IFACE"}, {"family", "boardToBoard"}, {"positions", 13},
+        {{"mpn", "NO_IFACE"}, {"lifecycle_status", "production"}, {"family", "boardToBoard"}, {"positions", 13},
          {"polarity", "male"}, {"pitch_mm", 2.0}, {"rated_current_A", 5.0}}});
     auto r = cross_reference("connector", original, cands, Options{});
     auto by_mpn = [&](const char* m) {
@@ -942,15 +942,15 @@ TEST_CASE("a discrete chip is not a drop-in for a resistor array", "[crossref][c
     // and a body outline that matches to the micron — every electrical column
     // agrees, which is exactly why the device class has to be the thing that
     // decides it.
-    json original = {{"mpn", "EXBV8V510JV"}, {"family", "Chip Resistor Array"},
+    json original = {{"mpn", "EXBV8V510JV"}, {"lifecycle_status", "production"}, {"family", "Chip Resistor Array"},
                      {"value_si", 51.0},     {"power_rating", 0.063},
                      {"tolerance_pct", 5.0}, {"length_m", 0.0032},
                      {"width_m", 0.0016}};
     json cands = json::array({
-        {{"mpn", "CR1206-JW-510ELF"}, {"family", "CR"}, {"value_si", 51.0},
+        {{"mpn", "CR1206-JW-510ELF"}, {"lifecycle_status", "production"}, {"family", "CR"}, {"value_si", 51.0},
          {"power_rating", 0.25}, {"tolerance_pct", 5.0}, {"case_code", "1206"}},
         // Another array: the class agrees, so this one is free to rank normally.
-        {{"mpn", "YC164-JR-0751RL"}, {"family", "YC"}, {"value_si", 51.0},
+        {{"mpn", "YC164-JR-0751RL"}, {"lifecycle_status", "production"}, {"family", "YC"}, {"value_si", 51.0},
          {"power_rating", 0.063}, {"tolerance_pct", 5.0}, {"length_m", 0.0032},
          {"width_m", 0.0016}}});
     auto r = cross_reference("resistor", original, cands, Options{});
@@ -995,7 +995,7 @@ TEST_CASE("an array offered for a discrete original is flagged the other way rou
     json original = {{"mpn", "RC1206JR-0751RL"}, {"family", "RC"}, {"value_si", 51.0},
                      {"power_rating", 0.25}, {"tolerance_pct", 5.0}, {"case_code", "1206"}};
     json cands = json::array({
-        {{"mpn", "EXBV8V510JV"}, {"family", "Chip Resistor Array"}, {"value_si", 51.0},
+        {{"mpn", "EXBV8V510JV"}, {"lifecycle_status", "production"}, {"family", "Chip Resistor Array"}, {"value_si", 51.0},
          {"power_rating", 0.063}, {"tolerance_pct", 5.0}, {"length_m", 0.0032},
          {"width_m", 0.0016}}});
     auto r = cross_reference("resistor", original, cands, Options{});
@@ -1032,6 +1032,7 @@ TEST_CASE("the device class survives extraction into the browse row",
     // End to end on the real rows: the array original, the discrete substitute.
     auto spec = [](const json& row) {
         return json{{"mpn", row.at("mpn")},
+                    {"lifecycle_status", row.at("lifecycleStatus")},
                     {"family", row.at("family")},
                     {"value_si", row.at("resistance")},
                     {"power_rating", row.at("power_rating")},
@@ -1102,7 +1103,7 @@ TEST_CASE("a standard thick-film chip is not a drop-in for an anti-sulfurated or
     // The ticket's case, as the ranker sees it: 63.4 ohm, 1 %, 1 W, 2512 on both
     // sides, both thick film. Nothing numeric can separate them, which is exactly
     // why the construction class has to be the thing that decides it.
-    json original = {{"mpn", "ERJS1TF63R4U"},
+    json original = {{"mpn", "ERJS1TF63R4U"}, {"lifecycle_status", "production"},
                      {"family", "Anti-Sulfurated Thick Film Chip Resistors"},
                      {"value_si", 63.4},
                      {"power_rating", 1.0},
@@ -1111,16 +1112,16 @@ TEST_CASE("a standard thick-film chip is not a drop-in for an anti-sulfurated or
                      {"length_m", 0.0064},
                      {"width_m", 0.0032}};
     json cands = json::array({
-        {{"mpn", "CR2512-FX-63R4ELF"}, {"family", "CR"}, {"value_si", 63.4},
+        {{"mpn", "CR2512-FX-63R4ELF"}, {"lifecycle_status", "production"}, {"family", "CR"}, {"value_si", 63.4},
          {"power_rating", 1.0}, {"tolerance_pct", 1.0}, {"case_code", "2512"},
          {"length_m", 0.0064}, {"width_m", 0.0032}},
         // A record that names no series at all: the class is not knowable from it,
         // and the note has to say that rather than name a line it does not have.
-        {{"mpn", "RC2512FK-0763R4L"}, {"family", ""}, {"value_si", 63.4},
+        {{"mpn", "RC2512FK-0763R4L"}, {"lifecycle_status", "production"}, {"family", ""}, {"value_si", 63.4},
          {"power_rating", 1.0}, {"tolerance_pct", 1.0}, {"case_code", "2512"},
          {"length_m", 0.0064}, {"width_m", 0.0032}},
         // An anti-sulfurated line: the class agrees, so this one ranks normally.
-        {{"mpn", "AF2512FR-0763R4L"}, {"family", "AF"}, {"value_si", 63.4},
+        {{"mpn", "AF2512FR-0763R4L"}, {"lifecycle_status", "production"}, {"family", "AF"}, {"value_si", 63.4},
          {"power_rating", 1.0}, {"tolerance_pct", 1.0}, {"case_code", "2512"},
          {"length_m", 0.0064}, {"width_m", 0.0032}}});
     auto r = cross_reference("resistor", original, cands, Options{});
@@ -1171,11 +1172,11 @@ TEST_CASE("an anti-sulfurated substitute for an ordinary original is not a cavea
     // Asked one way only. Sulfur resistance is a property ADDED to the original's
     // spec, and an engineer replacing an ordinary chip with an ERJ-S loses
     // nothing — flagging it would be noise on 112k records.
-    json original = {{"mpn", "CR2512-FX-63R4ELF"}, {"family", "CR"},   {"value_si", 63.4},
+    json original = {{"mpn", "CR2512-FX-63R4ELF"}, {"lifecycle_status", "production"}, {"family", "CR"},   {"value_si", 63.4},
                      {"power_rating", 1.0},        {"tolerance_pct", 1.0}, {"case_code", "2512"},
                      {"length_m", 0.0064},         {"width_m", 0.0032}};
     json cands = json::array({
-        {{"mpn", "ERJS1TF63R4U"}, {"family", "Anti-Sulfurated Thick Film Chip Resistors"},
+        {{"mpn", "ERJS1TF63R4U"}, {"lifecycle_status", "production"}, {"family", "Anti-Sulfurated Thick Film Chip Resistors"},
          {"value_si", 63.4}, {"power_rating", 1.0}, {"tolerance_pct", 1.0},
          {"case_code", "2512"}, {"length_m", 0.0064}, {"width_m", 0.0032}}});
     auto r = cross_reference("resistor", original, cands, Options{});
@@ -1250,10 +1251,10 @@ TEST_CASE("a bridge rectifier module is not a substitute for a two-terminal diod
                      {"vf", 0.85},     {"technology", "rectifier"},
                      {"case_code", "SMC (DO-214AB)"}};
     json cands = json::array({
-        {{"mpn", "GBU8KS"}, {"vrrm", 800.0}, {"if_avg", 8.0}, {"vf", 1.0},
+        {{"mpn", "GBU8KS"}, {"lifecycle_status", "production"}, {"vrrm", 800.0}, {"if_avg", 8.0}, {"vf", 1.0},
          {"technology", "rectifier"}, {"case_code", "SIP-4"}},
         // A genuine two-terminal discrete whose only deficit is a higher Vf.
-        {{"mpn", "IDV08E65D2"}, {"vrrm", 650.0}, {"if_avg", 8.0}, {"vf", 1.6},
+        {{"mpn", "IDV08E65D2"}, {"lifecycle_status", "production"}, {"vrrm", 650.0}, {"if_avg", 8.0}, {"vf", 1.6},
          {"technology", "rectifier"}},
     });
     auto r = cross_reference("diode", original, cands, Options{});
@@ -1296,9 +1297,9 @@ TEST_CASE("a discrete offered for a bridge original is flagged the other way rou
           "[crossref][classes][abt521]") {
     // The mirror case: one discrete replaces ONE of the bridge's four elements,
     // and the original's ratings are per element / bridge output.
-    json original = {{"mpn", "GBU8K"}, {"vrrm", 800.0}, {"if_avg", 8.0}, {"vf", 1.0},
+    json original = {{"mpn", "GBU8K"}, {"lifecycle_status", "production"}, {"vrrm", 800.0}, {"if_avg", 8.0}, {"vf", 1.0},
                      {"technology", "rectifier"}, {"case_code", "GBU"}};
-    json cands = json::array({{{"mpn", "S8K"},
+    json cands = json::array({{{"mpn", "S8K"}, {"lifecycle_status", "production"},
                                {"vrrm", 800.0},
                                {"if_avg", 8.0},
                                {"vf", 0.85},
@@ -1321,7 +1322,7 @@ TEST_CASE("a package that states four leads but no bridge series says only what 
     // series in the table, so the note claims the terminals and not the topology.
     json original = {{"mpn", "S8J"}, {"vrrm", 600.0}, {"if_avg", 8.0}, {"vf", 0.85},
                      {"technology", "rectifier"}, {"case_code", "SMC (DO-214AB)"}};
-    json cands = json::array({{{"mpn", "DFB25100"},
+    json cands = json::array({{{"mpn", "DFB25100"}, {"lifecycle_status", "production"},
                                {"vrrm", 1000.0},
                                {"if_avg", 25.0},
                                {"vf", 1.1},
@@ -1361,6 +1362,7 @@ TEST_CASE("the four-lead package survives extraction into the browse row",
     // — browse omits the key on a record that states no case.
     auto spec = [](const json& row) {
         return json{{"mpn", row.at("mpn")},
+                    {"lifecycle_status", row.at("lifecycleStatus")},
                     {"vrrm", row.at("vrrm_rated")},
                     {"if_avg", row.at("if_avg_rated")},
                     {"vf", row.at("vf_typ")},
@@ -1396,12 +1398,12 @@ TEST_CASE("a zener's guaranteed window is compared, not just its marked voltage"
                      {"vrrm", 3.6},           {"if_avg", 0.2},        {"vz_min_V", 3.56},
                      {"vz_max_V", 3.64},      {"vz_tolerance_pct", 100.0 * 0.08 / 7.2}};
     json cands = json::array({
-        {{"mpn", "A_GRADE"}, {"technology", "zener"}, {"case_code", "SOT23"}, {"vrrm", 3.6},
+        {{"mpn", "A_GRADE"}, {"lifecycle_status", "production"}, {"technology", "zener"}, {"case_code", "SOT23"}, {"vrrm", 3.6},
          {"if_avg", 0.2}, {"vz_min_V", 3.56}, {"vz_max_V", 3.64},
          {"vz_tolerance_pct", 100.0 * 0.08 / 7.2}},
-        {{"mpn", "B_GRADE"}, {"technology", "zener"}, {"case_code", "SOT23"}, {"vrrm", 3.6},
+        {{"mpn", "B_GRADE"}, {"lifecycle_status", "production"}, {"technology", "zener"}, {"case_code", "SOT23"}, {"vrrm", 3.6},
          {"if_avg", 0.2}, {"vz_min_V", 3.42}, {"vz_max_V", 3.78}, {"vz_tolerance_pct", 5.0}},
-        {{"mpn", "NO_BAND"}, {"technology", "zener"}, {"case_code", "SOT23"}, {"vrrm", 3.6},
+        {{"mpn", "NO_BAND"}, {"lifecycle_status", "production"}, {"technology", "zener"}, {"case_code", "SOT23"}, {"vrrm", 3.6},
          {"if_avg", 0.2}}});
     auto r = cross_reference("diode", original, cands, Options{});
     auto by_mpn = [&](const char* m) {
@@ -1472,16 +1474,150 @@ TEST_CASE("a zener's guaranteed window is compared, not just its marked voltage"
 // numeric tells them apart: the channel is identity, and a mismatch rejects (ABT #1749).
 TEST_CASE("a P-channel MOSFET is never a substitute for an N-channel one",
           "[crossref][classes][rank]") {
-    json original = {{"mpn", "N"}, {"vds", 60.0}, {"id", 10.0}, {"rds_on", 0.02},
+    json original = {{"mpn", "N"}, {"lifecycle_status", "production"}, {"vds", 60.0}, {"id", 10.0}, {"rds_on", 0.02},
                      {"channel", "nChannel"}};
     json cands = json::array({
         {{"mpn", "P"}, {"vds", 60.0}, {"id", 10.0}, {"rds_on", 0.02}, {"channel", "pChannel"}},
-        {{"mpn", "N2"}, {"vds", 60.0}, {"id", 10.0}, {"rds_on", 0.02}, {"channel", "nChannel"}},
-        {{"mpn", "U"}, {"vds", 60.0}, {"id", 10.0}, {"rds_on", 0.02}}});
+        {{"mpn", "N2"}, {"lifecycle_status", "production"}, {"vds", 60.0}, {"id", 10.0}, {"rds_on", 0.02}, {"channel", "nChannel"}},
+        {{"mpn", "U"}, {"lifecycle_status", "production"}, {"vds", 60.0}, {"id", 10.0}, {"rds_on", 0.02}}});
     auto r = cross_reference("mosfet", original, cands, Options{});
     std::map<std::string, std::string> st;
     for (const auto& c : r["candidates"]) st[c["mpn"]] = c["status"];
     CHECK(st["P"] == "no_substitute");
     CHECK(st["N2"] != "no_substitute");
     CHECK(st["U"] != "no_substitute");  // a record naming no channel is unverified, not refused
+}
+
+// ── Qarlos 2026-11-20: identities the grading did not compare ───────────────────────────────
+// Specs below are the browse rows of the real TAS records (TAS 680c9c9), as web/src/crossref.js
+// projects them.
+namespace {
+json qx_adc(const char* mpn, const char* arch, double ch, double bits, double fs = 0) {
+    json j = {{"mpn", mpn}, {"lifecycle_status", "production"}, {"subtype", "adc"}, {"channels", ch}, {"resolution", bits}};
+    if (arch) j["architecture"] = arch;
+    if (fs > 0) j["sample_rate"] = fs;
+    return j;
+}
+json qx_only(const json& r) {
+    REQUIRE(r["candidates"].size() == 1);
+    return r["candidates"][0];
+}
+bool qx_note_has(const json& c, const std::string& s) {
+    if (!c.contains("notes")) return false;
+    for (const auto& n : c["notes"])
+        if (n.get<std::string>().find(s) != std::string::npos) return true;
+    return false;
+}
+}  // namespace
+
+TEST_CASE("qarlos 2026-11-20: a pipeline ADC is not a substitute for a SAR ADC",
+          "[crossref][classes][qarlos-adc-arch]") {
+    // MAX1305 (SAR, 4 ch, 12 bit, 1.08 MSPS) -> AD9228 (pipeline, 4 ch, 12 bit, 65 MSPS) was
+    // graded a minor-review upgrade; MAX1246 (SAR, 133 kSPS) -> AD9228 likewise.
+    for (const json& orig : {qx_adc("MAX1305", "SAR", 4, 12, 1.08e6),
+                             qx_adc("MAX1246", "SAR", 4, 12, 133e3)}) {
+        const json c = qx_only(cross_reference(
+            "analog", orig, json::array({qx_adc("AD9228", "pipeline", 4, 12, 65e6)}), Options{}));
+        CHECK(c["status"] == "no_substitute");
+        CHECK(qx_note_has(c, "ADC conversion architecture differs: the original is SAR, the "
+                             "substitute pipeline"));
+    }
+    // AD7911 (SAR, 2 ch, 10 bit) -> ADS1209 (delta-sigma) and -> AFE7225 (pipeline AFE).
+    const json ad7911 = qx_adc("AD7911", "SAR", 2, 10, 250e3);
+    for (const json& sub :
+         {qx_adc("ADS1209", "deltaSigma", 2, 16), qx_adc("AFE7225", "pipeline", 2, 12)}) {
+        const json c = qx_only(cross_reference("analog", ad7911, json::array({sub}), Options{}));
+        CHECK(c["status"] == "no_substitute");
+    }
+    // ADC10DL065 (pipeline, 65 MSPS) -> AD7150 (a capacitance-to-digital converter its record
+    // files as a deltaSigma adc).
+    const json c = qx_only(cross_reference("analog", qx_adc("ADC10DL065", "pipeline", 2, 10, 65e6),
+                                           json::array({qx_adc("AD7150", "deltaSigma", 2, 12)}),
+                                           Options{}));
+    CHECK(c["status"] == "no_substitute");
+}
+
+TEST_CASE("qarlos 2026-11-20: same ADC architecture passes, an unstated one is unverified",
+          "[crossref][classes][qarlos-adc-arch]") {
+    const json orig = qx_adc("MAX1305", "SAR", 4, 12, 1.08e6);
+    const json same = qx_only(cross_reference(
+        "analog", orig, json::array({qx_adc("SAR-B", "SAR", 4, 12, 1.08e6)}), Options{}));
+    CHECK(same["status"] != "no_substitute");
+    bool pass = false;
+    for (const auto& p : same["params"])
+        if (p["name"] == "architecture") pass = p["verdict"] == "pass";
+    CHECK(pass);
+    // The substitute states no architecture: UNVERIFIED with a note, never a drop_in.
+    const json open = qx_only(cross_reference(
+        "analog", orig, json::array({qx_adc("NOARCH", nullptr, 4, 12, 1.08e6)}), Options{}));
+    CHECK(open["status"] != "no_substitute");
+    CHECK(open["grade"] != "drop_in");
+    CHECK(qx_note_has(open, "states no conversion architecture"));
+    // Not an ADC: the architecture is not compared (a zero-drift op-amp vs one stating none).
+    json opa = {{"mpn", "OPA-A"}, {"subtype", "operationalAmplifier"}, {"channels", 1.0},
+                {"architecture", "zeroDrift"}};
+    json opb = {{"mpn", "OPA-B"}, {"lifecycle_status", "production"}, {"subtype", "operationalAmplifier"}, {"channels", 1.0}};
+    const json op = qx_only(cross_reference("analog", opa, json::array({opb}), Options{}));
+    for (const auto& p : op["params"]) CHECK(p["name"] != "architecture");
+}
+
+TEST_CASE("qarlos 2026-11-20: an IGBT power module is read from what its case declares",
+          "[crossref][classes][qarlos-igbt-module]") {
+    CHECK(declares_igbt_module("Module"));
+    CHECK(declares_igbt_module("ACEPACK\xE2\x84\xA2 1"));
+    CHECK(declares_igbt_module("Double INT-A-PAK"));
+    CHECK(declares_igbt_module("ECONO2 4PACK"));
+    CHECK(declares_igbt_module("AG-EASY2B"));
+    CHECK(declares_igbt_module("62mm"));
+    CHECK(declares_igbt_module("SEMITOP\xC2\xAE" "2"));
+    CHECK(declares_igbt_module("12-MTP"));
+    CHECK(declares_igbt_module("SP3F"));
+    CHECK(declares_igbt_module("SP6-P"));
+    CHECK_FALSE(declares_igbt_module("TO-247"));
+    CHECK_FALSE(declares_igbt_module("TO-247 PLUS"));
+    CHECK_FALSE(declares_igbt_module("SOT-227B (minibloc)"));
+    CHECK_FALSE(declares_igbt_module("D2PAK"));
+    CHECK_FALSE(declares_igbt_module("SMPD"));
+    CHECK_FALSE(declares_igbt_module("Unknown"));
+    CHECK_FALSE(declares_igbt_module(""));
+    // The discrete side: a discrete outline, or no case on record (SAS igbt.json's default).
+    CHECK(declares_igbt_discrete("TO-247"));
+    CHECK(declares_igbt_discrete("https://www.infineon.com/package/PG-TO247-3-41"));
+    CHECK(declares_igbt_discrete("TO-263 (D2PAK)"));
+    CHECK(declares_igbt_discrete("Unknown"));
+    CHECK(declares_igbt_discrete(""));
+    CHECK(declares_igbt_discrete("-"));
+    // Neither: an outline this table does not know is not taken for a discrete.
+    CHECK_FALSE(declares_igbt_discrete("M274"));
+    CHECK_FALSE(declares_igbt_discrete("SOT-227"));
+    CHECK_FALSE(declares_igbt_discrete("D3"));
+    CHECK_FALSE(declares_igbt_discrete("Module"));
+    // Fuji 2MBI200XBE120-50 (case "M274", a module outline not in the table) against a 62mm
+    // module: no conflict claimed.
+    CHECK(igbt_configuration_conflict("M274", "62mm").empty());
+    CHECK(!igbt_configuration_conflict("Unknown", "Module").empty());
+}
+
+TEST_CASE("qarlos 2026-11-20: an IGBT power module is not a drop-in for a discrete IGBT",
+          "[crossref][classes][qarlos-igbt-module]") {
+    // NGTB35N65FL2WG (onsemi; case "Unknown" -> the discrete its schema defines) ->
+    // DF100R07W1H5FPB53BPSA2 (Infineon; case "Module"). Mounts omitted: both records state
+    // "smt", wrong for both (ABT #2428), and not what this test is about.
+    json original = {{"mpn", "NGTB35N65FL2WG"}, {"lifecycle_status", "production"}, {"vces", 650.0}, {"ic", 35.0}, {"vce_sat", 1.25},
+                     {"tj_max", 150.0}, {"technology", "Si"}, {"case_code", "Unknown"}};
+    json module = {{"mpn", "DF100R07W1H5FPB53BPSA2"}, {"lifecycle_status", "production"}, {"vces", 650.0}, {"ic", 40.0},
+                   {"vce_sat", 1.25}, {"tj_max", 150.0}, {"technology", "Si"},
+                   {"case_code", "Module"}};
+    const json c = qx_only(cross_reference("igbt", original, json::array({module}), Options{}));
+    CHECK(c["grade"] == "major_review");
+    CHECK(c["footprint"] == "different_land_pattern");
+    bool class_fail = false;
+    for (const auto& p : c["params"])
+        if (p["name"] == "configuration") class_fail = p["verdict"] == "fail";
+    CHECK(class_fail);
+    CHECK(qx_note_has(c, "IGBT POWER MODULE"));
+    // The mirror direction.
+    const json m = qx_only(cross_reference("igbt", module, json::array({original}), Options{}));
+    CHECK(m["grade"] == "major_review");
+    CHECK(qx_note_has(m, "the original is a multi-chip IGBT POWER MODULE"));
 }
