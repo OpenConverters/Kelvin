@@ -1682,10 +1682,13 @@ inline bool footprint_is_the_body(const std::string& category) {
 }
 
 // Categories whose package strings vary too much by series for the generic mount
-// rule to be safe (mirrors Heaviside's GFoot skip list).
+// rule to be safe (mirrors Heaviside's GFoot skip list). The IGBT left this list on
+// 2026-11-20 (Qarlos, RGSX5TS65EHRC11 -> IKWH75N65EH7XKSA1): a stated THT-vs-SMT
+// difference was never checked for it, so it now takes the shared gate like every
+// family not listed here.
 inline bool mount_gate_applies(const std::string& category) {
     return !(category == "magnetic" || category == "chipBead" || category == "mosfet" ||
-             category == "diode" || category == "igbt");
+             category == "diode");
 }
 
 }  // namespace kelvin::crossref

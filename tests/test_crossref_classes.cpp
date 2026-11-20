@@ -1485,3 +1485,140 @@ TEST_CASE("a P-channel MOSFET is never a substitute for an N-channel one",
     CHECK(st["N2"] != "no_substitute");
     CHECK(st["U"] != "no_substitute");  // a record naming no channel is unverified, not refused
 }
+
+// ── Qarlos 2026-11-20: identities the grading did not compare ───────────────────────────────
+// Specs below are the browse rows of the real TAS records (TAS 680c9c9), as web/src/crossref.js
+// projects them.
+namespace {
+json qx_adc(const char* mpn, const char* arch, double ch, double bits, double fs = 0) {
+    json j = {{"mpn", mpn}, {"subtype", "adc"}, {"channels", ch}, {"resolution", bits}};
+    if (arch) j["architecture"] = arch;
+    if (fs > 0) j["sample_rate"] = fs;
+    return j;
+}
+json qx_only(const json& r) {
+    REQUIRE(r["candidates"].size() == 1);
+    return r["candidates"][0];
+}
+bool qx_note_has(const json& c, const std::string& s) {
+    if (!c.contains("notes")) return false;
+    for (const auto& n : c["notes"])
+        if (n.get<std::string>().find(s) != std::string::npos) return true;
+    return false;
+}
+}  // namespace
+
+TEST_CASE("qarlos 2026-11-20: a pipeline ADC is not a substitute for a SAR ADC",
+          "[crossref][classes][qarlos-adc-arch]") {
+    // MAX1305 (SAR, 4 ch, 12 bit, 1.08 MSPS) -> AD9228 (pipeline, 4 ch, 12 bit, 65 MSPS) was
+    // graded a minor-review upgrade; MAX1246 (SAR, 133 kSPS) -> AD9228 likewise.
+    for (const json& orig : {qx_adc("MAX1305", "SAR", 4, 12, 1.08e6),
+                             qx_adc("MAX1246", "SAR", 4, 12, 133e3)}) {
+        const json c = qx_only(cross_reference(
+            "analog", orig, json::array({qx_adc("AD9228", "pipeline", 4, 12, 65e6)}), Options{}));
+        CHECK(c["status"] == "no_substitute");
+        CHECK(qx_note_has(c, "ADC conversion architecture differs: the original is SAR, the "
+                             "substitute pipeline"));
+    }
+    // AD7911 (SAR, 2 ch, 10 bit) -> ADS1209 (delta-sigma) and -> AFE7225 (pipeline AFE).
+    const json ad7911 = qx_adc("AD7911", "SAR", 2, 10, 250e3);
+    for (const json& sub :
+         {qx_adc("ADS1209", "deltaSigma", 2, 16), qx_adc("AFE7225", "pipeline", 2, 12)}) {
+        const json c = qx_only(cross_reference("analog", ad7911, json::array({sub}), Options{}));
+        CHECK(c["status"] == "no_substitute");
+    }
+    // ADC10DL065 (pipeline, 65 MSPS) -> AD7150 (a capacitance-to-digital converter its record
+    // files as a deltaSigma adc).
+    const json c = qx_only(cross_reference("analog", qx_adc("ADC10DL065", "pipeline", 2, 10, 65e6),
+                                           json::array({qx_adc("AD7150", "deltaSigma", 2, 12)}),
+                                           Options{}));
+    CHECK(c["status"] == "no_substitute");
+}
+
+TEST_CASE("qarlos 2026-11-20: same ADC architecture passes, an unstated one is unverified",
+          "[crossref][classes][qarlos-adc-arch]") {
+    const json orig = qx_adc("MAX1305", "SAR", 4, 12, 1.08e6);
+    const json same = qx_only(cross_reference(
+        "analog", orig, json::array({qx_adc("SAR-B", "SAR", 4, 12, 1.08e6)}), Options{}));
+    CHECK(same["status"] != "no_substitute");
+    bool pass = false;
+    for (const auto& p : same["params"])
+        if (p["name"] == "architecture") pass = p["verdict"] == "pass";
+    CHECK(pass);
+    // The substitute states no architecture: UNVERIFIED with a note, never a drop_in.
+    const json open = qx_only(cross_reference(
+        "analog", orig, json::array({qx_adc("NOARCH", nullptr, 4, 12, 1.08e6)}), Options{}));
+    CHECK(open["status"] != "no_substitute");
+    CHECK(open["grade"] != "drop_in");
+    CHECK(qx_note_has(open, "states no conversion architecture"));
+    // Not an ADC: the architecture is not compared (a zero-drift op-amp vs one stating none).
+    json opa = {{"mpn", "OPA-A"}, {"subtype", "operationalAmplifier"}, {"channels", 1.0},
+                {"architecture", "zeroDrift"}};
+    json opb = {{"mpn", "OPA-B"}, {"subtype", "operationalAmplifier"}, {"channels", 1.0}};
+    const json op = qx_only(cross_reference("analog", opa, json::array({opb}), Options{}));
+    for (const auto& p : op["params"]) CHECK(p["name"] != "architecture");
+}
+
+TEST_CASE("qarlos 2026-11-20: an IGBT power module is read from what its case declares",
+          "[crossref][classes][qarlos-igbt-module]") {
+    CHECK(declares_igbt_module("Module"));
+    CHECK(declares_igbt_module("ACEPACK\xE2\x84\xA2 1"));
+    CHECK(declares_igbt_module("Double INT-A-PAK"));
+    CHECK(declares_igbt_module("ECONO2 4PACK"));
+    CHECK(declares_igbt_module("AG-EASY2B"));
+    CHECK(declares_igbt_module("62mm"));
+    CHECK(declares_igbt_module("SEMITOP\xC2\xAE" "2"));
+    CHECK(declares_igbt_module("12-MTP"));
+    CHECK(declares_igbt_module("SP3F"));
+    CHECK(declares_igbt_module("SP6-P"));
+    CHECK_FALSE(declares_igbt_module("TO-247"));
+    CHECK_FALSE(declares_igbt_module("TO-247 PLUS"));
+    CHECK_FALSE(declares_igbt_module("SOT-227B (minibloc)"));
+    CHECK_FALSE(declares_igbt_module("D2PAK"));
+    CHECK_FALSE(declares_igbt_module("SMPD"));
+    CHECK_FALSE(declares_igbt_module("Unknown"));
+    CHECK_FALSE(declares_igbt_module(""));
+}
+
+TEST_CASE("qarlos 2026-11-20: an IGBT power module is not a drop-in for a discrete IGBT",
+          "[crossref][classes][qarlos-igbt-module]") {
+    // NGTB35N65FL2WG (onsemi; case "Unknown" -> the discrete its schema defines) ->
+    // DF100R07W1H5FPB53BPSA2 (Infineon; case "Module"). Mounts omitted: both records state
+    // "smt", wrong for both (ABT #2428), and not what this test is about.
+    json original = {{"mpn", "NGTB35N65FL2WG"}, {"vces", 650.0}, {"ic", 35.0}, {"vce_sat", 1.25},
+                     {"tj_max", 150.0}, {"technology", "Si"}, {"case_code", "Unknown"}};
+    json module = {{"mpn", "DF100R07W1H5FPB53BPSA2"}, {"vces", 650.0}, {"ic", 40.0},
+                   {"vce_sat", 1.25}, {"tj_max", 150.0}, {"technology", "Si"},
+                   {"case_code", "Module"}};
+    const json c = qx_only(cross_reference("igbt", original, json::array({module}), Options{}));
+    CHECK(c["grade"] == "major_review");
+    CHECK(c["footprint"] == "different_land_pattern");
+    bool class_fail = false;
+    for (const auto& p : c["params"])
+        if (p["name"] == "configuration") class_fail = p["verdict"] == "fail";
+    CHECK(class_fail);
+    CHECK(qx_note_has(c, "IGBT POWER MODULE"));
+    // The mirror direction.
+    const json m = qx_only(cross_reference("igbt", module, json::array({original}), Options{}));
+    CHECK(m["grade"] == "major_review");
+    CHECK(qx_note_has(m, "the original is a multi-chip IGBT POWER MODULE"));
+}
+
+TEST_CASE("qarlos 2026-11-20: a stated THT-vs-SMT IGBT mount is checked",
+          "[crossref][classes][qarlos-igbt-mount]") {
+    // RGSX5TS65EHRC11 (ROHM; mechanical.assemblyType smt, case "Unknown") ->
+    // IKWH75N65EH7XKSA1 (Infineon; tht, TO-247), as the records state them.
+    json original = {{"mpn", "RGSX5TS65EHRC11"}, {"vces", 650.0}, {"ic", 75.0}, {"vce_sat", 1.4},
+                     {"tj_max", 150.0}, {"technology", "Si"}, {"case_code", "Unknown"},
+                     {"mount", "smt"}};
+    json cand = {{"mpn", "IKWH75N65EH7XKSA1"}, {"vces", 650.0}, {"ic", 75.0}, {"vce_sat", 1.4},
+                 {"tj_max", 150.0}, {"technology", "Si"}, {"case_code", "TO-247"},
+                 {"mount", "tht"}};
+    const json c = qx_only(cross_reference("igbt", original, json::array({cand}), Options{}));
+    CHECK(c["status"] == "no_substitute");
+    CHECK(qx_note_has(c, "mount type incompatible"));
+    // The same mount on both sides is not rejected by the gate.
+    original["mount"] = "tht";
+    const json ok = qx_only(cross_reference("igbt", original, json::array({cand}), Options{}));
+    CHECK(ok["status"] != "no_substitute");
+}

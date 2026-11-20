@@ -390,6 +390,7 @@ inline std::vector<std::string> comparison_source_fields(const std::string& cat,
         if (name == "resolution") return {"electrical.resolution"};
         if (name == "sample_rate") return {"electrical.sampleRate"};
         if (name == "on_resistance") return {"electrical.onResistance"};
+        if (name == "architecture") return {"electrical.architecture"};
         return {};
     }
     if (cat == "timeBase") {
@@ -599,7 +600,9 @@ inline bool is_hard_param(const std::string& cat, const std::string& key) {
     static const std::set<std::string> connector{
         "family",        "positions",     "polarity", "interface_standard", "termination",
         "actuator_type", "coupling_type", "coding",   "shell_size"};
-    static const std::set<std::string> analog{"subtype", "channels"};
+    // architecture: an ADC's conversion architecture (Qarlos 2026-11-20); the PARAM_SPECS loop
+    // compares it for ADC originals only.
+    static const std::set<std::string> analog{"subtype", "channels", "architecture"};
     // mode: a 3rd-overtone crystal cannot cross with a fundamental one in either
     // direction — an overtone circuit's LC tank is inductive at the fundamental,
     // so the loop cannot close there; drop an overtone part into a fundamental
@@ -2011,6 +2014,22 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             diode_class_conflict = true;
         }
     }
+    // An IGBT power module is not a discrete IGBT (declares_igbt_module, CrossRefClasses.hpp):
+    // the bridge-rectifier treatment, field for field — a FAIL on the device class, the grade
+    // capped at major_review, the footprint a different land pattern (Qarlos 2026-11-20,
+    // NGTB35N65FL2WG -> DF100R07W1H5FPB53BPSA2).
+    bool igbt_class_conflict = false;
+    if (cat == "igbt") {
+        const std::string conflict =
+            igbt_configuration_conflict(str(original, "case_code"), str(cand, "case_code"));
+        if (!conflict.empty()) {
+            params.push_back({{"name", "configuration"}, {"verdict", FAIL}});
+            demote();
+            penalty += opt.gate_weight * kVerdictFailPenalty;
+            notes.push_back(conflict);
+            igbt_class_conflict = true;
+        }
+    }
     // Si / SiC / GaN differ in gate-drive requirements — a driver redesign, not
     // a drop-in, so it is surfaced loudly rather than scored away.
     if (cat == "mosfet" || cat == "igbt" || cat == "diode") {
@@ -2074,6 +2093,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // stability the original states and the substitute does not is UNVERIFIED and noted
     // too, but it is a secondary axis: no demotion, no cap (owner, 2026-11-09).
     bool timebase_pin_unverified = false;
+    // An ADC's conversion architecture stated on one side only (Qarlos 2026-11-20): UNVERIFIED,
+    // noted, and capped below drop_in like the timing control pin — it is the converter's kind.
+    bool analog_architecture_unverified = false;
     // The footprint is UNVERIFIED because NEITHER record states a land: both name only the
     // same generic package string (generic_package_names_no_land) and no dimensions, or
     // neither states any land dimension nor any package / case code at all. Reported, not
@@ -2793,6 +2815,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         const bool supply_key = spec.key == "supply_min_V" || spec.key == "supply_max_V" ||
                                 spec.key == "current_consumption";
         if (cat == "timeBase" && supply_key && timebase_passive) continue;
+        // The conversion architecture is an ADC identity only (kAnalog).
+        if (cat == "analog" && spec.key == "architecture" && str(original, "subtype") != "adc")
+            continue;
         // A programmable original or blank substitute: the frequency verdict is the range
         // check (programmable_frequency_fit), which also runs when neither record states a
         // single frequency.
@@ -2992,6 +3017,26 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 notes.push_back(std::string(buf) +
                                 " — a timing part's frequency is its identity; a different "
                                 "nominal is not a substitute, whatever its stability");
+            }
+        }
+        if (cat == "analog" && spec.key == "architecture") {
+            const std::string o_a = str(original, "architecture"), s_a = str(cand, "architecture");
+            if (verdict == FAIL) {
+                // Written before the hard-key reject below returns, so the rejection says why.
+                notes.push_back("ADC conversion architecture differs: the original is " + o_a +
+                                ", the substitute " + s_a +
+                                " — a different converter (latency, input structure, clocking "
+                                "and interface timing), not a substitute");
+            } else if (verdict == UNVERIFIED && (!o_a.empty() || !s_a.empty())) {
+                analog_architecture_unverified = true;
+                notes.push_back(
+                    !o_a.empty()
+                        ? "the original is a " + o_a +
+                              " ADC; the substitute's record states no conversion architecture "
+                              "— confirm it from the datasheet"
+                        : "the substitute is a " + s_a +
+                              " ADC; the original's record states no conversion architecture — "
+                              "confirm both are the same kind of converter");
             }
         }
         if (cat == "timeBase" && spec.key == "enable_function") {
@@ -3959,6 +4004,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                         "surface; dissimilar finishes fret and corrode at a separable joint");
 
     if (timebase_pin_unverified) demote();
+    if (analog_architecture_unverified) demote();
     if (timebase_supply_unverified)
         notes.push_back("the original runs from " + supply_range(original) +
                         "; the substitute's record states no supply range, so the rail could "
@@ -5123,7 +5169,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // four-terminal bridge module is the same story one rung coarser: the
         // case-code gate below would have called SMC -> SIP-4 an ordinary
         // "different_case" WARN, when the pads cannot be made to match at all.
-        if (resistor_class_conflict || diode_class_conflict) {
+        if (resistor_class_conflict || diode_class_conflict || igbt_class_conflict) {
             out["footprint"] = "different_land_pattern";
             params.push_back({{"name", "footprint"}, {"verdict", FAIL}});
             penalty += opt.footprint_weight * kVerdictFailPenalty;
@@ -6685,6 +6731,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                     qualification_unverified || topology_unverified ||
                                     resistor_connection_unverified || resistor_count_one_sided ||
                                     mount_unverified || timebase_pin_unverified ||
+                                    analog_architecture_unverified ||
                                     timebase_prog_order || current_rating_one_sided ||
                                     hard_rating_unverified ||
                                     cable_core_unverified ||
