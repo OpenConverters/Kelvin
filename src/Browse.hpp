@@ -213,10 +213,14 @@ inline const FieldTable<BjtRow>& fields<BjtRow>() {
          {"transition_frequency", &BjtRow::transition_frequency},
          {"vce_sat", &BjtRow::vce_sat},
          {"vce_sat_ic", &BjtRow::vce_sat_ic},
-         {"hfe_ic", &BjtRow::hfe_ic}},
+         {"hfe_ic", &BjtRow::hfe_ic},
+         {"bias_r1", &BjtRow::bias_r1},   // v25 (ABT #2445)
+         {"bias_r2", &BjtRow::bias_r2}},  // v25
         {{"technology", &BjtRow::technology},
          {"polarity", &BjtRow::polarity}},
-        {{"is_production", &BjtRow::is_production}},
+        {{"is_production", &BjtRow::is_production},
+         {"prebiased", &BjtRow::prebiased},         // v25
+         {"bias_r2_open", &BjtRow::bias_r2_open}},  // v25
         {}};
     return t;
 }

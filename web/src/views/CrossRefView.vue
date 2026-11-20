@@ -131,6 +131,7 @@ function cellValue(r, p) {
   // Categorical columns (contact plating, …) are printed as they are stated: si()
   // would render every one of them "NaN".
   if (p.str) return v || '—'
+  if (p.openRow && r?.[p.openRow] === true) return 'open'
   return si(v != null && p.scale ? v * p.scale : v, p.unit)
 }
 function penaltyText(c) {

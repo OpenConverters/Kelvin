@@ -347,5 +347,18 @@ assert.equal(famFor('analog', max1305).spec(max1305).architecture, 'SAR')
 assert.ok(famFor('analog', max1305).hardKeys.includes('architecture'))
 assert.ok(!famFor('analog', { device_type: 'operationalAmplifier' }).hardKeys.includes('architecture'))
 assert.equal(famFor('analog', max1305).spec({ ...max1305, architecture: '' }).architecture, null)
+// A BJT's built-in bias resistors reach the ranker (v25, ABT #2445): prebiased as the row states
+// it (false = plain), R1 / R2 null when unstated, an omitted R2 as bias_r2_open; a row without
+// the v25 field projects prebiased null (unknown), never false.
+const bjtFam = famFor('bjt', {})
+const pdtc114t = bjtFam.spec({ mpn: 'PDTC114TT', vceo_rated: 50, ic_continuous: 0.1,
+  prebiased: true, bias_r1: 10000, bias_r2: null, bias_r2_open: true })
+assert.equal(pdtc114t.prebiased, true); assert.equal(pdtc114t.bias_r1, 10000)
+assert.equal(pdtc114t.bias_r2, null); assert.equal(pdtc114t.bias_r2_open, true)
+const bc847 = bjtFam.spec({ mpn: 'BC847BLT1G', vceo_rated: 45, ic_continuous: 0.1,
+  prebiased: false, bias_r1: null, bias_r2: null, bias_r2_open: false })
+assert.equal(bc847.prebiased, false); assert.equal(bc847.bias_r1, null)
+assert.equal(bc847.bias_r2_open, false)
+assert.equal(bjtFam.spec({ mpn: 'OLD', vceo_rated: 45, ic_continuous: 0.1 }).prebiased, null)
 
 console.log('crossref variants: all checks passed')

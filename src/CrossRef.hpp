@@ -361,6 +361,9 @@ inline std::vector<std::string> comparison_source_fields(const std::string& cat,
         if (name == "vce_sat" || name == "vce_sat_basis") return {"electrical.saturationVoltage"};
         if (name == "tj_max") return {"thermal.junctionTemperatureMax"};
         if (name == "polarity") return {"part.subType"};
+        if (name == "configuration") return {"electrical.biasResistors"};
+        if (name == "bias_r1") return {"electrical.biasResistors.baseResistance"};
+        if (name == "bias_r2") return {"electrical.biasResistors.baseEmitterResistance"};
         return {};
     }
     if (cat == "varistor") {
@@ -2028,6 +2031,131 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             penalty += opt.gate_weight * kVerdictFailPenalty;
             notes.push_back(conflict);
             igbt_class_conflict = true;
+        }
+    }
+    // A pre-biased ("digital", BRT / RET) transistor carries its base network inside: R1 in
+    // series with the base, R2 from base to emitter (SAS bjt.json electrical.biasResistors,
+    // ABT #2445). It is not a drop-in for a plain BJT (the board has no base resistor, or the
+    // drive was designed around the missing one), nor for a pre-biased part with other
+    // resistors (the base current, and so whether it saturates, follows R1 and R2). The
+    // IGBT module / discrete treatment: a FAIL on the row (configuration for plain vs
+    // pre-biased, bias_r1 / bias_r2 for a different resistor), capped at major_review, not a
+    // rejection — external resistors or a changed drive do make it work once the board changes.
+    // R1 / R2 are compared exactly on their resolved values: they are E-series type values
+    // (10k / 22k / 47k), and the min / max a record states are the spread of ONE type, not a
+    // window inside which another type matches. One side unstated is UNVERIFIED, noted and
+    // capped below drop_in. An omitted R2 on a pre-biased part is OPEN (bias_r2_open), a stated
+    // value that is compared like any other.
+    bool bjt_bias_unverified = false;
+    if (cat == "bjt") {
+        auto prebiased = [](const json& j) -> std::optional<bool> {
+            auto it = j.find("prebiased");
+            if (it == j.end() || !it->is_boolean()) return std::nullopt;
+            return it->get<bool>();
+        };
+        auto ohm = [](double v) {
+            char b[32];
+            if (v >= 1e6) std::snprintf(b, sizeof b, "%g MOhm", v / 1e6);
+            else if (v >= 1e3) std::snprintf(b, sizeof b, "%g kOhm", v / 1e3);
+            else std::snprintf(b, sizeof b, "%g Ohm", v);
+            return std::string(b);
+        };
+        // R2 as the record states it: a resistance, "open", or nothing (unknown).
+        auto r2_text = [&](const json& j) -> std::string {
+            if (flag(j, "bias_r2_open")) return "open";
+            if (auto v = num(j, "bias_r2")) return ohm(*v);
+            return "";
+        };
+        auto network = [&](const json& j) {
+            const auto r1 = num(j, "bias_r1");
+            const std::string r2 = r2_text(j);
+            return "R1 " + (r1 ? ohm(*r1) : std::string("not stated")) + ", R2 " +
+                   (r2.empty() ? std::string("not stated") : r2);
+        };
+        const auto op = prebiased(original), sp = prebiased(cand);
+        if (op && sp && *op != *sp) {
+            params.push_back({{"name", "configuration"}, {"verdict", FAIL}});
+            demote();
+            penalty += opt.gate_weight * kVerdictFailPenalty;
+            notes.push_back(
+                *op ? "the original is a pre-biased (resistor-equipped, 'digital') transistor (" +
+                          network(original) +
+                          "); the substitute is a plain BJT — the base resistors the original "
+                          "carries inside must be added on the board; not a drop-in"
+                    : "the substitute is a pre-biased (resistor-equipped, 'digital') transistor (" +
+                          network(cand) +
+                          "); the original is a plain BJT — its built-in resistors sit in a base "
+                          "drive designed without them; not a drop-in");
+        } else if (op && sp && *op) {
+            // R1
+            const auto o1 = num(original, "bias_r1"), s1 = num(cand, "bias_r1");
+            if (o1 && s1) {
+                const bool same = *o1 == *s1;
+                params.push_back({{"name", "bias_r1"}, {"verdict", same ? PASS : FAIL}});
+                if (!same) {
+                    demote();
+                    penalty += opt.gate_weight * kVerdictFailPenalty;
+                    notes.push_back("built-in base resistor R1 differs: the original's is " +
+                                    ohm(*o1) + ", the substitute's " + ohm(*s1) +
+                                    " — a different base current at the same drive; not a "
+                                    "drop-in");
+                }
+            } else {
+                bjt_bias_unverified = true;
+                params.push_back({{"name", "bias_r1"}, {"verdict", UNVERIFIED}});
+                notes.push_back(
+                    o1 ? "the original's built-in base resistor R1 is " + ohm(*o1) +
+                             "; the substitute's record states no R1 — confirm it from the "
+                             "datasheet"
+                    : s1 ? "the substitute's built-in base resistor R1 is " + ohm(*s1) +
+                               "; the original's record states no R1 — confirm both are the "
+                               "same type"
+                         : "neither record states the built-in base resistor R1 — confirm both "
+                           "are the same type from the datasheets");
+            }
+            // R2
+            const std::string o2 = r2_text(original), s2 = r2_text(cand);
+            if (!o2.empty() && !s2.empty()) {
+                const auto ov = num(original, "bias_r2"), sv = num(cand, "bias_r2");
+                const bool o_open = flag(original, "bias_r2_open"),
+                           s_open = flag(cand, "bias_r2_open");
+                const bool same = (o_open && s_open) || (!o_open && !s_open && *ov == *sv);
+                params.push_back({{"name", "bias_r2"}, {"verdict", same ? PASS : FAIL}});
+                if (!same) {
+                    demote();
+                    penalty += opt.gate_weight * kVerdictFailPenalty;
+                    notes.push_back("built-in base-emitter resistor R2 differs: the original's "
+                                    "is " + o2 + ", the substitute's " + s2 +
+                                    " — a different turn-on threshold and base current; not a "
+                                    "drop-in");
+                }
+            } else {
+                bjt_bias_unverified = true;
+                params.push_back({{"name", "bias_r2"}, {"verdict", UNVERIFIED}});
+                notes.push_back(
+                    !o2.empty() ? "the original's built-in base-emitter resistor R2 is " + o2 +
+                                      "; the substitute's record states none — confirm it from "
+                                      "the datasheet"
+                    : !s2.empty() ? "the substitute's built-in base-emitter resistor R2 is " + s2 +
+                                        "; the original's record states none — confirm both "
+                                        "are the same type"
+                                  : "neither record states the built-in base-emitter resistor "
+                                    "R2 — confirm both are the same type from the datasheets");
+            }
+        } else if (op.has_value() != sp.has_value() && (op.value_or(false) || sp.value_or(false))) {
+            // One spec says pre-biased, the other does not say either way (a spec built without
+            // the v25 fields): unknown, never assumed plain.
+            bjt_bias_unverified = true;
+            params.push_back({{"name", "configuration"}, {"verdict", UNVERIFIED}});
+            notes.push_back(op ? "the original is a pre-biased (resistor-equipped) transistor (" +
+                                     network(original) +
+                                     "); the substitute's record does not say whether it is "
+                                     "— confirm from the datasheet"
+                               : "the substitute is a pre-biased (resistor-equipped) "
+                                 "transistor (" +
+                                     network(cand) +
+                                     "); the original's record does not say whether it is — "
+                                     "confirm from the datasheet");
         }
     }
     // Si / SiC / GaN differ in gate-drive requirements — a driver redesign, not
@@ -4005,6 +4133,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
 
     if (timebase_pin_unverified) demote();
     if (analog_architecture_unverified) demote();
+    if (bjt_bias_unverified) demote();
     if (timebase_supply_unverified)
         notes.push_back("the original runs from " + supply_range(original) +
                         "; the substitute's record states no supply range, so the rail could "
@@ -6736,6 +6865,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                     resistor_connection_unverified || resistor_count_one_sided ||
                                     mount_unverified || timebase_pin_unverified ||
                                     analog_architecture_unverified ||
+                                    bjt_bias_unverified ||
                                     timebase_prog_order || current_rating_one_sided ||
                                     hard_rating_unverified ||
                                     cable_core_unverified ||

@@ -27,6 +27,7 @@
 #include "../src/Browse.hpp"
 #include "../src/CrossRef.hpp"
 #include "../src/Index.hpp"
+#include "../src/Views.hpp"  // extract_bjt (ABT #2445 throw cases)
 
 using namespace kelvin;
 using namespace kelvin::crossref;
@@ -97,6 +98,11 @@ json spec_for(const std::string& cat, const json& row) {
         o["tj_max"] = num("tj_max");
         if (!s("polarity").empty()) o["polarity"] = s("polarity");
         o["technology"] = s("technology");
+        // v25 bias resistors (ABT #2445), as crossref.js projects them
+        if (auto it = row.find("prebiased"); it != row.end() && it->is_boolean())
+            o["prebiased"] = *it;
+        o["bias_r1"] = num("bias_r1"); o["bias_r2"] = num("bias_r2");
+        o["bias_r2_open"] = row.value("bias_r2_open", false);
     } else if (cat == "varistor") {
         // web/src/crossref.js XREF varistor (owner 2026-11-15)
         o["value_si"] = num("varistor_voltage"); o["clamping_voltage"] = num("clamping_voltage");
@@ -346,3 +352,145 @@ TEST_CASE("a hard rating the substitute does not state caps the grade below drop
             named = true;
     CHECK(named);
 }
+
+// ── ABT #2445: a pre-biased ("digital") BJT carries an identity, its bias resistors ─────────
+// Real TAS rows, verbatim (tests/fixtures/qarlos_1120_bjt_bias_resistors.ndjson, TAS bf7fd94):
+//   PDTC114ET  (Nexperia, SOT23)   R1 10k, R2 10k
+//   PDTC124ET  (Nexperia, SOT23)   R1 22k, R2 22k
+//   PDTC114TT  (Nexperia, SOT23)   R1 10k, R2 omitted = open (R1-only type)
+//   BC847BLT1G (onsemi, SOT-23)    plain BJT, no biasResistors block
+//   DDTC114GCA (Diodes, SOT23)     R2 10k only; the record states no R1
+TEST_CASE("bjt: the extractor reads the bias-resistor block (ABT #2445)",
+          "[crossref][5fam][bjt][bias-resistors]") {
+    auto shard = build_bjt_shard(fixtures() + "/qarlos_1120_bjt_bias_resistors.ndjson");
+    REQUIRE(shard.rows.size() == 5);
+    auto row = [&](const char* mpn) -> const BjtRow& {
+        for (const auto& r : shard.rows)
+            if (r.mpn == mpn) return r;
+        FAIL("row " << mpn << " missing");
+        return shard.rows.front();
+    };
+    const BjtRow& e = row("PDTC114ET");
+    CHECK(e.prebiased);
+    CHECK(e.bias_r1 == 10000.0);
+    CHECK(e.bias_r2 == 10000.0);
+    CHECK_FALSE(e.bias_r2_open);
+    const BjtRow& t = row("PDTC114TT");
+    CHECK(t.prebiased);
+    CHECK(t.bias_r1 == 10000.0);
+    CHECK(std::isnan(t.bias_r2));
+    CHECK(t.bias_r2_open);
+    const BjtRow& g = row("DDTC114GCA");
+    CHECK(g.prebiased);
+    CHECK(std::isnan(g.bias_r1));
+    CHECK(g.bias_r2 == 10000.0);
+    const BjtRow& plain = row("BC847BLT1G");
+    CHECK_FALSE(plain.prebiased);
+    CHECK(std::isnan(plain.bias_r1));
+    CHECK(std::isnan(plain.bias_r2));
+    CHECK_FALSE(plain.bias_r2_open);
+}
+
+TEST_CASE("bjt: a malformed bias-resistor block throws, it is never read as a plain part",
+          "[crossref][5fam][bjt][bias-resistors]") {
+    auto rec = [](const json& br) {
+        json el = {{"collectorEmitterVoltage", 50.0}, {"collectorCurrent", 0.1}};
+        if (!br.is_null()) el["biasResistors"] = br;
+        json di = {{"part", {{"subType", "npn"}}}, {"electrical", el}};
+        json mi = {{"name", "X"}, {"reference", "X1"}, {"datasheetInfo", di}};
+        return json{{"semiconductor", {{"bjt", {{"manufacturerInfo", mi}}}}}};
+    };
+    CHECK_THROWS(extract_bjt(rec(json::object())));  // neither R1 nor R2
+    CHECK_THROWS(extract_bjt(rec(json{{"baseResistance", json::object()}})));  // unresolvable
+    CHECK_THROWS(extract_bjt(rec(json{{"baseResistance", {{"nominal", 0.0}}}})));
+    CHECK_THROWS(extract_bjt(rec(json::array())));
+    CHECK_NOTHROW(extract_bjt(rec(json(nullptr))));
+}
+
+TEST_CASE("bjt: a plain BJT is not a drop-in for a pre-biased one, nor the reverse",
+          "[crossref][5fam][bjt][bias-resistors]") {
+    auto shard = build_bjt_shard(fixtures() + "/qarlos_1120_bjt_bias_resistors.ndjson");
+    const json dtc = spec_by_mpn("bjt", shard, "PDTC114ET");
+    const json plain = spec_by_mpn("bjt", shard, "BC847BLT1G");
+    REQUIRE(dtc.at("prebiased") == true);
+    REQUIRE(plain.at("prebiased") == false);
+    Options opt;
+    opt.max_results = 5;
+    {
+        const json c =
+            cand_by_mpn(cross_reference("bjt", dtc, json::array({plain}), opt), "BC847BLT1G");
+        INFO(c.dump());
+        CHECK(param_verdict(c, "configuration") == "fail");
+        CHECK(c.value("grade", std::string()) == "major_review");
+        CHECK(c.dump().find("the substitute is a plain BJT") != std::string::npos);
+    }
+    {
+        const json c =
+            cand_by_mpn(cross_reference("bjt", plain, json::array({dtc}), opt), "PDTC114ET");
+        INFO(c.dump());
+        CHECK(param_verdict(c, "configuration") == "fail");
+        CHECK(c.value("grade", std::string()) == "major_review");
+        CHECK(c.dump().find("the substitute is a pre-biased") != std::string::npos);
+    }
+}
+
+TEST_CASE("bjt: two pre-biased BJTs must carry the same R1 and R2",
+          "[crossref][5fam][bjt][bias-resistors]") {
+    auto shard = build_bjt_shard(fixtures() + "/qarlos_1120_bjt_bias_resistors.ndjson");
+    const json orig = spec_by_mpn("bjt", shard, "PDTC114ET");
+    Options opt;
+    opt.max_results = 5;
+    auto against = [&](const char* mpn) {
+        return cand_by_mpn(
+            cross_reference("bjt", orig, json::array({spec_by_mpn("bjt", shard, mpn)}), opt), mpn);
+    };
+    // 10k / 10k -> 22k / 22k: both resistors differ.
+    const json r124 = against("PDTC124ET");
+    INFO(r124.dump());
+    CHECK(param_verdict(r124, "bias_r1") == "fail");
+    CHECK(param_verdict(r124, "bias_r2") == "fail");
+    CHECK(r124.value("grade", std::string()) == "major_review");
+    CHECK(r124.dump().find("R1 differs: the original's is 10 kOhm, the substitute's 22 kOhm") !=
+          std::string::npos);
+    // 10k / 10k -> 10k / open: R1 the same, R2 open is a different network.
+    const json rT = against("PDTC114TT");
+    INFO(rT.dump());
+    CHECK(param_verdict(rT, "bias_r1") == "pass");
+    CHECK(param_verdict(rT, "bias_r2") == "fail");
+    CHECK(rT.value("grade", std::string()) == "major_review");
+    CHECK(rT.dump().find("the substitute's open") != std::string::npos);
+    // 10k / 10k -> R1 unstated / 10k: R1 UNVERIFIED with a note, capped below drop_in.
+    const json rG = against("DDTC114GCA");
+    INFO(rG.dump());
+    CHECK(param_verdict(rG, "bias_r1") == "unverified");
+    CHECK(param_verdict(rG, "bias_r2") == "pass");
+    CHECK(rG.value("grade", std::string()) != "drop_in");
+    CHECK(rG.dump().find("the substitute's record states no R1") != std::string::npos);
+    // Its own copy: both resistors pass, nothing about the network is flagged.
+    json self = orig;
+    self["_key"] = "SELF_COPY";
+    const json s = cross_reference("bjt", orig, json::array({self}), opt).at("candidates").at(0);
+    INFO(s.dump());
+    CHECK(param_verdict(s, "bias_r1") == "pass");
+    CHECK(param_verdict(s, "bias_r2") == "pass");
+    CHECK(param_verdict(s, "configuration") == "");
+    CHECK(s.value("grade", std::string()) == "drop_in");
+}
+
+TEST_CASE("bjt: a spec that does not say whether it is pre-biased is unverified, never plain",
+          "[crossref][5fam][bjt][bias-resistors]") {
+    auto shard = build_bjt_shard(fixtures() + "/qarlos_1120_bjt_bias_resistors.ndjson");
+    const json orig = spec_by_mpn("bjt", shard, "PDTC114ET");
+    json sub = orig;
+    sub["_key"] = "NO_V25_FIELDS";
+    sub["mpn"] = "NO_V25_FIELDS";
+    for (const char* k : {"prebiased", "bias_r1", "bias_r2", "bias_r2_open"}) sub.erase(k);
+    Options opt;
+    opt.max_results = 5;
+    const json c =
+        cand_by_mpn(cross_reference("bjt", orig, json::array({sub}), opt), "NO_V25_FIELDS");
+    INFO(c.dump());
+    CHECK(param_verdict(c, "configuration") == "unverified");
+    CHECK(c.value("grade", std::string()) != "drop_in");
+}
+

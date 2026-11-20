@@ -557,7 +557,14 @@ export const XREF = [
       vce_sat: nz(r.vce_sat), vce_sat_ic: nz(r.vce_sat_ic),
       // Raw, NOT through nz(): 0 degC would be a stated value. Absent -> null.
       tj_max: r.tj_max ?? null,
-      technology: r.technology ?? '' }),
+      technology: r.technology ?? '',
+      // Built-in bias resistors (v25, ABT #2445): a pre-biased ("digital") transistor is not a
+      // drop-in for a plain one, nor for one with other R1 / R2 (CrossRef.hpp). prebiased is
+      // stated either way by the record (the block's presence); null only when the row carries
+      // no such field. R1 / R2 null when unstated; an omitted R2 is OPEN (bias_r2_open).
+      prebiased: typeof r.prebiased === 'boolean' ? r.prebiased : null,
+      bias_r1: nz(r.bias_r1), bias_r2: nz(r.bias_r2),
+      bias_r2_open: r.bias_r2_open === true }),
     params: [
       { key: 'vceo', label: 'Vceo', row: 'vceo_rated', unit: 'V' },
       { key: 'ic', label: 'Ic', row: 'ic_continuous', unit: 'A' },
@@ -567,6 +574,9 @@ export const XREF = [
       { key: 'vce_sat', label: 'Vce(sat)', row: 'vce_sat', unit: 'V' },
       { key: 'tj_max', label: 'Tj max', row: 'tj_max', unit: '°C' },
       { key: 'polarity', label: 'polarity', row: 'polarity', str: true },
+      { key: 'bias_r1', label: 'R1', row: 'bias_r1', unit: 'Ω' },
+      // openRow: the row flag that says this resistor is stated OPEN (shown 'open', not '—').
+      { key: 'bias_r2', label: 'R2', row: 'bias_r2', unit: 'Ω', openRow: 'bias_r2_open' },
     ],
   },
 ]
