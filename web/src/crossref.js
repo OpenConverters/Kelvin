@@ -551,6 +551,13 @@ export const XREF = [
     hardKeys: ['vceo'],
     hardMin: [{ row: 'vceo_rated', factor: 0.9 }],
     sameStr: ['polarity'],
+    // Pre-biased ("digital") is an identity too (CrossRef.hpp fails plain vs pre-biased either
+    // way), so it cuts the pool: otherwise the 800-row pool of a pre-biased original is filled
+    // in file order by plain BJTs and the digital transistors with its R1 / R2 never reach the
+    // ranker. Every browse row states it (BjtRow.prebiased is a bool set from the record's
+    // biasResistors block, absent = plain), so no unstated row exists for the gate to drop; a
+    // shard without the field throws on the unknown filter instead of silently ungating.
+    sameBool: ['prebiased'],
     spec: (r) => ({ ...base(r), vceo: nz(r.vceo_rated), ic: nz(r.ic_continuous),
       hfe_min: nz(r.hfe_min), transition_frequency: nz(r.transition_frequency),
       power_dissipation: nz(r.power_dissipation), polarity: r.polarity || null,
@@ -921,6 +928,9 @@ export async function runCrossRef({ family, original, manufacturers, sameType = 
   }
   for (const k of f.sameStr ?? []) {
     if (original[k]) filters[k] = [original[k]]
+  }
+  for (const k of f.sameBool ?? []) {
+    if (typeof original[k] === 'boolean') filters[k] = original[k]
   }
   if (sameType && f.sameFacet && original[f.sameFacet.f]) {
     filters[f.sameFacet.f] = f.sameFacet.values ? f.sameFacet.values(original) : [original[f.sameFacet.f]]

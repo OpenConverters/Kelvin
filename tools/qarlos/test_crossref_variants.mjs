@@ -361,4 +361,26 @@ assert.equal(bc847.prebiased, false); assert.equal(bc847.bias_r1, null)
 assert.equal(bc847.bias_r2_open, false)
 assert.equal(bjtFam.spec({ mpn: 'OLD', vceo_rated: 45, ic_continuous: 0.1 }).prebiased, null)
 
+// The pool is cut on the original's stated prebiased, as on its polarity: in file order the
+// 800-row pool of PDTC114TT (Nexperia, R1 10 kOhm, R2 open) held 85 pre-biased rows and none of
+// the 13 with its own R1 / R2, so its top-12 held no matching digital transistor. A plain
+// original keeps to plain rows; a row projecting no prebiased (pre-v25) leaves the pool ungated.
+const bjtPools = []
+const bjtEngine = {
+  async browse(family, q) { bjtPools.push(q); return { total: 0, rows: [] } },
+  async crossReference() { throw new Error('an empty pool is not ranked') },
+}
+await runCrossRef({ family: 'bjt', original: { mpn: 'PDTC114TT', manufacturer: 'Nexperia',
+  vceo_rated: 50, ic_continuous: 0.1, polarity: 'npn', prebiased: true, bias_r1: 10000,
+  bias_r2: null, bias_r2_open: true }, manufacturers: ['onsemi'], engine: bjtEngine })
+assert.equal(bjtPools.at(-1).filters.prebiased, true)
+assert.deepEqual(bjtPools.at(-1).filters.polarity, ['npn'])
+await runCrossRef({ family: 'bjt', original: { mpn: 'BC847BLT1G', manufacturer: 'onsemi',
+  vceo_rated: 45, ic_continuous: 0.1, polarity: 'npn', prebiased: false },
+  manufacturers: ['Nexperia'], engine: bjtEngine })
+assert.equal(bjtPools.at(-1).filters.prebiased, false)
+await runCrossRef({ family: 'bjt', original: { mpn: 'OLD', manufacturer: 'onsemi',
+  vceo_rated: 45, ic_continuous: 0.1, polarity: 'npn' }, manufacturers: ['Nexperia'], engine: bjtEngine })
+assert.ok(!('prebiased' in bjtPools.at(-1).filters))
+
 console.log('crossref variants: all checks passed')
