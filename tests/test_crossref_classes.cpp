@@ -1578,6 +1578,22 @@ TEST_CASE("qarlos 2026-11-20: an IGBT power module is read from what its case de
     CHECK_FALSE(declares_igbt_module("SMPD"));
     CHECK_FALSE(declares_igbt_module("Unknown"));
     CHECK_FALSE(declares_igbt_module(""));
+    // The discrete side: a discrete outline, or no case on record (SAS igbt.json's default).
+    CHECK(declares_igbt_discrete("TO-247"));
+    CHECK(declares_igbt_discrete("https://www.infineon.com/package/PG-TO247-3-41"));
+    CHECK(declares_igbt_discrete("TO-263 (D2PAK)"));
+    CHECK(declares_igbt_discrete("Unknown"));
+    CHECK(declares_igbt_discrete(""));
+    CHECK(declares_igbt_discrete("-"));
+    // Neither: an outline this table does not know is not taken for a discrete.
+    CHECK_FALSE(declares_igbt_discrete("M274"));
+    CHECK_FALSE(declares_igbt_discrete("SOT-227"));
+    CHECK_FALSE(declares_igbt_discrete("D3"));
+    CHECK_FALSE(declares_igbt_discrete("Module"));
+    // Fuji 2MBI200XBE120-50 (case "M274", a module outline not in the table) against a 62mm
+    // module: no conflict claimed.
+    CHECK(igbt_configuration_conflict("M274", "62mm").empty());
+    CHECK(!igbt_configuration_conflict("Unknown", "Module").empty());
 }
 
 TEST_CASE("qarlos 2026-11-20: an IGBT power module is not a drop-in for a discrete IGBT",

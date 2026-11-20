@@ -984,13 +984,41 @@ inline bool declares_igbt_module(const std::string& case_code) {
     return std::regex_search(u, mtp) || std::regex_match(u, sp);
 }
 
+// The DISCRETE side of the comparison: a case string naming a discrete power outline (TO-xxx,
+// D2PAK / DPAK / I2PAK / IPAK / H2PAK, PLUS220/247/264, ISOPLUS, MAX247, T-MAX, SOT-223, an
+// Infineon PG-TO / PG-HSIP package, TO-LL, PQFN), or a record that states no case at all
+// ("", "Unknown", "-", "Package Unavailable") — the discrete its schema defines it to be. Any
+// other case string ("M274", "D3", "F2", "SOT-227", "SMPD", ...) is unknown: it is neither listed
+// as a module nor read as a discrete, so it raises no conflict either way. Without that third
+// state a Fuji 2MBI module whose case reads "M274" was taken for a discrete and every real
+// module offered for it was flagged.
+inline bool declares_igbt_discrete(const std::string& case_code) {
+    std::string u;
+    for (char ch : case_code) {
+        const auto c = static_cast<unsigned char>(ch);
+        if (c >= 0x80) continue;
+        u += static_cast<char>(std::toupper(c));
+    }
+    const auto b = u.find_first_not_of(" \t");
+    if (b == std::string::npos) return true;  // no case on record
+    u = u.substr(b, u.find_last_not_of(" \t") - b + 1);
+    if (u == "UNKNOWN" || u == "-" || u == "PACKAGE UNAVAILABLE") return true;
+    if (declares_igbt_module(u)) return false;
+    static const std::regex discrete(
+        R"((^|[^A-Z])(TO-?\d|D2PAK|D3PAK|DPAK|I2PAK|IPAK|H2PAK|PLUS2(20|47|64)|ISOPLUS ?(2|I4|I5)|MAX247|T-MAX|SOT-?223|PG-TO|PG-HSIP|TO-LL|PQFN))");
+    return std::regex_search(u, discrete);
+}
+
 // Why a module <-> discrete IGBT swap is not a substitution, phrased for the direction it
-// happened in. Empty when the two sides agree.
+// happened in. Empty when the two sides agree, or when either side's case is neither a module
+// outline nor a discrete one (declares_igbt_discrete).
 inline std::string igbt_configuration_conflict(const std::string& original_case,
                                                const std::string& substitute_case) {
     const bool o_mod = declares_igbt_module(original_case);
     const bool s_mod = declares_igbt_module(substitute_case);
     if (o_mod == s_mod) return "";
+    if (o_mod ? !declares_igbt_discrete(substitute_case) : !declares_igbt_discrete(original_case))
+        return "";
     const std::string ratings =
         "its Vces, Ic and Vce(sat) are the module's per-switch ratings, compared here against a "
         "single discrete die, and its board attach, isolation, thermal path and gate drive are a "
