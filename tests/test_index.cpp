@@ -5,6 +5,9 @@
 #include <cmath>
 #include <string>
 #include <thread>
+#ifndef _WIN32
+#include <sys/resource.h>
+#endif
 
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
@@ -13,6 +16,7 @@
 #include <nlohmann/json.hpp>
 
 #include "Browse.hpp"
+#include "Hash.hpp"
 #include "Index.hpp"
 #include "RecordFetcher.hpp"
 #include "Views.hpp"
@@ -153,6 +157,69 @@ TEST_CASE("index: staleness detects append", "[index]") {
     REQUIRE(shard_is_stale(shard.meta, path));
     fs::remove(path);
 }
+
+// The staleness hash is streamed in chunks (a 2.5 GB catalogue read whole into one buffer
+// swapped prod for 4+ minutes on a cold load). The streamed hash must equal the one-shot hash
+// the shard stores, across chunk boundaries, and still catch a same-size edit in the last
+// chunk. 20 MiB spans three 8 MiB chunks, the last one partial.
+TEST_CASE("index: staleness hash is streamed and equals the one-shot hash", "[index][stale]") {
+    std::string path = tmp_path("stale_streamed.ndjson");
+    std::string body(20u << 20, 'x');
+    for (size_t i = 0; i < body.size(); i += 97) body[i] = static_cast<char>('a' + i % 26);
+    write_file(path, body);
+
+    ShardMeta meta;
+    meta.extractor_hash = extractor_version();
+    meta.source_size = body.size();
+    meta.content_hash = fnv1a64(body.data(), body.size());
+    REQUIRE_FALSE(shard_stale_reason(meta, path).has_value());
+    REQUIRE_FALSE(shard_is_stale(meta, path));
+
+    body[body.size() - 3] ^= 0x01;  // same size, one byte changed in the final partial chunk
+    write_file(path, body);
+    auto reason = shard_stale_reason(meta, path);
+    REQUIRE(reason.has_value());
+    REQUIRE(reason->find("different content") != std::string::npos);
+
+    write_file(path, body + "y");
+    reason = shard_stale_reason(meta, path);
+    REQUIRE(reason.has_value());
+    REQUIRE(reason->find("bytes but the shard was built from") != std::string::npos);
+    fs::remove(path);
+}
+
+#ifndef _WIN32
+// The defect itself: checking a fresh shard must not hold the whole source in memory. 192 MiB
+// written (and hashed by the test) 1 MiB at a time, so the only thing that can lift the peak
+// RSS by ~192 MiB is the staleness check reading the file into one buffer.
+TEST_CASE("index: staleness check does not buffer the whole source", "[index][stale]") {
+    std::string path = tmp_path("stale_rss.ndjson");
+    const size_t kMiB = size_t{1} << 20, kCount = 192;
+    std::string block(kMiB, 'q');
+    uint64_t h = kFnvOffset;
+    {
+        std::ofstream out(path, std::ios::binary | std::ios::trunc);
+        for (size_t i = 0; i < kCount; ++i) {
+            block[i % kMiB] = static_cast<char>('a' + i % 26);
+            out.write(block.data(), static_cast<std::streamsize>(block.size()));
+            h = fnv1a64(block.data(), block.size(), h);
+        }
+    }
+    ShardMeta meta;
+    meta.extractor_hash = extractor_version();
+    meta.source_size = kCount * kMiB;
+    meta.content_hash = h;
+
+    struct rusage before {}, after {};
+    getrusage(RUSAGE_SELF, &before);
+    REQUIRE_FALSE(shard_stale_reason(meta, path).has_value());
+    getrusage(RUSAGE_SELF, &after);
+    const long grew_kib = after.ru_maxrss - before.ru_maxrss;  // Linux: KiB
+    INFO("peak RSS grew by " << grew_kib / 1024 << " MiB checking a " << kCount << " MiB source");
+    REQUIRE(grew_kib < 64 * 1024);
+    fs::remove(path);
+}
+#endif
 
 // ---- ABT #426 --------------------------------------------------------------
 // A shard is keyed on the code that produced it, not only on the bytes it read. Both

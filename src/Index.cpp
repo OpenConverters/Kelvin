@@ -7,9 +7,11 @@
 #else
 #include <unistd.h>
 #endif
+#include <algorithm>
 #include <fstream>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 
 #include <nlohmann/json.hpp>
@@ -1356,20 +1358,49 @@ Shard<ConnectorRow> read_connector_shard(const std::string& p) { return read_imp
 
 uint64_t extractor_version() { return kExtractorHash; }
 
-bool shard_is_stale(const ShardMeta& meta, const std::string& ndjson_path) {
+std::optional<std::string> shard_stale_reason(const ShardMeta& meta,
+                                              const std::string& ndjson_path) {
     // A shard built by different extractor code is stale even when every source byte is
     // identical — this is the path that made a working extractor fix look like a no-op,
     // because load_or_build() returns the cached shard verbatim when this says "fresh".
-    if (meta.extractor_hash != kExtractorHash) return true;
+    if (meta.extractor_hash != kExtractorHash)
+        return "it was built by different extractor code (shard " +
+               std::to_string(meta.extractor_hash) + ", this binary " +
+               std::to_string(kExtractorHash) + ")";
     std::ifstream f(ndjson_path, std::ios::binary | std::ios::ate);
-    if (!f) return true;  // source gone -> a rebuild (or error) is warranted
+    if (!f) return "its source " + ndjson_path + " cannot be opened";
     uint64_t size = static_cast<uint64_t>(f.tellg());
-    if (size != meta.source_size) return true;  // append/edit always changes size
+    if (size != meta.source_size)  // append/edit always changes size
+        return "its source " + ndjson_path + " is " + std::to_string(size) +
+               " bytes but the shard was built from " + std::to_string(meta.source_size);
     // Same size: confirm with a content hash (guards an in-place edit that preserved size).
-    std::string buf(size, '\0');
+    // STREAMED in fixed chunks, never read whole. The capacitor catalogue is 2.5 GB, and
+    // reading it into one buffer to hash it put a 2.5 GB allocation on every cold load of the
+    // family: under prod's 3 GB service cap that buffer went to swap on a spinning disk, and a
+    // cold describe_family(capacitor) took 247-275 s with a perfectly valid cached shard
+    // (2026-11-20). FNV-1a chains through its seed, so the chunked hash is bit-identical to
+    // the one-shot hash the shard stores.
     f.seekg(0);
-    if (size > 0) f.read(&buf[0], static_cast<std::streamsize>(size));
-    return fnv1a64(buf.data(), buf.size()) != meta.content_hash;
+    constexpr uint64_t kChunk = uint64_t{8} << 20;
+    std::string buf(static_cast<size_t>(std::min(size, kChunk)), '\0');
+    uint64_t h = kFnvOffset;
+    uint64_t done = 0;
+    while (done < size) {
+        const size_t n = static_cast<size_t>(std::min(size - done, kChunk));
+        if (!f.read(&buf[0], static_cast<std::streamsize>(n)))
+            return "its source " + ndjson_path + " could not be read to the end (" +
+                   std::to_string(done) + " of " + std::to_string(size) + " bytes)";
+        h = fnv1a64(buf.data(), n, h);
+        done += n;
+    }
+    if (h != meta.content_hash)
+        return "its source " + ndjson_path +
+               " has the size the shard was built from but different content";
+    return std::nullopt;
+}
+
+bool shard_is_stale(const ShardMeta& meta, const std::string& ndjson_path) {
+    return shard_stale_reason(meta, ndjson_path).has_value();
 }
 
 uint32_t shard_format_version() { return kFormatVersion; }

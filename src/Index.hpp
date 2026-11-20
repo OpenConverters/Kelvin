@@ -10,6 +10,7 @@
 // format has no practical row cap.
 #pragma once
 #include <cstdint>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -173,6 +174,10 @@ void attach_curve_shard(Shard<ConnectorRow>&, const std::string& bytes);
 // stale even for a byte-identical catalogue — otherwise a fix to an extractor silently has
 // no effect until someone deletes the .kidx by hand (ABT #426).
 bool shard_is_stale(const ShardMeta& meta, const std::string& ndjson_path);
+// The same check, saying WHY the shard is stale (nullopt when it is fresh). The content hash
+// is streamed in fixed chunks, so checking a multi-GB catalogue costs no multi-GB buffer.
+std::optional<std::string> shard_stale_reason(const ShardMeta& meta,
+                                              const std::string& ndjson_path);
 
 // Identity of the extract_* code compiled into this binary (see kExtractorHash in
 // Index.cpp). Exposed so tests can forge a shard from a different build.

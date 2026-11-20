@@ -124,18 +124,28 @@ Shard<Row> load_or_build(const std::string& ndjson, const std::string& shard,
                          Write write) {
     if (!has_cache) return build(ndjson, nullptr);  // in-memory, no persistence
 
+    // Why the cached shard is not used, said with the rebuild: a rebuild over a multi-GB
+    // catalogue takes minutes, and a cache that was MEANT to match (a deploy links it in) must
+    // not cost those minutes without saying which check it failed.
     std::optional<Shard<Row>> prev;
+    std::string why = "there is no cached shard at " + shard;
     if (file_exists(shard)) {
         try {
             prev = read(shard);
-        } catch (const std::exception&) {
+        } catch (const std::exception& e) {
             prev.reset();  // corrupt/old-format shard -> rebuild from scratch
+            why = "the cached shard " + shard + " cannot be read (" + e.what() + ")";
         }
     }
-    if (prev && !shard_is_stale(prev->meta, ndjson)) return std::move(*prev);
+    if (prev) {
+        const std::optional<std::string> stale = shard_stale_reason(prev->meta, ndjson);
+        if (!stale) return std::move(*prev);
+        why = "the cached shard " + shard + " is stale: " + *stale;
+    }
 
     if (!quiet)
-        std::cerr << "[kelvin] (re)building " << fam_name << " index from " << ndjson << std::endl;
+        std::cerr << "[kelvin] (re)building " << fam_name << " index from " << ndjson
+                  << " because " << why << std::endl;
     Shard<Row> s = build(ndjson, prev ? &*prev : nullptr);
     write(shard, s);
     return s;
