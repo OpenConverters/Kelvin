@@ -58,6 +58,7 @@ json spec_for(const std::string& cat, const json& row) {
     }
     if (!s("caseCode").empty()) o["case_code"] = s("caseCode");
     if (!s("mount").empty()) o["mount"] = s("mount");
+    o["lifecycle_status"] = row.at("lifecycleStatus");
 
     if (cat == "mosfet") {
         o["vds"] = num("vds_rated"); o["id"] = num("id_continuous");

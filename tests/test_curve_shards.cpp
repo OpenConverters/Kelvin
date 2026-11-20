@@ -88,6 +88,7 @@ json cap_spec(const CapacitorRow& r) {
     json o{{"mpn", r.mpn}, {"length_m", nz(r.length_m)}, {"width_m", nz(r.width_m)},
            {"height_m", nz(r.height_m)}, {"case_code", r.case_code}, {"mount", r.mount},
            {"lead_pitch_m", nz(r.lead_pitch_m)},
+           {"lifecycle_status", s(r.status)},
            {"value_si", nz(r.capacitance)}, {"voltage", nz(r.v_rated)}, {"esr", nz(r.esr)},
            {"ripple_current", nz(r.ripple_current_rms)}, {"technology", r.technology},
            {"dielectric_code", r.dielectric_code}, {"family", r.family},

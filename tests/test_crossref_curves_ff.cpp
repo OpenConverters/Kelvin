@@ -40,6 +40,7 @@ json base(const json& r) {
                 {"mount", r.value("mount", "")},
                 {"lead_pitch_m", r.contains("leadPitchM") ? nz(r["leadPitchM"]) : json(nullptr)},
                 {"is_production", r["is_production"]},
+                {"lifecycle_status", r.at("lifecycleStatus")},
                 {"provenance_retracted", r.value("provenanceRetracted", false)}};
 }
 json opt_str(const json& r, const char* k) {

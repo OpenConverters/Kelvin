@@ -6353,9 +6353,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // keeps the WARN below. A record stating none is not "not marked production" — nothing
     // says it is out of production either — so its lifecycle verdict is UNVERIFIED with a
     // 'status not stated' note: no demotion, no grade cap, and the same penalty term, so it
-    // still ranks after an otherwise equal substitute that states production. A caller whose
-    // rows carry only `is_production` (no lifecycle_status key) cannot tell the two apart and
-    // keeps the WARN on is_production == false.
+    // still ranks after an otherwise equal substitute that states production. A spec with no
+    // `lifecycle_status` key (or one that is neither a string nor null) is a caller error and
+    // throws: falling back to `is_production` cannot tell "not stated" from a stated
+    // non-production status, and the no-fallback rule forbids guessing which (ABT #2432).
     if (opt.check_lifecycle) {
         auto warn_not_production = [&] {
             params.push_back({{"name", "lifecycle"}, {"verdict", WARN}});
@@ -6364,19 +6365,22 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             notes.push_back("substitute is not marked production status");
         };
         auto ls = cand.find("lifecycle_status");
-        if (ls != cand.end() && (ls->is_string() || ls->is_null())) {
-            const std::string st = ls->is_string() ? ls->get<std::string>() : std::string();
-            if (st.empty()) {
-                params.push_back({{"name", "lifecycle"}, {"verdict", UNVERIFIED}});
-                penalty += opt.gate_weight * kVerdictWarnPenalty;
-                notes.push_back("status not stated: the substitute's record names no lifecycle "
-                                "status, so it cannot be shown to be in production");
-            } else if (st != "production") {
-                warn_not_production();
-            }
-        } else {
-            auto it = cand.find("is_production");
-            if (it != cand.end() && it->is_boolean() && !it->get<bool>()) warn_not_production();
+        if (ls == cand.end())
+            throw std::invalid_argument("cross_reference: substitute '" + str(cand, "mpn") +
+                                        "' has no 'lifecycle_status' key (its record's "
+                                        "manufacturerInfo.status, or null when it states none)");
+        if (!ls->is_string() && !ls->is_null())
+            throw std::invalid_argument("cross_reference: substitute '" + str(cand, "mpn") +
+                                        "' has a 'lifecycle_status' that is neither a string "
+                                        "nor null");
+        const std::string st = ls->is_string() ? ls->get<std::string>() : std::string();
+        if (st.empty()) {
+            params.push_back({{"name", "lifecycle"}, {"verdict", UNVERIFIED}});
+            penalty += opt.gate_weight * kVerdictWarnPenalty;
+            notes.push_back("status not stated: the substitute's record names no lifecycle "
+                            "status, so it cannot be shown to be in production");
+        } else if (st != "production") {
+            warn_not_production();
         }
     }
 
