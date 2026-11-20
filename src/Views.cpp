@@ -2054,6 +2054,32 @@ std::optional<BjtRow> extract_bjt(const json& env) {
         r.vce_sat_ic = *i;
     if (auto i = rating_magnitude(get_num(*refs->elec, "dcCurrentGainIc"), pnp); pos(i))
         r.hfe_ic = *i;
+    // Built-in bias resistors (v25, ABT #2445; SAS bjt.json electrical.biasResistors). The
+    // block's presence marks a pre-biased transistor; its absence a plain one. Each resistance
+    // is a dimensionWithTolerance resolved with the canonical resolver. A block or value that is
+    // present but malformed throws: it is not quietly read as a plain part or an unknown value.
+    if (const json* br = obj_get(*refs->elec, "biasResistors")) {
+        if (!br->is_object())
+            throw std::runtime_error("BJT " + *mpn + ": electrical.biasResistors is not an object");
+        r.prebiased = true;
+        auto resistance = [&](const char* key) -> std::optional<double> {
+            const json* v = obj_get(*br, key);
+            if (!v) return std::nullopt;
+            const double ohm = PEAS::resolve_dimensional_values(*v);
+            if (!(ohm > 0.0) || !std::isfinite(ohm))
+                throw std::runtime_error("BJT " + *mpn + ": electrical.biasResistors." + key +
+                                         " resolves to " + std::to_string(ohm) +
+                                         " Ohm, not a resistance");
+            return ohm;
+        };
+        if (!obj_get(*br, "baseResistance") && !obj_get(*br, "baseEmitterResistance"))
+            throw std::runtime_error("BJT " + *mpn +
+                                     ": electrical.biasResistors states neither R1 nor R2 "
+                                     "(SAS bjt.json requires one)");
+        if (auto r1 = resistance("baseResistance")) r.bias_r1 = *r1;
+        if (auto r2 = resistance("baseEmitterResistance")) r.bias_r2 = *r2;
+        else r.bias_r2_open = true;  // SAS: an omitted R2 is open (R1-only types)
+    }
     // The junction limit (v24; the row had the field and never filled it), as for the IGBT.
     if (const json* bdi = obj_get(*refs->mi, "datasheetInfo"))
         if (const json* th = obj_get(*bdi, "thermal"))

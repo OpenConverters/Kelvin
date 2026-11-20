@@ -170,7 +170,11 @@ constexpr char kCurveMagic[8] = {'K', 'E', 'L', 'V', 'C', 'R', 'V', '\1'};
 // selector keeps a part with no stated status (one more UNVERIFIED item) and drops only a
 // stated non-production one, which is_production cannot tell apart. Numbered 24: one above the v23
 // curve-shard format; every v23 shard must be rebuilt and both engines redeployed together.
-constexpr uint32_t kFormatVersion = 24;
+// v25 carries a BJT's built-in bias resistors (BjtRow.prebiased, bias_r1, bias_r2,
+// bias_r2_open; SAS bjt.json electrical.biasResistors; ABT #2445): a pre-biased ("digital")
+// transistor is not a drop-in for a plain one, nor for one with other resistors. Every v24 shard
+// must be rebuilt and both engines (Kelvin, Kirchhoff's deps/Kelvin) redeployed together.
+constexpr uint32_t kFormatVersion = 25;
 
 // Identity of the code that produces rows, so a cached shard can be recognised as
 // having been built by a DIFFERENT extractor than the one running now (ABT #426).
@@ -550,6 +554,10 @@ void row_io(Ar& ar, BjtRow& r) {
     ar.dbl(r.vce_sat);               // v24
     ar.dbl(r.vce_sat_ic);            // v24
     ar.dbl(r.hfe_ic);                // v24
+    ar.boolean(r.prebiased);         // v25 (ABT #2445)
+    ar.dbl(r.bias_r1);               // v25
+    ar.dbl(r.bias_r2);               // v25
+    ar.boolean(r.bias_r2_open);      // v25
     ar.boolean(r.is_production);
 }
 

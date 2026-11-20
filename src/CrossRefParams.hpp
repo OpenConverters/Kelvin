@@ -1026,6 +1026,8 @@ inline std::string param_label(const std::string& key) {
         {"energy_absorption", "energy rating"},
         {"on_resistance", "on-resistance"},
         {"architecture", "conversion architecture"},
+        {"bias_r1", "built-in base resistor R1"},
+        {"bias_r2", "built-in base-emitter resistor R2"},
     };
     for (const auto& [k, label] : kLabels)
         if (k == key) return label;

@@ -720,6 +720,23 @@ struct BjtRow : RowBase {
     double vce_sat = kNaN();
     double vce_sat_ic = kNaN();
     double hfe_ic = kNaN();
+    // v25 (ABT #2445): the built-in bias resistors of a pre-biased ("digital", BRT / RET)
+    // transistor, SAS bjt.json electrical.biasResistors. Its presence is what marks the part as
+    // pre-biased (no separate flag in the schema), so `prebiased` is a stated fact either way:
+    // false = a plain BJT. Ohm, resolved with PEAS::resolve_dimensional_values.
+    //   bias_r1      R1 (baseResistance, the series base resistor). NaN when the block states
+    //                none: the schema says nothing about an omitted R1, so it is unknown,
+    //                never 0 (an R2-only type such as DDTA114G states only R2).
+    //   bias_r2      R2 (baseEmitterResistance). NaN when omitted.
+    //   bias_r2_open the schema's meaning of an omitted R2 on a pre-biased part: R2 is OPEN
+    //                (R1-only types such as PDTC114T), a stated fact, not an unknown. A
+    //                separate flag rather than an in-band +inf or 0.
+    // Only the record's top-level electrical is read: a multi-die record (dies[] with a
+    // block per die, and no top-level electrical) is not a BjtRow at all (extract_bjt).
+    bool prebiased = false;
+    double bias_r1 = kNaN();
+    double bias_r2 = kNaN();
+    bool bias_r2_open = false;
     bool is_production = false;
     bool no_thermal() const { return !present(tj_max); }
 };
