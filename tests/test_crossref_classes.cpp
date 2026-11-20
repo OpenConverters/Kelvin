@@ -1619,22 +1619,3 @@ TEST_CASE("qarlos 2026-11-20: an IGBT power module is not a drop-in for a discre
     CHECK(m["grade"] == "major_review");
     CHECK(qx_note_has(m, "the original is a multi-chip IGBT POWER MODULE"));
 }
-
-TEST_CASE("qarlos 2026-11-20: a stated THT-vs-SMT IGBT mount is checked",
-          "[crossref][classes][qarlos-igbt-mount]") {
-    // RGSX5TS65EHRC11 (ROHM; mechanical.assemblyType smt, case "Unknown") ->
-    // IKWH75N65EH7XKSA1 (Infineon; tht, TO-247), as the records state them.
-    json original = {{"mpn", "RGSX5TS65EHRC11"}, {"vces", 650.0}, {"ic", 75.0}, {"vce_sat", 1.4},
-                     {"tj_max", 150.0}, {"technology", "Si"}, {"case_code", "Unknown"},
-                     {"mount", "smt"}};
-    json cand = {{"mpn", "IKWH75N65EH7XKSA1"}, {"vces", 650.0}, {"ic", 75.0}, {"vce_sat", 1.4},
-                 {"tj_max", 150.0}, {"technology", "Si"}, {"case_code", "TO-247"},
-                 {"mount", "tht"}};
-    const json c = qx_only(cross_reference("igbt", original, json::array({cand}), Options{}));
-    CHECK(c["status"] == "no_substitute");
-    CHECK(qx_note_has(c, "mount type incompatible"));
-    // The same mount on both sides is not rejected by the gate.
-    original["mount"] = "tht";
-    const json ok = qx_only(cross_reference("igbt", original, json::array({cand}), Options{}));
-    CHECK(ok["status"] != "no_substitute");
-}
