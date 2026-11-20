@@ -28,6 +28,7 @@ Run:
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import os
@@ -259,6 +260,7 @@ UMAMI_WEBSITE_ID = os.environ.get("KELVIN_UMAMI_WEBSITE_ID", "").strip()
 _SERVER_VERSION = "0.1.0"
 _tel_queue: "queue.Queue[tuple[str, str | None, dict, str]]" = queue.Queue(maxsize=1000)
 _tel_started = False
+_tel_start_lock = threading.Lock()   # tools run in threads: start the sender exactly once
 _UMAMI_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36 KelvinMCP"
 
 
@@ -292,9 +294,10 @@ def _telemetry(event: str, target: str | None, props: dict, path: str) -> None:
     global _tel_started
     if not (TELEMETRY_URL or (UMAMI_URL and UMAMI_WEBSITE_ID)):
         return
-    if not _tel_started:
-        _tel_started = True
-        threading.Thread(target=_tel_worker, name="kelvin-telemetry", daemon=True).start()
+    with _tel_start_lock:
+        if not _tel_started:
+            _tel_started = True
+            threading.Thread(target=_tel_worker, name="kelvin-telemetry", daemon=True).start()
     try:
         _tel_queue.put_nowait((event, target, props, path))
     except queue.Full:
@@ -849,6 +852,7 @@ def _result(summary: str, payload: dict) -> CallToolResult:
 # links itself.
 _CITED_MODES = ("details", "search", "recommend", "crossref")
 _DATA_VERSION: str | None = None
+_data_version_lock = threading.Lock()   # tools run in threads; hash the catalogue once
 
 
 def _data_version() -> str:
@@ -861,19 +865,24 @@ def _data_version() -> str:
     running server.
     """
     global _DATA_VERSION
-    if _DATA_VERSION is None:
-        h = hashlib.sha256()
-        for f in sorted(Path(_data_dir()).glob("*.ndjson")):
-            st = f.stat()
-            h.update(f"{f.name}:{st.st_size}\n".encode())
-        shard_dir = (os.environ.get("KELVIN_SHARD_DIR", "").strip()
-                     or str(_REPO / "web" / "public" / "kelvin"))
-        try:
-            h.update((Path(shard_dir) / "manifest.json").read_bytes())
-        except OSError:
-            pass                                      # no manifest: the family files still count
-        _DATA_VERSION = h.hexdigest()[:16]
+    with _data_version_lock:
+        if _DATA_VERSION is None:
+            _DATA_VERSION = _data_version_compute()
     return _DATA_VERSION
+
+
+def _data_version_compute() -> str:
+    h = hashlib.sha256()
+    for f in sorted(Path(_data_dir()).glob("*.ndjson")):
+        st = f.stat()
+        h.update(f"{f.name}:{st.st_size}\n".encode())
+    shard_dir = (os.environ.get("KELVIN_SHARD_DIR", "").strip()
+                 or str(_REPO / "web" / "public" / "kelvin"))
+    try:
+        h.update((Path(shard_dir) / "manifest.json").read_bytes())
+    except OSError:
+        pass                                          # no manifest: the family files still count
+    return h.hexdigest()[:16]
 
 
 def _permalink(family: str, mpn: str, manufacturer: str | None = None) -> str:
@@ -1250,7 +1259,32 @@ def _xref(request: dict) -> dict:
 
 # --- tools ------------------------------------------------------------------
 
-@mcp.tool(
+def _sync_tool(**options):
+    """@mcp.tool for a plain (sync) tool body: register it to run in a worker thread.
+
+    FastMCP (mcp 1.27) calls a sync tool function directly ON the event loop. A cold shard
+    load is 20 s and more, and for all of it the loop served nothing: not other tools, not
+    tools/list, and not /health — so prod's health timer (two failures 20 s apart) restarted
+    the service mid-call (2026-11-15 20:34 and 20:36). What FastMCP registers here is an async
+    twin that hands the body to a thread; the engine calls release the GIL (src/bindings.cpp),
+    so the loop keeps answering while the thread works.
+
+    The twin carries the body's name, docstring and signature (functools.wraps; FastMCP reads
+    the schema through __wrapped__), so the advertised tool is unchanged. The module keeps the
+    SYNC function under the tool's name, because api.py, smoke.py and the tests call it
+    directly.
+    """
+    def register(fn):
+        @functools.wraps(fn)
+        async def off_loop(*args, **kwargs):
+            return await anyio.to_thread.run_sync(functools.partial(fn, *args, **kwargs))
+
+        mcp.tool(**options)(off_loop)
+        return fn
+    return register
+
+
+@_sync_tool(
     annotations=_READ_NOTES,
     title="List catalogue families",
     description=(
@@ -1284,7 +1318,7 @@ def list_families() -> CallToolResult:
         {"mode": "catalogue", "families": families, "units": UNITS_NOTE})
 
 
-@mcp.tool(
+@_sync_tool(
     annotations=_READ_NOTES,
     title="Describe a family's query vocabulary",
     description=(
@@ -1329,7 +1363,7 @@ def describe_family(family: str) -> CallToolResult:
          "catalogueTotal": page.get("rowCount"), "units": UNITS_NOTE})
 
 
-@mcp.tool(
+@_sync_tool(
     annotations=_READ_NOTES,
     title="Search the parts catalogue",
     description=(
@@ -1408,7 +1442,7 @@ def search_parts(family: str, filters: dict | None = None, sort: dict | None = N
     }))
 
 
-@mcp.tool(
+@_sync_tool(
     annotations=_READ_NOTES,
     title="Look up one part",
     description=(
@@ -1637,7 +1671,7 @@ def _spec_extras(c: dict) -> str:
     return out
 
 
-@mcp.tool(
+@_sync_tool(
     annotations=_READ_NOTES,
     title="Recommend parts for a requirement",
     description=(
@@ -1834,7 +1868,7 @@ def recommend_parts(family: str, requirements: dict, options: dict | None = None
         }))
 
 
-@mcp.tool(
+@_sync_tool(
     annotations=_READ_NOTES,
     title="Distribution of a spec",
     description=(
@@ -1883,7 +1917,7 @@ def spec_distribution(family: str, field: str, filters: dict | None = None,
         }))
 
 
-@mcp.tool(
+@_sync_tool(
     annotations=_READ_NOTES,
     title="Cross-reference a part",
     description=(
@@ -2362,7 +2396,7 @@ class _Jobs:
 JOBS = _Jobs()
 
 
-@mcp.tool(
+@_sync_tool(
     annotations=_BOM_NOTES,
     title="BOM job status",
     description=(
@@ -2386,7 +2420,7 @@ def job_status(job: str) -> CallToolResult:
                    handle.envelope())
 
 
-@mcp.tool(
+@_sync_tool(
     annotations=_BOM_NOTES,
     title="BOM job result",
     description=(
@@ -2662,7 +2696,7 @@ def _crossref_bom_compute(bom, doc, name, targets, same_type, max_results, top, 
     return digest, payload
 
 
-@mcp.tool(
+@_sync_tool(
     annotations=_BOM_NOTES,
     title="One BOM cross-reference line in full",
     description=(
@@ -2720,7 +2754,7 @@ def crossref_bom_line(crossref: str, ref: str) -> CallToolResult:
         payload)
 
 
-@mcp.tool(
+@_sync_tool(
     annotations=_BOM_NOTES,
     title="A page of a BOM cross-reference's lines",
     description=(
