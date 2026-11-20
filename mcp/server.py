@@ -2080,7 +2080,40 @@ def _ranked_inline(c: dict, best: bool) -> dict:
             out["params"] = failing
         out["_paramsPassed"] = len(params) - len(failing)
         if c.get("notes"):
-            out["notes"] = [str(n)[:240] for n in c["notes"][:3]]
+            out["notes"] = _note_heads(c["notes"])
+    return out
+
+
+# A ranker note is a full sentence ("Footprint: SOD-523 vs SOD-923 — the substitute is ..."),
+# and three of them made one BOM line of the summary payload 1,600 characters. The summary
+# carries each note's short label; crossref_bom_line returns the sentences. The label is cut
+# exactly as the web's cross-reference table cuts it (noteItems / noteHead / noteHeads in
+# web/src/views/CrossRefView.vue), so the MCP and the web name a note the same way.
+def _note_items(notes) -> list[str]:
+    """The notes as separate items: a note may hold several joined with ' · '; repeats drop."""
+    out: list[str] = []
+    for note in notes or []:
+        for part in str(note).split(" · "):
+            item = part.strip()
+            if item and item not in out:
+                out.append(item)
+    return out
+
+
+def _note_head(item: str) -> str:
+    """The short head of one note: up to its first ': ', ' — ' or '; ', at most ~60 chars."""
+    head = re.split(r":\s| — |; ", item)[0].strip()
+    if len(head) > 60:
+        head = head[:head.rfind(" ", 0, 58)] + "…"
+    return head
+
+
+def _note_heads(notes) -> list[str]:
+    out: list[str] = []
+    for item in _note_items(notes):
+        head = _note_head(item)
+        if head not in out:
+            out.append(head)
     return out
 
 
@@ -2609,7 +2642,9 @@ def _crossref_bom_compute(bom, doc, name, targets, same_type, max_results, top, 
         f"COMPACT: each line keeps at most {max_results} ranked candidates in the stored "
         f"cross-reference, and this payload carries the best {CROSSREF_INLINE_RANKED} "
         "(the rest counted in _candidatesHeldBack); the best candidate's passed checks are "
-        "counted in _paramsPassed (its `params` lists only those that did not pass); "
+        "counted in _paramsPassed (its `params` lists only those that did not pass) and its "
+        "`notes` are short labels (each note's head, repeats collapsed; the sentences are held "
+        "back); "
         "candidates' spec tables, the alternates' checks and notes, and unranked catalogue "
         f"rows beyond {CROSSREF_INLINE_ROWS} per line (_rowsHeldBack) are held back; a "
         "designator sharing its BOM row's answer with an earlier one points at it with "
