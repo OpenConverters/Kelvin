@@ -34,6 +34,14 @@ class Engine {
     // load_shard_bytes first; browsing an unloaded family throws InvalidOptions.
     json browse(const std::string& category, const json& query);
 
+    // The cross-reference candidates' measured curves, attached in place from the family's
+    // loaded curve shard: linenos[i] is candidates[i]'s row (browse::attach_candidate_curves).
+    // The family's shard must be loaded; a family with curves needs its curve shard too
+    // (CurvesNotLoaded otherwise). A family without curves is left untouched.
+    void attach_candidate_curves(const std::string& family, json& candidates, const json& linenos);
+    // Every measured curve of one row (browse::row_curves_json), by lineno.
+    json row_curves(const std::string& family, const json& lineno);
+
     // The full TAS record behind a browse/select row, by its byte span in the family's source
     // NDJSON (row.srcOffset / row.srcLength) — the native equivalent of the browser's HTTP Range
     // fetch. Needs a data dir; throws DataError without one (there is no file to read).
@@ -89,6 +97,8 @@ class Engine {
     const Shard<AnalogRow>& analog_shard();
     const Shard<TimingRow>& timing_shard();
     const Shard<ConnectorRow>& connector_shard();
+    template <class Fn>
+    auto with_shard(const std::string& family, Fn&& fn);
 };
 
 // String facade (guarded) for the embind/WASM and any C-string consumer: returns the

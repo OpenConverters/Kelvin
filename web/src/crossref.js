@@ -916,31 +916,42 @@ export async function runCrossRef({ family, original, manufacturers, sameType = 
     filters[f.sameFacet.f] = f.sameFacet.values ? f.sameFacet.values(original) : [original[f.sameFacet.f]]
   }
 
-  const pool = await browse(f.key, { filters, sort: { field: 'lineno', dir: 'asc' }, limit: poolLimit, curves: true })
+  // The pool is read WITHOUT curves (owner 2026-11-20): the ranker attaches each candidate's
+  // curves itself from the curve shard, by row lineno (crossReference's `curves` argument).
+  const pool = await browse(f.key, { filters, sort: { field: 'lineno', dir: 'asc' }, limit: poolLimit })
   // A second pool a family adds beside the first (timing: programmable blanks whose range
   // holds a programmable original's frequency). Merged by key; its count is reported too.
   const extra = f.extraPool?.(original, filters)
   let poolRows = pool.rows
   let poolTotal = pool.total
   if (extra) {
-    const more = await browse(f.key, { filters: extra.filters, sort: { field: 'lineno', dir: 'asc' }, limit: poolLimit, curves: true })
+    const more = await browse(f.key, { filters: extra.filters, sort: { field: 'lineno', dir: 'asc' }, limit: poolLimit })
     const seen = new Set(poolRows.map(keyOf))
     const add = more.rows.filter((r) => extra.keep(r) && !seen.has(keyOf(r)))
     poolRows = poolRows.concat(add)
     poolTotal += add.length
   }
   const rows = poolRows.filter((r) => !(r.mpn === original.mpn && r.manufacturer === original.manufacturer))
-  const omitted = rows.find((r) => r.curvesOmitted)
-  if (omitted) throw new Error(`${omitted.mpn}: browse row carries no curves (curvesOmitted) — the cross-reference needs them`)
   const rowByKey = new Map(rows.map((r) => [keyOf(r), r]))
   const missing = originalMissing(f, origSpec)
   // An original whose every source is retracted is not a verified spec either (ABT #2035).
   const origVerified = missing.length === 0 && original.provenanceRetracted !== true
-  const ranked = rows.length
-    ? (await crossReference(f.category, { ...origSpec, _key: keyOf(original) },
+  const res = rows.length
+    ? await crossReference(f.category, { ...origSpec, _key: keyOf(original) },
         rows.map((r) => ({ ...f.spec(r), _key: keyOf(r) })),
-        { original_verified: origVerified, max_results: Number(maxResults) })).candidates
-    : []
+        { original_verified: origVerified, max_results: Number(maxResults) },
+        { family: f.key, linenos: rows.map((r) => r.lineno) })
+    : { candidates: [] }
+  const ranked = res.candidates
+  // The ranked rows, with the curves the ranker attached (rowCurves): each is then the row a
+  // browse with curves: true returns (keys in its order), for the view and the MCP's `row`.
+  for (const c of ranked) {
+    const curves = res.rowCurves?.[c._key]
+    if (!curves) throw new Error(`${c._key}: the ranker returned no curves for this candidate's row`)
+    const { curvesOmitted, ...row } = rowByKey.get(c._key)
+    rowByKey.set(c._key, Object.fromEntries(Object.entries({ ...row, ...curves })
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))))
+  }
   return { fam: f, origSpec, ranked, rowByKey, poolTotal,
            poolScored: rows.length, origVerified, missing,
            originalRetracted: original.provenanceRetracted === true }

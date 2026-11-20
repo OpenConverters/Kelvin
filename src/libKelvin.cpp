@@ -5,9 +5,12 @@
 //    in-module Engine with an empty data dir, fed prebuilt .kidx bytes via load_shard, then
 //    queried with select (recommendations) and browse (catalogue filtering/facets). Candidates
 //    carry srcOffset/srcLength; JS fetches the full record itself (HTTP Range).
-//  * cross_reference_string — the no-FS substitute ranker.
+//  * cross_reference_string — the no-FS substitute ranker; cross_reference_rows — the same, with
+//    the candidates' measured curves attached from the loaded curve shard (by row lineno).
 #include <emscripten/bind.h>
 #include <emscripten/val.h>
+
+#include <map>
 
 #include <nlohmann/json.hpp>
 
@@ -35,12 +38,6 @@ std::string cross_reference_string(const std::string& category, const std::strin
     return kelvin::crossref::cross_reference_json(category, original, candidates, options).dump();
 }
 
-// The browser engine: no filesystem — shards are fed as bytes, records fetched by JS via Range.
-kelvin::api::Engine& web_engine() {
-    static kelvin::api::Engine engine("", "", /*quiet=*/true);
-    return engine;
-}
-
 template <class F>
 std::string guarded(F&& body) {
     try {
@@ -50,6 +47,58 @@ std::string guarded(F&& body) {
     } catch (...) {
         return std::string("Exception: unknown error");
     }
+}
+
+// The browser engine: no filesystem — shards are fed as bytes, records fetched by JS via Range.
+kelvin::api::Engine& web_engine() {
+    static kelvin::api::Engine engine("", "", /*quiet=*/true);
+    return engine;
+}
+
+// cross_reference_string with the candidates' measured curves attached HERE, from the loaded
+// curve shard of `family` (the shard family, e.g. "magnetic" for the chipBead category), instead
+// of carried in candidates_json (owner 2026-11-20: 19 MB of curve JSON per capacitor call).
+// linenos_json is the candidates' row linenos, in candidate order. The candidates' specs are built
+// from browse rows without curves; see browse::attach_candidate_curves. A curve shard that is
+// not loaded throws (CurvesNotLoaded), as an "Exception: " string.
+std::string cross_reference_rows(const std::string& category, const std::string& family,
+                                 const std::string& original_json,
+                                 const std::string& candidates_json,
+                                 const std::string& linenos_json,
+                                 const std::string& options_json) {
+    return guarded([&] {
+        json original = json::parse(original_json);
+        json candidates = json::parse(candidates_json);
+        json linenos = json::parse(linenos_json);
+        json options = options_json.empty() ? json::object() : json::parse(options_json);
+        kelvin::api::Engine& engine = web_engine();
+        engine.attach_candidate_curves(family, candidates, linenos);
+        json out = kelvin::crossref::cross_reference_json(category, original, candidates, options);
+        // The ranked candidates' rows carry no curves either (the pool was read without them);
+        // their curves come back beside the result, keyed by `_key`, so the caller can show the
+        // rows as a browse with curves: true would have (rowCurves).
+        if (out.contains("candidates")) {
+            std::map<std::string, size_t> at;
+            for (size_t i = 0; i < candidates.size(); ++i) {
+                const auto k = candidates[i].find("_key");
+                if (k == candidates[i].end() || !k->is_string())
+                    throw std::runtime_error("cross_reference_rows: candidate " +
+                                             std::to_string(i) + " carries no _key");
+                at.emplace(k->get<std::string>(), i);
+            }
+            json row_curves = json::object();
+            for (const json& c : out["candidates"]) {
+                const std::string key = c.at("_key").get<std::string>();
+                const auto i = at.find(key);
+                if (i == at.end())
+                    throw std::runtime_error("cross_reference_rows: ranked " + key +
+                                             " is not among the candidates");
+                row_curves[key] = engine.row_curves(family, linenos.at(i->second));
+            }
+            out["rowCurves"] = std::move(row_curves);
+        }
+        return out.dump();
+    });
 }
 
 // Shard bytes are BINARY, so load_shard takes a Uint8Array (not a std::string, whose embind
@@ -122,6 +171,7 @@ std::string browse(const std::string& category, const std::string& query_json) {
 EMSCRIPTEN_BINDINGS(kelvin) {
     function("select_string", &kelvin::api::select_string);
     function("cross_reference_string", &cross_reference_string);
+    function("cross_reference_rows", &cross_reference_rows);
     // Browser sourcing (no FS): load prebuilt shard bytes, then select/browse the loaded families.
     function("load_shard", &load_shard);
     function("load_curve_shard", &load_curve_shard);

@@ -250,12 +250,17 @@ export async function select(family, requirements, options = {}) {
   return callJson('select', family, JSON.stringify(requirements), JSON.stringify(options))
 }
 
-// ── cross-reference: the deterministic substitute ranker (CrossRef.hpp). Pure
-//    math over spec blocks the caller built from browse rows — no shard access,
-//    so no ensureShard here. ──────────────────────────────────────────────────
-export async function crossReference(category, original, candidates, options = {}) {
-  const out = await callJson('cross_reference_string', category,
-    JSON.stringify(original), JSON.stringify(candidates), JSON.stringify(options))
+// ── cross-reference: the deterministic substitute ranker (CrossRef.hpp), over spec
+//    blocks the caller built from browse rows WITHOUT curves. `curves` = {family,
+//    linenos} names the candidates' shard family and rows: the engine attaches their
+//    measured curves from the curve shard (owner 2026-11-20), so that shard is loaded
+//    first; an unloaded one throws (CurvesNotLoaded), never ranks without curves. ──
+export async function crossReference(category, original, candidates, options = {}, curves = null) {
+  if (!curves) throw new Error('crossReference needs the candidates\' rows ({family, linenos})')
+  await ensureCurves(curves.family)
+  const out = await callJson('cross_reference_rows', category, curves.family,
+    JSON.stringify(original), JSON.stringify(candidates), JSON.stringify(curves.linenos),
+    JSON.stringify(options))
   if (out?.error) throw new Error(`cross-reference failed: ${out.error}`)
   return out
 }

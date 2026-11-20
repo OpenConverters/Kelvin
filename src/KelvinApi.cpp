@@ -774,6 +774,52 @@ json Engine::browse(const std::string& category, const json& query) {
     throw InvalidOptions("unknown family");
 }
 
+// The loaded shard of a family, handed to `fn` (the cross-reference curve helpers). As browse:
+// with no data dir a shard can only come from load_shard_bytes.
+template <class Fn>
+auto Engine::with_shard(const std::string& family, Fn&& fn) {
+    Family f = family_from_string(family);
+    if (data_dir_.empty()) {
+        bool loaded = (f == Family::Mosfet && mosfet_) || (f == Family::Diode && diode_) ||
+                      (f == Family::Capacitor && capacitor_) ||
+                      (f == Family::Resistor && resistor_) ||
+                      (f == Family::Controller && controller_) || (f == Family::Igbt && igbt_) ||
+                      (f == Family::Bjt && bjt_) || (f == Family::Varistor && varistor_) ||
+                      (f == Family::Magnetic && magnetic_) || (f == Family::Analog && analog_) ||
+                      (f == Family::Timing && timing_) || (f == Family::Connector && connector_);
+        if (!loaded)
+            throw InvalidOptions("cross-reference curves: shard not loaded for family '" +
+                                 family + "'");
+    }
+    switch (f) {
+        case Family::Mosfet: return fn(mosfet_shard());
+        case Family::Diode: return fn(diode_shard());
+        case Family::Capacitor: return fn(capacitor_shard());
+        case Family::Resistor: return fn(resistor_shard());
+        case Family::Controller: return fn(controller_shard());
+        case Family::Igbt: return fn(igbt_shard());
+        case Family::Bjt: return fn(bjt_shard());
+        case Family::Varistor: return fn(varistor_shard());
+        case Family::Magnetic: return fn(magnetic_shard());
+        case Family::Analog: return fn(analog_shard());
+        case Family::Timing: return fn(timing_shard());
+        case Family::Connector: return fn(connector_shard());
+    }
+    throw InvalidOptions("unknown family");
+}
+
+void Engine::attach_candidate_curves(const std::string& family, json& candidates,
+                                     const json& linenos) {
+    with_shard(family, [&](const auto& shard) {
+        browse::attach_candidate_curves(shard, candidates, linenos);
+    });
+}
+
+json Engine::row_curves(const std::string& family, const json& lineno) {
+    return with_shard(family,
+                      [&](const auto& shard) { return browse::row_curves_json(shard, lineno); });
+}
+
 json Engine::fetch_record(const std::string& category, uint64_t offset, uint32_t length) {
     Family f = family_from_string(category);
     if (data_dir_.empty())

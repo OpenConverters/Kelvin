@@ -291,3 +291,82 @@ TEST_CASE("curve shards d: operating-point selects and a cross-reference are ide
         CHECK(a.dump() == b.dump());
     }
 }
+
+// e. The cross-reference with the candidates' curves attached from the curve shard (owner
+// 2026-11-20): the caller builds each spec off a browse row without curves (every curve key
+// null), names its row by lineno, and the engine fills the curves in — the specs, and so the
+// ranking, are then exactly those built from rows carrying their curves.
+TEST_CASE("curve shards e: candidates' curves attached from the curve shard rank identically",
+          "[curve_shards]") {
+    const auto built = build_capacitor_shard(fixture("curves_capacitors.ndjson"));
+    api::Engine eng("", "", /*quiet=*/true);
+    eng.load_shard_bytes("capacitor", serialize_shard(built));
+    // A curve-less spec: what web/src/crossref.js builds off a row browsed without curves.
+    auto bare = [](const CapacitorRow& r) {
+        json o = cap_spec(r);
+        json curves;
+        browse::curve_row_json(r, curves);
+        for (auto it = curves.begin(); it != curves.end(); ++it) o[it.key()] = nullptr;
+        return o;
+    };
+    const CapacitorRow* orig = nullptr;
+    json full = json::array(), cands = json::array(), linenos = json::array();
+    for (const auto& r : built.rows) {
+        if (r.mpn == "CL05A225KP5NSNC") { orig = &r; continue; }
+        full.push_back(cap_spec(r));
+        cands.push_back(bare(r));
+        linenos.push_back(r.lineno);
+    }
+    REQUIRE(orig != nullptr);
+    REQUIRE(cands.size() > 1);
+
+    // Without the curve shard the attach throws: an unloaded curve is not a stated-none one.
+    {
+        json c = cands;
+        CHECK_THROWS_AS(eng.attach_candidate_curves("capacitor", c, linenos), CurvesNotLoaded);
+        CHECK_THROWS_AS(eng.row_curves("capacitor", linenos[0]), CurvesNotLoaded);
+    }
+    eng.load_curve_shard_bytes("capacitor", serialize_curve_shard(built));
+
+    json attached = cands;
+    eng.attach_candidate_curves("capacitor", attached, linenos);
+    CHECK(attached.dump() == full.dump());
+    crossref::Options opt;
+    opt.max_results = 50;
+    const json a = crossref::cross_reference("capacitor", cap_spec(*orig), full, opt);
+    const json b = crossref::cross_reference("capacitor", cap_spec(*orig), attached, opt);
+    REQUIRE(a.at("candidates").size() > 0);
+    CHECK(a.dump().find("esr_curve") != std::string::npos);
+    CHECK(a.dump() == b.dump());
+
+    // row_curves: the curves a browse with curves: true puts on the row.
+    const json page = eng.browse("capacitor", {{"limit", 1000}, {"curves", true}});
+    const json& r0 = page.at("rows").at(0);
+    const json rc = eng.row_curves("capacitor", r0.at("lineno"));
+    REQUIRE(rc.contains("esr_curve"));
+    for (auto it = rc.begin(); it != rc.end(); ++it) CHECK(r0.at(it.key()) == it.value());
+
+    // A key the projection leaves out stays out; one it already filled is refused.
+    {
+        json c = cands;
+        c[0].erase("esl_curve");
+        eng.attach_candidate_curves("capacitor", c, linenos);
+        CHECK_FALSE(c[0].contains("esl_curve"));
+    }
+    {
+        json c = cands;
+        c[0]["esr_curve"] = json::object();
+        CHECK_THROWS_AS(eng.attach_candidate_curves("capacitor", c, linenos), InvalidOptions);
+    }
+    // A lineno naming no row, or another row than the candidate's, is refused.
+    {
+        json c = cands, ln = linenos;
+        ln[0] = 999999;
+        CHECK_THROWS_AS(eng.attach_candidate_curves("capacitor", c, ln), InvalidOptions);
+        ln = linenos;
+        std::swap(ln[0], ln[1]);
+        CHECK_THROWS_AS(eng.attach_candidate_curves("capacitor", c, ln), InvalidOptions);
+        ln.erase(ln.size() - 1);
+        CHECK_THROWS_AS(eng.attach_candidate_curves("capacitor", c, ln), InvalidOptions);
+    }
+}

@@ -968,5 +968,73 @@ json browse_rows(const Shard<Row>& shard, const json& query) {
     return out;
 }
 
+// The row at a lineno (shard rows are in lineno order; browse's default order relies on it).
+// Throws InvalidOptions when the shard has no such row.
+template <class Row>
+const Row& row_at_lineno(const Shard<Row>& shard, const json& lineno) {
+    if (!lineno.is_number_unsigned())
+        throw InvalidOptions("cross-reference curves: " + lineno.dump() + " is not a row lineno");
+    const auto ln = lineno.get<uint64_t>();
+    const auto& rows = shard.rows;
+    auto it = std::lower_bound(rows.begin(), rows.end(), ln,
+                               [](const Row& r, uint64_t v) { return r.lineno < v; });
+    if (it == rows.end() || it->lineno != ln)
+        throw InvalidOptions("cross-reference curves: no " +
+                             std::string(family_name(shard.meta.family)) + " row at lineno " +
+                             std::to_string(ln));
+    return *it;
+}
+
+// The cross-reference candidates' measured curves, attached from the loaded curve shard instead
+// of travelling through JSON (owner 2026-11-20: ~800 capacitor candidates with their ESR / |Z| /
+// C(f) curves were 19 MB of JSON per call, most of the call spent parsing it). The caller builds
+// each candidate's ranker spec off a browse row WITHOUT curves, so every curve key its family's
+// projection names (esr_curve: r.esr_curve ?? null, ...) holds null; linenos[i] is candidates[i]'s
+// row. Each curve key the spec carries is replaced with that row's curve, exactly as
+// curve_row_json emits it for a browse with curves: true — and only the keys the spec carries,
+// so a projection that leaves a curve out (the bead model has no inductance_curves) still leaves
+// it out. Throws: CurvesNotLoaded when the curve shard is not attached; InvalidOptions when a
+// lineno names no row, the row's MPN is not the candidate's, or a curve key already holds a value
+// (a projection that computed something there would be silently overwritten).
+template <class Row>
+void attach_candidate_curves(const Shard<Row>& shard, json& candidates, const json& linenos) {
+    if (!candidates.is_array() || !linenos.is_array() || candidates.size() != linenos.size())
+        throw InvalidOptions("cross-reference curves: candidates and linenos must be arrays of "
+                             "one length (" + std::to_string(candidates.size()) + " vs " +
+                             std::to_string(linenos.size()) + ")");
+    if constexpr (row_has_curves<Row>) {
+        for (size_t i = 0; i < candidates.size(); ++i) {
+            const Row& row = row_at_lineno(shard, linenos[i]);
+            json& c = candidates[i];
+            const auto mpn = c.find("mpn");
+            if (mpn == c.end() || !mpn->is_string() || mpn->get<std::string>() != row.mpn)
+                throw InvalidOptions("cross-reference curves: candidate " + std::to_string(i) +
+                                     " is not the row at lineno " + std::to_string(row.lineno) +
+                                     " (" + row.mpn + ")");
+            json curves = json::object();
+            curve_row_json(row, curves);
+            for (auto cv = curves.begin(); cv != curves.end(); ++cv) {
+                auto slot = c.find(cv.key());
+                if (slot == c.end()) continue;  // the family's projection does not carry it
+                if (!slot->is_null())
+                    throw InvalidOptions("cross-reference curves: candidate " + row.mpn +
+                                         " already carries a value for '" + cv.key() +
+                                         "' — its spec must be built from a row without curves");
+                *slot = std::move(cv.value());
+            }
+        }
+    }
+}
+
+// Every measured curve of the row at a lineno, as a browse with curves: true puts them on it
+// (curve_row_json); {} for a family without curves. CurvesNotLoaded when not attached.
+template <class Row>
+json row_curves_json(const Shard<Row>& shard, const json& lineno) {
+    const Row& row = row_at_lineno(shard, lineno);
+    json o = json::object();
+    if constexpr (row_has_curves<Row>) curve_row_json(row, o);
+    return o;
+}
+
 }  // namespace browse
 }  // namespace kelvin

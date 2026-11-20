@@ -113,9 +113,13 @@ const engine = {
     if (query.curves) ensureCurves(family)
     return callJson('browse', family, JSON.stringify(query))
   },
-  async crossReference(category, original, candidates, options = {}) {
-    const out = callJson('cross_reference_string', category, JSON.stringify(original),
-      JSON.stringify(candidates), JSON.stringify(options))
+  // `curves` = {family, linenos}: the candidates' shard family and rows. The ranker attaches
+  // their measured curves itself from the curve shard (the pool is browsed without them).
+  async crossReference(category, original, candidates, options = {}, curves = null) {
+    if (!curves) throw new Error('crossReference needs the candidates\' rows ({family, linenos})')
+    ensureCurves(curves.family)
+    const out = callJson('cross_reference_rows', category, curves.family, JSON.stringify(original),
+      JSON.stringify(candidates), JSON.stringify(curves.linenos), JSON.stringify(options))
     if (out?.error) throw new Error(`cross-reference failed: ${out.error}`)
     return out
   },
