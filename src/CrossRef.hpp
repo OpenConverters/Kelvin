@@ -506,7 +506,8 @@ inline bool is_primary_rating(const std::string& cat, const std::string& key) {
 // its table verdict. The supply range applies to every analog subtype, the rail-to-rail input
 // to an operational-amplifier original, the on-resistance to an analog-switch or multiplexer
 // original (the only subtypes whose records state them), the gain range (minimum / maximum
-// gain, owner 2026-11-21, B5) to an instrumentation-amplifier original. Stated by neither record: no cap
+// gain, owner 2026-11-21, B5) to an instrumentation-amplifier original, the withstand isolation
+// voltage (owner 2026-11-21, B10) to a digital-isolator original. Stated by neither record: no cap
 // from this rule (the all-electricals-unverified cap, B1, may still apply).
 inline const char* analog_primary_axis(const std::string& key, const std::string& orig_subtype) {
     if (key == "supply_min_V" || key == "supply_max_V") return "supply range";
@@ -518,6 +519,9 @@ inline const char* analog_primary_axis(const std::string& key, const std::string
     // The gain range of an instrumentation amplifier (owner 2026-11-21, B5).
     if ((key == "gain_min" || key == "gain_max") && orig_subtype == "instrumentationAmplifier")
         return "gain range";
+    // A digital isolator's withstand isolation voltage (owner 2026-11-21, B10).
+    if (key == "isolation_voltage_V" && orig_subtype == "digitalIsolator")
+        return "isolation voltage";
     return nullptr;
 }
 // Both-unknown primary cap (owner decision 2026-11-14; both_unstated_primary in
@@ -3285,15 +3289,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 notes.push_back(std::string(b) +
                                 " — a lower safety isolation rating, not a substitute where the "
                                 "original's rating is required");
-            } else if (verdict == UNVERIFIED && (o_v || s_v)) {
-                std::snprintf(b, sizeof b,
-                              o_v ? "the original's withstand isolation voltage is %g Vrms; the "
-                                    "substitute's record states none"
-                                  : "the substitute's withstand isolation voltage is %g Vrms; "
-                                    "the original's record states none",
-                              o_v ? *o_v : *s_v);
-                notes.push_back(std::string(b) + " — confirm it from the datasheet");
             }
+            // Stated by one record only: a primary axis (owner 2026-11-21, B10), noted and capped
+            // by the analog primary-axis block below.
         }
         // The gain range not covered (owner 2026-11-21, B5): the FAIL is the table's; the note
         // names both ranges, once for the two rows.
@@ -3339,6 +3337,13 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                 return std::string(b);
                             };
                             return g(lo) + "-" + g(hi) + " V/V";
+                        }
+                        if (spec.key == "isolation_voltage_V") {
+                            const auto v = num(p, "isolation_voltage_V");
+                            if (!v) return "none";
+                            char b[48];
+                            std::snprintf(b, sizeof b, "%g Vrms", *v);
+                            return b;
                         }
                         if (spec.key == "on_resistance") {
                             const auto r = num(p, "on_resistance");
@@ -7022,7 +7027,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //     (Qarlos r32-33; analog_configuration_unverified)    primary    cap minor_review
     //   analog supply range, op-amp rail-to-rail input,
     //     switch / mux on-resistance, one side only (owner
-    //     2026-11-21, B2; analog_primary_one_sided)           primary    note, cap minor_review
+    //     2026-11-21, B2; analog_primary_one_sided), in-amp
+    //     gain range (B5), isolator isolation voltage (B10)   primary    note, cap minor_review
     //   analog: no non-identity electrical established
     //     (owner 2026-11-21, B1;
     //     analog_electricals_unverified)                      primary    note, cap minor_review

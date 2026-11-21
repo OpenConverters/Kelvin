@@ -415,3 +415,31 @@ TEST_CASE("owner B7: B1 caps an isolator only when its electricals are unverifie
                       {"temp_max_C", 85.0}, {"gbw", 1e6}};
     CHECK(night_b_verdict(night_b_one(opa, opb), "temp_max_C").empty());
 }
+
+TEST_CASE("owner B10: an isolator's isolation voltage stated by one record only caps",
+          "[qarlos-night-b][qarlos-night-b-isoprimary]") {
+    json orig = night_b_iso_spec("DCL540H01");
+    json twin = orig;
+    twin["mpn"] = "DCL540H01-NOISO";  // a synthetic MPN in no TAS record
+    twin["lifecycle_status"] = "production";
+    twin["isolation_voltage_V"] = nullptr;
+    // The range is verified (B1 does not cap), so only the isolation primary axis caps.
+    const json c = night_b_one(orig, twin);
+    CHECK(night_b_verdict(c, "isolation_voltage_V") == "unverified");
+    CHECK(night_b_verdict(c, "temp_max_C") == "pass");
+    CHECK(!night_b_note(c, "no electrical parameter could be compared"));
+    CHECK(c["grade"] == "minor_review");
+    CHECK(night_b_note(c, "isolation voltage stated by one record only: the original's record "
+                          "states 5000 Vrms, the substitute's none"));
+    // The other way round (only the substitute states it): capped as well.
+    const json r = night_b_one(twin, orig);
+    CHECK(night_b_verdict(r, "isolation_voltage_V") == "unverified");
+    CHECK(r["grade"] == "minor_review");
+    // Not an isolator original: no isolation row, no cap from it.
+    json opa = night_b_full("OP262");
+    json opb = opa;
+    opb["mpn"] = "OP262-TWIN";
+    opb["lifecycle_status"] = "production";
+    opb["isolation_voltage_V"] = 2500.0;
+    CHECK(night_b_verdict(night_b_one(opa, opb), "isolation_voltage_V").empty());
+}
