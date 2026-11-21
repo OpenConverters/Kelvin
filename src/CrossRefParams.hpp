@@ -879,6 +879,14 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
     static const std::vector<ParamSpec> kAnalog = {
         {"subtype", D::ExactMatch, 0.0, std::nullopt, false, true, nullptr},
         {"channels", D::ExactMatch, 0.0, std::nullopt, false, true, nullptr},
+        // A digital isolator's channels per direction (AAS digitalIsolator
+        // electrical.forwardChannels / reverseChannels; owner 2026-11-21, B4): each an identity
+        // compared on its own — a 3/1 isolator is not a 2/2 one, though both have 4 channels.
+        // Hard keys (is_hard_param): both stated and different rejects; the substitute not
+        // stating one the original states rejects as unverifiable (exclude_missing_sub, like
+        // the channel count). Only isolator records state them.
+        {"forward_channels", D::ExactMatch, 0.0, std::nullopt, false, true, nullptr},
+        {"reverse_channels", D::ExactMatch, 0.0, std::nullopt, false, true, nullptr},
         // An ADC's conversion architecture (AAS adc electrical.architecture: SAR / deltaSigma /
         // pipeline / flash / dualSlope / folding) is an identity (Qarlos 2026-11-20): a 65 MSPS
         // pipeline AD9228 for a SAR MAX1305 has a different latency, input structure and
@@ -889,6 +897,16 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
         // field is stated for a few special cases (zeroDrift / currentFeedback op-amps) and its
         // absence there says nothing.
         {"architecture", D::ExactMatch, 0.0, std::nullopt, false, false, nullptr},
+        // A switch's pole/throw arrangement (AAS analogSwitch electrical.switchConfiguration:
+        // SPST-NO / SPST-NC / SPDT / DPDT ...) and a multiplexer's ratio (multiplexer
+        // electrical.multiplexerConfiguration: 8:1 / 4:1 x2 / Crosspoint/exchange ...) are
+        // identities, like the ADC architecture above (Qarlos r32-33): an SPST-NC switch is open
+        // where an SPST-NO one is closed for the same logic level, an SPDT has a second throw
+        // and another pinout, and a 16:1 mux is no substitute for a 16x16 crosspoint (ADG1402 ->
+        // TMUX9832, ADG788 -> TMUX5411, LMH6586 -> DG406 were drop_in). A hard key: both stated
+        // and different rejects; one side unstated is UNVERIFIED, noted and capped below drop_in
+        // (CrossRef.hpp). Compared for analogSwitch / multiplexer originals only.
+        {"configuration", D::ExactMatch, 0.0, std::nullopt, false, false, nullptr},
         {"supply_min_V", D::Lower, 0.0, 0.3, false, false, nullptr},
         {"supply_max_V", D::Higher, 0.9, std::nullopt, false, false, nullptr},
         {"gbw", D::Higher, 0.7, std::nullopt, false, false, nullptr},
@@ -907,6 +925,32 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
         // A switch / multiplexer's on-resistance (owner 2026-11-15): lower is better, the
         // MOSFET Rds(on) band (up to 1.5x warns, beyond FAILs).
         {"on_resistance", D::Lower, 1.5, std::nullopt, false, false, nullptr},
+        // An instrumentation amplifier's specified gain range (owner 2026-11-21, B5; Qarlos
+        // INA126, 5-10000 V/V, offered AD627, 5-1000, and LT1101, 10-100, as drop-in): the
+        // substitute must COVER the original's range, so its minimum gain may be no higher and
+        // its maximum no lower, with no band (the operating-range rule) — a shortfall is a FAIL
+        // (major_review); stated by one record only it is UNVERIFIED and capped at
+        // minor_review (analog_primary_axis, B2 style).
+        {"gain_min", D::Lower, 0.0, 0.0, false, false, nullptr},
+        {"gain_max", D::Higher, 0.0, 0.0, false, false, nullptr},
+        // A digital isolator's electricals (owner 2026-11-21, B7), so a verified isolator can
+        // reach drop_in; compared for a digital-isolator original only (CrossRef.hpp).
+        // The withstand isolation voltage (V RMS, UL 1577 / IEC 60747-17) is a minimum rating
+        // with no band: a lower one is a FAIL (a safety certification level, not a margin).
+        // Different test durations make the two figures incomparable: UNVERIFIED (CrossRef.hpp).
+        {"isolation_voltage_V", D::Higher, 0.0, 0.0, false, false, nullptr},
+        // The operating range: the resistor / magnetic rule, both ends covered with NO band;
+        // compared for every analog subtype (owner 2026-11-21, B11), one-sided UNVERIFIED with a
+        // note and no cap. It lifts the B1 cap for an isolator original only (CrossRef.hpp).
+        {"temp_min_C", D::Lower, 0.0, 0.0, false, false, nullptr},
+        {"temp_max_C", D::Higher, 0.0, 0.0, false, false, nullptr},
+        // A difference amplifier's fixed on-chip gain (AAS differenceAmplifier electrical.gain,
+        // V/V; owner 2026-11-21, B12): an exact identity — a G = 1 part is no substitute for a
+        // G = 0.2 one, the resistor ratio is inside the package. Equal within the representation
+        // epsilon only. A hard key (is_hard_param): both stated and different rejects; stated by
+        // one record only it is UNVERIFIED, noted and capped at minor_review
+        // (analog_primary_axis). Compared for a difference-amplifier original only.
+        {"fixed_gain", D::ExactMatch, kRepresentationEpsilon, std::nullopt, false, false, nullptr},
     };
     static const std::vector<ParamSpec> kTimeBase = {
         {"subtype", D::ExactMatch, 0.0, std::nullopt, false, true, nullptr},
@@ -1036,7 +1080,12 @@ inline std::string param_label(const std::string& key) {
         {"max_continuous_ac_voltage", "maximum continuous AC voltage"},
         {"energy_absorption", "energy rating"},
         {"on_resistance", "on-resistance"},
+        {"gain_min", "minimum gain"},
+        {"gain_max", "maximum gain"},
+        {"fixed_gain", "fixed gain"},
+        {"isolation_voltage_V", "withstand isolation voltage"},
         {"architecture", "conversion architecture"},
+        {"configuration", "switch / multiplexer configuration"},
         {"bias_r1", "built-in base resistor R1"},
         {"bias_r2", "built-in base-emitter resistor R2"},
     };

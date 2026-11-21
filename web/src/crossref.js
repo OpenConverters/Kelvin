@@ -519,15 +519,48 @@ export const XREF = [
       output_stage: r.output_stage || null,
       // An ADC's conversion architecture (SAR / deltaSigma / pipeline ...): an identity for an
       // ADC original (is_hard_param("analog"); Qarlos 2026-11-20). '' -> null, NOT '' (ABT #505).
-      architecture: r.architecture || null }),
+      architecture: r.architecture || null,
+      // A switch's pole/throw arrangement (SPST-NO / SPST-NC / SPDT ...) or a multiplexer's
+      // ratio (8:1 / 4:1 x2 / Crosspoint/exchange ...): an identity for those two subtypes
+      // (is_hard_param("analog"); Qarlos r32-33). '' -> null, NOT '' (ABT #505).
+      configuration: r.configuration || null,
+      // A digital isolator's channels per direction (owner 2026-11-21, B4): each an identity.
+      // Raw, NOT through nz(): 0 reverse channels is a stated count; unstated arrives null.
+      forward_channels: r.forward_channels ?? null,
+      reverse_channels: r.reverse_channels ?? null,
+      // An instrumentation amplifier's specified gain range, V/V (owner 2026-11-21, B5): the
+      // substitute must cover it (kAnalog gain_min / gain_max).
+      gain_min: nz(r.minimum_gain), gain_max: nz(r.maximum_gain),
+      // A digital isolator's electricals (owner 2026-11-21, B7): the withstand isolation
+      // voltage (V RMS) with its test duration; the ranker compares it for an isolator
+      // original only.
+      isolation_voltage_V: nz(r.isolation_voltage_rms),
+      isolation_duration_s: nz(r.isolation_duration_s),
+      // The operating range, compared for EVERY analog subtype (owner 2026-11-21, B11): both
+      // ends covered, one-sided = note, no cap. Raw, NOT through nz(): a cold limit is negative
+      // and 0 degC is a stated value; unstated arrives null.
+      temp_min_C: r.temp_min_c ?? null,
+      temp_max_C: r.temp_max_c ?? null,
+      // A difference amplifier's fixed on-chip gain, V/V (owner 2026-11-21, B12): an identity.
+      fixed_gain: nz(r.fixed_gain) }),
     // For an ADC original the architecture is a hard key too, so an ADC that does not state it
-    // is not a verified original (the FAE honesty rule). Other subtypes do not compare it.
+    // is not a verified original (the FAE honesty rule); for a switch or a multiplexer the
+    // configuration is. Other subtypes compare neither.
     variantFor: (orig) => (orig?.device_type === 'adc'
       ? { hardKeys: ['subtype', 'channels', 'architecture'] }
-      : null),
+      : orig?.device_type === 'analogSwitch' || orig?.device_type === 'multiplexer'
+        ? { hardKeys: ['subtype', 'channels', 'configuration'] }
+        : orig?.device_type === 'digitalIsolator'
+          ? { hardKeys: ['subtype', 'channels', 'forward_channels', 'reverse_channels'] }
+          : orig?.device_type === 'differenceAmplifier'
+            ? { hardKeys: ['subtype', 'channels', 'fixed_gain'] }
+            : null),
     params: [
       { key: 'channels', label: 'ch', row: 'channels', unit: '' },
       { key: 'architecture', label: 'arch', row: 'architecture', str: true },
+      { key: 'configuration', label: 'config', row: 'configuration', str: true },
+      { key: 'forward_channels', label: 'fwd ch', row: 'forward_channels', unit: '' },
+      { key: 'reverse_channels', label: 'rev ch', row: 'reverse_channels', unit: '' },
       { key: 'supply_min_V', label: 'Vsup min', row: 'vsupply_min', unit: 'V' },
       { key: 'supply_max_V', label: 'Vsup max', row: 'vsupply_max', unit: 'V' },
       { key: 'gbw', label: 'GBW', row: 'gain_bandwidth', unit: 'Hz' },
@@ -544,6 +577,12 @@ export const XREF = [
       { key: 'resolution', label: 'bits', row: 'resolution', unit: '' },
       { key: 'sample_rate', label: 'fs', row: 'sample_rate', unit: 'S/s' },
       { key: 'on_resistance', label: 'Ron', row: 'on_resistance', unit: 'Ω' },
+      { key: 'gain_min', label: 'G min', row: 'minimum_gain', unit: 'V/V' },
+      { key: 'gain_max', label: 'G max', row: 'maximum_gain', unit: 'V/V' },
+      { key: 'isolation_voltage_V', label: 'Viso', row: 'isolation_voltage_rms', unit: 'Vrms' },
+      { key: 'temp_min_C', label: 'T min', row: 'temp_min_c', unit: '°C' },
+      { key: 'temp_max_C', label: 'T max', row: 'temp_max_c', unit: '°C' },
+      { key: 'fixed_gain', label: 'G', row: 'fixed_gain', unit: 'V/V' },
     ],
   },
   {

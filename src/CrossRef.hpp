@@ -383,7 +383,18 @@ inline std::vector<std::string> comparison_source_fields(const std::string& cat,
         return {};
     }
     if (cat == "analog") {
-        if (name == "channels") return {"electrical.numberOfChannels"};
+        if (name == "channels") {
+            // An isolator's total is the sum of its two direction counts (B4).
+            if (str(row, "subtype") == "digitalIsolator")
+                return {"electrical.forwardChannels", "electrical.reverseChannels"};
+            return {str(row, "subtype") == "analogSwitch" ? "electrical.numberOfSwitches"
+                                                          : "electrical.numberOfChannels"};
+        }
+        if (name == "configuration")
+            return {str(row, "subtype") == "multiplexer" ? "electrical.multiplexerConfiguration"
+                                                         : "electrical.switchConfiguration"};
+        if (name == "forward_channels") return {"electrical.forwardChannels"};
+        if (name == "reverse_channels") return {"electrical.reverseChannels"};
         if (name == "supply_min_V" || name == "supply_max_V" || name == "quiescent_current")
             return {"electrical.supply"};
         if (name == "gbw") return {"electrical.gainBandwidthProduct"};
@@ -400,6 +411,11 @@ inline std::vector<std::string> comparison_source_fields(const std::string& cat,
         if (name == "sample_rate") return {"electrical.sampleRate"};
         if (name == "on_resistance") return {"electrical.onResistance"};
         if (name == "architecture") return {"electrical.architecture"};
+        if (name == "gain_min") return {"electrical.minimumGain"};
+        if (name == "gain_max") return {"electrical.maximumGain"};
+        if (name == "fixed_gain") return {"electrical.gain"};
+        if (name == "isolation_voltage_V") return {"electrical.isolation"};
+        if (name == "temp_min_C" || name == "temp_max_C") return kOpTemp;
         return {};
     }
     if (cat == "timeBase") {
@@ -490,6 +506,32 @@ inline bool is_primary_rating(const std::string& cat, const std::string& key) {
         {"resistor", {"power_rating"}}};
     const auto it = k.find(cat);
     return it != k.end() && it->second.count(key);
+}
+// The analog PRIMARY axes (owner 2026-11-21, B2), with the label a note uses; nullptr for any
+// other key. Stated by one record only, each is UNVERIFIED, noted, demoted and capped at
+// minor_review (analog_primary_one_sided in score_candidate); an established difference keeps
+// its table verdict. The supply range applies to every analog subtype, the rail-to-rail input
+// to an operational-amplifier original, the on-resistance to an analog-switch or multiplexer
+// original (the only subtypes whose records state them), the gain range (minimum / maximum
+// gain, owner 2026-11-21, B5) to an instrumentation-amplifier original, the withstand isolation
+// voltage (owner 2026-11-21, B10) to a digital-isolator original. Stated by neither record: no cap
+// from this rule (the all-electricals-unverified cap, B1, may still apply).
+inline const char* analog_primary_axis(const std::string& key, const std::string& orig_subtype) {
+    if (key == "supply_min_V" || key == "supply_max_V") return "supply range";
+    if (key == "rail_to_rail_input" && orig_subtype == "operationalAmplifier")
+        return "rail-to-rail input";
+    if (key == "on_resistance" &&
+        (orig_subtype == "analogSwitch" || orig_subtype == "multiplexer"))
+        return "on-resistance";
+    // The gain range of an instrumentation amplifier (owner 2026-11-21, B5).
+    if ((key == "gain_min" || key == "gain_max") && orig_subtype == "instrumentationAmplifier")
+        return "gain range";
+    // A digital isolator's withstand isolation voltage (owner 2026-11-21, B10).
+    if (key == "isolation_voltage_V" && orig_subtype == "digitalIsolator")
+        return "isolation voltage";
+    // A difference amplifier's fixed gain (owner 2026-11-21, B12).
+    if (key == "fixed_gain" && orig_subtype == "differenceAmplifier") return "fixed gain";
+    return nullptr;
 }
 // Both-unknown primary cap (owner decision 2026-11-14; both_unstated_primary in
 // score_candidate): a primary axis stated by NEITHER record caps the grade at minor_review —
@@ -623,7 +665,14 @@ inline bool is_hard_param(const std::string& cat, const std::string& key) {
         "actuator_type", "coupling_type", "coding",   "shell_size"};
     // architecture: an ADC's conversion architecture (Qarlos 2026-11-20); the PARAM_SPECS loop
     // compares it for ADC originals only.
-    static const std::set<std::string> analog{"subtype", "channels", "architecture"};
+    // configuration: a switch's pole/throw arrangement or a multiplexer's ratio (Qarlos r32-33);
+    // the PARAM_SPECS loop compares it for analogSwitch / multiplexer originals only.
+    // forward_channels / reverse_channels: a digital isolator's channels per direction (owner
+    // 2026-11-21, B4), each an identity.
+    static const std::set<std::string> analog{"subtype",       "channels",
+                                              "architecture",  "configuration",
+                                              "forward_channels", "reverse_channels",
+                                              "fixed_gain"};
     // mode: a 3rd-overtone crystal cannot cross with a fundamental one in either
     // direction — an overtone circuit's LC tank is inductive at the fundamental,
     // so the loop cannot close there; drop an overtone part into a fundamental
@@ -2242,6 +2291,18 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // An ADC's conversion architecture stated on one side only (Qarlos 2026-11-20): UNVERIFIED,
     // noted, and capped below drop_in like the timing control pin — it is the converter's kind.
     bool analog_architecture_unverified = false;
+    // The switch / multiplexer configuration stated by one record only (Qarlos r32-33): capped
+    // like the ADC architecture.
+    bool analog_configuration_unverified = false;
+    // Analog primary axes (owner 2026-11-21, B2): the supply range, an op-amp's rail-to-rail
+    // input and a switch / multiplexer's on-resistance, stated by ONE record only: UNVERIFIED,
+    // noted, demoted and capped at minor_review (analog_primary_axis below). Timing is not
+    // touched by this rule.
+    bool analog_primary_one_sided = false;
+    std::vector<std::string> analog_primary_noted;
+    // An instrumentation amplifier's gain range not covered (owner 2026-11-21, B5): one note
+    // for the two rows.
+    bool analog_gain_short_noted = false;
     // The footprint is UNVERIFIED because NEITHER record states a land: both name only the
     // same generic package string (generic_package_names_no_land) and no dimensions, or
     // neither states any land dimension nor any package / case code at all. Reported, not
@@ -3045,6 +3106,21 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // The conversion architecture is an ADC identity only (kAnalog).
         if (cat == "analog" && spec.key == "architecture" && str(original, "subtype") != "adc")
             continue;
+        // A digital isolator's isolation rating (owner 2026-11-21, B7) is compared for an
+        // isolator original only. The operating range is compared for every analog subtype
+        // (owner 2026-11-21, B11).
+        if (cat == "analog" && spec.key == "isolation_voltage_V" &&
+            str(original, "subtype") != "digitalIsolator")
+            continue;
+        // A difference amplifier's fixed gain (owner 2026-11-21, B12) is compared for a
+        // difference-amplifier original only.
+        if (cat == "analog" && spec.key == "fixed_gain" &&
+            str(original, "subtype") != "differenceAmplifier")
+            continue;
+        // The switch / multiplexer arrangement is an identity of those two subtypes only.
+        if (cat == "analog" && spec.key == "configuration" &&
+            str(original, "subtype") != "analogSwitch" && str(original, "subtype") != "multiplexer")
+            continue;
         // A programmable original or blank substitute: the frequency verdict is the range
         // check (programmable_frequency_fit), which also runs when neither record states a
         // single frequency.
@@ -3121,8 +3197,18 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             const auto o = detail::jnum(original, spec.key), s = detail::jnum(cand, spec.key);
             return o && s && std::fabs(*s - *o) < kVzGradePrintResolutionPct / 2.0;
         }();
+        // Two withstand isolation voltages tested for different durations (a 60 s UL 1577
+        // rating against a 1 s production test) are not the same figure (owner 2026-11-21, B7).
+        const bool iso_duration_differs = [&] {
+            if (cat != "analog" || spec.key != "isolation_voltage_V") return false;
+            const auto o = num(original, "isolation_duration_s"),
+                       s = num(cand, "isolation_duration_s");
+            return o && s && std::fabs(*o - *s) > 1e-9 && num(original, spec.key.c_str()) &&
+                   num(cand, spec.key.c_str());
+        }();
         const ParamOutcome outcome =
-            pin_field             ? ParamOutcome(connector_pitch.verdict)
+            iso_duration_differs  ? ParamOutcome(UNVERIFIED)
+            : pin_field           ? ParamOutcome(connector_pitch.verdict)
             : curve_ov != curve_override.end() ? curve_ov->second.outcome
             : vz_grade_same       ? ParamOutcome(PASS)
             : ripple_blind        ? ParamOutcome(UNVERIFIED)
@@ -3277,6 +3363,142 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                         : "the substitute is a " + s_a +
                               " ADC; the original's record states no conversion architecture — "
                               "confirm both are the same kind of converter");
+            }
+        }
+        if (cat == "analog" && spec.key == "configuration") {
+            const std::string what = str(original, "subtype") == "multiplexer"
+                                         ? "multiplexer configuration"
+                                         : "switch configuration";
+            const std::string o_c = str(original, "configuration"),
+                              s_c = str(cand, "configuration");
+            if (verdict == FAIL) {
+                // Written before the hard-key reject below returns, so the rejection says why.
+                notes.push_back(what + " differs: the original is " + o_c + ", the substitute " +
+                                s_c + " — a different switching function and pinout, not a "
+                                      "substitute");
+            } else if (verdict == UNVERIFIED && (!o_c.empty() || !s_c.empty())) {
+                analog_configuration_unverified = true;
+                notes.push_back(!o_c.empty()
+                                    ? "the original's " + what + " is " + o_c +
+                                          "; the substitute's record states none — confirm it "
+                                          "from the datasheet"
+                                    : "the substitute's " + what + " is " + s_c +
+                                          "; the original's record states none — confirm both "
+                                          "are the same arrangement");
+            }
+        }
+        // A difference amplifier's fixed gain differs (owner 2026-11-21, B12): name both. Written
+        // before the hard-key reject below returns, so the rejection says why.
+        if (cat == "analog" && spec.key == "fixed_gain" && verdict == FAIL) {
+            char b[160];
+            std::snprintf(b, sizeof b,
+                          "fixed gain differs: the original is G = %g V/V, the substitute "
+                          "G = %g V/V",
+                          *num(original, "fixed_gain"), *num(cand, "fixed_gain"));
+            notes.push_back(std::string(b) +
+                            " — the gain is set by on-chip resistors, not a substitute");
+        }
+        // A digital isolator's withstand isolation voltage (owner 2026-11-21, B7): name both.
+        if (cat == "analog" && spec.key == "isolation_voltage_V") {
+            const auto o_v = num(original, "isolation_voltage_V"),
+                       s_v = num(cand, "isolation_voltage_V");
+            char b[256];
+            if (iso_duration_differs) {
+                std::snprintf(b, sizeof b,
+                              "withstand isolation voltages tested for different durations: the "
+                              "original %g Vrms for %g s, the substitute %g Vrms for %g s",
+                              *o_v, *num(original, "isolation_duration_s"), *s_v,
+                              *num(cand, "isolation_duration_s"));
+                notes.push_back(std::string(b) +
+                                " — not the same rating; confirm the isolation from the "
+                                "datasheets");
+            } else if (verdict == FAIL && o_v && s_v) {
+                std::snprintf(b, sizeof b,
+                              "lower withstand isolation voltage: the substitute is rated %g "
+                              "Vrms against the original's %g Vrms",
+                              *s_v, *o_v);
+                notes.push_back(std::string(b) +
+                                " — a lower safety isolation rating, not a substitute where the "
+                                "original's rating is required");
+            }
+            // Stated by one record only: a primary axis (owner 2026-11-21, B10), noted and capped
+            // by the analog primary-axis block below.
+        }
+        // The gain range not covered (owner 2026-11-21, B5): the FAIL is the table's; the note
+        // names both ranges, once for the two rows.
+        if (cat == "analog" && (spec.key == "gain_min" || spec.key == "gain_max") &&
+            verdict == FAIL && !analog_gain_short_noted) {
+            analog_gain_short_noted = true;
+            auto range = [&](const json& p) {
+                char b[96];
+                const auto lo = num(p, "gain_min"), hi = num(p, "gain_max");
+                if (lo && hi) std::snprintf(b, sizeof b, "%g-%g V/V", *lo, *hi);
+                else if (lo) std::snprintf(b, sizeof b, "from %g V/V", *lo);
+                else if (hi) std::snprintf(b, sizeof b, "up to %g V/V", *hi);
+                else std::snprintf(b, sizeof b, "none stated");
+                return std::string(b);
+            };
+            notes.push_back("gain range not covered: the original is specified over " +
+                            range(original) + ", the substitute over " + range(cand) +
+                            " — a gain the design may use is outside the substitute's "
+                            "specified range");
+        }
+        // Analog primary axes stated by one record only (owner 2026-11-21, B2).
+        if (cat == "analog" && verdict == UNVERIFIED &&
+            detail::present(original, spec.key) != detail::present(cand, spec.key)) {
+            if (const char* axis = analog_primary_axis(spec.key, str(original, "subtype"))) {
+                const bool first = std::find(analog_primary_noted.begin(),
+                                             analog_primary_noted.end(),
+                                             axis) == analog_primary_noted.end();
+                analog_primary_one_sided = true;
+                if (first) {
+                    analog_primary_noted.push_back(axis);
+                    auto stated = [&](const json& p) -> std::string {
+                        if (spec.key == "supply_min_V" || spec.key == "supply_max_V")
+                            return num(p, "supply_min_V") || num(p, "supply_max_V")
+                                       ? supply_range(p)
+                                       : std::string("none");
+                        if (spec.key == "gain_min" || spec.key == "gain_max") {
+                            const auto lo = num(p, "gain_min"), hi = num(p, "gain_max");
+                            if (!lo && !hi) return "none";
+                            auto g = [](const std::optional<double>& v) {
+                                if (!v) return std::string("?");
+                                char b[32];
+                                std::snprintf(b, sizeof b, "%g", *v);
+                                return std::string(b);
+                            };
+                            return g(lo) + "-" + g(hi) + " V/V";
+                        }
+                        if (spec.key == "fixed_gain") {
+                            const auto g = num(p, "fixed_gain");
+                            if (!g) return "none";
+                            char b[48];
+                            std::snprintf(b, sizeof b, "G = %g V/V", *g);
+                            return b;
+                        }
+                        if (spec.key == "isolation_voltage_V") {
+                            const auto v = num(p, "isolation_voltage_V");
+                            if (!v) return "none";
+                            char b[48];
+                            std::snprintf(b, sizeof b, "%g Vrms", *v);
+                            return b;
+                        }
+                        if (spec.key == "on_resistance") {
+                            const auto r = num(p, "on_resistance");
+                            if (!r) return "none";
+                            char b[48];
+                            std::snprintf(b, sizeof b, "%g ohm", *r);
+                            return b;
+                        }
+                        const std::string v = str(p, spec.key.c_str());
+                        return v.empty() ? std::string("none") : v;
+                    };
+                    notes.push_back(std::string(axis) + " stated by one record only: the "
+                                    "original's record states " + stated(original) +
+                                    ", the substitute's " + stated(cand) +
+                                    " — a primary axis, UNVERIFIED, so the swap cannot be a "
+                                    "drop-in; confirm it from the datasheets");
+                }
             }
         }
         if (cat == "timeBase" && spec.key == "enable_function") {
@@ -3573,6 +3795,41 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         if (numeric && is_primary_rating(cat, spec.key) && !detail::jnum(original, spec.key) &&
             detail::jnum(cand, spec.key))
             orig_unstated(spec.key);
+    }
+
+    // ── analog: no electrical verified (owner 2026-11-21, B1) ─────────────────
+    // Every non-identity electrical row of kAnalog that was compared came out UNVERIFIED (or
+    // none came out at all): nothing electrical was weighed, so drop_in would rest on the
+    // identities (subtype, channel count, ...) alone. Capped at minor_review with a note; no
+    // demotion and no penalty of its own (the one-sided rows keep theirs).
+    bool analog_electricals_unverified = false;
+    if (cat == "analog") {
+        bool any_established = false;
+        int compared = 0;
+        // The operating range counts as an isolator electrical (B7) only; on the other
+        // subtypes it is compared (B11) but is not an electrical that lifts this cap.
+        const bool iso_orig = str(original, "subtype") == "digitalIsolator";
+        for (const auto& p : params) {
+            const std::string name = p["name"];
+            if (is_hard_param(cat, name)) continue;
+            if (!iso_orig && (name == "temp_min_C" || name == "temp_max_C")) continue;
+            const bool in_table =
+                std::any_of(params_for(cat).begin(), params_for(cat).end(),
+                            [&](const ParamSpec& s) { return s.key == name; });
+            if (!in_table) continue;
+            ++compared;
+            if (p["verdict"] != UNVERIFIED) any_established = true;
+        }
+        if (!any_established) {
+            analog_electricals_unverified = true;
+            notes.push_back(std::string(compared > 0
+                                            ? "no electrical parameter could be compared: each "
+                                              "one the records state is unverified"
+                                            : "neither record states an electrical parameter "
+                                              "beyond the identities") +
+                            " — the match rests on the identities alone, so it cannot be a "
+                            "drop-in; confirm the electricals from the datasheets");
+        }
     }
 
     // ── magnetic curves, curve vs curve (owner 2026-11-14) ───────────────────
@@ -4113,8 +4370,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // the original only, they are UNVERIFIED and noted but neither demote nor cap the grade
     // (they used to cap at minor_review; see the table at the grade site). A stated shortfall
     // is still a FAIL from the table loop.
+    // An analog operating range (owner 2026-11-21, B7 / B11: every subtype) and a varistor's
+    // (Qarlos r32/r33) take the same notes.
     if (cat == "resistor" || cat == "magnetic" || cat == "chipBead" || cat == "diode" ||
-        cat == "varistor") {
+        cat == "varistor" || cat == "analog") {
         auto verdict_of = [&](const char* name) -> std::string {
             for (const auto& p : params)
                 if (p.value("name", "") == name) return p.value("verdict", "");
@@ -4246,6 +4505,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
 
     if (timebase_pin_unverified) demote();
     if (analog_architecture_unverified) demote();
+    if (analog_configuration_unverified) demote();
+    if (analog_primary_one_sided) demote();
     if (bjt_bias_unverified) demote();
     if (timebase_supply_unverified)
         notes.push_back("the original runs from " + supply_range(original) +
@@ -6917,6 +7178,16 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //     the substitute (owner 2026-11-14; cable_core_unv.)  primary    cap minor_review
     //   diode / MOSFET die configuration, internal connection primary  cap minor_review
     //   oscillator control-pin function (timebase_pin_unv.)   primary    cap minor_review
+    //   analog switch / mux configuration, one side only
+    //     (Qarlos r32-33; analog_configuration_unverified)    primary    cap minor_review
+    //   analog supply range, op-amp rail-to-rail input,
+    //     switch / mux on-resistance, one side only (owner
+    //     2026-11-21, B2; analog_primary_one_sided), in-amp
+    //     gain range (B5), isolator isolation voltage (B10),
+    //     difference-amp fixed gain (B12)                     primary    note, cap minor_review
+    //   analog: no non-identity electrical established
+    //     (owner 2026-11-21, B1;
+    //     analog_electricals_unverified)                      primary    note, cap minor_review
     //   resistor power at rating temp (power_basis_unverif.)  primary    cap minor_review
     //   capacitor ripple-current basis (ripple_basis_unv.)    primary    cap minor_review
     //   capacitor ripple TEMPERATURE basis differs / unstated
@@ -6993,6 +7264,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                     resistor_connection_unverified || resistor_count_one_sided ||
                                     mount_unverified || timebase_pin_unverified ||
                                     analog_architecture_unverified ||
+                                    analog_configuration_unverified ||
+                                    analog_primary_one_sided || analog_electricals_unverified ||
                                     bjt_bias_unverified ||
                                     timebase_prog_order || current_rating_one_sided ||
                                     hard_rating_unverified ||

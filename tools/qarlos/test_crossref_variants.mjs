@@ -10,7 +10,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const { famFor, runCrossRef } = await import(
+const { famFor, runCrossRef, originalMissingKeys } = await import(
   pathToFileURL(join(here, '..', '..', 'web', 'src', 'crossref.js')).href)
 
 const acm = { mpn: 'ACM-21-161M-T', manufacturer: 'Abracon', device_type: 'commonModeChoke',
@@ -347,6 +347,46 @@ assert.equal(famFor('analog', max1305).spec(max1305).architecture, 'SAR')
 assert.ok(famFor('analog', max1305).hardKeys.includes('architecture'))
 assert.ok(!famFor('analog', { device_type: 'operationalAmplifier' }).hardKeys.includes('architecture'))
 assert.equal(famFor('analog', max1305).spec({ ...max1305, architecture: '' }).architecture, null)
+// A switch's / multiplexer's configuration reaches the ranker and is a hard key for those two
+// subtypes only (Qarlos r32-33: ADG1402 SPST-NC -> TMUX9832 SPST-NO, LMH6586 crosspoint ->
+// DG406 16:1); '' -> null, never ''.
+const adg1402 = { mpn: 'ADG1402', manufacturer: 'Analog Devices', device_type: 'analogSwitch',
+  channels: 1, configuration: 'SPST-NC' }
+assert.equal(famFor('analog', adg1402).spec(adg1402).configuration, 'SPST-NC')
+assert.ok(famFor('analog', adg1402).hardKeys.includes('configuration'))
+assert.ok(famFor('analog', { device_type: 'multiplexer' }).hardKeys.includes('configuration'))
+assert.ok(!famFor('analog', { device_type: 'operationalAmplifier' }).hardKeys.includes('configuration'))
+assert.ok(!famFor('analog', max1305).hardKeys.includes('configuration'))
+assert.equal(famFor('analog', adg1402).spec({ ...adg1402, configuration: '' }).configuration, null)
+// A digital isolator's direction split reaches the ranker as stated, 0 included, and both
+// counts are hard keys for an isolator original only (owner 2026-11-21, B4).
+const dcl320 = { mpn: 'DCL320C00', manufacturer: 'Toshiba', device_type: 'digitalIsolator',
+  channels: 2, forward_channels: 2, reverse_channels: 0 }
+assert.equal(famFor('analog', dcl320).spec(dcl320).forward_channels, 2)
+assert.equal(famFor('analog', dcl320).spec(dcl320).reverse_channels, 0)
+assert.equal(famFor('analog', adg1402).spec(adg1402).reverse_channels, null)
+assert.ok(famFor('analog', dcl320).hardKeys.includes('forward_channels'))
+assert.ok(famFor('analog', dcl320).hardKeys.includes('reverse_channels'))
+assert.ok(!famFor('analog', adg1402).hardKeys.includes('reverse_channels'))
+// An instrumentation amplifier's gain range reaches the ranker (owner 2026-11-21, B5); unstated
+// (NaN in the row) arrives null.
+const ina126 = { mpn: 'INA126', manufacturer: 'Texas Instruments',
+  device_type: 'instrumentationAmplifier', channels: 1, minimum_gain: 5, maximum_gain: 10000 }
+assert.equal(famFor('analog', ina126).spec(ina126).gain_min, 5)
+assert.equal(famFor('analog', ina126).spec(ina126).gain_max, 10000)
+assert.equal(famFor('analog', adg1402).spec(adg1402).gain_max, null)
+// A digital isolator's isolation rating and operating range reach the ranker (owner
+// 2026-11-21, B7); the range only for an isolator (the shared operating-range block judges it
+// in every category), a cold limit kept negative.
+const dcl540 = { ...dcl320, mpn: 'DCL540H01', isolation_voltage_rms: 5000,
+  isolation_duration_s: 60, temp_min_c: -40, temp_max_c: 110 }
+assert.equal(famFor('analog', dcl540).spec(dcl540).isolation_voltage_V, 5000)
+assert.equal(famFor('analog', dcl540).spec(dcl540).isolation_duration_s, 60)
+assert.equal(famFor('analog', dcl540).spec(dcl540).temp_min_C, -40)
+assert.equal(famFor('analog', dcl540).spec(dcl540).temp_max_C, 110)
+const opTemp = { mpn: 'OPA', device_type: 'operationalAmplifier', temp_min_c: -40, temp_max_c: 125 }
+// Owner 2026-11-21, B11 / T1: the range now reaches the ranker for every subtype (was null).
+assert.equal(famFor('analog', opTemp).spec(opTemp).temp_max_C, 125)
 // A BJT's built-in bias resistors reach the ranker (v25, ABT #2445): prebiased as the row states
 // it (false = plain), R1 / R2 null when unstated, an omitted R2 as bias_r2_open; a row without
 // the v25 field projects prebiased null (unknown), never false.
@@ -382,5 +422,24 @@ assert.equal(bjtPools.at(-1).filters.prebiased, false)
 await runCrossRef({ family: 'bjt', original: { mpn: 'OLD', manufacturer: 'onsemi',
   vceo_rated: 45, ic_continuous: 0.1, polarity: 'npn' }, manufacturers: ['Nexperia'], engine: bjtEngine })
 assert.ok(!('prebiased' in bjtPools.at(-1).filters))
+
+// Every analog subtype's operating range reaches the ranker (owner 2026-11-21, B11), raw: a
+// cold limit stays negative, 0 degC stays 0, unstated stays null.
+const swTemp = { mpn: 'SW', device_type: 'analogSwitch', temp_min_c: 0, temp_max_c: 70 }
+assert.equal(famFor('analog', swTemp).spec(swTemp).temp_min_C, 0)
+assert.equal(famFor('analog', swTemp).spec(swTemp).temp_max_C, 70)
+const inaTemp = { mpn: 'INA', device_type: 'instrumentationAmplifier', temp_min_c: -40 }
+assert.equal(famFor('analog', inaTemp).spec(inaTemp).temp_min_C, -40)
+assert.equal(famFor('analog', inaTemp).spec(inaTemp).temp_max_C, null)
+
+// A difference amplifier's fixed gain reaches the ranker and is a hard key of that subtype's
+// variant (owner 2026-11-21, B12): an original that does not state it is not verified.
+const da = { mpn: 'AD8276', device_type: 'differenceAmplifier', channels: 1, fixed_gain: 1 }
+assert.equal(famFor('analog', da).spec(da).fixed_gain, 1)
+assert.ok(famFor('analog', da).hardKeys.includes('fixed_gain'))
+const daBare = { mpn: 'DA', device_type: 'differenceAmplifier', channels: 1 }
+assert.deepEqual(originalMissingKeys(famFor('analog', daBare), famFor('analog', daBare).spec(daBare)),
+  ['fixed_gain'])
+assert.ok(!famFor('analog', opTemp).hardKeys.includes('fixed_gain'))
 
 console.log('crossref variants: all checks passed')

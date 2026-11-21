@@ -2820,7 +2820,30 @@ std::optional<AnalogRow> extract_analog(const json& env) {
 
     const json* elec = obj_get(*di, "electrical");
     if (elec && elec->is_object()) {
-        set_if_pos(r.channels, get_num(*elec, "numberOfChannels"));
+        // The channel count is the number of independent functions in the package. An analog
+        // switch states it as numberOfSwitches (AAS analogSwitch.json; the schema has no
+        // numberOfChannels for it), every other subtype as numberOfChannels. Reading only
+        // numberOfChannels left channels unset on all 642 switch records, so the identity the
+        // ranker turns on was never compared (Qarlos r32-33: MAX4742 -> TMUX9832, a 2-switch
+        // part offered a 32-switch one as drop_in). Each subtype reads its own key only.
+        // A digital isolator states its channels per direction (AAS digitalIsolator
+        // electrical.forwardChannels / reverseChannels) and never numberOfChannels (owner
+        // 2026-11-21, B4). Each count is kept as stated, 0 included; the total is their sum,
+        // and only when both are stated.
+        if (node->subtype == "digitalIsolator") {
+            auto count = [&](const char* key) {
+                const auto v = get_num(*elec, key);
+                return v && *v >= 0 ? *v : kNaN();
+            };
+            r.forward_channels = count("forwardChannels");
+            r.reverse_channels = count("reverseChannels");
+            if (!std::isnan(r.forward_channels) && !std::isnan(r.reverse_channels))
+                r.channels = r.forward_channels + r.reverse_channels;
+        } else {
+            set_if_pos(r.channels, get_num(*elec, node->subtype == "analogSwitch"
+                                                      ? "numberOfSwitches"
+                                                      : "numberOfChannels"));
+        }
         set_if_pos(r.input_offset_voltage, get_num(*elec, "inputOffsetVoltage"));
         set_if_pos(r.input_bias_current, get_num(*elec, "inputBiasCurrent"));
         set_if_pos(r.gain_bandwidth, get_num(*elec, "gainBandwidthProduct"));
@@ -2831,6 +2854,21 @@ std::optional<AnalogRow> extract_analog(const json& env) {
         set_if_pos(r.on_resistance, get_num(*elec, "onResistance"));
         set_if_pos(r.offset_drift, get_num(*elec, "inputOffsetVoltageDrift"));
         set_if_pos(r.propagation_delay, get_num(*elec, "propagationDelay"));
+        // The specified gain range (owner 2026-11-21, B5): AAS instrumentationAmplifier
+        // electrical.minimumGain / maximumGain, resolved with the canonical resolver.
+        set_if_pos(r.minimum_gain, resolve_field(*elec, "minimumGain"));
+        set_if_pos(r.maximum_gain, resolve_field(*elec, "maximumGain"));
+        // A difference amplifier's fixed gain (owner 2026-11-21, B12): AAS differenceAmplifier
+        // electrical.gain, resolved with the canonical resolver. Read for that subtype only: the
+        // key means nothing defined on the others.
+        if (node->subtype == "differenceAmplifier")
+            set_if_pos(r.fixed_gain, resolve_field(*elec, "gain"));
+        // A digital isolator's withstand isolation voltage and its test duration (owner
+        // 2026-11-21, B7): PEAS isolationRating electrical.isolation.
+        if (const json* iso = obj_get(*elec, "isolation"); iso && iso->is_object()) {
+            set_if_pos(r.isolation_voltage_rms, resolve_field(*iso, "withstandVoltageRms"));
+            set_if_pos(r.isolation_duration_s, resolve_field(*iso, "withstandVoltageDuration"));
+        }
         const json* supply = obj_get(*elec, "supply");
         if (supply) {
             set_if_pos(r.vsupply_min, get_num(*supply, "minimumSupplyVoltage"));
@@ -2849,6 +2887,19 @@ std::optional<AnalogRow> extract_analog(const json& env) {
         };
         r.rail_to_rail_input = yes_no("railToRailInput");
         r.rail_to_rail_output = yes_no("railToRailOutput");
+        // The switch / multiplexer arrangement (Qarlos r32-33): each subtype's own key only.
+        if (node->subtype == "analogSwitch")
+            r.configuration = get_str(*elec, "switchConfiguration").value_or("");
+        else if (node->subtype == "multiplexer")
+            r.configuration = get_str(*elec, "multiplexerConfiguration").value_or("");
+    }
+    // Operating range (owner 2026-11-21, B7): read straight from the object, not through
+    // set_if_pos: a cold limit is negative.
+    if (const json* th = obj_get(*di, "thermal")) {
+        if (const json* t = obj_get(*th, "operatingTemperature")) {
+            if (auto v = get_num(*t, "minimum")) r.temp_min_c = *v;
+            if (auto v = get_num(*t, "maximum")) r.temp_max_c = *v;
+        }
     }
     auto status = get_str(*node->mi, "status");
     r.is_production = status.has_value() && *status == "production";

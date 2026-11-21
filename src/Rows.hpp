@@ -890,6 +890,39 @@ struct AnalogRow : RowBase {
     std::string rail_to_rail_input;
     std::string rail_to_rail_output;
     std::string output_stage;             // outputStage (comparators: pushPull / openDrain …)
+    // v25 (Qarlos r32-33): a switch's pole/throw arrangement (analogSwitch
+    // electrical.switchConfiguration: SPST-NO / SPST-NC / SPDT ...) or a multiplexer's ratio
+    // (multiplexer electrical.multiplexerConfiguration: 8:1 / 4:1 x2 / Crosspoint/exchange ...),
+    // as stated; "" when unstated or another subtype.
+    std::string configuration;
+    // v25 (owner 2026-11-21, B4): a digital isolator's channel split, AAS digitalIsolator
+    // electrical.forwardChannels / reverseChannels, as stated (0 is a stated count); NaN when
+    // unstated or another subtype. Each is an identity of its own; `channels` of an isolator is
+    // their sum, set only when both are stated.
+    double forward_channels = kNaN();
+    double reverse_channels = kNaN();
+    // v25 (owner 2026-11-21, B5): the gain range an instrumentation amplifier is specified over,
+    // AAS instrumentationAmplifier electrical.minimumGain / maximumGain (V/V), each resolved with
+    // PEAS::resolve_dimensional_values; NaN when unstated. Only instrumentation-amplifier
+    // records state them (122 / 126 of them, 2026-11-21).
+    double minimum_gain = kNaN();
+    double maximum_gain = kNaN();
+    // v25 (owner 2026-11-21, B7): a digital isolator's withstand isolation voltage (PEAS
+    // isolationRating electrical.isolation.withstandVoltageRms, V RMS) and the duration of that
+    // test (withstandVoltageDuration, s), stated by all 48 isolator records (all 60 s); NaN
+    // when unstated.
+    double isolation_voltage_rms = kNaN();
+    double isolation_duration_s = kNaN();
+    // degC — thermal.operatingTemperature, read for every analog subtype (the cross-reference
+    // compares it for every subtype, owner 2026-11-21, B11). Negative and zero are ordinary
+    // values, not absence; NaN when unstated.
+    double temp_min_c = kNaN();
+    double temp_max_c = kNaN();
+    // v25 (owner 2026-11-21, B12): a difference amplifier's fixed on-chip gain, AAS
+    // differenceAmplifier electrical.gain (V/V), resolved with PEAS::resolve_dimensional_values;
+    // NaN when unstated or another subtype. Stated by all 37 difference-amplifier records
+    // (2026-11-21: 0.2 / 0.5 / 1 / 2 / 10 / 14 / 20); none states a pin-selectable gainOptions set.
+    double fixed_gain = kNaN();
     bool is_production = false;
 };
 
