@@ -5463,6 +5463,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // ── physical fit ─────────────────────────────────────────────────────────
     if (opt.check_footprint) {
         auto o_dims = dims_of(original, cat), s_dims = dims_of(cand, cat);
+        // What a footprint WARN has charged on the footprint term (before footprint_weight),
+        // so the C5 area rule below can raise it to a FAIL's cost (owner C9, 2026-11-21).
+        double footprint_warn_charged = 0.0;
         // The case identities every case-kept gate below compares (series-aware for capacitors).
         auto case_ids = case_identities_of(cat, original, cand);
         // Capacitor case codes from different systems that resolve to the same body (owner
@@ -5663,6 +5666,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 // An ESTABLISHED land-pattern change, so it sits above the
                 // unverified rung of the footprint ladder — never below it.
                 penalty += opt.footprint_weight * kEstablishedFootprintMismatchPenalty;
+                footprint_warn_charged = kEstablishedFootprintMismatchPenalty;
                 // Name the two bodies when both resolve, so the note carries the reason and
                 // not just two strings: CWR06DC155JCA's case "A" is CWR06's 2.54 x 1.27 mm,
                 // not the EIA 3216 (owner 2026-11-13, r16 26859036).
@@ -5949,6 +5953,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             if (tier != FootprintTier::Fits && tier != FootprintTier::Unknown)
                 fit_penalty = std::max(fit_penalty, kEstablishedFootprintMismatchPenalty);
             penalty += opt.footprint_weight * fit_penalty;
+            footprint_warn_charged = fit_penalty;
             // "different_case" is the existing name for a land the pads cannot match (the
             // case-code gate above); the grade reads it as a WARN, exactly as one_size_larger.
             out["footprint"] = crossed_land ? "different_case" : footprint_tier_name(tier);
@@ -6136,7 +6141,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // (any_fail -> major_review): at that size the part is not a near land to rework but a
         // different board layout. Below 2x it stays the WARN it was. Every family that compares
         // bodies, on the two complete lands the compare above used (length x width, as stated
-        // or as the case table resolved them). Penalty unchanged.
+        // or as the case table resolved them). Owner C9 (2026-11-21): the FAIL costs the normal
+        // FAIL penalty — the footprint term is raised to kVerdictFailPenalty (a continuous
+        // over/undersize term already above it stands), so it ranks with the other FAILs.
         if (o_dims && s_dims && has_land(*o_dims) && has_land(*s_dims)) {
             const double oa = *o_dims->length * *o_dims->width,
                          sa = *s_dims->length * *s_dims->width;
@@ -6145,6 +6152,11 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 if (p.value("name", "") == "footprint" && p.value("verdict", "") == WARN &&
                     ratio >= kFootprintAreaFailRatio * (1.0 - 1e-9)) {
                     p["verdict"] = FAIL;
+                    if (footprint_warn_charged < kVerdictFailPenalty) {
+                        penalty += opt.footprint_weight *
+                                   (kVerdictFailPenalty - footprint_warn_charged);
+                        footprint_warn_charged = kVerdictFailPenalty;
+                    }
                     char ab[96];
                     std::snprintf(ab, sizeof ab, "%.3g", ratio);
                     notes.push_back("footprint area " + std::string(ab) + "x " +
