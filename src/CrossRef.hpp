@@ -3368,6 +3368,11 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 missing_required_data = true;
             }
         } else if (verdict == FAIL) {
+            // A rejection read off one L(I) curve says which reading rejected it.
+            if (hard_gate && spec.key == "saturation_current")
+                if (const auto one = isat::compare_one_curve(original, cand, spec.tol_factor);
+                    one.applies)
+                    notes.push_back(isat::one_curve_note(one));
             if (hard_gate)
                 return reject(spec.dir == Dir::ExactMatch
                                   ? "an identity parameter differs from the original"
@@ -3443,26 +3448,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                        one.applies) {
                 // One record's L(I) curve read at the other's stated criterion (Qarlos r33,
                 // seed 35761001; compare_saturation_current).
-                char buf[96];
-                std::string list;
-                for (const auto& row : one.rows) {
-                    auto amps = [](const std::optional<double>& a) {
-                        char b[32];
-                        if (!a) return std::string("not reached");
-                        std::snprintf(b, sizeof b, "%.3g A", *a);
-                        return std::string(b);
-                    };
-                    std::snprintf(buf, sizeof buf, "%g %% drop ", row.drop_pct);
-                    list += (list.empty() ? "" : "; ") + std::string(buf) + amps(row.sub_at) +
-                            " vs " + amps(row.orig_at);
-                }
-                notes.push_back(std::string("saturation compared at the ") +
-                                (one.curve_on_substitute ? "original's" : "substitute's") +
-                                " stated criterion on the " +
-                                (one.curve_on_substitute ? "substitute's" : "original's") +
-                                " L(I) curve (substitute vs original: " + list +
-                                ") — the curve is read at room temperature against a figure "
-                                "stated at room temperature or at none, never extrapolated");
+                notes.push_back(isat::one_curve_note(one));
                 if (one.decisive && verdict != UNVERIFIED) {
                     od = one.rows[*one.decisive].orig_at;
                     sd = one.rows[*one.decisive].sub_at;

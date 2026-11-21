@@ -9293,7 +9293,8 @@ TEST_CASE("qarlos night C: one L(I) curve is read at the other side's stated Isa
     REQUIRE(r["candidates"].size() == 1);
     const json& c = r["candidates"][0];
     CHECK(verdict_of(c, "saturation_current") == "fail");
-    CHECK(has_note(c, "stated criterion on the substitute's L(I) curve"));
+    CHECK(c["status"] == "no_substitute");  // a hard rating far below: rejected
+    CHECK(has_note(c, "stated criterion on the substitute's L(I) curve (substitute vs original: 35 % drop 0.65 A vs 1.3 A)"));
     CHECK_FALSE(has_note(c, "not directly comparable"));
     // A curve at a non-room temperature is not on the stated figure's basis: not read.
     json hot = cand;

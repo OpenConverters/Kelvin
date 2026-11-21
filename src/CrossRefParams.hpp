@@ -634,6 +634,29 @@ inline OneCurveCompare compare_one_curve(const nlohmann::json& orig, const nlohm
     out.applies = any_read;
     return out;
 }
+// The note naming the reading (used for a pass, a warn and a rejection alike).
+inline std::string one_curve_note(const OneCurveCompare& one) {
+    std::string list;
+    for (const auto& row : one.rows) {
+        auto amps = [](const std::optional<double>& a) {
+            char b[32];
+            if (!a) return std::string("not reached");
+            std::snprintf(b, sizeof b, "%.3g A", *a);
+            return std::string(b);
+        };
+        char buf[48];
+        std::snprintf(buf, sizeof buf, "%g %% drop ", row.drop_pct);
+        list += (list.empty() ? "" : "; ") + std::string(buf) + amps(row.sub_at) + " vs " +
+                amps(row.orig_at);
+    }
+    return std::string("saturation compared at the ") +
+           (one.curve_on_substitute ? "original's" : "substitute's") +
+           " stated criterion on the " +
+           (one.curve_on_substitute ? "substitute's" : "original's") +
+           " L(I) curve (substitute vs original: " + list +
+           ") — the curve is read at room temperature against a figure stated at room "
+           "temperature or at none, never extrapolated";
+}
 }  // namespace isat
 
 // The original states no saturation current, only its rated (thermal) current. The two
