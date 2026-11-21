@@ -883,6 +883,11 @@ struct AnalogRow : RowBase {
     std::string rail_to_rail_input;
     std::string rail_to_rail_output;
     std::string output_stage;             // outputStage (comparators: pushPull / openDrain …)
+    // v25 (Qarlos r32-33): a switch's pole/throw arrangement (analogSwitch
+    // electrical.switchConfiguration: SPST-NO / SPST-NC / SPDT ...) or a multiplexer's ratio
+    // (multiplexer electrical.multiplexerConfiguration: 8:1 / 4:1 x2 / Crosspoint/exchange ...),
+    // as stated; "" when unstated or another subtype.
+    std::string configuration;
     bool is_production = false;
 };
 

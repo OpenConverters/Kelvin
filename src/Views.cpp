@@ -2846,6 +2846,11 @@ std::optional<AnalogRow> extract_analog(const json& env) {
         };
         r.rail_to_rail_input = yes_no("railToRailInput");
         r.rail_to_rail_output = yes_no("railToRailOutput");
+        // The switch / multiplexer arrangement (Qarlos r32-33): each subtype's own key only.
+        if (node->subtype == "analogSwitch")
+            r.configuration = get_str(*elec, "switchConfiguration").value_or("");
+        else if (node->subtype == "multiplexer")
+            r.configuration = get_str(*elec, "multiplexerConfiguration").value_or("");
     }
     auto status = get_str(*node->mi, "status");
     r.is_production = status.has_value() && *status == "production";

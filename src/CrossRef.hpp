@@ -377,7 +377,12 @@ inline std::vector<std::string> comparison_source_fields(const std::string& cat,
         return {};
     }
     if (cat == "analog") {
-        if (name == "channels") return {"electrical.numberOfChannels"};
+        if (name == "channels")
+            return {str(row, "subtype") == "analogSwitch" ? "electrical.numberOfSwitches"
+                                                          : "electrical.numberOfChannels"};
+        if (name == "configuration")
+            return {str(row, "subtype") == "multiplexer" ? "electrical.multiplexerConfiguration"
+                                                         : "electrical.switchConfiguration"};
         if (name == "supply_min_V" || name == "supply_max_V" || name == "quiescent_current")
             return {"electrical.supply"};
         if (name == "gbw") return {"electrical.gainBandwidthProduct"};
@@ -605,7 +610,10 @@ inline bool is_hard_param(const std::string& cat, const std::string& key) {
         "actuator_type", "coupling_type", "coding",   "shell_size"};
     // architecture: an ADC's conversion architecture (Qarlos 2026-11-20); the PARAM_SPECS loop
     // compares it for ADC originals only.
-    static const std::set<std::string> analog{"subtype", "channels", "architecture"};
+    // configuration: a switch's pole/throw arrangement or a multiplexer's ratio (Qarlos r32-33);
+    // the PARAM_SPECS loop compares it for analogSwitch / multiplexer originals only.
+    static const std::set<std::string> analog{"subtype", "channels", "architecture",
+                                              "configuration"};
     // mode: a 3rd-overtone crystal cannot cross with a fundamental one in either
     // direction — an overtone circuit's LC tank is inductive at the fundamental,
     // so the loop cannot close there; drop an overtone part into a fundamental
@@ -2224,6 +2232,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // An ADC's conversion architecture stated on one side only (Qarlos 2026-11-20): UNVERIFIED,
     // noted, and capped below drop_in like the timing control pin — it is the converter's kind.
     bool analog_architecture_unverified = false;
+    // The switch / multiplexer configuration stated by one record only (Qarlos r32-33): capped
+    // like the ADC architecture.
+    bool analog_configuration_unverified = false;
     // The footprint is UNVERIFIED because NEITHER record states a land: both name only the
     // same generic package string (generic_package_names_no_land) and no dimensions, or
     // neither states any land dimension nor any package / case code at all. Reported, not
@@ -2946,6 +2957,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // The conversion architecture is an ADC identity only (kAnalog).
         if (cat == "analog" && spec.key == "architecture" && str(original, "subtype") != "adc")
             continue;
+        // The switch / multiplexer arrangement is an identity of those two subtypes only.
+        if (cat == "analog" && spec.key == "configuration" &&
+            str(original, "subtype") != "analogSwitch" && str(original, "subtype") != "multiplexer")
+            continue;
         // A programmable original or blank substitute: the frequency verdict is the range
         // check (programmable_frequency_fit), which also runs when neither record states a
         // single frequency.
@@ -3165,6 +3180,28 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                         : "the substitute is a " + s_a +
                               " ADC; the original's record states no conversion architecture — "
                               "confirm both are the same kind of converter");
+            }
+        }
+        if (cat == "analog" && spec.key == "configuration") {
+            const std::string what = str(original, "subtype") == "multiplexer"
+                                         ? "multiplexer configuration"
+                                         : "switch configuration";
+            const std::string o_c = str(original, "configuration"),
+                              s_c = str(cand, "configuration");
+            if (verdict == FAIL) {
+                // Written before the hard-key reject below returns, so the rejection says why.
+                notes.push_back(what + " differs: the original is " + o_c + ", the substitute " +
+                                s_c + " — a different switching function and pinout, not a "
+                                      "substitute");
+            } else if (verdict == UNVERIFIED && (!o_c.empty() || !s_c.empty())) {
+                analog_configuration_unverified = true;
+                notes.push_back(!o_c.empty()
+                                    ? "the original's " + what + " is " + o_c +
+                                          "; the substitute's record states none — confirm it "
+                                          "from the datasheet"
+                                    : "the substitute's " + what + " is " + s_c +
+                                          "; the original's record states none — confirm both "
+                                          "are the same arrangement");
             }
         }
         if (cat == "timeBase" && spec.key == "enable_function") {
@@ -4133,6 +4170,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
 
     if (timebase_pin_unverified) demote();
     if (analog_architecture_unverified) demote();
+    if (analog_configuration_unverified) demote();
     if (bjt_bias_unverified) demote();
     if (timebase_supply_unverified)
         notes.push_back("the original runs from " + supply_range(original) +
@@ -6792,6 +6830,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //     the substitute (owner 2026-11-14; cable_core_unv.)  primary    cap minor_review
     //   diode / MOSFET die configuration, internal connection primary  cap minor_review
     //   oscillator control-pin function (timebase_pin_unv.)   primary    cap minor_review
+    //   analog switch / mux configuration, one side only
+    //     (Qarlos r32-33; analog_configuration_unverified)    primary    cap minor_review
     //   resistor power at rating temp (power_basis_unverif.)  primary    cap minor_review
     //   capacitor ripple-current basis (ripple_basis_unv.)    primary    cap minor_review
     //   capacitor ripple TEMPERATURE basis differs / unstated
@@ -6865,6 +6905,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                     resistor_connection_unverified || resistor_count_one_sided ||
                                     mount_unverified || timebase_pin_unverified ||
                                     analog_architecture_unverified ||
+                                    analog_configuration_unverified ||
                                     bjt_bias_unverified ||
                                     timebase_prog_order || current_rating_one_sided ||
                                     hard_rating_unverified ||

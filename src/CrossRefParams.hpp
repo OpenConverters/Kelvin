@@ -879,6 +879,16 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
         // field is stated for a few special cases (zeroDrift / currentFeedback op-amps) and its
         // absence there says nothing.
         {"architecture", D::ExactMatch, 0.0, std::nullopt, false, false, nullptr},
+        // A switch's pole/throw arrangement (AAS analogSwitch electrical.switchConfiguration:
+        // SPST-NO / SPST-NC / SPDT / DPDT ...) and a multiplexer's ratio (multiplexer
+        // electrical.multiplexerConfiguration: 8:1 / 4:1 x2 / Crosspoint/exchange ...) are
+        // identities, like the ADC architecture above (Qarlos r32-33): an SPST-NC switch is open
+        // where an SPST-NO one is closed for the same logic level, an SPDT has a second throw
+        // and another pinout, and a 16:1 mux is no substitute for a 16x16 crosspoint (ADG1402 ->
+        // TMUX9832, ADG788 -> TMUX5411, LMH6586 -> DG406 were drop_in). A hard key: both stated
+        // and different rejects; one side unstated is UNVERIFIED, noted and capped below drop_in
+        // (CrossRef.hpp). Compared for analogSwitch / multiplexer originals only.
+        {"configuration", D::ExactMatch, 0.0, std::nullopt, false, false, nullptr},
         {"supply_min_V", D::Lower, 0.0, 0.3, false, false, nullptr},
         {"supply_max_V", D::Higher, 0.9, std::nullopt, false, false, nullptr},
         {"gbw", D::Higher, 0.7, std::nullopt, false, false, nullptr},
@@ -1026,6 +1036,7 @@ inline std::string param_label(const std::string& key) {
         {"energy_absorption", "energy rating"},
         {"on_resistance", "on-resistance"},
         {"architecture", "conversion architecture"},
+        {"configuration", "switch / multiplexer configuration"},
         {"bias_r1", "built-in base resistor R1"},
         {"bias_r2", "built-in base-emitter resistor R2"},
     };

@@ -174,6 +174,8 @@ constexpr char kCurveMagic[8] = {'K', 'E', 'L', 'V', 'C', 'R', 'V', '\1'};
 // bias_r2_open; SAS bjt.json electrical.biasResistors; ABT #2445): a pre-biased ("digital")
 // transistor is not a drop-in for a plain one, nor for one with other resistors. Every v24 shard
 // must be rebuilt and both engines (Kelvin, Kirchhoff's deps/Kelvin) redeployed together.
+// v25 also carries an analog switch's / multiplexer's arrangement (AnalogRow.configuration:
+// switchConfiguration / multiplexerConfiguration; Qarlos r32-33), before v25 shipped.
 constexpr uint32_t kFormatVersion = 25;
 
 // Identity of the code that produces rows, so a cached shard can be recognised as
@@ -637,6 +639,7 @@ void row_io(Ar& ar, AnalogRow& r) {
     ar.str(r.rail_to_rail_input);    // v24
     ar.str(r.rail_to_rail_output);   // v24
     ar.str(r.output_stage);          // v24
+    ar.str(r.configuration);         // v25 (Qarlos r32-33)
     ar.boolean(r.is_production);
 }
 

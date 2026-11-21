@@ -511,15 +511,23 @@ export const XREF = [
       output_stage: r.output_stage || null,
       // An ADC's conversion architecture (SAR / deltaSigma / pipeline ...): an identity for an
       // ADC original (is_hard_param("analog"); Qarlos 2026-11-20). '' -> null, NOT '' (ABT #505).
-      architecture: r.architecture || null }),
+      architecture: r.architecture || null,
+      // A switch's pole/throw arrangement (SPST-NO / SPST-NC / SPDT ...) or a multiplexer's
+      // ratio (8:1 / 4:1 x2 / Crosspoint/exchange ...): an identity for those two subtypes
+      // (is_hard_param("analog"); Qarlos r32-33). '' -> null, NOT '' (ABT #505).
+      configuration: r.configuration || null }),
     // For an ADC original the architecture is a hard key too, so an ADC that does not state it
-    // is not a verified original (the FAE honesty rule). Other subtypes do not compare it.
+    // is not a verified original (the FAE honesty rule); for a switch or a multiplexer the
+    // configuration is. Other subtypes compare neither.
     variantFor: (orig) => (orig?.device_type === 'adc'
       ? { hardKeys: ['subtype', 'channels', 'architecture'] }
-      : null),
+      : orig?.device_type === 'analogSwitch' || orig?.device_type === 'multiplexer'
+        ? { hardKeys: ['subtype', 'channels', 'configuration'] }
+        : null),
     params: [
       { key: 'channels', label: 'ch', row: 'channels', unit: '' },
       { key: 'architecture', label: 'arch', row: 'architecture', str: true },
+      { key: 'configuration', label: 'config', row: 'configuration', str: true },
       { key: 'supply_min_V', label: 'Vsup min', row: 'vsupply_min', unit: 'V' },
       { key: 'supply_max_V', label: 'Vsup max', row: 'vsupply_max', unit: 'V' },
       { key: 'gbw', label: 'GBW', row: 'gain_bandwidth', unit: 'Hz' },

@@ -289,7 +289,8 @@ inline const FieldTable<AnalogRow>& fields<AnalogRow>() {
          {"input_stage", &AnalogRow::input_stage},
          {"rail_to_rail_input", &AnalogRow::rail_to_rail_input},
          {"rail_to_rail_output", &AnalogRow::rail_to_rail_output},
-         {"output_stage", &AnalogRow::output_stage}},
+         {"output_stage", &AnalogRow::output_stage},
+         {"configuration", &AnalogRow::configuration}},
         {{"is_production", &AnalogRow::is_production}},
         {}};
     return t;

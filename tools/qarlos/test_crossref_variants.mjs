@@ -347,6 +347,17 @@ assert.equal(famFor('analog', max1305).spec(max1305).architecture, 'SAR')
 assert.ok(famFor('analog', max1305).hardKeys.includes('architecture'))
 assert.ok(!famFor('analog', { device_type: 'operationalAmplifier' }).hardKeys.includes('architecture'))
 assert.equal(famFor('analog', max1305).spec({ ...max1305, architecture: '' }).architecture, null)
+// A switch's / multiplexer's configuration reaches the ranker and is a hard key for those two
+// subtypes only (Qarlos r32-33: ADG1402 SPST-NC -> TMUX9832 SPST-NO, LMH6586 crosspoint ->
+// DG406 16:1); '' -> null, never ''.
+const adg1402 = { mpn: 'ADG1402', manufacturer: 'Analog Devices', device_type: 'analogSwitch',
+  channels: 1, configuration: 'SPST-NC' }
+assert.equal(famFor('analog', adg1402).spec(adg1402).configuration, 'SPST-NC')
+assert.ok(famFor('analog', adg1402).hardKeys.includes('configuration'))
+assert.ok(famFor('analog', { device_type: 'multiplexer' }).hardKeys.includes('configuration'))
+assert.ok(!famFor('analog', { device_type: 'operationalAmplifier' }).hardKeys.includes('configuration'))
+assert.ok(!famFor('analog', max1305).hardKeys.includes('configuration'))
+assert.equal(famFor('analog', adg1402).spec({ ...adg1402, configuration: '' }).configuration, null)
 // A BJT's built-in bias resistors reach the ranker (v25, ABT #2445): prebiased as the row states
 // it (false = plain), R1 / R2 null when unstated, an omitted R2 as bias_r2_open; a row without
 // the v25 field projects prebiased null (unknown), never false.
