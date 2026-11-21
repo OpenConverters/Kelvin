@@ -468,6 +468,11 @@ export const XREF = [
       max_continuous_dc_voltage: nz(r.max_continuous_dc_voltage), capacitance: nz(r.capacitance),
       max_continuous_ac_voltage: nz(r.max_continuous_ac_voltage),
       energy_absorption: nz(r.energy_absorption),
+      // v25 (Qarlos r32/r33): the impulse the surge current is rated at ('' = not stated) and
+      // the current the clamping voltage is measured at; the ranker compares each rating only
+      // on a common basis. The operating range, raw (0 degC is a stated value).
+      surge_waveform: r.surge_waveform ?? '', clamping_current: nz(r.clamping_current),
+      temp_min_C: r.temp_min_c ?? null, temp_max_C: r.temp_max_c ?? null,
       technology: r.technology ?? '' }),
     params: [
       { key: 'value', label: 'V varistor', row: 'varistor_voltage', unit: 'V' },
@@ -477,6 +482,7 @@ export const XREF = [
       { key: 'clamping_voltage', label: 'V clamp', row: 'clamping_voltage', unit: 'V' },
       { key: 'peak_surge_current', label: 'I surge', row: 'peak_surge_current', unit: 'A' },
       { key: 'capacitance', label: 'C', row: 'capacitance', unit: 'F' },
+      { key: 'temp_max_C', label: 'T max', row: 'temp_max_c', unit: '°C' },
     ],
   },
   {

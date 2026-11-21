@@ -1641,3 +1641,146 @@ TEST_CASE("qarlos 2026-11-20: a stated THT-vs-SMT IGBT mount is checked",
     const json ok = qx_only(cross_reference("igbt", original, json::array({cand}), Options{}));
     CHECK(ok["status"] != "no_substitute");
 }
+
+// ── Qarlos night fixes A (rounds 32-34, Kelvin 9416f0b, shards v25) ──────────────────────────
+// Specs below are the browse rows of the real TAS records (TAS 33069cb) as web/src/crossref.js
+// projects them.
+
+TEST_CASE("qarlos r32: one TO-247 outline is one land, however the records draw its axes",
+          "[crossref][classes][qarlos-night-a-to247]") {
+    // AOK30B120D2 (AOS; case "TO247", drawn 21 x 15.8 x 5 mm) -> STGW28IH125DF (ST; case
+    // "TO-247", no mechanical block). The candidate's box was the TO-247 table row (width x
+    // thickness x length) and it read "smaller body ... needs a new land pattern".
+    json original = {{"mpn", "AOK30B120D2"}, {"lifecycle_status", "nrnd"}, {"vces", 1200.0},
+                     {"ic", 60.0}, {"vce_sat", 1.77}, {"vce_sat_ic", 30.0}, {"tj_max", 175.0},
+                     {"technology", "Si"}, {"case_code", "TO247"}, {"mount", "tht"},
+                     {"length_m", 0.021}, {"width_m", 0.0158}, {"height_m", 0.005}};
+    json cand = {{"mpn", "STGW28IH125DF"}, {"lifecycle_status", "production"}, {"vces", 1250.0},
+                 {"ic", 60.0}, {"vce_sat", 1.4}, {"tj_max", 175.0}, {"technology", "Si"},
+                 {"case_code", "TO-247"}, {"mount", "tht"}};
+    const json c = qx_only(cross_reference("igbt", original, json::array({cand}), Options{}));
+    CHECK(c["footprint"] == "fits");
+    CHECK_FALSE(qx_note_has(c, "smaller body"));
+    // A different outline is still a different land.
+    cand["case_code"] = "TO-264";
+    const json d = qx_only(cross_reference("igbt", original, json::array({cand}), Options{}));
+    CHECK(d["footprint"] != "fits");
+}
+
+TEST_CASE("qarlos r32/r34: a SOT-227 case string is not read as surface-mount",
+          "[crossref][classes][qarlos-night-a-chassis]") {
+    // SOT-227 is a screw-mounted package: neither SMD nor leaded.
+    CHECK_FALSE(is_smd("SOT-227B"));
+    CHECK_FALSE(is_smd("SOT227"));
+    CHECK_FALSE(is_smd("SOT-227 (ISOTOP\xC2\xAE)"));
+    CHECK(is_smd("SOT-223"));
+    CHECK(is_smd("SOT-23"));
+    CHECK(mount_class("chassis", "SOT-227B").empty());
+    CHECK(mount_class("tht", "SOT-227B") == "leaded");
+    CHECK(compare_mount("smt", "chassis", "Die", "SOT-227B") == MountMatch::Unknown);
+    CHECK(compare_mount("tht", "chassis", "TO-247", "SOT-227B") == MountMatch::Unknown);
+    // STG200G65FD8AG (ST; "smt", case "Die") -> IXYN120N65B3D1 (IXYS; "chassis", SOT-227B):
+    // the pair passed the mount gate silently while chassis "Module" records were UNVERIFIED.
+    json original = {{"mpn", "STG200G65FD8AG"}, {"lifecycle_status", "production"}, {"vces", 650.0},
+                     {"ic", 200.0}, {"vce_sat", 1.4}, {"tj_max", 150.0}, {"technology", "Si"},
+                     {"case_code", "Die"}, {"mount", "smt"}};
+    json cand = {{"mpn", "IXYN120N65B3D1"}, {"lifecycle_status", "production"}, {"vces", 650.0},
+                 {"ic", 250.0}, {"vce_sat", 1.4}, {"tj_max", 150.0}, {"technology", "Si"},
+                 {"case_code", "SOT-227B"}, {"mount", "chassis"}};
+    const json c = qx_only(cross_reference("igbt", original, json::array({cand}), Options{}));
+    bool mount_unverified = false;
+    for (const auto& p : c["params"])
+        if (p["name"] == "mounting") mount_unverified = p["verdict"] == "unverified";
+    CHECK(mount_unverified);
+    CHECK(qx_note_has(c, "substitute: \"chassis\""));
+    // A through-hole TO-247 original (r34: the note called the SOT-227 part "smd", and the
+    // package pair would have rejected it as an SMT part).
+    original["case_code"] = "TO-247";
+    original["mount"] = "tht";
+    const json t = qx_only(cross_reference("igbt", original, json::array({cand}), Options{}));
+    CHECK(t["status"] != "no_substitute");
+    CHECK_FALSE(qx_note_has(t, "smd"));
+}
+
+TEST_CASE("qarlos r32/r34: D-series and F2 IGBT module housings are power modules",
+          "[crossref][classes][qarlos-night-a-dmodule]") {
+    CHECK(declares_igbt_module("D3"));
+    CHECK(declares_igbt_module("D1"));
+    CHECK(declares_igbt_module("D4"));
+    CHECK(declares_igbt_module("F2"));
+    CHECK_FALSE(declares_igbt_module("D3PAK"));
+    CHECK(declares_igbt_discrete("D3PAK"));
+    CHECK_FALSE(declares_igbt_module("TO-268HV (IXYT)"));
+    // IXYK220N65A5 (IXYS; TO-264 (IXYK), tht) -> MG06400D-BN4MM (Littelfuse; D3, chassis).
+    json original = {{"mpn", "IXYK220N65A5"}, {"lifecycle_status", "production"}, {"vces", 650.0},
+                     {"ic", 510.0}, {"vce_sat", 1.4}, {"tj_max", 175.0}, {"technology", "Si"},
+                     {"case_code", "TO-264 (IXYK)"}, {"mount", "tht"}};
+    json cand = {{"mpn", "MG06400D-BN4MM"}, {"lifecycle_status", "production"}, {"vces", 600.0},
+                 {"ic", 500.0}, {"vce_sat", 1.35}, {"tj_max", 175.0}, {"technology", "Si"},
+                 {"case_code", "D3"}, {"mount", "chassis"}};
+    const json c = qx_only(cross_reference("igbt", original, json::array({cand}), Options{}));
+    CHECK(c["grade"] == "major_review");
+    CHECK(qx_note_has(c, "IGBT POWER MODULE"));
+}
+
+namespace {
+json qx_mov(const char* mpn, double vsurge, const char* wf, double vc, double ic) {
+    json j = {{"mpn", mpn}, {"lifecycle_status", "production"}, {"value_si", 620.0},
+              {"clamping_voltage", vc}, {"peak_surge_current", vsurge},
+              {"max_continuous_ac_voltage", 385.0}, {"max_continuous_dc_voltage", 505.0},
+              {"technology", "metalOxide"}};
+    if (wf) j["surge_waveform"] = wf;
+    if (ic > 0) j["clamping_current"] = ic;
+    return j;
+}
+std::string qx_verdict(const json& c, const std::string& name) {
+    for (const auto& p : c["params"])
+        if (p["name"] == name) return p["verdict"].get<std::string>();
+    return "";
+}
+}  // namespace
+
+TEST_CASE("qarlos r32/r33: varistor surge current and clamping voltage compare on a common basis",
+          "[crossref][classes][qarlos-night-a-mov-basis]") {
+    // ZOVA385K40E (Bourns; 5 kA at 10/350 us, Vc 1025 V at 300 A) -> V14E385P (Littelfuse;
+    // 6 kA at 8/20 us, Vc 1025 V, no test current on record).
+    const json o = qx_mov("ZOVA385K40E", 5000.0, "10/350", 1025.0, 300.0);
+    const json c = qx_only(cross_reference(
+        "varistor", o, json::array({qx_mov("V14E385P", 6000.0, "8/20", 1025.0, 0)}), Options{}));
+    CHECK(qx_verdict(c, "peak_surge_current") == "unverified");
+    CHECK(qx_verdict(c, "peak_surge_current_basis") == "unverified");
+    CHECK(qx_verdict(c, "clamping_voltage") == "unverified");
+    CHECK(qx_note_has(c, "10/350 us on the original"));
+    CHECK(c["grade"] != "drop_in");
+    // Vc at currents 2x apart (820522511 -> V250LA20CP).
+    const json o2 = qx_mov("820522511", 6000.0, "8/20", 650.0, 50.0);
+    const json h = qx_only(cross_reference(
+        "varistor", o2, json::array({qx_mov("V250LA20CP", 6500.0, "8/20", 650.0, 25.0)}),
+        Options{}));
+    CHECK(qx_verdict(h, "clamping_voltage") == "unverified");
+    CHECK(qx_note_has(h, "at 25 A on the substitute"));
+    CHECK(qx_verdict(h, "peak_surge_current") == "pass");
+    // An unweighed clamping voltage alone is noted, not capped (the TVS clamping rule).
+    CHECK(qx_verdict(h, "clamping_voltage_basis") == "unverified");
+    // The same conditions on both sides compare as before.
+    const json s = qx_only(cross_reference(
+        "varistor", o2, json::array({qx_mov("SAME", 6500.0, "8/20", 640.0, 50.0)}), Options{}));
+    CHECK(qx_verdict(s, "clamping_voltage") == "pass");
+    CHECK(qx_verdict(s, "peak_surge_current") == "pass");
+    CHECK(qx_verdict(s, "clamping_voltage_basis").empty());
+}
+
+TEST_CASE("qarlos r33: a varistor's operating range is compared",
+          "[crossref][classes][qarlos-night-a-mov-temp]") {
+    // B72530G1140S862 (TDK; -55 ... 150 degC) -> AV14K1210401NIR1 (-55 ... 125 degC).
+    json o = qx_mov("B72530G1140S862", 1200.0, "8/20", 1025.0, 10.0);
+    json s = qx_mov("AV14K1210401NIR1", 1200.0, "8/20", 1025.0, 10.0);
+    o["temp_min_C"] = -55.0;
+    o["temp_max_C"] = 150.0;
+    s["temp_min_C"] = -55.0;
+    s["temp_max_C"] = 125.0;
+    const json c = qx_only(cross_reference("varistor", o, json::array({s}), Options{}));
+    CHECK(qx_verdict(c, "temp_max_C") == "fail");
+    CHECK(c["grade"] != "drop_in");
+    CHECK(c["grade"] != "upgrade");
+}

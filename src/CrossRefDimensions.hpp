@@ -829,9 +829,20 @@ inline bool package_says_smd_word(const std::string& upper_package) {
     }
     return false;
 }
+// SOT-227 (ISOTOP, "minibloc") is a screw-mounted power package with screw terminals, bolted
+// to a heatsink: the "SOT" token does not make it surface-mount. Read as SMD, IXYS
+// IXYN120N65B3D1 (assemblyType "chassis", case "SOT-227B") passed the mount gate silently
+// against an SMT original and was called "smd" in the mount note against a through-hole one
+// (Qarlos r32 seed 35027898, r34 seeds 36284646 / 36389375). It classifies as neither SMD nor
+// leaded, so the gate reads it as not established, like the chassis "Module" records.
+inline bool names_sot227(const std::string& upper_package) {
+    return upper_package.find("SOT-227") != std::string::npos ||
+           upper_package.find("SOT227") != std::string::npos;
+}
 inline bool is_smd(const std::string& package) {
     if (wide_terminal_chip_code(package)) return true;
     const std::string p = dims_detail::upper(package);
+    if (names_sot227(p)) return false;
     for (const auto& tok : smd_tokens())
         if (p.find(tok) != std::string::npos) return true;
     return package_says_smd_word(p);
