@@ -1870,9 +1870,11 @@ TEST_CASE("owner A3: a varistor surge current at no stated waveform on either si
 
 TEST_CASE("owner A12: a surge current unweighed for want of any waveform costs the WARN penalty",
           "[crossref][classes][qarlos-night-a-a12]") {
-    // Owner 2026-11-21, A12: no waveform on either side -> UNVERIFIED at the WARN penalty; a
-    // waveform stated on one side only keeps the FAIL penalty. The two candidates differ in
-    // nothing else, so their penalties differ by exactly FAIL - WARN.
+    // Owner 2026-11-21, A12: no waveform on either side -> UNVERIFIED at the WARN penalty.
+    // A waveform stated on one side only first kept the FAIL penalty (penalties FAIL - WARN
+    // apart); the owner extended A8/A12 to the one-sided case later the same day, so the two
+    // now cost the same WARN penalty (expectation changed for that decision only; the inputs
+    // are unchanged). Two different stated waveforms keep FAIL: [qarlos-night-a-onewave].
     const json o = qx_mov("MOV-A", 6000.0, nullptr, 650.0, 50.0);
     const json none = qx_only(cross_reference(
         "varistor", o, json::array({qx_mov("MOV-B", 6500.0, nullptr, 650.0, 50.0)}), Options{}));
@@ -1880,8 +1882,38 @@ TEST_CASE("owner A12: a surge current unweighed for want of any waveform costs t
         "varistor", o, json::array({qx_mov("MOV-B", 6500.0, "8/20", 650.0, 50.0)}), Options{}));
     REQUIRE(qx_verdict(none, "peak_surge_current_basis") == "unverified");
     REQUIRE(qx_verdict(one_sided, "peak_surge_current_basis") == "unverified");
+    CHECK(none["penalty"].get<double>() == Catch::Approx(one_sided["penalty"].get<double>()));
+}
+
+TEST_CASE("owner 2026-11-21: a surge waveform stated on one side only is treated like A8",
+          "[crossref][classes][qarlos-night-a-onewave]") {
+    // Owner 2026-11-21: a varistor surge current whose waveform one record states and the
+    // other does not is UNVERIFIED, capped at minor_review, at the WARN penalty, with a note
+    // (decision A8, extended to one side). Two DIFFERENT stated waveforms keep the TVS rule:
+    // major_review at the FAIL penalty.
+    const json none = qx_only(cross_reference(
+        "varistor", qx_mov("MOV-A", 6000.0, nullptr, 650.0, 50.0),
+        json::array({qx_mov("MOV-B", 6500.0, nullptr, 650.0, 50.0)}), Options{}));
+    REQUIRE(none["grade"] == "minor_review");
+    for (auto [ow, sw] : {std::pair<const char*, const char*>{nullptr, "8/20"},
+                          std::pair<const char*, const char*>{"8/20", nullptr}}) {
+        const json c = qx_only(cross_reference(
+            "varistor", qx_mov("MOV-A", 6000.0, ow, 650.0, 50.0),
+            json::array({qx_mov("MOV-B", 6500.0, sw, 650.0, 50.0)}), Options{}));
+        INFO(c.dump());
+        CHECK(qx_verdict(c, "peak_surge_current") == "unverified");
+        CHECK(qx_verdict(c, "peak_surge_current_basis") == "unverified");
+        CHECK(c["grade"] == "minor_review");
+        CHECK(qx_note_has(c, "at no stated waveform on the"));
+        CHECK(c["penalty"].get<double>() == Catch::Approx(none["penalty"].get<double>()));
+    }
+    const json diff = qx_only(cross_reference(
+        "varistor", qx_mov("MOV-A", 6000.0, "8/20", 650.0, 50.0),
+        json::array({qx_mov("MOV-B", 6500.0, "10/350", 650.0, 50.0)}), Options{}));
+    CHECK(qx_verdict(diff, "peak_surge_current_basis") == "unverified");
+    CHECK(diff["grade"] == "major_review");
     CHECK(none["penalty"].get<double>() + (kVerdictFailPenalty - kVerdictWarnPenalty) ==
-          Catch::Approx(one_sided["penalty"].get<double>()));
+          Catch::Approx(diff["penalty"].get<double>()));
 }
 
 TEST_CASE("owner A4: Littelfuse S3 and Fuji M274 / M277 IGBT outlines are power modules",

@@ -2966,8 +2966,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // an unweighed SURGE rating caps the grade as missing required data; an unweighed
     // clamping voltage is noted without a cap.
     bool varistor_surge_basis_unverified = false, varistor_clamp_basis_unverified = false;
-    // Both varistor surge ratings stated, at no stated waveform on EITHER side (owner
-    // 2026-11-21, A8): UNVERIFIED, capped at minor_review.
+    // Both varistor surge ratings stated, with the waveform unstated on at least one side
+    // (owner 2026-11-21, A8 for neither side; one side only treated the same way, owner
+    // 2026-11-21): UNVERIFIED, capped at minor_review.
     bool varistor_surge_waveform_unstated = false;
     if (cat == "varistor") {
         auto g = [](double v) {
@@ -2981,18 +2982,20 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             // Neither side naming its impulse is no common basis either (owner 2026-11-21, A3):
             // two "8 kA" figures may be an 8/20 us and a 10/350 us rating. UNVERIFIED, and
             // capped at minor_review (owner 2026-11-21, A8), not at the major_review of the
-            // TVS rule below, which stays for a waveform stated on one side only or two
-            // different stated waveforms.
+            // TVS rule below. A waveform stated on ONE side only is treated the same way
+            // (owner 2026-11-21): nothing is known to differ, only one basis is unstated.
+            // The TVS rule stays for two different STATED waveforms.
             if (o && s && (ow.empty() || ow != sw)) {
                 varistor_surge_basis_unverified = true;
                 params.push_back({{"name", "peak_surge_current_basis"}, {"verdict", UNVERIFIED}});
                 // The TVS surge-rating rule (Alf 2026-10-25): a surge rating not weighed on a
                 // common impulse caps the grade as missing required data, not a rejection.
                 demote();
-                // Neither side naming a waveform costs the WARN penalty, not FAIL (owner
-                // 2026-11-21, A12): nothing is known to differ, only the basis is unstated.
-                // A one-sided or a different stated waveform keeps the TVS rule's FAIL penalty.
-                if (ow.empty() && sw.empty()) {
+                // A waveform unstated on either side (or both) costs the WARN penalty, not
+                // FAIL (owner 2026-11-21, A12 and the one-sided extension): nothing is known
+                // to differ, only a basis is unstated. Two different stated waveforms keep
+                // the TVS rule's FAIL penalty and major_review cap.
+                if (ow.empty() || sw.empty()) {
                     penalty += opt.gate_weight * kVerdictWarnPenalty;
                     varistor_surge_waveform_unstated = true;
                 } else {
@@ -7544,8 +7547,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //                                                                    no penalty; capped
     //                                                                    minor_review since
     //                                                                    2026-11-14 (below)
-    //   varistor Isurge stated by both at no stated waveform
-    //     on either side (owner 2026-11-21, A8;
+    //   varistor Isurge stated by both, waveform unstated on
+    //     one or both sides (owner 2026-11-21, A8;
     //     varistor_surge_waveform_unstated)                   primary    note, cap minor_review
     //   Id / If(AV) / Ic stated by one record only (owner
     //     2026-11-13, Y1; current_rating_one_sided)           primary    note, cap minor_review
