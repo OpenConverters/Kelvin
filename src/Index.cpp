@@ -648,6 +648,7 @@ void row_io(Ar& ar, AnalogRow& r) {
     ar.dbl(r.isolation_duration_s);  // v25 (owner 2026-11-21, B7)
     ar.dbl(r.temp_min_c);            // v25 (owner 2026-11-21, B7)
     ar.dbl(r.temp_max_c);            // v25 (owner 2026-11-21, B7)
+    ar.dbl(r.fixed_gain);            // v25 (owner 2026-11-21, B12)
     ar.boolean(r.is_production);
 }
 

@@ -10,7 +10,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const { famFor, runCrossRef } = await import(
+const { famFor, runCrossRef, originalMissingKeys } = await import(
   pathToFileURL(join(here, '..', '..', 'web', 'src', 'crossref.js')).href)
 
 const acm = { mpn: 'ACM-21-161M-T', manufacturer: 'Abracon', device_type: 'commonModeChoke',
@@ -430,5 +430,15 @@ assert.equal(famFor('analog', swTemp).spec(swTemp).temp_max_C, 70)
 const inaTemp = { mpn: 'INA', device_type: 'instrumentationAmplifier', temp_min_c: -40 }
 assert.equal(famFor('analog', inaTemp).spec(inaTemp).temp_min_C, -40)
 assert.equal(famFor('analog', inaTemp).spec(inaTemp).temp_max_C, null)
+
+// A difference amplifier's fixed gain reaches the ranker and is a hard key of that subtype's
+// variant (owner 2026-11-21, B12): an original that does not state it is not verified.
+const da = { mpn: 'AD8276', device_type: 'differenceAmplifier', channels: 1, fixed_gain: 1 }
+assert.equal(famFor('analog', da).spec(da).fixed_gain, 1)
+assert.ok(famFor('analog', da).hardKeys.includes('fixed_gain'))
+const daBare = { mpn: 'DA', device_type: 'differenceAmplifier', channels: 1 }
+assert.deepEqual(originalMissingKeys(famFor('analog', daBare), famFor('analog', daBare).spec(daBare)),
+  ['fixed_gain'])
+assert.ok(!famFor('analog', opTemp).hardKeys.includes('fixed_gain'))
 
 console.log('crossref variants: all checks passed')

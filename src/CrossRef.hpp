@@ -407,6 +407,7 @@ inline std::vector<std::string> comparison_source_fields(const std::string& cat,
         if (name == "architecture") return {"electrical.architecture"};
         if (name == "gain_min") return {"electrical.minimumGain"};
         if (name == "gain_max") return {"electrical.maximumGain"};
+        if (name == "fixed_gain") return {"electrical.gain"};
         if (name == "isolation_voltage_V") return {"electrical.isolation"};
         if (name == "temp_min_C" || name == "temp_max_C") return kOpTemp;
         return {};
@@ -522,6 +523,8 @@ inline const char* analog_primary_axis(const std::string& key, const std::string
     // A digital isolator's withstand isolation voltage (owner 2026-11-21, B10).
     if (key == "isolation_voltage_V" && orig_subtype == "digitalIsolator")
         return "isolation voltage";
+    // A difference amplifier's fixed gain (owner 2026-11-21, B12).
+    if (key == "fixed_gain" && orig_subtype == "differenceAmplifier") return "fixed gain";
     return nullptr;
 }
 // Both-unknown primary cap (owner decision 2026-11-14; both_unstated_primary in
@@ -650,7 +653,8 @@ inline bool is_hard_param(const std::string& cat, const std::string& key) {
     // 2026-11-21, B4), each an identity.
     static const std::set<std::string> analog{"subtype",       "channels",
                                               "architecture",  "configuration",
-                                              "forward_channels", "reverse_channels"};
+                                              "forward_channels", "reverse_channels",
+                                              "fixed_gain"};
     // mode: a 3rd-overtone crystal cannot cross with a fundamental one in either
     // direction — an overtone circuit's LC tank is inductive at the fundamental,
     // so the loop cannot close there; drop an overtone part into a fundamental
@@ -3009,6 +3013,11 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         if (cat == "analog" && spec.key == "isolation_voltage_V" &&
             str(original, "subtype") != "digitalIsolator")
             continue;
+        // A difference amplifier's fixed gain (owner 2026-11-21, B12) is compared for a
+        // difference-amplifier original only.
+        if (cat == "analog" && spec.key == "fixed_gain" &&
+            str(original, "subtype") != "differenceAmplifier")
+            continue;
         // The switch / multiplexer arrangement is an identity of those two subtypes only.
         if (cat == "analog" && spec.key == "configuration" &&
             str(original, "subtype") != "analogSwitch" && str(original, "subtype") != "multiplexer")
@@ -3266,6 +3275,17 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                           "are the same arrangement");
             }
         }
+        // A difference amplifier's fixed gain differs (owner 2026-11-21, B12): name both. Written
+        // before the hard-key reject below returns, so the rejection says why.
+        if (cat == "analog" && spec.key == "fixed_gain" && verdict == FAIL) {
+            char b[160];
+            std::snprintf(b, sizeof b,
+                          "fixed gain differs: the original is G = %g V/V, the substitute "
+                          "G = %g V/V",
+                          *num(original, "fixed_gain"), *num(cand, "fixed_gain"));
+            notes.push_back(std::string(b) +
+                            " — the gain is set by on-chip resistors, not a substitute");
+        }
         // A digital isolator's withstand isolation voltage (owner 2026-11-21, B7): name both.
         if (cat == "analog" && spec.key == "isolation_voltage_V") {
             const auto o_v = num(original, "isolation_voltage_V"),
@@ -3336,6 +3356,13 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                 return std::string(b);
                             };
                             return g(lo) + "-" + g(hi) + " V/V";
+                        }
+                        if (spec.key == "fixed_gain") {
+                            const auto g = num(p, "fixed_gain");
+                            if (!g) return "none";
+                            char b[48];
+                            std::snprintf(b, sizeof b, "G = %g V/V", *g);
+                            return b;
                         }
                         if (spec.key == "isolation_voltage_V") {
                             const auto v = num(p, "isolation_voltage_V");
@@ -7032,7 +7059,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //   analog supply range, op-amp rail-to-rail input,
     //     switch / mux on-resistance, one side only (owner
     //     2026-11-21, B2; analog_primary_one_sided), in-amp
-    //     gain range (B5), isolator isolation voltage (B10)   primary    note, cap minor_review
+    //     gain range (B5), isolator isolation voltage (B10),
+    //     difference-amp fixed gain (B12)                     primary    note, cap minor_review
     //   analog: no non-identity electrical established
     //     (owner 2026-11-21, B1;
     //     analog_electricals_unverified)                      primary    note, cap minor_review

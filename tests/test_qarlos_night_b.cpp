@@ -504,3 +504,54 @@ TEST_CASE("owner B11: a verified operating range does not lift B1 outside the is
     CHECK(c["grade"] == "minor_review");
     CHECK(night_b_note(c, "no electrical parameter could be compared"));
 }
+
+namespace {
+// The projection web/src/crossref.js passes since B12: the difference amplifier's fixed gain.
+json night_b_dgain_spec(const std::string& mpn) {
+    const auto r = night_b_row(mpn);
+    json s = night_b_full_spec(r);
+    s["fixed_gain"] = std::isnan(r.fixed_gain) ? json(nullptr) : json(r.fixed_gain);
+    return s;
+}
+}  // namespace
+
+TEST_CASE("owner B12: a difference amplifier's fixed gain is an exact identity",
+          "[qarlos-night-b][qarlos-night-b-dgain]") {
+    // The rows carry AAS differenceAmplifier electrical.gain, for that subtype only.
+    CHECK(night_b_row("AD8276").fixed_gain == 1.0);
+    CHECK(night_b_row("AD8275").fixed_gain == 0.2);
+    CHECK(std::isnan(night_b_row("INA126").fixed_gain));
+    // AD8276 (G = 1) -> AD8275 (G = 0.2): a different gain rejects, with a note naming both.
+    const json r = night_b_one(night_b_dgain_spec("AD8276"), night_b_dgain_spec("AD8275"));
+    CHECK(r["status"] == "no_substitute");
+    CHECK(night_b_note(r, "fixed gain differs: the original is G = 1 V/V, the substitute "
+                          "G = 0.2 V/V"));
+    // AD8276 -> AD8479 (both G = 1): the gain passes.
+    const json same = night_b_one(night_b_dgain_spec("AD8276"), night_b_dgain_spec("AD8479"));
+    CHECK(night_b_verdict(same, "fixed_gain") == "pass");
+}
+
+TEST_CASE("owner B12: a fixed gain stated by one record only caps at minor_review",
+          "[qarlos-night-b][qarlos-night-b-dgain]") {
+    json orig = night_b_dgain_spec("AD8276");
+    json twin = orig;
+    twin["mpn"] = "AD8276-TWIN";  // a synthetic MPN in no TAS record
+    twin["lifecycle_status"] = "production";
+    const json ok = night_b_one(orig, twin);
+    CHECK(night_b_verdict(ok, "fixed_gain") == "pass");
+    CHECK(ok["grade"] == "drop_in");
+    twin["fixed_gain"] = nullptr;
+    const json c = night_b_one(orig, twin);
+    CHECK(night_b_verdict(c, "fixed_gain") == "unverified");
+    CHECK(c["status"] != "no_substitute");
+    CHECK(c["grade"] == "minor_review");
+    CHECK(night_b_note(c, "fixed gain stated by one record only: the original's record states "
+                          "G = 1 V/V, the substitute's none"));
+    // Not a difference-amplifier original: no fixed-gain row.
+    json ina = night_b_gain_spec("INA126");
+    json ina2 = ina;
+    ina2["mpn"] = "INA126-G";
+    ina2["lifecycle_status"] = "production";
+    ina2["fixed_gain"] = 5.0;
+    CHECK(night_b_verdict(night_b_one(ina, ina2), "fixed_gain").empty());
+}

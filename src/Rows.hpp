@@ -911,6 +911,11 @@ struct AnalogRow : RowBase {
     // values, not absence; NaN when unstated.
     double temp_min_c = kNaN();
     double temp_max_c = kNaN();
+    // v25 (owner 2026-11-21, B12): a difference amplifier's fixed on-chip gain, AAS
+    // differenceAmplifier electrical.gain (V/V), resolved with PEAS::resolve_dimensional_values;
+    // NaN when unstated or another subtype. Stated by all 37 difference-amplifier records
+    // (2026-11-21: 0.2 / 0.5 / 1 / 2 / 10 / 14 / 20); none states a pin-selectable gainOptions set.
+    double fixed_gain = kNaN();
     bool is_production = false;
 };
 

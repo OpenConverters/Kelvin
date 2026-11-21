@@ -532,7 +532,9 @@ export const XREF = [
       // ends covered, one-sided = note, no cap. Raw, NOT through nz(): a cold limit is negative
       // and 0 degC is a stated value; unstated arrives null.
       temp_min_C: r.temp_min_c ?? null,
-      temp_max_C: r.temp_max_c ?? null }),
+      temp_max_C: r.temp_max_c ?? null,
+      // A difference amplifier's fixed on-chip gain, V/V (owner 2026-11-21, B12): an identity.
+      fixed_gain: nz(r.fixed_gain) }),
     // For an ADC original the architecture is a hard key too, so an ADC that does not state it
     // is not a verified original (the FAE honesty rule); for a switch or a multiplexer the
     // configuration is. Other subtypes compare neither.
@@ -542,7 +544,9 @@ export const XREF = [
         ? { hardKeys: ['subtype', 'channels', 'configuration'] }
         : orig?.device_type === 'digitalIsolator'
           ? { hardKeys: ['subtype', 'channels', 'forward_channels', 'reverse_channels'] }
-          : null),
+          : orig?.device_type === 'differenceAmplifier'
+            ? { hardKeys: ['subtype', 'channels', 'fixed_gain'] }
+            : null),
     params: [
       { key: 'channels', label: 'ch', row: 'channels', unit: '' },
       { key: 'architecture', label: 'arch', row: 'architecture', str: true },
@@ -570,6 +574,7 @@ export const XREF = [
       { key: 'isolation_voltage_V', label: 'Viso', row: 'isolation_voltage_rms', unit: 'Vrms' },
       { key: 'temp_min_C', label: 'T min', row: 'temp_min_c', unit: '°C' },
       { key: 'temp_max_C', label: 'T max', row: 'temp_max_c', unit: '°C' },
+      { key: 'fixed_gain', label: 'G', row: 'fixed_gain', unit: 'V/V' },
     ],
   },
   {

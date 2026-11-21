@@ -934,6 +934,13 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
         // note and no cap. It lifts the B1 cap for an isolator original only (CrossRef.hpp).
         {"temp_min_C", D::Lower, 0.0, 0.0, false, false, nullptr},
         {"temp_max_C", D::Higher, 0.0, 0.0, false, false, nullptr},
+        // A difference amplifier's fixed on-chip gain (AAS differenceAmplifier electrical.gain,
+        // V/V; owner 2026-11-21, B12): an exact identity — a G = 1 part is no substitute for a
+        // G = 0.2 one, the resistor ratio is inside the package. Equal within the representation
+        // epsilon only. A hard key (is_hard_param): both stated and different rejects; stated by
+        // one record only it is UNVERIFIED, noted and capped at minor_review
+        // (analog_primary_axis). Compared for a difference-amplifier original only.
+        {"fixed_gain", D::ExactMatch, kRepresentationEpsilon, std::nullopt, false, false, nullptr},
     };
     static const std::vector<ParamSpec> kTimeBase = {
         {"subtype", D::ExactMatch, 0.0, std::nullopt, false, true, nullptr},
@@ -1064,6 +1071,7 @@ inline std::string param_label(const std::string& key) {
         {"on_resistance", "on-resistance"},
         {"gain_min", "minimum gain"},
         {"gain_max", "maximum gain"},
+        {"fixed_gain", "fixed gain"},
         {"isolation_voltage_V", "withstand isolation voltage"},
         {"architecture", "conversion architecture"},
         {"configuration", "switch / multiplexer configuration"},

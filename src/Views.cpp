@@ -2847,6 +2847,11 @@ std::optional<AnalogRow> extract_analog(const json& env) {
         // electrical.minimumGain / maximumGain, resolved with the canonical resolver.
         set_if_pos(r.minimum_gain, resolve_field(*elec, "minimumGain"));
         set_if_pos(r.maximum_gain, resolve_field(*elec, "maximumGain"));
+        // A difference amplifier's fixed gain (owner 2026-11-21, B12): AAS differenceAmplifier
+        // electrical.gain, resolved with the canonical resolver. Read for that subtype only: the
+        // key means nothing defined on the others.
+        if (node->subtype == "differenceAmplifier")
+            set_if_pos(r.fixed_gain, resolve_field(*elec, "gain"));
         // A digital isolator's withstand isolation voltage and its test duration (owner
         // 2026-11-21, B7): PEAS isolationRating electrical.isolation.
         if (const json* iso = obj_get(*elec, "isolation"); iso && iso->is_object()) {
