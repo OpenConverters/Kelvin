@@ -9700,3 +9700,48 @@ TEST_CASE("owner 2026-11-21 C14: a generic package with no size states no land u
     // The generic string still decides the mount (smd on both): nothing else is unverified.
     CHECK(verdict_of(*a, "mounting") != "unverified");
 }
+
+// C13: candidates are ranked by grade tier first (drop_in > minor_review > major_review >
+// redesign), then by penalty within the grade; the reject and value-differs tiers keep their
+// place ahead of it. Taiyo Yuden MLAST021SCK0R3BWNA01 (0.3 pF, 008004) ranked KEMET
+// CBR08C308BAGAC (0805, footprint FAIL by area, major_review, penalty 3.24) first, ahead of
+// Murata GRM0115C1ER30WE11 (008004-class, minor_review, penalty 5) (Qarlos r36, seed 37541394).
+// Specs as the site builds them from the shard rows.
+namespace night_c_c13 {
+json cap(const char* mpn, const char* cc, double voltage, std::optional<double> l,
+         std::optional<double> w, std::optional<double> h, const char* dielectric) {
+    json j = {{"mpn", mpn}, {"lifecycle_status", "production"}, {"is_production", true},
+              {"value_si", 3e-13}, {"voltage", voltage}, {"technology", "ceramic-class-1"},
+              {"case_code", cc}, {"mount", "SMT"}, {"temp_min_C", -55}, {"temp_max_C", 125}};
+    j["length_m"] = l ? json(*l) : json(nullptr);
+    j["width_m"] = w ? json(*w) : json(nullptr);
+    j["height_m"] = h ? json(*h) : json(nullptr);
+    j["dielectric_code"] = *dielectric ? json(dielectric) : json(nullptr);
+    return j;
+}
+}  // namespace night_c_c13
+
+TEST_CASE("owner 2026-11-21 C13: grade tier first, then penalty", "[qarlos-night-c-c13]") {
+    using namespace night_c_c13;
+    json orig = cap("MLAST021SCK0R3BWNA01", "008004", 25, 0.00025, 0.000125, 0.000125, "C0K");
+    orig["capacitance_min"] = 2e-13;
+    orig["capacitance_max"] = 4e-13;
+    const json cbr = cap("CBR08C308BAGAC", "0805", 250, std::nullopt, std::nullopt, std::nullopt, "");
+    json grm = cap("GRM0115C1ER30WE11", "0201M/008004", 25, 0.0002, 0.0001, 0.000138, "C0G");
+    grm["temp_min_C"] = nullptr;
+    auto r = kelvin::crossref::cross_reference("capacitor", orig, json::array({cbr, grm}));
+    const json& c = r["candidates"];
+    REQUIRE(c.size() == 2);
+    const json* b = cand_by_mpn(r, "CBR08C308BAGAC");
+    const json* g = cand_by_mpn(r, "GRM0115C1ER30WE11");
+    REQUIRE((b && g));
+    INFO("CBR08 " << b->value("grade", "") << " " << b->value("penalty", 0.0) << " / GRM0115 "
+                  << g->value("grade", "") << " " << g->value("penalty", 0.0));
+    // The premise: the major_review part has the LOWER penalty.
+    REQUIRE(b->value("grade", "") == "major_review");
+    REQUIRE(g->value("grade", "") == "minor_review");
+    REQUIRE(b->value("penalty", 0.0) < g->value("penalty", 0.0));
+    // The minor_review part ranks first all the same.
+    CHECK(c[0]["mpn"] == "GRM0115C1ER30WE11");
+    CHECK(c[1]["mpn"] == "CBR08C308BAGAC");
+}

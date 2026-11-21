@@ -7264,7 +7264,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
 }
 
 // Rank a candidate list for an original. Returns {category, original_verified,
-// candidates:[...]} sorted best-first (lowest penalty); no_substitute rows sink.
+// candidates:[...]} sorted best-first (best grade, then lowest penalty); no_substitute rows sink.
 //: Categories the ranker has rules for. Any other would be compared on nothing
 //: and every candidate would come back "recommended" — a 300 V varistor for a
 //: 30 V one did — so an unknown category is refused, not ranked.
@@ -7285,17 +7285,35 @@ inline json cross_reference(const std::string& category, const json& original,
     for (const auto& c : candidates) scored.push_back(score_candidate(category, original, c, opt));
     // Order: viable candidates before rejects, then exact-value candidates before
     // different-value alternatives (resistors and off-nominal zeners, "value_differs"),
-    // then penalty. The
-    // value tier is a sort key, not a penalty, so no combination of other penalties
-    // can lift a different-value part above an exact-value one.
+    // then the grade tier (drop_in, minor_review, major_review, redesign), then penalty
+    // within the grade. The value tier and the grade tier are sort keys, not penalties, so
+    // no combination of other penalties can lift a different-value part above an
+    // exact-value one, nor a worse grade above a better one: a major_review 0805 for a
+    // 008004 original (footprint FAIL) ranked first ahead of the minor_review 008004-class
+    // parts on its lower penalty (owner 2026-11-21, C13; Qarlos r36 seed 37541394). Every
+    // family; the site and the MCP both rank through here.
+    auto grade_tier = [](const json& c) {
+        const std::string g = c.value("grade", "");
+        if (g == "drop_in") return 0;
+        if (g == "minor_review") return 1;
+        if (g == "major_review") return 2;
+        if (g == "redesign") return 3;
+        if (g == "no_substitute") return 4;
+        throw std::logic_error("cross_reference: candidate '" + c.value("mpn", std::string()) +
+                               "' has no known grade ('" + g + "')");
+    };
+    for (auto& c : scored) c["_grade_tier"] = grade_tier(c);
     std::stable_sort(scored.begin(), scored.end(), [](const json& a, const json& b) {
         const bool ra = a.value("status", "") == "no_substitute",
                    rb = b.value("status", "") == "no_substitute";
         if (ra != rb) return rb;
         const bool va = a.value("value_differs", false), vb = b.value("value_differs", false);
         if (va != vb) return vb;
+        const int ga = a["_grade_tier"].get<int>(), gb = b["_grade_tier"].get<int>();
+        if (ga != gb) return ga < gb;
         return a.value("penalty", 1e18) < b.value("penalty", 1e18);
     });
+    for (auto& c : scored) c.erase("_grade_tier");
     json cands = json::array();
     for (size_t i = 0; i < scored.size() && i < opt.max_results; ++i) cands.push_back(scored[i]);
     return {{"category", category},
