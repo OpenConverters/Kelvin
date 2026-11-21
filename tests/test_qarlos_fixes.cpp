@@ -9662,3 +9662,41 @@ TEST_CASE("owner 2026-11-21 C8: a designation height is a maximum, compared with
     CHECK(back["height_fit"] == "fits");
     CHECK(has_note(back, "against the substitute's stated maximum (3.1 mm)"));
 }
+
+// C14: an original that states only a generic package string with no size ("4-SMD, No Lead")
+// states no land under N1b, so no candidate is capped for footprint. EPSON FA-20H
+// 24.0000MF15Y-W3 ("4-SMD, No Lead", no dimensions) capped ABM10N-24.0000MHZ-12-D1G-T3
+// ("2520 4-SMD", 2.5 x 2.0 mm) at minor_review while ECS-240-12-36Q-CWY-TR (the same generic
+// string, no dimensions) was drop_in (Qarlos r36, seed 37122478). Values as on the shard rows.
+namespace night_c_c14 {
+json xtal(const char* mpn, const char* cc) {
+    return json{{"mpn", mpn}, {"subtype", "oscillator"}, {"technology", "quartzCrystal"},
+                {"frequency", 24e6}, {"load_capacitance_pF", 12.0}, {"esr", 80.0},
+                {"mode", "fundamental"}, {"output_type", "none"}, {"tolerance_ppm", 10.0},
+                {"stability_ppm", 15.0}, {"temp_min_C", -30.0}, {"temp_max_C", 85.0},
+                {"case_code", cc}};
+}
+}  // namespace night_c_c14
+
+TEST_CASE("owner 2026-11-21 C14: a generic package with no size states no land under N1b",
+          "[qarlos-night-c-c14]") {
+    using namespace night_c_c14;
+    const json orig = xtal("FA-20H 24.0000MF15Y-W3", "4-SMD, No Lead");
+    json abm = with_status(xtal("ABM10N-24.0000MHZ-12-D1G-T3", "2520 4-SMD"), "production");
+    abm["length_m"] = 0.0025;
+    abm["width_m"] = 0.002;
+    const json ecs = with_status(xtal("ECS-240-12-36Q-CWY-TR", "4-SMD, No Lead"), "production");
+    auto r = kelvin::crossref::cross_reference("timeBase", orig, json::array({abm, ecs}));
+    const json* a = cand_by_mpn(r, "ABM10N-24.0000MHZ-12-D1G-T3");
+    const json* e = cand_by_mpn(r, "ECS-240-12-36Q-CWY-TR");
+    REQUIRE((a && e));
+    INFO("ABM10N " << a->value("grade", "") << " / ECS-240 " << e->value("grade", ""));
+    CHECK(verdict_of(*a, "footprint") == "unverified");
+    CHECK(a->value("footprint", "") == "unknown");
+    CHECK(a->value("grade", "") == "drop_in");
+    CHECK(e->value("grade", "") == "drop_in");
+    // Still penalised for the unknown fit.
+    CHECK(a->value("penalty", 0.0) >= kelvin::crossref::kUnknownDimPenalty);
+    // The generic string still decides the mount (smd on both): nothing else is unverified.
+    CHECK(verdict_of(*a, "mounting") != "unverified");
+}

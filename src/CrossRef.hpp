@@ -6096,7 +6096,18 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 // original stating only a case code is left capped: whether that code counts as
                 // "no land" is an open question for the owner.) This branch is shared by every
                 // family whose footprint is the body, so the rule applies to all of them alike.
-                const bool original_states_no_land = o_pkg.empty();
+                //
+                // A generic style string with no size ("4-SMD, No Lead", "SMD") names a pad
+                // count, not a land (generic_package_names_no_land), so an original stating only
+                // such a string states no land either (owner, 2026-11-21, C14): the FA-20H
+                // 24.0000MF15Y-W3 crystal ("4-SMD, No Lead", no dimensions) capped every
+                // dimensioned candidate at minor_review while the generic twin stayed drop_in.
+                // Both the package and the case code must say nothing about a size.
+                auto says_no_land = [](const std::string& s) {
+                    return s.empty() || generic_package_names_no_land(s);
+                };
+                const bool original_states_no_land =
+                    says_no_land(str(original, "package")) && says_no_land(str(original, "case_code"));
                 if (original_states_no_land) footprint_unstated_both = true;
                 // Name what the substitute IS, so an engineer can see the two case
                 // sizes for themselves even though the ranker cannot compare them.
