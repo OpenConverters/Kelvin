@@ -49,6 +49,10 @@ json spec_for(const std::string& cat, const json& row) {
         auto it = row.find(k);
         return (it != row.end() && it->is_string()) ? it->get<std::string>() : "";
     };
+    auto raw = [&](const char* k) -> json {
+        auto it = row.find(k);
+        return (it != row.end() && it->is_number()) ? *it : json(nullptr);
+    };
     json o{{"_key", s("manufacturer") + "|" + s("mpn")}, {"mpn", s("mpn")}};
     // shared physical size + lifecycle, as base() does
     for (const char* k : {"lengthM", "widthM", "heightM"}) {
@@ -68,10 +72,15 @@ json spec_for(const std::string& cat, const json& row) {
     } else if (cat == "diode") {
         o["vrrm"] = num("vrrm_rated"); o["if_avg"] = num("if_avg_rated");
         o["vf"] = num("vf_typ"); o["technology"] = s("technology");
+        // owner A11 (2026-11-21): synced with crossref.js — tonight's diode fields
+        o["tvs_polarity"] = s("tvs_polarity").empty() ? json(nullptr) : json(s("tvs_polarity"));
+        o["vz_test_current"] = num("vz_test_current");
     } else if (cat == "capacitor") {
         o["value_si"] = num("capacitance"); o["voltage"] = num("v_rated");
         o["esr"] = num("esr"); o["technology"] = s("technology");
         o["dielectric_code"] = s("dielectric_code");
+        // owner A11 (2026-11-21): synced with crossref.js — the stated maximum height (C8)
+        o["height_max"] = num("height_max");
     } else if (cat == "resistor") {
         o["value_si"] = num("resistance"); o["power_rating"] = num("power_rating");
     } else if (cat == "magnetic") {
@@ -84,6 +93,16 @@ json spec_for(const std::string& cat, const json& row) {
         o["subtype"] = s("device_type"); o["channels"] = num("channels");
         o["supply_max_V"] = num("vsupply_max"); o["gbw"] = num("gain_bandwidth");
         o["slew_rate"] = num("slew_rate");
+        // owner A11 (2026-11-21): synced with crossref.js — tonight's analog fields (B4, B5,
+        // B7, B11, B12, the switch / mux configuration); counts and temperatures raw
+        o["configuration"] = s("configuration").empty() ? json(nullptr) : json(s("configuration"));
+        o["forward_channels"] = raw("forward_channels");
+        o["reverse_channels"] = raw("reverse_channels");
+        o["gain_min"] = num("minimum_gain"); o["gain_max"] = num("maximum_gain");
+        o["isolation_voltage_V"] = num("isolation_voltage_rms");
+        o["isolation_duration_s"] = num("isolation_duration_s");
+        o["temp_min_C"] = raw("temp_min_c"); o["temp_max_C"] = raw("temp_max_c");
+        o["fixed_gain"] = num("fixed_gain");
     } else if (cat == "igbt") {
         // web/src/crossref.js XREF igbt (owner 2026-11-15)
         o["vces"] = num("vces_rated"); o["ic"] = num("ic_continuous");
@@ -116,13 +135,7 @@ json spec_for(const std::string& cat, const json& row) {
         // owner A11 (2026-11-21): synced with crossref.js — the surge waveform, the clamping
         // test current and the operating range, raw (0 degC is a stated value; absent -> null)
         o["surge_waveform"] = s("surge_waveform"); o["clamping_current"] = num("clamping_current");
-        {
-            auto raw = [&](const char* k) -> json {
-                auto it = row.find(k);
-                return (it != row.end() && it->is_number()) ? *it : json(nullptr);
-            };
-            o["temp_min_C"] = raw("temp_min_c"); o["temp_max_C"] = raw("temp_max_c");
-        }
+        o["temp_min_C"] = raw("temp_min_c"); o["temp_max_C"] = raw("temp_max_c");
     }
     return o;
 }
