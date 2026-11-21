@@ -2809,7 +2809,15 @@ std::optional<AnalogRow> extract_analog(const json& env) {
 
     const json* elec = obj_get(*di, "electrical");
     if (elec && elec->is_object()) {
-        set_if_pos(r.channels, get_num(*elec, "numberOfChannels"));
+        // The channel count is the number of independent functions in the package. An analog
+        // switch states it as numberOfSwitches (AAS analogSwitch.json; the schema has no
+        // numberOfChannels for it), every other subtype as numberOfChannels. Reading only
+        // numberOfChannels left channels unset on all 642 switch records, so the identity the
+        // ranker turns on was never compared (Qarlos r32-33: MAX4742 -> TMUX9832, a 2-switch
+        // part offered a 32-switch one as drop_in). Each subtype reads its own key only.
+        set_if_pos(r.channels, get_num(*elec, node->subtype == "analogSwitch"
+                                                  ? "numberOfSwitches"
+                                                  : "numberOfChannels"));
         set_if_pos(r.input_offset_voltage, get_num(*elec, "inputOffsetVoltage"));
         set_if_pos(r.input_bias_current, get_num(*elec, "inputBiasCurrent"));
         set_if_pos(r.gain_bandwidth, get_num(*elec, "gainBandwidthProduct"));
