@@ -691,9 +691,12 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
     // tj_max (the substitute must reach it, no band). Vce(sat) is compared when both records
     // state the same collector current (vce_sat_ic) or neither states one; otherwise
     // CrossRef.hpp reports it UNVERIFIED (owner 2026-11-15, the diode Vf rule).
+    // Rth(j-c) (owner 2026-11-21, A9): lower is better, up to 1.25x warns, beyond FAILs;
+    // stated by one record only -> UNVERIFIED with a note, no cap (CrossRef.hpp).
     static const std::vector<ParamSpec> kIgbt = {
         {"vce_sat", D::Lower, 1.2, std::nullopt, false, false, nullptr},
         {"tj_max", D::Higher, 0.0, 0.0, false, false, nullptr},
+        {"rth_jc", D::Lower, 1.25, std::nullopt, false, false, nullptr},
     };
     // A BJT (owner 2026-11-15), on the IGBT / MOSFET pattern: Vceo / Ic are critical_ratings
     // (CrossRef.hpp); the polarity is an identity like the MOSFET channel (an NPN is never a
@@ -1026,6 +1029,7 @@ inline std::string param_label(const std::string& key) {
         {"max_voltage_V", "maximum working voltage"},
         {"vz_tolerance_pct", "breakdown-voltage tolerance"},
         {"vce_sat", "collector-emitter saturation voltage"},
+        {"rth_jc", "junction-to-case thermal resistance Rth(j-c)"},
         {"hfe_min", "minimum DC current gain (hFE)"},
         {"transition_frequency", "transition frequency (fT)"},
         {"max_continuous_dc_voltage", "maximum continuous DC voltage"},

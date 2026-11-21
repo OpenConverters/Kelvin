@@ -896,6 +896,11 @@ inline std::string normalize_mount(const std::string& assembly_type) {
     if (a == "screw type" || a == "screw-type" || a == "screw_type" || a == "screw" ||
         a == "screw terminal" || a == "screw-terminal")
         return "screw";
+    // "chassis" (PEAS assemblyType) is its own class (owner 2026-11-21, A1): a part bolted to
+    // the chassis / heatsink is neither reflowed on pads nor soldered through holes, so chassis
+    // against smt or tht is an ESTABLISHED mount mismatch, and chassis against chassis the same
+    // mount. Other unclassified strings ("Chassis Mount") keep their old reading.
+    if (a == "chassis") return "chassis";
     if (a == "pressfit" || a == "press_fit" || a == "press-fit") return "pressfit";
     if (a == "skedd") return "skedd";
     if (a == "panel") return "panel";
@@ -1134,7 +1139,11 @@ inline const std::vector<std::vector<std::string>>& transistor_case_groups() {
         // outline index files TO-126 under TO-225AA, onsemi's case 77 drawing (10.6-11.1 x
         // 7.4-7.8 mm, 2.29 mm pitch) is NXP's TO-126 (SOT32) body, and no other TO-225
         // variant is in the catalogue.
-        g.push_back({"TO126", "TO225AA", "TO225"});
+        // SOT-32 is NXP's / Nexperia's name for that same TO-126 outline (owner 2026-11-21,
+        // A10; 26 BJT records state "SOT-32"). The trap is SOT-323 (= SC-70, a 2 x 1.25 mm
+        // SMD): its folded form "SOT323" is "SOT32" + the TO-126 pin count 3, but it is a
+        // member of the SC70 group, so it never reaches the pin-count rule below.
+        g.push_back({"TO126", "TO225AA", "TO225", "SOT32"});
         return g;
     }();
     return kGroups;

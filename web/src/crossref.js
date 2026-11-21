@@ -437,6 +437,7 @@ export const XREF = [
     hardMin: [{ row: 'vces_rated', factor: 0.9 }],
     spec: (r) => ({ ...base(r), vces: nz(r.vces_rated), ic: nz(r.ic_continuous),
       vce_sat: nz(r.vce_sat), vce_sat_ic: nz(r.vce_sat_ic), technology: r.technology ?? '',
+      rth_jc: nz(r.rth_jc),
       // Raw, NOT through nz(): 0 degC would be a stated value. Absent -> null.
       tj_max: r.tj_max ?? null }),
     params: [
@@ -444,6 +445,7 @@ export const XREF = [
       { key: 'ic', label: 'Ic', row: 'ic_continuous', unit: 'A' },
       { key: 'vce_sat', label: 'Vce(sat)', row: 'vce_sat', unit: 'V' },
       { key: 'tj_max', label: 'Tj max', row: 'tj_max', unit: '°C' },
+      { key: 'rth_jc', label: 'Rth(j-c)', row: 'rth_jc', unit: 'K/W' },
     ],
   },
   {

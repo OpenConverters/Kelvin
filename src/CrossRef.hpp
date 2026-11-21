@@ -349,6 +349,7 @@ inline std::vector<std::string> comparison_source_fields(const std::string& cat,
             return {"electrical.collectorEmitterSaturation",
                     "electrical.collectorEmitterSaturationIc"};
         if (name == "tj_max") return {"thermal.junctionTemperatureMax"};
+        if (name == "rth_jc") return {"thermal.thermalResistanceJunctionCase"};
         if (name == "process") return {"part.technology"};
         return {};
     }
@@ -2889,6 +2890,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // an unweighed SURGE rating caps the grade as missing required data; an unweighed
     // clamping voltage is noted without a cap.
     bool varistor_surge_basis_unverified = false, varistor_clamp_basis_unverified = false;
+    // Both varistor surge ratings stated, at no stated waveform on EITHER side (owner
+    // 2026-11-21, A8): UNVERIFIED, capped at minor_review.
+    bool varistor_surge_waveform_unstated = false;
     if (cat == "varistor") {
         auto g = [](double v) {
             char b[40];
@@ -2898,14 +2902,22 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         {
             const auto o = num(original, "peak_surge_current"), s = num(cand, "peak_surge_current");
             const std::string ow = str(original, "surge_waveform"), sw = str(cand, "surge_waveform");
-            if (o && s && ow != sw) {
+            // Neither side naming its impulse is no common basis either (owner 2026-11-21, A3):
+            // two "8 kA" figures may be an 8/20 us and a 10/350 us rating. UNVERIFIED, and
+            // capped at minor_review (owner 2026-11-21, A8), not at the major_review of the
+            // TVS rule below, which stays for a waveform stated on one side only or two
+            // different stated waveforms.
+            if (o && s && (ow.empty() || ow != sw)) {
                 varistor_surge_basis_unverified = true;
                 params.push_back({{"name", "peak_surge_current_basis"}, {"verdict", UNVERIFIED}});
                 // The TVS surge-rating rule (Alf 2026-10-25): a surge rating not weighed on a
                 // common impulse caps the grade as missing required data, not a rejection.
                 demote();
                 penalty += opt.gate_weight * kVerdictFailPenalty;
-                missing_required_data = true;
+                if (ow.empty() && sw.empty())
+                    varistor_surge_waveform_unstated = true;
+                else
+                    missing_required_data = true;
                 auto at = [](const std::string& w) {
                     return w.empty() ? std::string("at no stated waveform") : "at " + w + " us";
                 };
@@ -3125,6 +3137,15 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                         ? std::string(WARN)
                                         : outcome.verdict;
         params.push_back({{"name", spec.key}, {"verdict", verdict}});
+        // IGBT Rth(j-c) (owner 2026-11-21, A9): stated by one record only -> UNVERIFIED with a
+        // note (a secondary axis: no cap).
+        if (cat == "igbt" && spec.key == "rth_jc" && verdict == UNVERIFIED) {
+            const bool o_has = detail::present(original, spec.key);
+            notes.push_back(std::string("junction-to-case thermal resistance Rth(j-c) stated by ") +
+                            (o_has ? "the original only" : "the substitute only") +
+                            " — whether the substitute runs its junction hotter at the same "
+                            "loss is unknown; confirm it from both datasheets");
+        }
         if (timebase_tech_allowed && verdict == WARN) {
             const std::string o_t = str(original, "technology"), s_t = str(cand, "technology");
             auto name = [](const std::string& t) {
@@ -6911,6 +6932,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //                                                                    no penalty; capped
     //                                                                    minor_review since
     //                                                                    2026-11-14 (below)
+    //   varistor Isurge stated by both at no stated waveform
+    //     on either side (owner 2026-11-21, A8;
+    //     varistor_surge_waveform_unstated)                   primary    note, cap minor_review
     //   Id / If(AV) / Ic stated by one record only (owner
     //     2026-11-13, Y1; current_rating_one_sided)           primary    note, cap minor_review
     //   a HARD critical rating stated by the original only
@@ -6970,7 +6994,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                     cable_core_unverified ||
                                     !orig_unstated_primary.empty() ||
                                     !both_unstated_primary.empty() || cand_no_physical_data ||
-                                    ac_rating_unverified;
+                                    ac_rating_unverified || varistor_surge_waveform_unstated;
     out["grade"] = grade_for(status, tier, any_warn, any_fail, primary_unverified,
                              missing_required_data || connector_identity_gaps_major ||
                                  timebase_tech_major,
