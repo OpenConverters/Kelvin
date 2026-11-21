@@ -233,8 +233,11 @@ inline const FieldTable<VaristorRow>& fields<VaristorRow>() {
          {"max_continuous_dc_voltage", &VaristorRow::max_continuous_dc_voltage},
          {"capacitance", &VaristorRow::capacitance},
          {"max_continuous_ac_voltage", &VaristorRow::max_continuous_ac_voltage},
-         {"energy_absorption", &VaristorRow::energy_absorption}},
-        {{"technology", &VaristorRow::technology}},
+         {"energy_absorption", &VaristorRow::energy_absorption},
+         {"clamping_current", &VaristorRow::clamping_current},
+         {"temp_min_c", &VaristorRow::temp_min_c},
+         {"temp_max_c", &VaristorRow::temp_max_c}},
+        {{"technology", &VaristorRow::technology}, {"surge_waveform", &VaristorRow::surge_waveform}},
         {{"is_production", &VaristorRow::is_production}},
         {}};
     return t;

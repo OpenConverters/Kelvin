@@ -572,6 +572,10 @@ void row_io(Ar& ar, VaristorRow& r) {
     ar.str(r.technology);
     ar.dbl(r.max_continuous_ac_voltage);  // v24
     ar.dbl(r.energy_absorption);          // v24
+    ar.str(r.surge_waveform);             // v25 (Qarlos r32/r33)
+    ar.dbl(r.clamping_current);           // v25
+    ar.dbl(r.temp_min_c);                 // v25
+    ar.dbl(r.temp_max_c);                 // v25
     ar.boolean(r.is_production);
 }
 

@@ -981,16 +981,28 @@ inline bool declares_igbt_module(const std::string& case_code) {
     // ("SP3F", "SP6-P") as the whole case string.
     static const std::regex mtp(R"((^|[^A-Z])MTP([^A-Z]|$))");
     static const std::regex sp(R"(^\s*SP[1-6]F?(-P)?\s*$)");
-    return std::regex_search(u, mtp) || std::regex_match(u, sp);
+    // Microsemi / Littelfuse D1, D3, D4 module housings and onsemi's F2 PIM housing, as the
+    // whole case string (Qarlos r32 seed 35342085, r34 seed 36389375: Littelfuse
+    // MG06400D-BN4MM / MG12300D-BN3MM, case "D3", half-bridge modules, were graded
+    // minor_review for a discrete TO-264 IXYK220N65A5 / IXYK110N120A4). Every igbts.ndjson
+    // record naming one of them is a multi-chip module (Microsemi APTG...D1G/D3G/D4G,
+    // Littelfuse MG...D-BN, onsemi FPF2G120BF07AS); "D3PAK" stays the discrete it is.
+    // Littelfuse "S3" and Fuji "M274" / "M277" too (owner 2026-11-21, A4, checked against the
+    // makers' outlines): S3 is Littelfuse's screw-terminal half-bridge "Package S" (MG06100S-BN4MM
+    // datasheet: 2x(IGBT+FWD), M5 terminals, M6 to the sink; MG1750S-BN4MM / MG1775S-BN4MM here),
+    // M274 (92 x 45 x 30 mm) and M277 (80 x 110 mm) are Fuji's 2-in-1 "2MBI" packages
+    // (2MBI400VB-060-50, 2MBI300XEE170-50; 2MBI...XBE / XEE here).
+    static const std::regex dseries(R"(^\s*(D[134]|F2|S3|M27[47])\s*$)");
+    return std::regex_search(u, mtp) || std::regex_match(u, sp) || std::regex_match(u, dseries);
 }
 
 // The DISCRETE side of the comparison: a case string naming a discrete power outline (TO-xxx,
 // D2PAK / DPAK / I2PAK / IPAK / H2PAK, PLUS220/247/264, ISOPLUS, MAX247, T-MAX, SOT-223, an
 // Infineon PG-TO / PG-HSIP package, TO-LL, PQFN), or a record that states no case at all
 // ("", "Unknown", "-", "Package Unavailable") — the discrete its schema defines it to be. Any
-// other case string ("M274", "D3", "F2", "SOT-227", "SMPD", ...) is unknown: it is neither listed
+// other case string ("SOT-227", "SMPD", ...) is unknown: it is neither listed
 // as a module nor read as a discrete, so it raises no conflict either way. Without that third
-// state a Fuji 2MBI module whose case reads "M274" was taken for a discrete and every real
+// state a Fuji 2MBI module whose case reads "M274" (now a listed module outline) was taken for a discrete and every real
 // module offered for it was flagged.
 inline bool declares_igbt_discrete(const std::string& case_code) {
     std::string u;

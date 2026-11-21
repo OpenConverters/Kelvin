@@ -829,9 +829,20 @@ inline bool package_says_smd_word(const std::string& upper_package) {
     }
     return false;
 }
+// SOT-227 (ISOTOP, "minibloc") is a screw-mounted power package with screw terminals, bolted
+// to a heatsink: the "SOT" token does not make it surface-mount. Read as SMD, IXYS
+// IXYN120N65B3D1 (assemblyType "chassis", case "SOT-227B") passed the mount gate silently
+// against an SMT original and was called "smd" in the mount note against a through-hole one
+// (Qarlos r32 seed 35027898, r34 seeds 36284646 / 36389375). It classifies as neither SMD nor
+// leaded, so the gate reads it as not established, like the chassis "Module" records.
+inline bool names_sot227(const std::string& upper_package) {
+    return upper_package.find("SOT-227") != std::string::npos ||
+           upper_package.find("SOT227") != std::string::npos;
+}
 inline bool is_smd(const std::string& package) {
     if (wide_terminal_chip_code(package)) return true;
     const std::string p = dims_detail::upper(package);
+    if (names_sot227(p)) return false;
     for (const auto& tok : smd_tokens())
         if (p.find(tok) != std::string::npos) return true;
     return package_says_smd_word(p);
@@ -885,6 +896,11 @@ inline std::string normalize_mount(const std::string& assembly_type) {
     if (a == "screw type" || a == "screw-type" || a == "screw_type" || a == "screw" ||
         a == "screw terminal" || a == "screw-terminal")
         return "screw";
+    // "chassis" (PEAS assemblyType) is its own class (owner 2026-11-21, A1): a part bolted to
+    // the chassis / heatsink is neither reflowed on pads nor soldered through holes, so chassis
+    // against smt or tht is an ESTABLISHED mount mismatch, and chassis against chassis the same
+    // mount. Other unclassified strings ("Chassis Mount") keep their old reading.
+    if (a == "chassis") return "chassis";
     if (a == "pressfit" || a == "press_fit" || a == "press-fit") return "pressfit";
     if (a == "skedd") return "skedd";
     if (a == "panel") return "panel";
@@ -1110,7 +1126,7 @@ inline std::string canonical_diode_case(const std::string& s) {
 //      Outlines for Semiconductor Devices) as cross-referenced in the manufacturers' package
 //      drawings: SOT-23 = TO-236AB, SOT-223 = TO-261AA, DPAK = TO-252AA, D2PAK = TO-263AB,
 //      TO-220 = TO-220AB, TO-247 = TO-247AC/AD (mosfet_case_groups), and here
-//      TO-92 = TO-226AA, SOT-89 = TO-243AA, TO-126 = TO-225AA.
+//      TO-92 = TO-226AA, SOT-89 = TO-243AA, TO-126 = TO-225AA (= the bare TO-225).
 // Different pad layouts are never folded: the full-pack TO-220 (TO-220F / FP / FullPAK) is its
 // own group, and vendor outlines (TO-220SIS, TO-220NIS, TSOT-23-6, SOT-23F) stay themselves.
 inline const std::vector<std::vector<std::string>>& transistor_case_groups() {
@@ -1118,7 +1134,16 @@ inline const std::vector<std::vector<std::string>>& transistor_case_groups() {
         auto g = mosfet_case_groups();
         g.push_back({"TO92", "TO226AA"});
         g.push_back({"SOT89", "TO243AA"});
-        g.push_back({"TO126", "TO225AA"});
+        // The bare "TO-225" names TO-225AA too (Qarlos r35 seed 36913020: onsemi BD681G,
+        // "TO-225-3", case 77, against BD677A "TO-126" read as a different land). JEDEC's
+        // outline index files TO-126 under TO-225AA, onsemi's case 77 drawing (10.6-11.1 x
+        // 7.4-7.8 mm, 2.29 mm pitch) is NXP's TO-126 (SOT32) body, and no other TO-225
+        // variant is in the catalogue.
+        // SOT-32 is NXP's / Nexperia's name for that same TO-126 outline (owner 2026-11-21,
+        // A10; 26 BJT records state "SOT-32"). The trap is SOT-323 (= SC-70, a 2 x 1.25 mm
+        // SMD): its folded form "SOT323" is "SOT32" + the TO-126 pin count 3, but it is a
+        // member of the SC70 group, so it never reaches the pin-count rule below.
+        g.push_back({"TO126", "TO225AA", "TO225", "SOT32"});
         return g;
     }();
     return kGroups;
@@ -1358,7 +1383,11 @@ inline std::optional<std::string> tantalum_eia_numeric_size(const std::string& c
 inline bool generic_package_names_no_land(const std::string& code) {
     static const std::set<std::string> kStyleWords = {
         "smd", "smt", "no", "lead", "leads", "flat", "non", "standard", "nonstandard",
-        "plastic", "radial", "formed", "cylindrical", "can"};
+        "plastic", "radial", "formed", "cylindrical", "can",
+        // "Module" (143 IGBT records state exactly that) covers every power-module outline
+        // alike, 62mm, EconoDUAL, PrimePACK ...: Powerex CM400HA-24H "Module" took Infineon
+        // FF600R12IP4VBOSA1 "Module" as footprint 'fits' (Qarlos r35 seed 37017749).
+        "module"};
     bool any_word = false;
     std::string tok;
     auto flush = [&]() -> bool {

@@ -476,14 +476,16 @@ TEST_CASE("an explicit assembly type beats package-string inference", "[crossref
     // Both records state their mount type -> use it, ignore the package strings.
     CHECK(mount_incompatible("smt", "tht", "", ""));
     CHECK_FALSE(mount_incompatible("smt", "smt", "", ""));
-    // "chassis" does not classify as either -> fall back to the package strings.
-    CHECK_FALSE(mount_incompatible("chassis", "smt", "0805", "0603"));
+    // Owner decision A1 (2026-11-21): "chassis" is a mount class of its own, so chassis
+    // against smt is an established mismatch whatever the package strings say.
+    CHECK(mount_incompatible("chassis", "smt", "0805", "0603"));
     CHECK(mount_incompatible("chassis", "smt", "0805", "TO-220"));
     // No explicit types at all -> package inference, as before.
     CHECK(mount_incompatible("", "", "0805", "TO-220"));
     CHECK(normalize_mount("SMT") == "smd");
     CHECK(normalize_mount("tht") == "leaded");
-    CHECK(normalize_mount("chassis").empty());
+    // Owner decision A1 (2026-11-21): "chassis" normalises to its own class.
+    CHECK(normalize_mount("chassis") == "chassis");
 }
 
 TEST_CASE("caller identity travels in `_key`, leaving `mpn` decodable", "[crossref][rank]") {

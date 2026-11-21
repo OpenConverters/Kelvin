@@ -677,6 +677,13 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
         // Lower is better; the diode junction-capacitance band (up to 2x warns, beyond FAILs).
         // The records state no measurement frequency / bias for it, so it is compared as stated.
         {"capacitance", D::Lower, 2.0, std::nullopt, false, false, nullptr},
+        // Operating range (Qarlos r33 seed 35761001: B72530G1140S862, rated to 150 degC, took
+        // the 125 degC AV14K1210401NIR1 as a clean drop-in/upgrade — the row never carried
+        // the range). The resistor / magnetic rule: the substitute must cover the original's
+        // range at both ends with NO warn band (abs_tol 0). Absent -> UNVERIFIED and noted (a
+        // secondary axis: no grade cap, owner 2026-11-09).
+        {"temp_min_C", D::Lower, 0.0, 0.0, false, false, nullptr},
+        {"temp_max_C", D::Higher, 0.0, 0.0, false, false, nullptr},
     };
     // An IGBT's ratings Vces / Ic are critical_ratings (CrossRef.hpp). The table grades the
     // conduction drop and the junction limit (owner 2026-11-15), on the diode's conventions:
@@ -684,9 +691,12 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
     // tj_max (the substitute must reach it, no band). Vce(sat) is compared when both records
     // state the same collector current (vce_sat_ic) or neither states one; otherwise
     // CrossRef.hpp reports it UNVERIFIED (owner 2026-11-15, the diode Vf rule).
+    // Rth(j-c) (owner 2026-11-21, A9): lower is better, up to 1.25x warns, beyond FAILs;
+    // stated by one record only -> UNVERIFIED with a note, no cap (CrossRef.hpp).
     static const std::vector<ParamSpec> kIgbt = {
         {"vce_sat", D::Lower, 1.2, std::nullopt, false, false, nullptr},
         {"tj_max", D::Higher, 0.0, 0.0, false, false, nullptr},
+        {"rth_jc", D::Lower, 1.25, std::nullopt, false, false, nullptr},
     };
     // A BJT (owner 2026-11-15), on the IGBT / MOSFET pattern: Vceo / Ic are critical_ratings
     // (CrossRef.hpp); the polarity is an identity like the MOSFET channel (an NPN is never a
@@ -1019,6 +1029,7 @@ inline std::string param_label(const std::string& key) {
         {"max_voltage_V", "maximum working voltage"},
         {"vz_tolerance_pct", "breakdown-voltage tolerance"},
         {"vce_sat", "collector-emitter saturation voltage"},
+        {"rth_jc", "junction-to-case thermal resistance Rth(j-c)"},
         {"hfe_min", "minimum DC current gain (hFE)"},
         {"transition_frequency", "transition frequency (fT)"},
         {"max_continuous_dc_voltage", "maximum continuous DC voltage"},

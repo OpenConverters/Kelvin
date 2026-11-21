@@ -750,6 +750,13 @@ struct VaristorRow : RowBase {
     // v24 (owner 2026-11-15): RAS electrical.maxContinuousAcVoltage (V rms) and
     // electrical.energyAbsorption (J, 10/1000 us single pulse). NaN when unstated.
     double max_continuous_ac_voltage = kNaN(), energy_absorption = kNaN();
+    // v25 (Qarlos r32/r33): the test conditions the surge and clamping ratings are stated at —
+    // RAS electrical.surgeWaveform (the impulse peakSurgeCurrent is rated at, "" = not stated)
+    // and electrical.clampingCurrent (A, the current clampingVoltage is measured at, NaN = not
+    // stated) — and thermal.operatingTemperature (degC, NaN = not stated).
+    std::string surge_waveform;
+    double clamping_current = kNaN();
+    double temp_min_c = kNaN(), temp_max_c = kNaN();
     std::string technology;
     bool is_production = false;
 };

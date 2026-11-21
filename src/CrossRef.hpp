@@ -349,6 +349,7 @@ inline std::vector<std::string> comparison_source_fields(const std::string& cat,
             return {"electrical.collectorEmitterSaturation",
                     "electrical.collectorEmitterSaturationIc"};
         if (name == "tj_max") return {"thermal.junctionTemperatureMax"};
+        if (name == "rth_jc") return {"thermal.thermalResistanceJunctionCase"};
         if (name == "process") return {"part.technology"};
         return {};
     }
@@ -374,6 +375,11 @@ inline std::vector<std::string> comparison_source_fields(const std::string& cat,
         if (name == "max_continuous_ac_voltage") return {"electrical.maxContinuousAcVoltage"};
         if (name == "energy_absorption") return {"electrical.energyAbsorption"};
         if (name == "capacitance") return {"electrical.capacitance"};
+        if (name == "peak_surge_current_basis")
+            return {"electrical.peakSurgeCurrent", "electrical.surgeWaveform"};
+        if (name == "clamping_voltage_basis")
+            return {"electrical.clampingVoltage", "electrical.clampingCurrent"};
+        if (name == "temp_min_C" || name == "temp_max_C") return kOpTemp;
         return {};
     }
     if (cat == "analog") {
@@ -509,9 +515,14 @@ inline bool is_primary_rating(const std::string& cat, const std::string& key) {
 //              rated_current)
 //   mosfet     Vds, Id, Rds(on)                 every MOSFET
 //   connector  rated current (rated_current_A)  every connector; NOT rated voltage
+//   varistor   energy (energy_absorption)       metal-oxide (metalOxide) only (owner
+//                                               2026-11-21, A2; varistor_energy_applies)
+//   varistor   surge current, clamping voltage  every varistor (owner 2026-11-21, A2)
+//              (peak_surge_current,
+//               clamping_voltage)
 //
-// Every other primary axis (capacitor rated voltage, diode Vrrm, IGBT, chip bead, varistor,
-// resistor power, connector rated voltage) has no both-unknown cap. An original whose
+// Every other primary axis (capacitor rated voltage, diode Vrrm, IGBT, chip bead, varistor
+// working voltages, resistor power, connector rated voltage) has no both-unknown cap. An original whose
 // technology is not stated gives no cap on a technology-scoped axis: whether the rating exists
 // for it is unknown, and no technology is assumed.
 inline bool both_unknown_cap_applies(const std::string& cat, const std::string& key,
@@ -537,6 +548,13 @@ inline bool both_unknown_cap_applies(const std::string& cat, const std::string& 
             return t == "tvs" || t == "esd";
         if (key == "power_dissipation") return pd.count(t) > 0;
         return false;
+    }
+    // Varistor (owner 2026-11-21, A2): the energy, surge and clamping ratings stated by neither
+    // record cap the grade. The energy rating only where it is one (varistor_energy_applies:
+    // metal-oxide discs / blocks; critical_ratings skips the axis for any other original).
+    if (cat == "varistor") {
+        if (key == "energy_absorption") return t == "metalOxide";
+        return key == "peak_surge_current" || key == "clamping_voltage";
     }
     return false;
 }
@@ -2856,6 +2874,87 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         }
     }
 
+    // ── varistor surge / clamping basis (Qarlos r32/r33) ─────────────────────
+    // A varistor's peak surge current is a rating AT an impulse (RAS surgeWaveform) and its
+    // clamping voltage a point on the V-I curve AT a test current (RAS clampingCurrent). Two
+    // figures stated at different conditions are not one quantity: ZOVA385K40E's 5 kA is a
+    // 10/350 us lightning rating and V14E385P's 6 kA an 8/20 us one (r32 seed 35132627), and
+    // 820522511's Vc and V250LA20CP's were measured at currents 2x apart (r32 seed 35342085,
+    // r33 seed 35761001), yet both were graded "pass". The diode Vf / IGBT Vce(sat) basis rule
+    // (owner 2026-11-13 / 2026-11-15): compared when both records state the same condition or
+    // neither states one; a different condition, or one stated on one side only, leaves the
+    // row UNVERIFIED with a basis row and a note giving both values and conditions. The
+    // currents agree within the TVS clamping band (kVaristorClampCurrentBand = 1.1, the
+    // diode's kClampCurrentBand). No scaling between waveforms or currents: neither the
+    // pulse-derating nor the V-I curve is on record. As for the TVS ratings (Alf 2026-10-25):
+    // an unweighed SURGE rating caps the grade as missing required data; an unweighed
+    // clamping voltage is noted without a cap.
+    bool varistor_surge_basis_unverified = false, varistor_clamp_basis_unverified = false;
+    // Both varistor surge ratings stated, at no stated waveform on EITHER side (owner
+    // 2026-11-21, A8): UNVERIFIED, capped at minor_review.
+    bool varistor_surge_waveform_unstated = false;
+    if (cat == "varistor") {
+        auto g = [](double v) {
+            char b[40];
+            std::snprintf(b, sizeof b, "%g", v);
+            return std::string(b);
+        };
+        {
+            const auto o = num(original, "peak_surge_current"), s = num(cand, "peak_surge_current");
+            const std::string ow = str(original, "surge_waveform"), sw = str(cand, "surge_waveform");
+            // Neither side naming its impulse is no common basis either (owner 2026-11-21, A3):
+            // two "8 kA" figures may be an 8/20 us and a 10/350 us rating. UNVERIFIED, and
+            // capped at minor_review (owner 2026-11-21, A8), not at the major_review of the
+            // TVS rule below, which stays for a waveform stated on one side only or two
+            // different stated waveforms.
+            if (o && s && (ow.empty() || ow != sw)) {
+                varistor_surge_basis_unverified = true;
+                params.push_back({{"name", "peak_surge_current_basis"}, {"verdict", UNVERIFIED}});
+                // The TVS surge-rating rule (Alf 2026-10-25): a surge rating not weighed on a
+                // common impulse caps the grade as missing required data, not a rejection.
+                demote();
+                // Neither side naming a waveform costs the WARN penalty, not FAIL (owner
+                // 2026-11-21, A12): nothing is known to differ, only the basis is unstated.
+                // A one-sided or a different stated waveform keeps the TVS rule's FAIL penalty.
+                if (ow.empty() && sw.empty()) {
+                    penalty += opt.gate_weight * kVerdictWarnPenalty;
+                    varistor_surge_waveform_unstated = true;
+                } else {
+                    penalty += opt.gate_weight * kVerdictFailPenalty;
+                    missing_required_data = true;
+                }
+                auto at = [](const std::string& w) {
+                    return w.empty() ? std::string("at no stated waveform") : "at " + w + " us";
+                };
+                notes.push_back("peak surge current stated at different or unstated impulses (" +
+                                g(*o) + " A " + at(ow) + " on the original, " + g(*s) + " A " +
+                                at(sw) + " on the substitute) — not comparable; confirm the "
+                                "substitute's surge rating at the original's waveform from its "
+                                "datasheet");
+            }
+        }
+        {
+            constexpr double kVaristorClampCurrentBand = 1.1;
+            const auto o = num(original, "clamping_voltage"), s = num(cand, "clamping_voltage");
+            const auto oi = num(original, "clamping_current"), si = num(cand, "clamping_current");
+            const bool same_basis =
+                (!oi && !si) ||
+                (oi && si && std::max(*oi, *si) <= kVaristorClampCurrentBand * std::min(*oi, *si));
+            if (o && s && !same_basis) {
+                varistor_clamp_basis_unverified = true;
+                params.push_back({{"name", "clamping_voltage_basis"}, {"verdict", UNVERIFIED}});
+                auto at = [&](const std::optional<double>& i) {
+                    return i ? "at " + g(*i) + " A" : std::string("at no stated test current");
+                };
+                notes.push_back("clamping voltage stated at different test currents (" + g(*o) +
+                                " V " + at(oi) + " on the original, " + g(*s) + " V " + at(si) +
+                                " on the substitute) — not comparable, the clamping voltage "
+                                "rises with the current; confirm the substitute's clamping "
+                                "voltage at the original's current from its datasheet");
+            }
+        }
+    }
+
     // ── capacitance tolerance (the band each record guarantees) ─────────────
     // A capacitor's tolerance is the band the circuit was designed around, exactly as a
     // resistor's is: a +/-5 % C0G is not a drop-in for a +/-1 % one in a filter or timing
@@ -3002,7 +3101,11 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             cat == "capacitor" && ((spec.key == "ripple_current" &&
                                     (ripple_basis_unverified || ripple_temp_basis_unverified)) ||
                                    (spec.key == "esr" && esr_basis_unverified));
-        const bool coss_blind = (cat == "mosfet" && spec.key == "coss" && coss_basis_unverified) ||
+        const bool coss_blind = (cat == "varistor" && spec.key == "peak_surge_current" &&
+                                 varistor_surge_basis_unverified) ||
+                                (cat == "varistor" && spec.key == "clamping_voltage" &&
+                                 varistor_clamp_basis_unverified) ||
+                                (cat == "mosfet" && spec.key == "coss" && coss_basis_unverified) ||
                                 (cat == "diode" && spec.key == "vf" && vf_basis_unverified) ||
                                 (spec.key == "vce_sat" && vce_sat_basis_unverified);
         const bool work_v_basis = spec.key == "max_voltage_V" && work_v.applies;
@@ -3039,6 +3142,15 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                         ? std::string(WARN)
                                         : outcome.verdict;
         params.push_back({{"name", spec.key}, {"verdict", verdict}});
+        // IGBT Rth(j-c) (owner 2026-11-21, A9): stated by one record only -> UNVERIFIED with a
+        // note (a secondary axis: no cap).
+        if (cat == "igbt" && spec.key == "rth_jc" && verdict == UNVERIFIED) {
+            const bool o_has = detail::present(original, spec.key);
+            notes.push_back(std::string("junction-to-case thermal resistance Rth(j-c) stated by ") +
+                            (o_has ? "the original only" : "the substitute only") +
+                            " — whether the substitute runs its junction hotter at the same "
+                            "loss is unknown; confirm it from both datasheets");
+        }
         if (timebase_tech_allowed && verdict == WARN) {
             const std::string o_t = str(original, "technology"), s_t = str(cand, "technology");
             auto name = [](const std::string& t) {
@@ -4001,7 +4113,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // the original only, they are UNVERIFIED and noted but neither demote nor cap the grade
     // (they used to cap at minor_review; see the table at the grade site). A stated shortfall
     // is still a FAIL from the table loop.
-    if (cat == "resistor" || cat == "magnetic" || cat == "chipBead" || cat == "diode") {
+    if (cat == "resistor" || cat == "magnetic" || cat == "chipBead" || cat == "diode" ||
+        cat == "varistor") {
         auto verdict_of = [&](const char* name) -> std::string {
             for (const auto& p : params)
                 if (p.value("name", "") == name) return p.value("verdict", "");
@@ -4178,6 +4291,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     const std::string o_tech = str(original, "technology");
     const bool protection = cat == "diode" && (o_tech == "tvs" || o_tech == "esd");
     bool surge_blind = false;
+    // A varistor surge rating left unweighed by its impulse (the varistor basis block above)
+    // blinds the direction the same way.
+    if (varistor_surge_basis_unverified) surge_blind = true;
     if (protection) {
         auto fmt = [](double v, const char* unit) {
             char b[48];
@@ -5586,7 +5702,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                 "from the datasheet drawings");
             }
         }
-        // ── same stated case = same land (MOSFETs, diodes) ──────────────────
+        // ── same stated case = same land (MOSFETs, diodes, IGBTs, BJTs) ──────
         // A MOSFET or diode case code names a registered outline (TO-220, DPAK, SOD-323,
         // DO-214AB ...), and two records naming the same one name the same pads. The body
         // compare below must not overrule that with a box neither record states: NTP18G120
@@ -5598,12 +5714,21 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // case_identity, and at least one side's land is NOT a drawing of its own (a table
         // outline, or none at all) -> the land is kept: footprint 'fits', PASS. When BOTH
         // records draw their own bodies, those drawings are compared as before.
-        if ((cat == "mosfet" || cat == "diode") && !out.contains("footprint")) {
+        // IGBTs too (Qarlos r32 seed 35027898): AOK30B120D2 (case "TO247", drawn 21 x 15.8 x
+        // 5 mm, lying flat) took STGW28IH125DF (case "TO-247", no mechanical block) as
+        // "smaller body ... needs a new land pattern" against the TO-247 table row, whose axes
+        // are width x thickness x length. One registered outline, the same pads.
+        // BJTs too (owner 2026-11-21, A5): their case codes read the same transistor outline
+        // table (canonical_transistor_case) as the IGBTs'.
+        if ((cat == "mosfet" || cat == "diode" || cat == "igbt" || cat == "bjt") &&
+            !out.contains("footprint")) {
             const std::string oc = str(original, "case_code"), sc = str(cand, "case_code");
             auto drawn_land = [](const std::optional<Dims>& d) {
                 return d && has_land(*d) && !d->land_from_table;
             };
+            // A generic style string ("Module") names no outline, so it keeps no land.
             if (!oc.empty() && !sc.empty() && case_ids.first == case_ids.second &&
+                !generic_package_names_no_land(oc) && !generic_package_names_no_land(sc) &&
                 !(drawn_land(o_dims) && drawn_land(s_dims))) {
                 out["footprint"] = "fits";
                 params.push_back({{"name", "footprint"}, {"verdict", PASS}});
@@ -6812,6 +6937,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     //                                                                    no penalty; capped
     //                                                                    minor_review since
     //                                                                    2026-11-14 (below)
+    //   varistor Isurge stated by both at no stated waveform
+    //     on either side (owner 2026-11-21, A8;
+    //     varistor_surge_waveform_unstated)                   primary    note, cap minor_review
     //   Id / If(AV) / Ic stated by one record only (owner
     //     2026-11-13, Y1; current_rating_one_sided)           primary    note, cap minor_review
     //   a HARD critical rating stated by the original only
@@ -6871,7 +6999,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                     cable_core_unverified ||
                                     !orig_unstated_primary.empty() ||
                                     !both_unstated_primary.empty() || cand_no_physical_data ||
-                                    ac_rating_unverified;
+                                    ac_rating_unverified || varistor_surge_waveform_unstated;
     out["grade"] = grade_for(status, tier, any_warn, any_fail, primary_unverified,
                              missing_required_data || connector_identity_gaps_major ||
                                  timebase_tech_major,

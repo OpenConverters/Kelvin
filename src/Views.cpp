@@ -2121,6 +2121,17 @@ std::optional<VaristorRow> extract_varistor(const json& env) {
     if (auto vac = get_num(*elec, "maxContinuousAcVoltage"); pos(vac))  // v24
         r.max_continuous_ac_voltage = *vac;
     if (auto e = get_num(*elec, "energyAbsorption"); pos(e)) r.energy_absorption = *e;  // v24
+    // v25 (Qarlos r32/r33): the conditions the surge and clamping ratings are stated at, and
+    // the operating range. Unstated stays "" / NaN.
+    r.surge_waveform = get_str(*elec, "surgeWaveform").value_or("");
+    if (auto x = get_num(*elec, "clampingCurrent"); pos(x)) r.clamping_current = *x;
+    if (const json* th = obj_get(*di, "thermal")) {
+        if (const json* t = obj_get(*th, "operatingTemperature")) {
+            // Straight from the object: a cold limit is negative and 0 degC is a real rating.
+            if (auto x = get_num(*t, "minimum")) r.temp_min_c = *x;
+            if (auto x = get_num(*t, "maximum")) r.temp_max_c = *x;
+        }
+    }
     r.technology = get_str(*part, "technology").value_or("");
     auto st = get_str(*mi, "status");
     r.is_production = st && *st == "production";

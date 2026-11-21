@@ -953,3 +953,28 @@ TEST_CASE("views: an AC-only capacitor is indexed with its AC rating and no DC r
 
     CHECK_FALSE(kelvin::extract_capacitor(cap({{"capacitance", 1e-7}})).has_value());
 }
+
+TEST_CASE("qarlos r32/r33: the varistor row carries its surge waveform, clamping current and range",
+          "[index][qarlos-night-a-mov-row]") {
+    // ZOVA385K40E's record (TAS 33069cb), trimmed to the fields read here.
+    const json rec = json::parse(R"({"varistor": {"manufacturerInfo": {"name": "Bourns",
+        "reference": "ZOVA385K40E", "status": "production", "datasheetInfo": {
+        "part": {"partNumber": "ZOVA385K40E", "technology": "metalOxide"},
+        "electrical": {"varistorVoltage": {"nominal": 620}, "clampingVoltage": 1025,
+          "clampingCurrent": 300, "peakSurgeCurrent": 5000, "surgeWaveform": "10/350"},
+        "thermal": {"operatingTemperature": {"minimum": -40, "maximum": 85}}}}}})");
+    const auto r = kelvin::extract_varistor(rec);
+    REQUIRE(r.has_value());
+    CHECK(r->surge_waveform == "10/350");
+    CHECK(r->clamping_current == 300.0);
+    CHECK(r->temp_min_c == -40.0);
+    CHECK(r->temp_max_c == 85.0);
+    // Unstated stays unstated.
+    const json bare = json::parse(R"({"varistor": {"manufacturerInfo": {"name": "X",
+        "reference": "BARE", "datasheetInfo": {"electrical": {"varistorVoltage": 470}}}}})");
+    const auto b = kelvin::extract_varistor(bare);
+    REQUIRE(b.has_value());
+    CHECK(b->surge_waveform.empty());
+    CHECK(std::isnan(b->clamping_current));
+    CHECK(std::isnan(b->temp_max_c));
+}
