@@ -410,6 +410,8 @@ export const XREF = [
       // v25 (Qarlos r32): the record's stated TVS / ESD polarity ('unidirectional' |
       // 'bidirectional'); null when unstated. The ranker prefers it over the part-number decode.
       tvs_polarity: r.tvs_polarity || null,
+      // v25 (owner 2026-11-21, C3): the zener test current Vz is stated at (A); null unstated.
+      vz_test_current: nz(r.vz_test_current),
       // v20 (Qarlos 2026-11-09): the junction temperature maximum, which the substitute must
       // reach (lower = FAIL), and the qualification the record states ('' = not stated =
       // UNKNOWN grade to the ranker, never "commercial").

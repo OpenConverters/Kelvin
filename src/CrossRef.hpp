@@ -308,6 +308,7 @@ inline std::vector<std::string> comparison_source_fields(const std::string& cat,
     }
     if (cat == "magnetic" || cat == "chipBead") {
         if (name == "value") return {"electrical.inductance"};
+        if (name == "inductance_tolerance") return {"electrical.inductance"};
         if (name == "saturation_current")
             return {"electrical.saturationCurrents", "electrical.saturationCurrentPeak"};
         if (name == "rated_current") return {"electrical.ratedCurrents", "electrical.ratedCurrentPoints"};
@@ -670,6 +671,8 @@ inline constexpr double kUnknownTempGradePenaltyPerC = 0.002;
 // numeric terms so no single categorical miss can outweigh the primary value.
 inline constexpr double kVerdictWarnPenalty = 0.5;
 inline constexpr double kVerdictFailPenalty = 3.0;
+// Owner 2026-11-21 (C5): two lands 2x or more apart in area (either way) are a footprint FAIL.
+inline constexpr double kFootprintAreaFailRatio = 2.0;
 // Gross over-rating (owner 2026-11-13, Y4; resistor power rating added by the owner
 // 2026-11-14): a substitute whose primary voltage, current or (resistor) power rating is
 // more than kGrossOverRatingFactor times the original's costs
@@ -1340,6 +1343,12 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // A cable core's cable diameter or pass count the substitute does not state while the
     // original does (owner 2026-11-14): UNVERIFIED, capped at minor_review.
     bool cable_core_unverified = false;
+    // A transformer whose turns ratio NEITHER record states (owner 2026-11-21, C4): UNVERIFIED,
+    // capped at minor_review, with a note telling the user to confirm the ratio.
+    bool turns_ratio_unstated_both = false;
+    // Two zeners whose Vz are stated at different test currents (owner 2026-11-21, C3):
+    // zener_voltage UNVERIFIED, capped at minor_review.
+    bool zener_iz_unverified = false;
     // Primary ratings the ORIGINAL does not state and the substitute does (owner 2026-11-13,
     // Y2; is_primary_rating): each candidate is capped at minor_review with a note.
     std::vector<std::string> orig_unstated_primary;
@@ -2914,9 +2923,30 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             cap_tol_judged = true;
             if (s_n && *s_n > 0 && s_lo && s_hi) {
                 const bool same_nominal = std::fabs(*o_n - *s_n) <= 1e-9 * std::max(*o_n, *s_n);
-                // Deviations below / above nominal, in farads (equal nominals) or as a
-                // fraction of each record's own nominal (different nominals).
-                const double o_scale = same_nominal ? 1.0 : *o_n, s_scale = same_nominal ? 1.0 : *s_n;
+                // Owner 2026-11-21 (C2): when BOTH bands are absolute (pF) bands, the absolute
+                // widths are compared in farads whatever the nominals: VJ1111D2R4CLGAT (2.4 pF
+                // +/-0.25 pF) and C0805C229CDGACTU (2.2 pF +/-0.25 pF) guarantee the same band,
+                // which the percentages (10.4 % vs 11.4 %) called looser (Qarlos r34, seed
+                // 36284646). The records state farads only, so "absolute" is read from the band
+                // itself: each record's deviations below and above its nominal both equal one
+                // of the EIA-198 absolute tolerance steps (A 0.05, B 0.1, C 0.25, D 0.5 pF),
+                // within 1e-6 relative (decimal renderings), on a nominal below 10 pF, the
+                // range those pF letters are printed for. Percentage bands keep the rule below.
+                auto absolute_band = [](double n, double lo, double hi) {
+                    if (!(n < 10e-12)) return false;
+                    auto step = [](double d) {
+                        for (double a : {0.05e-12, 0.1e-12, 0.25e-12, 0.5e-12})
+                            if (std::fabs(d - a) <= 1e-6 * a) return true;
+                        return false;
+                    };
+                    return step(n - lo) && step(hi - n);
+                };
+                const bool absolute = absolute_band(*o_n, *o_lo, *o_hi) &&
+                                      absolute_band(*s_n, *s_lo, *s_hi);
+                // Deviations below / above nominal, in farads (equal nominals, or two absolute
+                // bands) or as a fraction of each record's own nominal (different nominals).
+                const bool in_farads = same_nominal || absolute;
+                const double o_scale = in_farads ? 1.0 : *o_n, s_scale = in_farads ? 1.0 : *s_n;
                 const double o_dn = (*o_n - *o_lo) / o_scale, o_up = (*o_hi - *o_n) / o_scale;
                 const double s_dn = (*s_n - *s_lo) / s_scale, s_up = (*s_hi - *s_n) / s_scale;
                 // 1e-6 relative slack: the records' farads are decimal renderings (4.465e-11
@@ -3629,6 +3659,61 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                     "ESR spec", Interp::LogLog, &useful_band.esl);
     }
 
+    // ── inductance tolerance (owner 2026-11-21, C1) ──────────────────────────
+    // The band each record guarantees, compared by the resistor table rule (tolerance_pct,
+    // Lower, 2x): the substitute's band equal or tighter -> PASS, up to 2x the original's ->
+    // WARN, wider -> FAIL. An asymmetric band counts by its WIDER side (owner, C1), on both
+    // records. The bands are the row's stated inductance minimum / maximum as percent below /
+    // above the nominal (tolerance_minus_pct / tolerance_plus_pct, v22); nothing is read from
+    // a part-number letter. The original states a band and the substitute none -> UNVERIFIED
+    // with a note, no cap (a secondary axis, as the capacitance band). The original states
+    // none -> not compared.
+    if (cat == "magnetic") {
+        auto wider_side = [&](const json& p) -> std::optional<double> {
+            const auto m = num(p, "tolerance_minus_pct"), pl = num(p, "tolerance_plus_pct");
+            if (!tolerance_band_stated(m, pl)) return std::nullopt;
+            return std::max(*m, *pl);
+        };
+        auto band_text = [&](const json& p) {
+            const double m = *num(p, "tolerance_minus_pct"), pl = *num(p, "tolerance_plus_pct");
+            return std::fabs(m - pl) < 0.005 ? "+/-" + plain_pct(m)
+                                             : "+" + plain_pct(pl) + " / -" + plain_pct(m);
+        };
+        const auto ot = wider_side(original), st = wider_side(cand);
+        if (ot && *ot > 0) {
+            if (st) {
+                // 1e-6 relative slack: the percentages are derived from decimal renderings of
+                // the stated henries (7.344e-09 / 7.2e-09), not a looser guarantee.
+                const double ratio = *st / *ot;
+                const char* v = ratio <= 1.0 + 1e-6 ? PASS : ratio <= 2.0 + 1e-6 ? WARN : FAIL;
+                params.push_back({{"name", "inductance_tolerance"}, {"verdict", v}});
+                if (v != PASS) {
+                    demote();
+                    ++worse;
+                    penalty += opt.gate_weight *
+                               (v == FAIL ? kVerdictFailPenalty : kVerdictWarnPenalty);
+                    notes.push_back(std::string("looser inductance tolerance: the substitute "
+                                                "guarantees ") +
+                                    band_text(cand) + " against the original's " +
+                                    band_text(original) +
+                                    (v == FAIL ? " — more than twice as wide, not a drop-in "
+                                                 "wherever the inductance sets a filter, "
+                                                 "resonance or ripple"
+                                               : " — up to twice as wide; check the circuit "
+                                                 "tolerates the wider spread"));
+                } else {
+                    note_direction(Dir::Lower, ot, st);
+                }
+            } else {
+                params.push_back({{"name", "inductance_tolerance"}, {"verdict", UNVERIFIED}});
+                notes.push_back("the original guarantees its inductance to " +
+                                band_text(original) +
+                                "; the substitute's record states no inductance band — "
+                                "confirm its tolerance from the datasheet");
+            }
+        }
+    }
+
     // ── transformer turns ratio (owner 2026-11-13, R2; W4) ───────────────────
     // MagneticRow carried the ratio but the ranker never compared it, so a 1:1.2 part and a
     // 1:2 part were the same candidate. Owner: "turns ratio can be +-15%, but with care".
@@ -3764,6 +3849,16 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                 : "the substitute's turns ratio is " + lists(s_cf) +
                                       "; the original's record states none — confirm both "
                                       "ratios match from the datasheets");
+        } else if (str(original, "device_type") == "transformer") {
+            // Stated by neither record (owner 2026-11-21, C4): the ratio a transformer exists
+            // for was never compared, so the row says so and the grade is capped at
+            // minor_review (turns_ratio_unstated_both in primary_unverified).
+            params.push_back({{"name", "turns_ratio"}, {"verdict", UNVERIFIED}});
+            turns_ratio_unstated_both = true;
+            demote();
+            notes.push_back("neither record states a turns ratio — the ratio this transformer "
+                            "exists for was not compared; confirm from both datasheets that the "
+                            "substitute's ratio matches the original's before this swap");
         }
     }
 
@@ -4767,6 +4862,18 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         std::optional<double> s_center = sc;
         if (!s_center && s_band) s_center = 0.5 * (*slo + *shi);
         auto band = [](double lo, double hi) { return volts(lo) + "-" + volts(hi) + " V"; };
+        // The test current each Vz is stated AT (owner 2026-11-21, C3): the same current (to
+        // 0.1 %, print rounding) -> compared as below; different currents -> the Vz figures
+        // are not on one basis, so the in-window verdict is UNVERIFIED and the grade capped at
+        // minor_review (a Vz outside the window is still a different zener: the web pool
+        // pre-filter drops it at exactly that edge); stated on one side only -> a note.
+        const auto o_iz = num(original, "vz_test_current"), s_iz = num(cand, "vz_test_current");
+        const bool iz_differs = o_iz && s_iz && std::fabs(*s_iz / *o_iz - 1.0) > 1e-3;
+        auto ma = [](double a) {
+            char b[32];
+            std::snprintf(b, sizeof b, "%g mA", a * 1e3);
+            return std::string(b);
+        };
         const std::string o_window = o_band ? band(*olo, *ohi)
                                      : oc   ? volts(*oc) + " V (no band on record)"
                                             : std::string();
@@ -4784,6 +4891,15 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             notes.push_back("zener voltage " + volts(*s_center) + " V is outside the original's " +
                             o_window + " — a different zener voltage, not a substitute");
             return reject("a different zener voltage");
+        } else if (iz_differs) {
+            params.push_back({{"name", "zener_voltage"}, {"verdict", UNVERIFIED}});
+            zener_iz_unverified = true;
+            demote();
+            notes.push_back("zener voltages stated at different test currents (the original's "
+                            "at " + ma(*o_iz) + ", the substitute's at " + ma(*s_iz) +
+                            ") — Vz moves with the current, so the two are not compared; "
+                            "confirm the substitute's Vz at the original's operating current "
+                            "from its datasheet");
         } else if (o_band && s_band && (*slo < *wlo || *shi > *whi)) {
             params.push_back({{"name", "zener_voltage"}, {"verdict", FAIL}});
             demote();
@@ -4797,6 +4913,15 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         } else {
             params.push_back({{"name", "zener_voltage"}, {"verdict", PASS}});
         }
+        if (wlo && s_center && (o_iz.has_value() != s_iz.has_value()))
+            notes.push_back(o_iz ? "the original's Vz is stated at " + ma(*o_iz) +
+                                       "; the substitute's record states no test current, so "
+                                       "the two Vz may not be on one basis — confirm its test "
+                                       "current from the datasheet"
+                                 : "the substitute's Vz is stated at " + ma(*s_iz) +
+                                       "; the original's record states no test current, so "
+                                       "the two Vz may not be on one basis — confirm the "
+                                       "original's test current from its datasheet");
         // A substitute whose Vz lies inside the original's window but away from its nominal
         // is a different marked voltage, and the verdicts above say nothing about it: a 6.0 V
         // 1N5233B sat at the top edge of BZV55-C5V6's 5.2-6.0 V window, 7 % above its 5.6 V,
@@ -6005,6 +6130,30 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                             "); footprint fit is UNVERIFIED, confirm the hole pattern from the "
                             "datasheet");
         }
+        // ── footprint area ratio (owner 2026-11-21, C5) ─────────────────────────
+        // A footprint WARN (a different case, a smaller body, one case size larger, a crossed
+        // land) whose two lands differ in AREA by 2x or more, either way, is a footprint FAIL
+        // (any_fail -> major_review): at that size the part is not a near land to rework but a
+        // different board layout. Below 2x it stays the WARN it was. Every family that compares
+        // bodies, on the two complete lands the compare above used (length x width, as stated
+        // or as the case table resolved them). Penalty unchanged.
+        if (o_dims && s_dims && has_land(*o_dims) && has_land(*s_dims)) {
+            const double oa = *o_dims->length * *o_dims->width,
+                         sa = *s_dims->length * *s_dims->width;
+            const double ratio = std::max(sa / oa, oa / sa);
+            for (auto& p : params)
+                if (p.value("name", "") == "footprint" && p.value("verdict", "") == WARN &&
+                    ratio >= kFootprintAreaFailRatio * (1.0 - 1e-9)) {
+                    p["verdict"] = FAIL;
+                    char ab[96];
+                    std::snprintf(ab, sizeof ab, "%.3g", ratio);
+                    notes.push_back("footprint area " + std::string(ab) + "x " +
+                                    (sa > oa ? "larger" : "smaller") + " than the original's (" +
+                                    land_mm(*s_dims) + " vs " + land_mm(*o_dims) +
+                                    ") — 2x or more is a different board layout, not a land to "
+                                    "rework");
+                }
+        }
         // ── height / clearance, its own axis ─────────────────────────────────
         // Not part of the land pattern, so it is judged and reported separately
         // and runs whatever the footprint verdict was — a part can need a new land
@@ -7019,7 +7168,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                     bjt_bias_unverified ||
                                     timebase_prog_order || current_rating_one_sided ||
                                     hard_rating_unverified ||
-                                    cable_core_unverified ||
+                                    cable_core_unverified || turns_ratio_unstated_both ||
+                                    zener_iz_unverified ||
                                     !orig_unstated_primary.empty() ||
                                     !both_unstated_primary.empty() || cand_no_physical_data ||
                                     ac_rating_unverified;

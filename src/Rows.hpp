@@ -543,6 +543,10 @@ struct DiodeRow : RowBase {
     // of them in no decoded part-number series; none contradicts its part-number decode.
     // v25 (not shipped yet, so no version bump).
     std::string tvs_polarity;
+    // electrical.zenerTestCurrent (A): the current the zener voltage (breakdownVoltage) is
+    // specified AT. NaN = not stated; never a "typical" 5 mA. Two zeners' Vz are compared as
+    // stated only on a common test current (owner 2026-11-21, C3). v25, no version bump.
+    double vz_test_current = kNaN();
     bool is_production = false;
     bool no_thermal() const { return !present(rth_ja) || !present(tj_max); }
 };

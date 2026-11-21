@@ -1200,6 +1200,9 @@ std::optional<DiodeRow> extract_diode(const json& env) {
     // and stays unstated, never mapped.
     if (auto p = get_str(*elec, "polarity"); p && (*p == "unidirectional" || *p == "bidirectional"))
         r.tvs_polarity = *p;
+    // The zener test current Vz is specified at (SAS electrical.zenerTestCurrent, A), as
+    // stated; a non-positive number is no current and stays unstated (owner 2026-11-21, C3).
+    if (auto iz = get_num(*elec, "zenerTestCurrent"); pos(iz)) r.vz_test_current = *iz;
     // Verbatim; "" = not stated (the ranker reads that as an UNKNOWN grade, never commercial).
     r.qualification = get_str(*part, "qualification").value_or("");
     auto status = get_str(*mi, "status");

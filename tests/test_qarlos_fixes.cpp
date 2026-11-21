@@ -9381,3 +9381,197 @@ TEST_CASE("qarlos night C: a timing supply-current warn is noted", "[qarlos-nigh
     CHECK(verdict_of(c, "current_consumption") == "warn");
     CHECK(has_note(c, "higher supply current: the substitute draws 3.5 mA against the original's 1.3 mA"));
 }
+
+// ── Owner decisions 2026-11-21, C1-C6 (night C) ─────────────────────────────────────────────
+
+// C1: the inductance band is compared by the resistor tolerance rule — tighter or equal PASS,
+// up to 2x WARN, wider FAIL; an asymmetric band counts by its wider side. NLV32T-271J-PF
+// (270 nH +/-5 %) against LQH43NZ271J03L as catalogued (+/-20 %, Qarlos r34 seed 36389375).
+TEST_CASE("owner 2026-11-21 C1: the inductance tolerance band is compared",
+          "[qarlos-night-c-c1]") {
+    auto mag = [](const char* mpn, std::optional<double> minus, std::optional<double> plus) {
+        json j = {{"mpn", mpn}, {"lifecycle_status", "production"}, {"value_si", 2.7e-7},
+                  {"rated_current", 0.3}, {"dcr", 1.0}};
+        j["tolerance_minus_pct"] = minus ? json(*minus) : json(nullptr);
+        j["tolerance_plus_pct"] = plus ? json(*plus) : json(nullptr);
+        return j;
+    };
+    kelvin::crossref::Options opt;
+    opt.check_footprint = false;
+    auto r = kelvin::crossref::cross_reference(
+        "magnetic", mag("NLV32T-271J-PF", 5.0, 5.0),
+        json::array({mag("LQH43NZ271J03L", 20.0, 20.0), mag("TEN", 10.0, 10.0),
+                     mag("TIGHT", 2.0, 2.0), mag("SAME", 5.0, 5.0), mag("NONE", {}, {})}),
+        opt);
+    const json* f = cand_by_mpn(r, "LQH43NZ271J03L");
+    const json* w = cand_by_mpn(r, "TEN");
+    const json* t = cand_by_mpn(r, "TIGHT");
+    const json* s = cand_by_mpn(r, "SAME");
+    const json* n = cand_by_mpn(r, "NONE");
+    REQUIRE((f && w && t && s && n));
+    CHECK(verdict_of(*f, "inductance_tolerance") == "fail");
+    CHECK(f->value("grade", "") == "major_review");
+    CHECK(has_note(*f, "looser inductance tolerance: the substitute guarantees +/-20 % against "
+                       "the original's +/-5 %"));
+    CHECK(verdict_of(*w, "inductance_tolerance") == "warn");
+    CHECK(w->value("grade", "") == "minor_review");
+    CHECK(verdict_of(*t, "inductance_tolerance") == "pass");
+    CHECK(verdict_of(*s, "inductance_tolerance") == "pass");
+    CHECK(s->value("grade", "") == "drop_in");
+    CHECK(verdict_of(*n, "inductance_tolerance") == "unverified");
+    CHECK(has_note(*n, "the substitute's record states no inductance band"));
+    // Asymmetric: +30 / -20 % counts as 30 % against a +/-20 % original (1.5x): WARN.
+    auto r2 = kelvin::crossref::cross_reference("magnetic", mag("ORIG20", 20.0, 20.0),
+                                                json::array({mag("ASYM", 20.0, 30.0)}), opt);
+    CHECK(verdict_of(r2["candidates"][0], "inductance_tolerance") == "warn");
+    // An original with no band: not compared.
+    auto r3 = kelvin::crossref::cross_reference("magnetic", mag("NOBAND", {}, {}),
+                                                json::array({mag("ANY", 20.0, 20.0)}), opt);
+    CHECK(verdict_of(r3["candidates"][0], "inductance_tolerance").empty());
+}
+
+// C2: two absolute (pF) bands are compared in farads. VJ1111D2R4CLGAT (2.4 pF +/-0.25 pF) and
+// C0805C229CDGACTU (2.2 pF +/-0.25 pF), the TAS record values (Qarlos r34 seed 36284646): the
+// percentages called the second looser (11.4 % vs 10.4 %).
+TEST_CASE("owner 2026-11-21 C2: absolute capacitance bands compare in farads",
+          "[qarlos-night-c-c2]") {
+    kelvin::crossref::Options opt;
+    opt.check_footprint = false;
+    json pv = {{"technology", "ceramic-class-1"}, {"dielectricCode", "C0G"}, {"case", "1111"}};
+    json pk = {{"series", "SMD Comm C0G HV"}, {"technology", "ceramic-class-1"},
+               {"dielectricCode", "C0G"}, {"case", "0805"}};
+    auto vj = cap_row(cap_env("Vishay", "VJ1111D2R4CLGAT", pv, json::object(),
+        {{"capacitance", cband(2.4e-12, 2.15e-12, 2.65e-12)}, {"ratedVoltage", 1000.0}}));
+    auto ck = cap_row(cap_env("KEMET", "C0805C229CDGACTU", pk, json::object(),
+        {{"capacitance", cband(2.2e-12, 1.95e-12, 2.45e-12)}, {"ratedVoltage", 1000.0}}));
+    auto r = kelvin::crossref::cross_reference(
+        "capacitor", cap_spec(vj), json::array({with_status(cap_spec(ck), "production")}), opt);
+    REQUIRE(r["candidates"].size() == 1);
+    CHECK(verdict_of(r["candidates"][0], "capacitance_tolerance") == "pass");
+    CHECK_FALSE(has_note(r["candidates"][0], "looser capacitance tolerance"));
+    // A wider absolute band still fails: +/-0.5 pF against +/-0.25 pF.
+    auto wide = cap_row(cap_env("X", "WIDE", pk, json::object(),
+        {{"capacitance", cband(2.2e-12, 1.7e-12, 2.7e-12)}, {"ratedVoltage", 1000.0}}));
+    auto r2 = kelvin::crossref::cross_reference(
+        "capacitor", cap_spec(vj), json::array({with_status(cap_spec(wide), "production")}), opt);
+    CHECK(verdict_of(r2["candidates"][0], "capacitance_tolerance") == "fail");
+    // Percentage bands keep the relative rule: 47 pF +/-1 % against 51 pF +/-1 % passes.
+    auto p47 = cap_row(cap_env("X", "P47", pk, json::object(),
+        {{"capacitance", cband(4.7e-11, 4.653e-11, 4.747e-11)}, {"ratedVoltage", 100.0}}));
+    auto p51 = cap_row(cap_env("X", "P51", pk, json::object(),
+        {{"capacitance", cband(5.1e-11, 5.049e-11, 5.151e-11)}, {"ratedVoltage", 100.0}}));
+    auto r3 = kelvin::crossref::cross_reference(
+        "capacitor", cap_spec(p47), json::array({with_status(cap_spec(p51), "production")}), opt);
+    CHECK(verdict_of(r3["candidates"][0], "capacitance_tolerance") == "pass");
+}
+
+// C3: the zener test current Iz. 1N4752A (31.35-34.65 V at 7.5 mA) against BZX84C33V-Q1
+// (31-35 V at 2 mA), the TAS record values: different Iz -> zener_voltage UNVERIFIED and capped
+// at minor_review; the same Iz -> compared as before; Iz on one side only -> a note.
+TEST_CASE("owner 2026-11-21 C3: zener Vz is compared only on a common test current",
+          "[qarlos-night-c-c3]") {
+    auto z = kelvin::extract_diode(
+        tvs_env("IZ", {{"standoffVoltage", 5.0}, {"zenerTestCurrent", 0.0075}}));
+    REQUIRE(z.has_value());
+    CHECK(z->vz_test_current == Approx(0.0075));
+    auto z0 = kelvin::extract_diode(tvs_env("NOIZ", {{"standoffVoltage", 5.0}}));
+    REQUIRE(z0.has_value());
+    CHECK(std::isnan(z0->vz_test_current));
+
+    json orig = {{"mpn", "1N4752A"}, {"technology", "zener"}, {"vrrm", 33.0},
+                 {"vz_min_V", 31.35}, {"vz_max_V", 34.65}, {"vz_test_current", 0.0075},
+                 {"power_dissipation", 1.0}};
+    json bzx = {{"mpn", "BZX84C33V-Q1"}, {"lifecycle_status", "production"},
+                {"technology", "zener"}, {"vrrm", 33.0}, {"vz_min_V", 31.0}, {"vz_max_V", 35.0},
+                {"vz_test_current", 0.002}, {"power_dissipation", 1.0}};
+    json same_iz = bzx;
+    same_iz["mpn"] = "SAME-IZ";
+    same_iz["vz_test_current"] = 0.0075;
+    json self = orig;
+    self["mpn"] = "SELF";
+    self["lifecycle_status"] = "production";
+    json self_2ma = self;
+    self_2ma["mpn"] = "SELF-2MA";
+    self_2ma["vz_test_current"] = 0.002;
+    json self_none = self;
+    self_none["mpn"] = "SELF-NONE";
+    self_none.erase("vz_test_current");
+    kelvin::crossref::Options opt;
+    opt.check_footprint = false;
+    auto r = kelvin::crossref::cross_reference(
+        "diode", orig, json::array({bzx, same_iz, self, self_2ma, self_none}), opt);
+    const json* b = cand_by_mpn(r, "BZX84C33V-Q1");
+    const json* si = cand_by_mpn(r, "SAME-IZ");
+    const json* s = cand_by_mpn(r, "SELF");
+    const json* s2 = cand_by_mpn(r, "SELF-2MA");
+    const json* sn = cand_by_mpn(r, "SELF-NONE");
+    REQUIRE((b && si && s && s2 && sn));
+    CHECK(verdict_of(*b, "zener_voltage") == "unverified");
+    CHECK(has_note(*b, "zener voltages stated at different test currents (the original's at "
+                       "7.5 mA, the substitute's at 2 mA)"));
+    CHECK(verdict_of(*si, "zener_voltage") == "fail");  // 31-35 V reaches outside 31.35-34.65 V
+    CHECK(verdict_of(*s, "zener_voltage") == "pass");
+    CHECK(s->value("grade", "") == "drop_in");
+    CHECK(verdict_of(*s2, "zener_voltage") == "unverified");
+    CHECK(s2->value("grade", "") == "minor_review");
+    CHECK(verdict_of(*sn, "zener_voltage") == "pass");
+    CHECK(has_note(*sn, "the original's Vz is stated at 7.5 mA; the substitute's record states "
+                        "no test current"));
+}
+
+// C4: a transformer whose turns ratio neither record states. Würth 749252100 (a current-sense
+// transformer, no turnsRatios on record) against itself: UNVERIFIED, capped at minor_review,
+// with a note. An inductor gets no turns-ratio row.
+TEST_CASE("owner 2026-11-21 C4: a turns ratio stated by neither transformer record is capped",
+          "[qarlos-night-c-c4]") {
+    const auto we = real_row(kRec749252100);
+    REQUIRE(we.turns_ratios.empty());
+    json self = mag_spec_r(we);
+    self["mpn"] = "SELF";
+    self["lifecycle_status"] = "production";
+    auto r = kelvin::crossref::cross_reference("magnetic", mag_spec_r(we), json::array({self}));
+    REQUIRE(r["candidates"].size() == 1);
+    const json& c = r["candidates"][0];
+    CHECK(verdict_of(c, "turns_ratio") == "unverified");
+    CHECK(has_note(c, "neither record states a turns ratio"));
+    CHECK(c.value("grade", "") == "minor_review");
+    const auto lqw = real_row(kRecLQW15AN7N2G00B);
+    json lself = mag_spec_r(lqw);
+    lself["mpn"] = "LSELF";
+    lself["lifecycle_status"] = "production";
+    auto r2 = kelvin::crossref::cross_reference("magnetic", mag_spec_r(lqw), json::array({lself}));
+    REQUIRE(r2["candidates"].size() == 1);
+    CHECK(verdict_of(r2["candidates"][0], "turns_ratio").empty());
+}
+
+// C5: two lands 2x or more apart in area (either way) are a footprint FAIL (major_review); below
+// 2x the WARN stands. A 1206 (3.2 x 1.6 mm) original: a 0603 (1.6 x 0.8 mm, 4x smaller) FAILs,
+// a 1210 (3.2 x 2.5 mm, 1.56x larger) stays WARN.
+TEST_CASE("owner 2026-11-21 C5: a footprint area ratio of 2x or more fails",
+          "[qarlos-night-c-c5]") {
+    auto res = [](const char* mpn, const char* cc, double l, double w) {
+        return json{{"mpn", mpn}, {"lifecycle_status", "production"}, {"value_si", 1000.0},
+                    {"power_rating", 0.25}, {"tolerance_pct", 1.0}, {"case_code", cc},
+                    {"length_m", l}, {"width_m", w}, {"mount", "smt"}};
+    };
+    auto r = kelvin::crossref::cross_reference(
+        "resistor", res("ORIG1206", "1206", 0.0032, 0.0016),
+        json::array({res("SMALL0603", "0603", 0.0016, 0.0008),
+                     res("BIG1210", "1210", 0.0032, 0.0025)}));
+    const json* sm = cand_by_mpn(r, "SMALL0603");
+    const json* bg = cand_by_mpn(r, "BIG1210");
+    REQUIRE((sm && bg));
+    CHECK(verdict_of(*sm, "footprint") == "fail");
+    CHECK(sm->value("grade", "") == "major_review");
+    CHECK(has_note(*sm, "footprint area 4x smaller than the original's"));
+    CHECK(verdict_of(*bg, "footprint") == "warn");
+    CHECK_FALSE(has_note(*bg, "footprint area"));
+}
+
+// C6: the 8045 crystal body (8.0 x 4.5 mm), e.g. ABM2-10.000MHZ-D4Y-T's "8045 2-SMD".
+TEST_CASE("owner 2026-11-21 C6: the 8045 timing body code is read", "[qarlos-night-c-c6]") {
+    using kelvin::crossref::timing_case_body_code;
+    CHECK(timing_case_body_code("8045 2-SMD", std::nullopt, std::nullopt) == "8045");
+    CHECK(timing_case_body_code("8045 2-SMD", 0.008, 0.0045) == "8045");
+    CHECK_FALSE(timing_case_body_code("8045 2-SMD", 0.005, 0.0032));
+}

@@ -1399,7 +1399,9 @@ inline bool generic_package_names_no_land(const std::string& code) {
 // timing_case_body_code below), as found; empty when it names none.
 inline std::set<std::string> timing_case_body_tokens(const std::string& code) {
     static const std::set<std::string> kBodies = {"1210", "1612", "2012", "2016", "2520",
-                                                  "3215", "3225", "5032", "6035", "7050"};
+                                                  "3215", "3225", "5032", "6035", "7050",
+                                                  // 8.0 x 4.5 mm (owner 2026-11-21, C6)
+                                                  "8045"};
     std::set<std::string> found;
     std::string tok;
     auto flush = [&] {
