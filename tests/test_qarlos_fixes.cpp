@@ -9183,3 +9183,200 @@ TEST_CASE("qarlos r28: a timing substitute not covering the original's cold end 
     CHECK(c["grade"] != "minor_review");
     CHECK(c["grade"] != "drop_in");
 }
+
+// ── Overnight fix agent C (Qarlos rounds 32-34, Kelvin 9416f0b, shards-v25) ─────────────────
+
+// r32 seeds 35132627 / 35237356 (r34 36075188): SMF4L16AH, TESDS5V0A and 1KSMB10CA state
+// electrical.polarity in their records but sit in no decoded part-number series, so the ranker
+// said "stated by neither record". The extractor carries the record's polarity; the ranker
+// reads it before the part-number decode.
+TEST_CASE("qarlos night C: a TVS polarity stated by the record is read", "[qarlos-night-c-tvs]") {
+    auto uni = kelvin::extract_diode(
+        tvs_env("SMF4L16AH", {{"standoffVoltage", 16.0}, {"polarity", "unidirectional"}}));
+    REQUIRE(uni.has_value());
+    CHECK(uni->tvs_polarity == "unidirectional");
+    auto bi = kelvin::extract_diode(
+        tvs_env("TESDS5V0B", {{"standoffVoltage", 5.0}, {"polarity", "bidirectional"}}));
+    REQUIRE(bi.has_value());
+    CHECK(bi->tvs_polarity == "bidirectional");
+    auto none = kelvin::extract_diode(tvs_env("X5V0", {{"standoffVoltage", 5.0}}));
+    REQUIRE(none.has_value());
+    CHECK(none->tvs_polarity.empty());
+    auto junk = kelvin::extract_diode(
+        tvs_env("X5V0", {{"standoffVoltage", 5.0}, {"polarity", "both"}}));
+    REQUIRE(junk.has_value());
+    CHECK(junk->tvs_polarity.empty());
+
+    json orig = tvs("SMF4L16AH", 16.0);
+    orig["tvs_polarity"] = "unidirectional";
+    json same = with_status(tvs("SMBJ16A", 16.0), "production");     // decodes uni
+    json other = with_status(tvs("SMBJ16CA", 16.0), "production");   // decodes bi
+    json rec_bi = with_status(tvs("TESDX16", 16.0), "production");   // states bi, no decode
+    rec_bi["tvs_polarity"] = "bidirectional";
+    auto r = kelvin::crossref::cross_reference("diode", orig, json::array({same, other, rec_bi}));
+    bool seen_same = false, seen_other = false, seen_rec = false;
+    for (const auto& c : r["candidates"]) {
+        if (c["mpn"] == "SMBJ16A") {
+            seen_same = true;
+            CHECK(verdict_of(c, "polarity") == "pass");
+            CHECK_FALSE(has_note(c, "stated by neither record"));
+        } else if (c["mpn"] == "SMBJ16CA") {
+            seen_other = true;
+            CHECK(verdict_of(c, "polarity") == "fail");
+            CHECK(has_note(c, "the original stated by its record"));
+        } else if (c["mpn"] == "TESDX16") {
+            seen_rec = true;
+            CHECK(verdict_of(c, "polarity") == "fail");
+        }
+    }
+    CHECK((seen_same && seen_other && seen_rec));
+    // A record contradicting its own part-number decode is read neither way.
+    json contra = with_status(tvs("SMBJ16A", 16.0), "production");
+    contra["mpn"] = "SMBJ16A-X";
+    contra["tvs_polarity"] = "bidirectional";
+    auto r2 = kelvin::crossref::cross_reference("diode", orig, json::array({contra}));
+    CHECK(verdict_of(r2["candidates"][0], "polarity") == "unverified");
+    CHECK(has_note(r2["candidates"][0], "contradicts"));
+}
+
+// r32 seed 35132627: the over-rating and no-physical-data notes promised "ranked after
+// closer-rated parts" / "ranks after parts of a known size", but both are penalties, not sort
+// tiers (SRU6013-1R0Y's 13 A VLS6045EX-1R0N-H ranked first; RN73H2ETTD8763F50's size-unknown
+// MMP100FRE909K 2nd of 5). The notes now say what the penalty does.
+TEST_CASE("qarlos night C: penalty notes do not promise a sort tier", "[qarlos-night-c-note]") {
+    json orig = {{"mpn", "SRU6013-1R0Y"}, {"value_si", 1e-6}, {"saturation_current", 2.9},
+                 {"rated_current", 3.2}, {"dcr", 0.036}};
+    json cand = {{"mpn", "VLS6045EX-1R0N-H"}, {"lifecycle_status", "production"},
+                 {"value_si", 1e-6}, {"saturation_current", 13.0}, {"rated_current", 13.0},
+                 {"dcr", 0.01}};
+    kelvin::crossref::Options opt;
+    opt.check_footprint = false;
+    auto r = kelvin::crossref::cross_reference("magnetic", orig, json::array({cand}), opt);
+    const json& c = r["candidates"][0];
+    CHECK(has_note(c, "far above what the original is rated for"));
+    CHECK(has_note(c, "ranks after an otherwise equal closer-rated part"));
+    CHECK_FALSE(has_note(c, "; ranked after closer-rated parts"));
+
+    json ro = {{"mpn", "RN73H2ETTD8763F50"}, {"value_si", 876000.0}, {"power_rating", 0.5},
+               {"case_code", "1210"}, {"length_m", 0.0032}, {"width_m", 0.0025},
+               {"mount", "smt"}};
+    json rc = {{"mpn", "MMP100FRE909K"}, {"lifecycle_status", "production"},
+               {"value_si", 876000.0}, {"power_rating", 1.0}};
+    auto rr = kelvin::crossref::cross_reference("resistor", ro, json::array({rc}));
+    const json& c2 = rr["candidates"][0];
+    CHECK(has_note(c2, "states no physical data at all"));
+    CHECK(has_note(c2, "ranks after an otherwise equal part of a known size"));
+    CHECK_FALSE(has_note(c2, "so it ranks after parts of a known size"));
+}
+
+// r33 seed 35761001: SCRH6D38-220 (1.3 A at 35 % drop) took VLS3012CX-220M-1, whose own 20 degC
+// L(I) curve falls 35 % at about 0.65 A, with a WARN "not directly comparable": one stated
+// curve now resolves the criterion mismatch (owner curve rule 2026-11-14, as for Coss / Vf / Cj).
+TEST_CASE("qarlos night C: one L(I) curve is read at the other side's stated Isat criterion",
+          "[qarlos-night-c-isat]") {
+    json orig = {{"mpn", "SCRH6D38-220"}, {"value_si", 2.2e-5}, {"saturation_current", 1.3},
+                 {"saturation_points", json::array({{{"current", 1.3}, {"percent_drop", 35},
+                                                     {"temperature", nullptr}}})},
+                 {"saturation_from_curve", false}};
+    json cand = {{"mpn", "VLS3012CX-220M-1"}, {"lifecycle_status", "production"},
+                 {"value_si", 2.2e-5}, {"saturation_current", 0.62},
+                 {"saturation_points", json::array({{{"current", 0.62}, {"percent_drop", nullptr},
+                                                     {"temperature", nullptr}}})},
+                 {"saturation_from_curve", false},
+                 {"bias_curve", {{"current", {0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9}},
+                                 {"ratio", {1, 0.99095, 0.96833, 0.93213, 0.88688, 0.82353,
+                                            0.72398, 0.57466, 0.39885, 0.27843}},
+                                 {"temperature", 20}}}};
+    kelvin::crossref::Options opt;
+    opt.check_footprint = false;
+    auto r = kelvin::crossref::cross_reference("magnetic", orig, json::array({cand}), opt);
+    REQUIRE(r["candidates"].size() == 1);
+    const json& c = r["candidates"][0];
+    CHECK(verdict_of(c, "saturation_current") == "fail");
+    CHECK(has_note(c, "stated criterion on the substitute's L(I) curve"));
+    CHECK_FALSE(has_note(c, "not directly comparable"));
+    // A curve at a non-room temperature is not on the stated figure's basis: not read.
+    json hot = cand;
+    hot["bias_curve"]["temperature"] = 100;
+    auto r2 = kelvin::crossref::cross_reference("magnetic", orig, json::array({hot}), opt);
+    CHECK(verdict_of(r2["candidates"][0], "saturation_current") == "warn");
+    CHECK(has_note(r2["candidates"][0], "not directly comparable"));
+    // The mirror: the original's curve read at the substitute's stated criterion.
+    json o2 = cand, c2 = orig;
+    o2["mpn"] = "ORIG-CURVE";
+    c2["mpn"] = "SUB-STATED";
+    c2["lifecycle_status"] = "production";
+    c2["saturation_points"][0]["current"] = 0.8;  // 0.8 A at 35 %: the curve reads ~0.65 A
+    auto r3 = kelvin::crossref::cross_reference("magnetic", o2, json::array({c2}), opt);
+    CHECK(verdict_of(r3["candidates"][0], "saturation_current") == "pass");
+    CHECK(has_note(r3["candidates"][0], "stated criterion on the original's L(I) curve"));
+}
+
+// r33 seed 35551543: AB308-12.000MHZ-18-R50-5 (18 pF) took ECS-120-S-5PX-TR, which states no
+// load capacitance, with no note.
+TEST_CASE("qarlos night C: a one-sided crystal load capacitance is noted", "[qarlos-night-c-cl]") {
+    json orig = {{"mpn", "AB308-12.000MHZ-18-R50-5"}, {"subtype", "oscillator"},
+                 {"technology", "quartzCrystal"}, {"frequency", 12e6}, {"load_capacitance", 18e-12}};
+    json cand = {{"mpn", "ECS-120-S-5PX-TR"}, {"lifecycle_status", "production"},
+                 {"subtype", "oscillator"}, {"technology", "quartzCrystal"}, {"frequency", 12e6}};
+    auto r = kelvin::crossref::cross_reference("timeBase", orig, json::array({cand}));
+    REQUIRE(r["candidates"].size() == 1);
+    CHECK(has_note(r["candidates"][0], "specified at a 18 pF load capacitance; the substitute's record states none"));
+    auto r2 = kelvin::crossref::cross_reference("timeBase", cand, json::array({with_status(orig, "production")}));
+    CHECK(has_note(r2["candidates"][0], "the substitute is specified at a 18 pF load capacitance"));
+}
+
+// r34 seed 36075188: AON2803's dies state 3.8 A at 25 degC ambient only; the note said its record
+// "states none" against SiS415DNT's 35 A. The note now names the ambient-referred rating.
+TEST_CASE("qarlos night C: a one-sided Id note names the other side's ambient rating",
+          "[qarlos-night-c-idamb]") {
+    json orig = {{"mpn", "SiS415DNT"}, {"vds", 20.0}, {"id", 35.0}, {"rds_on", 0.006},
+                 {"channel", "pChannel"}};
+    json cand = {{"mpn", "AON2803"}, {"lifecycle_status", "production"}, {"vds", 20.0},
+                 {"rds_on", 0.07}, {"channel", "pChannel"},
+                 {"id_ambient_curves", json::array({{{"x", {25.0, 70.0}}, {"y", {3.8, 3.0}}}})}};
+    auto r = kelvin::crossref::cross_reference("mosfet", orig, json::array({cand}));
+    REQUIRE(r["candidates"].size() == 1);
+    CHECK(has_note(r["candidates"][0], "it states only an ambient-referred rating, 3.8 A at 25 degC ambient"));
+}
+
+// r34 seed 36075188: 7M-12.000MAHJ-T ("4-SMD, No Lead", stated 3.2 x 2.5 mm) took
+// ABM3C-12.000MHZ-D4Y-T ("5032 4-SMD") with no footprint word.
+TEST_CASE("qarlos night C: stated timing dims contradicting the other side's body code differ",
+          "[qarlos-night-c-body]") {
+    json orig = {{"mpn", "7M-12.000MAHJ-T"}, {"subtype", "oscillator"},
+                 {"technology", "quartzCrystal"}, {"frequency", 12e6},
+                 {"case_code", "4-SMD, No Lead"}, {"length_m", 0.0032}, {"width_m", 0.0025},
+                 {"mount", "smt"}};
+    json cand = {{"mpn", "ABM3C-12.000MHZ-D4Y-T"}, {"lifecycle_status", "production"},
+                 {"subtype", "oscillator"}, {"technology", "quartzCrystal"}, {"frequency", 12e6},
+                 {"case_code", "5032 4-SMD"}, {"mount", "smt"}};
+    auto r = kelvin::crossref::cross_reference("timeBase", orig, json::array({cand}));
+    REQUIRE(r["candidates"].size() == 1);
+    const json& c = r["candidates"][0];
+    CHECK(verdict_of(c, "footprint") == "warn");
+    CHECK(c.value("footprint", "") == "different_case");
+    CHECK(has_note(c, "the substitute's case names the 5032 body; the original's record states 3.2 x 2.5 mm"));
+    // Agreeing dims stay the same body (Qarlos r31), not a different case.
+    json same = cand;
+    same["case_code"] = "3225 4-SMD";
+    auto r2 = kelvin::crossref::cross_reference("timeBase", orig, json::array({same}));
+    CHECK(r2["candidates"][0].value("footprint", "") != "different_case");
+}
+
+// r34 seed 36389375: SG-8018CG 16.0000M-TJHSA0 (3.5 mA) for AMPMAFB-16.0000T (1.3 mA) carried a
+// bare 'warn' current_consumption row.
+TEST_CASE("qarlos night C: a timing supply-current warn is noted", "[qarlos-night-c-icc]") {
+    json orig = {{"mpn", "AMPMAFB-16.0000T"}, {"subtype", "oscillator"}, {"technology", "mems"},
+                 {"output_type", "cmos"}, {"frequency", 16e6}, {"supply_min_V", 1.8},
+                 {"supply_max_V", 3.3}, {"current_consumption", 0.0013}};
+    json cand = orig;
+    cand["mpn"] = "SG-8018CG 16.0000M-TJHSA0";
+    cand["lifecycle_status"] = "production";
+    cand["current_consumption"] = 0.0035;
+    auto r = kelvin::crossref::cross_reference("timeBase", orig, json::array({cand}));
+    REQUIRE(r["candidates"].size() == 1);
+    const json& c = r["candidates"][0];
+    CHECK(verdict_of(c, "current_consumption") == "warn");
+    CHECK(has_note(c, "higher supply current: the substitute draws 3.5 mA against the original's 1.3 mA"));
+}

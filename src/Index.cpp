@@ -470,6 +470,7 @@ void row_io(Ar& ar, DiodeRow& r) {
     ar.dbl(r.vf_test_current);         // v22
     ar.dbl(r.reverse_leakage);         // v22 (owner 2026-11-14, operating-point loss)
     ar.str(r.price_quotes);            // v22 (owner 2026-11-14, price)
+    ar.str(r.tvs_polarity);            // v25 (Qarlos r32: electrical.polarity)
     ar.boolean(r.is_production);
 }
 

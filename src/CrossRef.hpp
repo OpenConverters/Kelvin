@@ -1371,6 +1371,11 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             both_unstated_primary.push_back(l);
     };
     // Y4: one note and one small penalty per grossly over-rated primary V / A rating.
+    // The note promises only what the penalty does (Qarlos r32, seed 35132627): it said
+    // "ranked after closer-rated parts", yet SRU6013-1R0Y's 13 A VLS6045EX-1R0N-H ranked
+    // FIRST, because every closer-rated part was a smaller body (footprint WARN, a larger
+    // penalty). A penalty orders otherwise equal parts; it is not a sort tier. The same
+    // holds for the no-physical-data note below (RN73H2ETTD8763F50: 2nd of 5).
     auto gross_over_rating = [&](const std::string& key, std::optional<double> o,
                                  std::optional<double> s) {
         if (!o || !s || !(*o > 0) || !(*s > kGrossOverRatingFactor * *o)) return;
@@ -1402,7 +1407,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         char b[320];
         std::snprintf(b, sizeof b,
                       "%s %g %s is %.3gx the original's %g %s — far above what the original is "
-                      "rated for (more than %gx): %s; ranked after closer-rated parts",
+                      "rated for (more than %gx): %s; a ranking penalty, so it ranks after an "
+                      "otherwise equal closer-rated part",
                       it->second.first, *s, it->second.second, *s / *o, *o, it->second.second,
                       kGrossOverRatingFactor, likely);
         notes.push_back(b);
@@ -3123,6 +3129,21 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                 " — it will not run correctly from the original's rail");
                 return reject("supply range does not cover the original's rail");
             }
+            // A higher supply current is a verdict, so it says so (Qarlos r34, seed 36389375:
+            // SG-8018CG 16.0000M-TJHSA0, 3.5 mA against AMPMAFB-16.0000T's 1.3 mA, carried a bare
+            // 'warn' current_consumption row and no word). Verdict, penalty and grade unchanged.
+            if (spec.key == "current_consumption" && (verdict == WARN || verdict == FAIL)) {
+                const auto oi = num(original, "current_consumption"),
+                           si = num(cand, "current_consumption");
+                if (oi && si) {
+                    char cb[240];
+                    std::snprintf(cb, sizeof cb,
+                                  "higher supply current: the substitute draws %g mA against the "
+                                  "original's %g mA — check the rail's current budget",
+                                  *si * 1000.0, *oi * 1000.0);
+                    notes.push_back(cb);
+                }
+            }
             // The supply current shares the supply_key gate but is not the range: a
             // substitute that states its 1.8 V rail but no current was told "states no supply
             // range" (Qarlos r26 32095486, ASDMB-50.000MHZ-C-40-T -> 831056223). Each gap
@@ -3412,6 +3433,39 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 if (curves.decisive && verdict != UNVERIFIED) {
                     od = curves.rows[*curves.decisive].orig_at;
                     sd = curves.rows[*curves.decisive].sub_at;
+                } else {
+                    basis_mismatch = true;
+                }
+            } else if (const auto one = spec.key == "saturation_current"
+                                            ? isat::compare_one_curve(original, cand,
+                                                                      spec.tol_factor)
+                                            : isat::OneCurveCompare{};
+                       one.applies) {
+                // One record's L(I) curve read at the other's stated criterion (Qarlos r33,
+                // seed 35761001; compare_saturation_current).
+                char buf[96];
+                std::string list;
+                for (const auto& row : one.rows) {
+                    auto amps = [](const std::optional<double>& a) {
+                        char b[32];
+                        if (!a) return std::string("not reached");
+                        std::snprintf(b, sizeof b, "%.3g A", *a);
+                        return std::string(b);
+                    };
+                    std::snprintf(buf, sizeof buf, "%g %% drop ", row.drop_pct);
+                    list += (list.empty() ? "" : "; ") + std::string(buf) + amps(row.sub_at) +
+                            " vs " + amps(row.orig_at);
+                }
+                notes.push_back(std::string("saturation compared at the ") +
+                                (one.curve_on_substitute ? "original's" : "substitute's") +
+                                " stated criterion on the " +
+                                (one.curve_on_substitute ? "substitute's" : "original's") +
+                                " L(I) curve (substitute vs original: " + list +
+                                ") — the curve is read at room temperature against a figure "
+                                "stated at room temperature or at none, never extrapolated");
+                if (one.decisive && verdict != UNVERIFIED) {
+                    od = one.rows[*one.decisive].orig_at;
+                    sd = one.rows[*one.decisive].sub_at;
                 } else {
                     basis_mismatch = true;
                 }
@@ -4390,17 +4444,45 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // polarity row at all. An unknown polarity on either side is UNVERIFIED with a note
         // saying which side could not be read; like the other one-sided unknowns of a
         // secondary nature it neither demotes nor caps (no cap existed here before either).
-        const TvsPolarity op = tvs_polarity_from_mpn(str(original, "mpn")),
-                          sp = tvs_polarity_from_mpn(str(cand, "mpn"));
+        // The record's own polarity (SAS electrical.polarity) comes first; the part-number
+        // decode is consulted only where the record is silent (Qarlos r32, seeds 35132627 /
+        // 35237356: SMF4L16AH and TESDS5V0A state "unidirectional" in their records but sit in
+        // no decoded series, so both came back "stated by neither record"). A record that
+        // contradicts its own part-number decode (none in TAS 33069cb) is not read either way:
+        // the side stays UNKNOWN with a note naming the contradiction.
+        struct SidePolarity { TvsPolarity p = TvsPolarity::Unknown; std::string src; bool conflict = false; };
+        auto side_polarity = [&](const json& o) {
+            SidePolarity sp;
+            const std::string rec = str(o, "tvs_polarity");
+            const TvsPolarity stated = rec == "unidirectional" ? TvsPolarity::Uni
+                                       : rec == "bidirectional" ? TvsPolarity::Bi
+                                                                : TvsPolarity::Unknown;
+            const TvsPolarity decoded = tvs_polarity_from_mpn(str(o, "mpn"));
+            if (stated != TvsPolarity::Unknown && decoded != TvsPolarity::Unknown &&
+                stated != decoded) {
+                sp.conflict = true;
+                return sp;
+            }
+            if (stated != TvsPolarity::Unknown) { sp.p = stated; sp.src = "stated by its record"; }
+            else if (decoded != TvsPolarity::Unknown) { sp.p = decoded; sp.src = "decoded from its part number"; }
+            return sp;
+        };
+        const SidePolarity osp = side_polarity(original), ssp = side_polarity(cand);
+        const TvsPolarity op = osp.p, sp = ssp.p;
         {
+            auto pol = [](TvsPolarity t) {
+                return std::string(t == TvsPolarity::Bi ? "bidirectional" : "unidirectional");
+            };
+            const std::string basis = "the original " + osp.src + ", the substitute " + ssp.src;
             if (op == TvsPolarity::Bi && sp == TvsPolarity::Uni) {
                 params.push_back({{"name", "polarity"}, {"verdict", FAIL}});
                 demote();
                 penalty += opt.gate_weight * kVerdictFailPenalty;
                 ++worse;
-                notes.push_back("unidirectional substitute for a bidirectional original (decoded "
-                                "from the part numbers) — it does not clamp a negative excursion, "
-                                "it conducts it as a forward diode");
+                notes.push_back("unidirectional substitute for a bidirectional original (" +
+                                basis +
+                                ") — it does not clamp a negative excursion, it conducts it as "
+                                "a forward diode");
             } else if (op == TvsPolarity::Uni && sp == TvsPolarity::Bi) {
                 // The mirror image is no silent pass either (Qarlos 2026-11-08). A
                 // unidirectional original clamps a NEGATIVE excursion as a forward diode at
@@ -4413,32 +4495,36 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 demote();
                 penalty += opt.gate_weight * kVerdictFailPenalty;
                 ++worse;
-                notes.push_back("bidirectional substitute for a unidirectional original (decoded "
-                                "from the part numbers) — a negative excursion is no longer "
-                                "clamped near -1 V by forward conduction but only at the "
-                                "substitute's reverse breakdown; confirm what the protected "
-                                "circuit tolerates below ground");
+                notes.push_back("bidirectional substitute for a unidirectional original (" +
+                                basis +
+                                ") — a negative excursion is no longer clamped near -1 V by "
+                                "forward conduction but only at the substitute's reverse "
+                                "breakdown; confirm what the protected circuit tolerates below "
+                                "ground");
             } else if (op == TvsPolarity::Unknown || sp == TvsPolarity::Unknown) {
                 params.push_back({{"name", "polarity"}, {"verdict", UNVERIFIED}});
-                auto pol = [](TvsPolarity t) {
-                    return std::string(t == TvsPolarity::Bi ? "bidirectional" : "unidirectional");
-                };
+                for (const auto* side : {&osp, &ssp})
+                    if (side->conflict)
+                        notes.push_back(std::string("the ") +
+                                        (side == &osp ? "original's" : "substitute's") +
+                                        " record states a TVS polarity its part number "
+                                        "contradicts — neither is used; confirm the polarity "
+                                        "from its datasheet");
                 if (op == TvsPolarity::Bi)
-                    notes.push_back("the original is bidirectional (decoded from its part number); "
-                                    "the substitute's polarity cannot be read from its record or "
-                                    "part number — confirm it clamps both polarities");
+                    notes.push_back("the original is bidirectional (" + osp.src +
+                                    "); the substitute's polarity cannot be read from its "
+                                    "record or part number — confirm it clamps both polarities");
                 else if (op == TvsPolarity::Uni)
-                    notes.push_back("the original is unidirectional (decoded from its part "
-                                    "number); the substitute's polarity cannot be read from its "
+                    notes.push_back("the original is unidirectional (" + osp.src +
+                                    "); the substitute's polarity cannot be read from its "
                                     "record or part number — confirm it is unidirectional too "
                                     "(a bidirectional part no longer clamps a negative "
                                     "excursion near -1 V)");
                 else if (sp != TvsPolarity::Unknown)
-                    notes.push_back("the substitute is " + pol(sp) +
-                                    " (decoded from its part number); the original's polarity "
-                                    "cannot be read from its record or part number — confirm "
-                                    "from the original's datasheet that it is " + pol(sp) +
-                                    " too before this swap");
+                    notes.push_back("the substitute is " + pol(sp) + " (" + ssp.src +
+                                    "); the original's polarity cannot be read from its record "
+                                    "or part number — confirm from the original's datasheet "
+                                    "that it is " + pol(sp) + " too before this swap");
                 else
                     notes.push_back("TVS polarity (unidirectional / bidirectional) is stated by "
                                     "neither record and decodes from neither part number — "
@@ -4861,12 +4947,38 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             std::snprintf(b, sizeof b, "%g A", o ? *o : *s);
             current_rating_one_sided = true;
             demote();
+            // The silent side may still state an AMBIENT-referred drain current (the dies'
+            // ambientRatings, id_ambient_curves): "states none" read as no current at all
+            // (Qarlos r34, seed 36075188: AON2803, 3.8 A per die at 25 degC ambient, against
+            // SiS415DNT's 35 A). A different basis from a case-rated Id, so the verdict is
+            // unchanged; the note names what that record does state.
+            std::string ambient;
+            if (r.key == std::string("id")) {
+                const json& silent = o ? cand : original;
+                if (auto it = silent.find("id_ambient_curves"); it != silent.end() && it->is_array())
+                    for (const auto& c : *it) {
+                        const auto xs = c.find("x"), ys = c.find("y");
+                        if (xs == c.end() || ys == c.end() || !xs->is_array() || !ys->is_array() ||
+                            xs->empty() || xs->size() != ys->size() || !(*xs)[0].is_number() ||
+                            !(*ys)[0].is_number())
+                            continue;
+                        char ab[160];
+                        std::snprintf(ab, sizeof ab,
+                                      " (it states only an ambient-referred rating, %.3g A at "
+                                      "%g degC ambient — not the same basis as a case-rated Id)",
+                                      (*ys)[0].get<double>(), (*xs)[0].get<double>());
+                        ambient = ab;
+                        break;
+                    }
+            }
             notes.push_back(o ? std::string("the original states a ") + what + " of " + b +
-                                    "; the substitute's record states none — whether it "
+                                    "; the substitute's record states none" + ambient +
+                                    " — whether it "
                                     "carries the original's current is unknown; confirm its "
                                     "rating from the datasheet before this swap"
                               : std::string("the substitute states a ") + what + " of " + b +
-                                    "; the original's record states none, so it could not be "
+                                    "; the original's record states none" + ambient +
+                                    ", so it could not be "
                                     "weighed against the original's requirement — confirm the "
                                     "original's rating from its datasheet before this swap");
         }
@@ -5410,10 +5522,29 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 o_body = s_body;
                 dims_named_side = "original";
             }
+            // The mirror image (Qarlos r34, seed 36075188): 7M-12.000MAHJ-T, "4-SMD, No Lead"
+            // with a stated 3.2 x 2.5 mm body, took ABM3C-12.000MHZ-D4Y-T "5032 4-SMD" with no
+            // footprint word, because the generic side named no land. Its STATED length and
+            // width (both, outside the body code's tolerance in either orientation) establish
+            // that it is not the body the other side's case names: a different case.
+            std::string contradicted_side;  // the side whose stated dims contradict the other's body
+            auto dims_contradict_body = [&](const std::string& body, const std::string& case_str,
+                                            const json& p) {
+                const auto l = num(p, "length_m"), w = num(p, "width_m");
+                return timing_case_body_tokens(case_str).empty() && l && w &&
+                       !timing_body_agrees(body, l, w);
+            };
+            if (cat == "timeBase" && dims_named_side.empty()) {
+                if (o_body && !s_body && dims_contradict_body(*o_body, sc, cand))
+                    contradicted_side = "substitute";
+                else if (s_body && !o_body && dims_contradict_body(*s_body, oc, original))
+                    contradicted_side = "original";
+            }
             const bool same_timing_body = o_body && s_body && *o_body == *s_body;
             if (magnetic_case ? magnetic_case_codes_differ(oc, sc)
                               : (!oc.empty() && !sc.empty() &&
-                                 case_ids.first != case_ids.second && !generic_side &&
+                                 case_ids.first != case_ids.second &&
+                                 (!generic_side || !contradicted_side.empty()) &&
                                  !same_timing_body)) {
                 out["footprint"] = "different_case";
                 params.push_back({{"name", "footprint"}, {"verdict", WARN}});
@@ -5437,6 +5568,16 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                     if (!src.empty())
                         bodies += " (" + src[0] + (src.size() > 1 ? "; " + src[1] : "") +
                                   " — a table size, not one the record states)";
+                }
+                if (!contradicted_side.empty()) {
+                    const json& p = contradicted_side == "original" ? original : cand;
+                    char db[64];
+                    std::snprintf(db, sizeof db, "%g x %g mm", *num(p, "length_m") * 1e3,
+                                  *num(p, "width_m") * 1e3);
+                    bodies += " (the " + std::string(contradicted_side == "original" ? "substitute" : "original") +
+                              "'s case names the " +
+                              (contradicted_side == "original" ? *s_body : *o_body) +
+                              " body; the " + contradicted_side + "'s record states " + db + ")";
                 }
                 notes.push_back("different package/case (" + oc + " -> " + sc + ")" + bodies +
                                 " — different land pattern; a substitute to re-lay-out, not a "
@@ -6234,6 +6375,28 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 return reject("crystal specified for a different load capacitance");
             }
         }
+        // One side states its CL, the other does not (Qarlos r33, seed 35551543:
+        // AB308-12.000MHZ-18-R50-5, an 18 pF crystal, took ECS-120-S-5PX-TR, whose record states
+        // none, with a bare UNVERIFIED load_capacitance_pF row and no word). The ceramic
+        // resonator rule below for a one-sided built-in capacitance: UNVERIFIED (the table row
+        // already says so), a note naming the stated value, no cap and no penalty.
+        if (o_cl.has_value() != s_cl.has_value()) {
+            char b[320];
+            if (o_cl)
+                std::snprintf(b, sizeof b,
+                              "the original is specified at a %g pF load capacitance; the "
+                              "substitute's record states none, so whether it oscillates on "
+                              "frequency in the original's load network is unknown — confirm "
+                              "its load capacitance from the datasheet",
+                              *o_cl * 1e12);
+            else
+                std::snprintf(b, sizeof b,
+                              "the substitute is specified at a %g pF load capacitance; the "
+                              "original's record states none — confirm the original's load "
+                              "capacitance from its datasheet before this swap",
+                              *s_cl * 1e12);
+            notes.push_back(b);
+        }
     }
 
     // ── ceramic resonator built-in load capacitors ──────────────────────────
@@ -6702,11 +6865,13 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         notes.push_back(mount_unverified
                             ? "the substitute's record states no physical data at all (no case "
                               "or package, no dimensions; its board attach is noted separately) "
-                              "— its size is unknown, so it ranks after parts of a known size; "
+                              "— its size is unknown, a ranking penalty, so it ranks after an "
+                              "otherwise equal part of a known size; "
                               "confirm the package from its datasheet before this swap"
                             : "the substitute's record states no physical data at all (no case or "
                               "package, no dimensions, no mount) — its size and how it mounts are "
-                              "unknown, so it ranks after parts of a known size; confirm the "
+                              "unknown, a ranking penalty, so it ranks after an otherwise equal "
+                              "part of a known size; confirm the "
                               "package from its datasheet before this swap");
     }
     if (!both_unstated_primary.empty()) {

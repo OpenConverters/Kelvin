@@ -1194,6 +1194,12 @@ std::optional<DiodeRow> extract_diode(const json& env) {
     r.clamping_waveform = get_str(*elec, "clampingWaveform").value_or("");
     r.peak_pulse_power_waveform = get_str(*elec, "peakPulsePowerWaveform").value_or("");
     r.peak_pulse_current_waveform = get_str(*elec, "peakPulseCurrentWaveform").value_or("");
+    // TVS / ESD clamping polarity as the record states it (SAS electrical.polarity, enum
+    // unidirectional | bidirectional; the only path and the only two values the catalogue
+    // uses: 3,703 / 3,324 occurrences in TAS 33069cb). Any other string is not a polarity
+    // and stays unstated, never mapped.
+    if (auto p = get_str(*elec, "polarity"); p && (*p == "unidirectional" || *p == "bidirectional"))
+        r.tvs_polarity = *p;
     // Verbatim; "" = not stated (the ranker reads that as an UNKNOWN grade, never commercial).
     r.qualification = get_str(*part, "qualification").value_or("");
     auto status = get_str(*mi, "status");

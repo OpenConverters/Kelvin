@@ -561,6 +561,79 @@ inline CurveCompare compare_curves(const nlohmann::json& orig, const nlohmann::j
     }
     return out;
 }
+// ── Isat read on ONE L(I) curve against the other side's stated criterion ─────────────────
+// The owner curve rule (2026-11-14) as the Coss / Vf / Cj basis checks apply it: a stated
+// curve resolves a basis mismatch. Isat had only the two-curve case (Z5 above), so a
+// substitute whose record carries an L(I) curve but quotes its Isat figure at no criterion was
+// "not directly comparable" with an original rated 1.3 A at 35 % drop, and graded only WARN,
+// although its own curve falls 35 % at 0.65 A (VLS3012CX-220M-1 / VLS4012CX-220M-1 for
+// SCRH6D38-220, Qarlos r33 seed 35761001). Here exactly one record states a curve and the
+// other states its Isat at one or more drop criteria: the curve is read at each stated
+// criterion — the first point it falls to (1 - drop) x L(0), interpolated, never extrapolated
+// (curve_current_at_drop) — and set against the stated current. Only a curve stated at room
+// temperature is read, against stated points at room temperature or at none (a scalar that
+// states no temperature is taken as 25 degC, owner 2026-11-14, as for Vf). Per criterion
+// substitute >= margin x original -> PASS, else FAIL; a criterion the curve does not reach is
+// UNVERIFIED; worst wins, as in compare_curves. No criterion read -> not applied (the stated
+// figures are compared as before).
+struct OneCurveCompare {
+    bool applies = false;
+    bool curve_on_substitute = false;
+    std::vector<CurveCriterion> rows;
+    const char* verdict = PASS;
+    std::optional<size_t> decisive;
+};
+inline OneCurveCompare compare_one_curve(const nlohmann::json& orig, const nlohmann::json& sub,
+                                         double margin) {
+    OneCurveCompare out;
+    const auto oc = bias_curve(orig), sc = bias_curve(sub);
+    if (oc.has_value() == sc.has_value()) return out;  // none, or both (compare_curves)
+    const BiasCurve& curve = oc ? *oc : *sc;
+    const nlohmann::json& stated_side = oc ? sub : orig;
+    if (!curve.temperature || !is_room_temperature(*curve.temperature)) return out;
+    if (stated_side.is_object() && stated_side.value("saturation_from_curve", false)) return out;
+    auto pts = stated_side.is_object() ? stated_side.find("saturation_points")
+                                       : nlohmann::json::const_iterator{};
+    if (!stated_side.is_object() || pts == stated_side.end() || !pts->is_array()) return out;
+    std::vector<std::pair<double, double>> stated;  // (drop %, current A)
+    for (const auto& p : *pts) {
+        if (!p.is_object()) continue;
+        const auto c = detail::jnum(p, "current"), d = detail::jnum(p, "percent_drop");
+        if (!c || !(*c > 0) || !d || !(*d > 0) || !(*d < 100)) continue;
+        if (const auto t = detail::jnum(p, "temperature"); t && !is_room_temperature(*t))
+            continue;
+        bool seen = false;
+        for (const auto& e : stated) seen = seen || e.first == *d;
+        if (!seen) stated.emplace_back(*d, *c);
+    }
+    if (stated.empty()) return out;
+    std::sort(stated.begin(), stated.end());
+    out.curve_on_substitute = sc.has_value();
+    auto rank = [](const char* v) {
+        return std::string(v) == FAIL ? 2 : std::string(v) == UNVERIFIED ? 1 : 0;
+    };
+    double worst_ratio = 0;
+    bool any_read = false;
+    for (const auto& [d, c] : stated) {
+        const auto read = curve_current_at_drop(curve, d);
+        CurveCriterion row{d, std::nullopt, std::nullopt, UNVERIFIED};
+        row.orig_at = oc ? read : std::optional<double>(c);
+        row.sub_at = sc ? read : std::optional<double>(c);
+        if (row.orig_at && row.sub_at) {
+            any_read = true;
+            row.verdict = *row.sub_at >= margin * *row.orig_at ? PASS : FAIL;
+            const double ratio = *row.sub_at / *row.orig_at;
+            if (!out.decisive || ratio < worst_ratio) {
+                out.decisive = out.rows.size();
+                worst_ratio = ratio;
+            }
+        }
+        if (rank(row.verdict) > rank(out.verdict)) out.verdict = row.verdict;
+        out.rows.push_back(row);
+    }
+    out.applies = any_read;
+    return out;
+}
 }  // namespace isat
 
 // The original states no saturation current, only its rated (thermal) current. The two
@@ -608,6 +681,9 @@ inline ParamOutcome compare_saturation_current(const ParamSpec& spec, const nloh
     // Both records state an L(I) curve: compared on the curves (owner 2026-11-13, Z5).
     if (const auto cc = isat::compare_curves(orig, sub, spec.tol_factor); cc.applies)
         return cc.verdict;
+    // One record states a curve, the other a stated criterion: the curve is read there.
+    if (const auto oc = isat::compare_one_curve(orig, sub, spec.tol_factor); oc.applies)
+        return oc.verdict;
     std::vector<isat::Point> op = isat::resolve_points(orig), sp = isat::resolve_points(sub);
     bool o_has = !op.empty(), s_has = !sp.empty();
     if (!o_has && !s_has) return UNVERIFIED;

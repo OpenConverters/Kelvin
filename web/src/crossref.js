@@ -407,6 +407,9 @@ export const XREF = [
       clamping_waveform: r.clamping_waveform ?? '',
       peak_pulse_power_waveform: r.peak_pulse_power_waveform ?? '',
       peak_pulse_current_waveform: r.peak_pulse_current_waveform ?? '',
+      // v25 (Qarlos r32): the record's stated TVS / ESD polarity ('unidirectional' |
+      // 'bidirectional'); null when unstated. The ranker prefers it over the part-number decode.
+      tvs_polarity: r.tvs_polarity || null,
       // v20 (Qarlos 2026-11-09): the junction temperature maximum, which the substitute must
       // reach (lower = FAIL), and the qualification the record states ('' = not stated =
       // UNKNOWN grade to the ranker, never "commercial").

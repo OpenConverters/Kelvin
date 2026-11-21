@@ -123,7 +123,8 @@ inline const FieldTable<DiodeRow>& fields<DiodeRow>() {
          {"clamping_waveform", &DiodeRow::clamping_waveform},
          {"peak_pulse_power_waveform", &DiodeRow::peak_pulse_power_waveform},
          {"peak_pulse_current_waveform", &DiodeRow::peak_pulse_current_waveform},
-         {"qualification", &DiodeRow::qualification}},
+         {"qualification", &DiodeRow::qualification},
+         {"tvs_polarity", &DiodeRow::tvs_polarity}},
         {{"is_production", &DiodeRow::is_production}},
         {}};
     return t;
