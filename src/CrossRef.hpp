@@ -3003,11 +3003,10 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // The conversion architecture is an ADC identity only (kAnalog).
         if (cat == "analog" && spec.key == "architecture" && str(original, "subtype") != "adc")
             continue;
-        // A digital isolator's electricals (owner 2026-11-21, B7) are compared for an isolator
-        // original only: the other analog subtypes keep their own tables.
-        if (cat == "analog" &&
-            (spec.key == "isolation_voltage_V" || spec.key == "temp_min_C" ||
-             spec.key == "temp_max_C") &&
+        // A digital isolator's isolation rating (owner 2026-11-21, B7) is compared for an
+        // isolator original only. The operating range is compared for every analog subtype
+        // (owner 2026-11-21, B11).
+        if (cat == "analog" && spec.key == "isolation_voltage_V" &&
             str(original, "subtype") != "digitalIsolator")
             continue;
         // The switch / multiplexer arrangement is an identity of those two subtypes only.
@@ -3668,9 +3667,13 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     if (cat == "analog") {
         bool any_established = false;
         int compared = 0;
+        // The operating range counts as an isolator electrical (B7) only; on the other
+        // subtypes it is compared (B11) but is not an electrical that lifts this cap.
+        const bool iso_orig = str(original, "subtype") == "digitalIsolator";
         for (const auto& p : params) {
             const std::string name = p["name"];
             if (is_hard_param(cat, name)) continue;
+            if (!iso_orig && (name == "temp_min_C" || name == "temp_max_C")) continue;
             const bool in_table =
                 std::any_of(params_for(cat).begin(), params_for(cat).end(),
                             [&](const ParamSpec& s) { return s.key == name; });
@@ -4228,7 +4231,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // the original only, they are UNVERIFIED and noted but neither demote nor cap the grade
     // (they used to cap at minor_review; see the table at the grade site). A stated shortfall
     // is still a FAIL from the table loop.
-    // A digital isolator's operating range (owner 2026-11-21, B7) takes the same notes.
+    // An analog operating range (owner 2026-11-21, B7 / B11: every subtype) takes the same
+    // notes.
     if (cat == "resistor" || cat == "magnetic" || cat == "chipBead" || cat == "diode" ||
         cat == "analog") {
         auto verdict_of = [&](const char* name) -> std::string {

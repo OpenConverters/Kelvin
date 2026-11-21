@@ -907,7 +907,7 @@ struct AnalogRow : RowBase {
     double isolation_voltage_rms = kNaN();
     double isolation_duration_s = kNaN();
     // degC — thermal.operatingTemperature, read for every analog subtype (the cross-reference
-    // compares it for a digital-isolator original only, B7). Negative and zero are ordinary
+    // compares it for every subtype, owner 2026-11-21, B11). Negative and zero are ordinary
     // values, not absence; NaN when unstated.
     double temp_min_c = kNaN();
     double temp_max_c = kNaN();

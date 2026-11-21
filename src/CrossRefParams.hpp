@@ -929,7 +929,9 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
         // with no band: a lower one is a FAIL (a safety certification level, not a margin).
         // Different test durations make the two figures incomparable: UNVERIFIED (CrossRef.hpp).
         {"isolation_voltage_V", D::Higher, 0.0, 0.0, false, false, nullptr},
-        // The operating range: the resistor / magnetic rule, both ends covered with NO band.
+        // The operating range: the resistor / magnetic rule, both ends covered with NO band;
+        // compared for every analog subtype (owner 2026-11-21, B11), one-sided UNVERIFIED with a
+        // note and no cap. It lifts the B1 cap for an isolator original only (CrossRef.hpp).
         {"temp_min_C", D::Lower, 0.0, 0.0, false, false, nullptr},
         {"temp_max_C", D::Higher, 0.0, 0.0, false, false, nullptr},
     };

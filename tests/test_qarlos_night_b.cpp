@@ -443,3 +443,64 @@ TEST_CASE("owner B10: an isolator's isolation voltage stated by one record only 
     opb["isolation_voltage_V"] = 2500.0;
     CHECK(night_b_verdict(night_b_one(opa, opb), "isolation_voltage_V").empty());
 }
+
+namespace {
+// The projection web/src/crossref.js passes since B11: the operating range for every analog
+// subtype (raw: a cold limit is negative), on top of the full projection.
+json night_b_temp_spec(const std::string& mpn) {
+    const auto r = night_b_row(mpn);
+    json s = night_b_full_spec(r);
+    auto num = [](double v) { return std::isnan(v) ? json(nullptr) : json(v); };
+    s["temp_min_C"] = num(r.temp_min_c);
+    s["temp_max_C"] = num(r.temp_max_c);
+    return s;
+}
+}  // namespace
+
+TEST_CASE("owner B11: the operating range is compared for every analog subtype",
+          "[qarlos-night-b][qarlos-night-b-temp]") {
+    // OP262 (-55..125 degC) -> TS462CPT (-20..70): neither end covered.
+    const json op = night_b_one(night_b_temp_spec("OP262"), night_b_temp_spec("TS462CPT"));
+    CHECK(night_b_verdict(op, "temp_min_C") == "fail");
+    CHECK(night_b_verdict(op, "temp_max_C") == "fail");
+    CHECK(night_b_note(op, "rated only down to -20 degC vs the original's -55 degC"));
+    CHECK(op["grade"] == "major_review");
+    // A switch: ADG1402 (-40..125 degC) against a twin rated only to 85 degC (ADG788's and
+    // MAX4742's hot end; neither is ADG1402's configuration): the hot end is not covered.
+    json sw85 = night_b_temp_spec("ADG1402");
+    sw85["mpn"] = "ADG1402-85C";  // a synthetic MPN in no TAS record
+    sw85["lifecycle_status"] = "production";
+    sw85["temp_max_C"] = 85.0;
+    const json sw = night_b_one(night_b_temp_spec("ADG1402"), sw85);
+    CHECK(night_b_verdict(sw, "temp_min_C") == "pass");
+    CHECK(night_b_verdict(sw, "temp_max_C") == "fail");
+    // A same-range twin passes both ends.
+    json orig = night_b_temp_spec("OP262");
+    json twin = orig;
+    twin["mpn"] = "OP262-TWIN";  // a synthetic MPN in no TAS record
+    twin["lifecycle_status"] = "production";
+    const json ok = night_b_one(orig, twin);
+    CHECK(night_b_verdict(ok, "temp_min_C") == "pass");
+    CHECK(night_b_verdict(ok, "temp_max_C") == "pass");
+    CHECK(ok["grade"] == "drop_in");
+    // One-sided: UNVERIFIED with the operating-range note, no cap.
+    twin["temp_min_C"] = nullptr;
+    twin["temp_max_C"] = nullptr;
+    const json one = night_b_one(orig, twin);
+    CHECK(night_b_verdict(one, "temp_max_C") == "unverified");
+    CHECK(night_b_note(one, "the substitute's record states no maximum operating temperature"));
+    CHECK(one["grade"] == "drop_in");
+}
+
+TEST_CASE("owner B11: a verified operating range does not lift B1 outside the isolators",
+          "[qarlos-night-b][qarlos-night-b-temp]") {
+    const json o = {{"mpn", "OPA-A"}, {"subtype", "operationalAmplifier"}, {"channels", 1.0},
+                    {"temp_min_C", -40.0}, {"temp_max_C", 125.0}, {"gbw", 1e6}};
+    const json s = {{"mpn", "OPA-B"}, {"lifecycle_status", "production"},
+                    {"subtype", "operationalAmplifier"}, {"channels", 1.0},
+                    {"temp_min_C", -40.0}, {"temp_max_C", 125.0}, {"slew_rate", 1e6}};
+    const json c = night_b_one(o, s);
+    CHECK(night_b_verdict(c, "temp_max_C") == "pass");
+    CHECK(c["grade"] == "minor_review");
+    CHECK(night_b_note(c, "no electrical parameter could be compared"));
+}

@@ -422,4 +422,13 @@ await runCrossRef({ family: 'bjt', original: { mpn: 'OLD', manufacturer: 'onsemi
   vceo_rated: 45, ic_continuous: 0.1, polarity: 'npn' }, manufacturers: ['Nexperia'], engine: bjtEngine })
 assert.ok(!('prebiased' in bjtPools.at(-1).filters))
 
+// Every analog subtype's operating range reaches the ranker (owner 2026-11-21, B11), raw: a
+// cold limit stays negative, 0 degC stays 0, unstated stays null.
+const swTemp = { mpn: 'SW', device_type: 'analogSwitch', temp_min_c: 0, temp_max_c: 70 }
+assert.equal(famFor('analog', swTemp).spec(swTemp).temp_min_C, 0)
+assert.equal(famFor('analog', swTemp).spec(swTemp).temp_max_C, 70)
+const inaTemp = { mpn: 'INA', device_type: 'instrumentationAmplifier', temp_min_c: -40 }
+assert.equal(famFor('analog', inaTemp).spec(inaTemp).temp_min_C, -40)
+assert.equal(famFor('analog', inaTemp).spec(inaTemp).temp_max_C, null)
+
 console.log('crossref variants: all checks passed')

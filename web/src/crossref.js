@@ -524,13 +524,15 @@ export const XREF = [
       // substitute must cover it (kAnalog gain_min / gain_max).
       gain_min: nz(r.minimum_gain), gain_max: nz(r.maximum_gain),
       // A digital isolator's electricals (owner 2026-11-21, B7): the withstand isolation
-      // voltage (V RMS) with its test duration, and the operating range. The ranker compares
-      // them for an isolator original only; the range is passed for isolators only, because the
-      // shared operating-range block judges any category's temp_min_C / temp_max_C.
+      // voltage (V RMS) with its test duration; the ranker compares it for an isolator
+      // original only.
       isolation_voltage_V: nz(r.isolation_voltage_rms),
       isolation_duration_s: nz(r.isolation_duration_s),
-      temp_min_C: r.device_type === 'digitalIsolator' ? (r.temp_min_c ?? null) : null,
-      temp_max_C: r.device_type === 'digitalIsolator' ? (r.temp_max_c ?? null) : null }),
+      // The operating range, compared for EVERY analog subtype (owner 2026-11-21, B11): both
+      // ends covered, one-sided = note, no cap. Raw, NOT through nz(): a cold limit is negative
+      // and 0 degC is a stated value; unstated arrives null.
+      temp_min_C: r.temp_min_c ?? null,
+      temp_max_C: r.temp_max_c ?? null }),
     // For an ADC original the architecture is a hard key too, so an ADC that does not state it
     // is not a verified original (the FAE honesty rule); for a switch or a multiplexer the
     // configuration is. Other subtypes compare neither.
