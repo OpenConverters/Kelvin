@@ -89,6 +89,8 @@ json spec_for(const std::string& cat, const json& row) {
         o["vces"] = num("vces_rated"); o["ic"] = num("ic_continuous");
         o["vce_sat"] = num("vce_sat"); o["vce_sat_ic"] = num("vce_sat_ic");
         o["tj_max"] = num("tj_max"); o["technology"] = s("technology");
+        // owner A11 (2026-11-21): synced with crossref.js — Rth(j-c) is passed (A9)
+        o["rth_jc"] = num("rth_jc");
     } else if (cat == "bjt") {
         // web/src/crossref.js XREF bjt (owner 2026-11-15)
         o["vceo"] = num("vceo_rated"); o["ic"] = num("ic_continuous");
@@ -111,6 +113,16 @@ json spec_for(const std::string& cat, const json& row) {
         o["capacitance"] = num("capacitance"); o["technology"] = s("technology");
         o["max_continuous_ac_voltage"] = num("max_continuous_ac_voltage");
         o["energy_absorption"] = num("energy_absorption");
+        // owner A11 (2026-11-21): synced with crossref.js — the surge waveform, the clamping
+        // test current and the operating range, raw (0 degC is a stated value; absent -> null)
+        o["surge_waveform"] = s("surge_waveform"); o["clamping_current"] = num("clamping_current");
+        {
+            auto raw = [&](const char* k) -> json {
+                auto it = row.find(k);
+                return (it != row.end() && it->is_number()) ? *it : json(nullptr);
+            };
+            o["temp_min_C"] = raw("temp_min_c"); o["temp_max_C"] = raw("temp_max_c");
+        }
     }
     return o;
 }
