@@ -9575,3 +9575,90 @@ TEST_CASE("owner 2026-11-21 C6: the 8045 timing body code is read", "[qarlos-nig
     CHECK(timing_case_body_code("8045 2-SMD", 0.008, 0.0045) == "8045");
     CHECK_FALSE(timing_case_body_code("8045 2-SMD", 0.005, 0.0032));
 }
+
+// C10: the C2 absolute-band detection is exactly "both deviations equal an EIA pF step
+// (0.05 / 0.1 / 0.25 / 0.5 pF) on a nominal below 10 pF". A +/-0.25 pF band on 15 pF and
+// 12 pF nominals, or a +/-0.2 pF band (no EIA step) on 2.4 / 2.2 pF, keeps the percentage
+// rule: the substitute's band is the wider percentage, so it fails.
+TEST_CASE("owner 2026-11-21 C10: absolute pF bands only below 10 pF and on an EIA step",
+          "[qarlos-night-c-c10]") {
+    kelvin::crossref::Options opt;
+    opt.check_footprint = false;
+    json pk = {{"series", "SMD Comm C0G HV"}, {"technology", "ceramic-class-1"},
+               {"dielectricCode", "C0G"}, {"case", "0805"}};
+    auto cap = [&](const char* mpn, double n, double d) {
+        return with_status(cap_spec(cap_row(cap_env("X", mpn, pk, json::object(),
+            {{"capacitance", cband(n, n - d, n + d)}, {"ratedVoltage", 100.0}}))), "production");
+    };
+    auto tol = [&](const json& o, const json& s) {
+        auto r = kelvin::crossref::cross_reference("capacitor", o, json::array({s}), opt);
+        REQUIRE(r["candidates"].size() == 1);
+        return verdict_of(r["candidates"][0], "capacitance_tolerance");
+    };
+    // 15 pF +/-0.25 pF (1.67 %) -> 12 pF +/-0.25 pF (2.08 %): nominal >= 10 pF, percentages.
+    CHECK(tol(cap("O15", 15e-12, 0.25e-12), cap("S12", 12e-12, 0.25e-12)) == "fail");
+    // 2.4 pF +/-0.2 pF (8.3 %) -> 2.2 pF +/-0.2 pF (9.1 %): 0.2 pF is no EIA step, percentages.
+    CHECK(tol(cap("O24", 2.4e-12, 0.2e-12), cap("S22", 2.2e-12, 0.2e-12)) == "fail");
+    // The accepted case itself: +/-0.25 pF on 2.4 / 2.2 pF compares in farads and passes.
+    CHECK(tol(cap("A24", 2.4e-12, 0.25e-12), cap("B22", 2.2e-12, 0.25e-12)) == "pass");
+}
+
+// C11: a zener whose Vz lies outside the original's window is rejected whatever its test
+// current: 1N4752A (31.35-34.65 V at 7.5 mA) against a 36 V part stated at 2 mA.
+TEST_CASE("owner 2026-11-21 C11: an out-of-window Vz is rejected regardless of Iz",
+          "[qarlos-night-c-c11]") {
+    json orig = {{"mpn", "1N4752A"}, {"technology", "zener"}, {"vrrm", 33.0},
+                 {"vz_min_V", 31.35}, {"vz_max_V", 34.65}, {"vz_test_current", 0.0075},
+                 {"power_dissipation", 1.0}};
+    json z36 = {{"mpn", "Z36-2MA"}, {"lifecycle_status", "production"},
+                {"technology", "zener"}, {"vrrm", 36.0}, {"vz_min_V", 34.2}, {"vz_max_V", 37.8},
+                {"vz_test_current", 0.002}, {"power_dissipation", 1.0}};
+    kelvin::crossref::Options opt;
+    opt.check_footprint = false;
+    auto r = kelvin::crossref::cross_reference("diode", orig, json::array({z36}), opt);
+    const json* z = cand_by_mpn(r, "Z36-2MA");
+    REQUIRE(z);
+    CHECK((*z)["status"] == "no_substitute");
+    CHECK(verdict_of(*z, "zener_voltage") == "fail");
+    CHECK(has_note(*z, "a different zener voltage, not a substitute"));
+}
+
+// C8: a tantalum height read from a case designation is a MAXIMUM and is compared against the
+// other side's stated maximum (capacitor row height_max). KEMET T540D156K025DH8710 ("2817",
+// 7.3 x 4.3 x 2.8 mm, maximum 3.1 mm) against Vishay T51D156M025C0100 ("D", no drawing): the
+// D case's 7343-31 reads 3.1 mm, which is the original's stated maximum, not "taller" than its
+// 2.8 mm nominal (Qarlos r36, seed 37541394). TAS records as of shards-v25.
+namespace night_c_c8 {
+const char* kT540D = R"KREC({"capacitor":{"manufacturerInfo":{"name":"KEMET","reference":"T540D156K025DH8710","datasheetInfo":{"part":{"partNumber":"T540D156K025DH8710","series":"T540 HRA","case":"2817","technology":"tantalum-polymer"},"electrical":{"capacitance":{"nominal":1.5e-05,"minimum":1.35e-05,"maximum":1.65e-05},"ratedVoltage":25.0,"voltageRatedDcMax":25.0,"dissipationFactor":0.1,"dissipationFactorFrequency":120.0,"leakageCurrent":3.8e-05,"esr":0.1,"esrFrequency":100000.0,"rippleCurrent":1.5,"rippleCurrentFrequency":100000.0,"rippleCurrentTemperature":45.0},"thermal":{"temperature":{"minimum":-55.0,"maximum":125.0}},"mechanical":{"shape":{"assembly":"SMT","shapeType":"SMD Chip"},"dimensions":{"length":{"nominal":0.0073,"minimum":0.007,"maximum":0.0076},"thickness":{"nominal":0.00013},"height":{"nominal":0.0028,"minimum":0.0025,"maximum":0.0031},"width":{"nominal":0.0043,"minimum":0.004,"maximum":0.0046}}},"provenance":[{"source":"manufacturerParametric","retrievedDate":"2026-10-11","fields":["part.series","part.case","part.description","part.technology","electrical.capacitance.nominal","electrical.ratedVoltage","electrical.voltageRatedDcMax","electrical.dissipationFactor","electrical.dissipationFactorFrequency","electrical.leakageCurrent","electrical.esr","electrical.esrFrequency","electrical.rippleCurrent","electrical.rippleCurrentFrequency","electrical.rippleCurrentTemperature","thermal.temperature","mechanical.dimensions.length","mechanical.dimensions.thickness","mechanical.dimensions.height","mechanical.dimensions.width","mechanical.shape"],"verification":"valuesReadFromSource","verificationDate":"2026-10-11"},{"source":"derived","retrievedDate":"2026-10-11","fields":["electrical.capacitance.minimum","electrical.capacitance.maximum"],"derivation":"nominal x (1 -/+ tolerance), tolerance 10% as listed by the vendor"},{"source":"manufacturerParametric","retrievedDate":"2026-10-11","fields":["electrical.capacitance"],"verification":"valuesReadFromSource","verificationDate":"2026-10-18"}]},"datasheetUrl":"https://yageogroup.com/content/datasheet/asset/file/KEM_T2077_T540-541"}}})KREC";
+const char* kT51D = R"KREC({"capacitor":{"manufacturerInfo":{"name":"Vishay","reference":"T51D156M025C0100","status":"production","datasheetUrl":"https://www.vishay.com/doc?40259","datasheetInfo":{"part":{"partNumber":"T51D156M025C0100","technology":"tantalum-polymer","series":"T51","case":"D"},"electrical":{"capacitance":{"nominal":1.4999999999999999e-05,"minimum":1.2e-05,"maximum":1.8e-05},"ratedVoltage":25.0,"polarized":true,"leakageCurrent":3.75e-05,"dissipationFactor":0.1,"dissipationFactorFrequency":120.0,"esr":0.1,"esrFrequency":100000.0,"rippleCurrent":2.12,"rippleCurrentFrequency":100000.0,"rippleCurrentTemperature":45.0},"mechanical":{"shape":{"assembly":"SMT","shapeType":"SMD, molded"}},"provenance":[{"source":"manufacturerDatasheet","retrievedDate":"2026-09-07","verification":"valuesReadFromSource","verificationDate":"2026-09-07","fields":["part.case","electrical.capacitance","electrical.ratedVoltage","electrical.leakageCurrent","electrical.dissipationFactor","electrical.dissipationFactorFrequency","electrical.esr","electrical.esrFrequency","electrical.rippleCurrent","electrical.rippleCurrentFrequency","electrical.rippleCurrentTemperature"]}]}}}})KREC";
+json spec(const kelvin::CapacitorRow& r) {
+    json s = cap_spec(r);
+    s["height_max"] = std::isnan(r.height_max) ? json(nullptr) : json(r.height_max);
+    return with_status(s, "production");
+}
+}  // namespace night_c_c8
+
+TEST_CASE("owner 2026-11-21 C8: a designation height is a maximum, compared with a stated maximum",
+          "[qarlos-night-c-c8]") {
+    using namespace night_c_c8;
+    const auto k = cap_row(json::parse(kT540D));
+    const auto v = cap_row(json::parse(kT51D));
+    CHECK(k.height_m == Approx(0.0028));
+    CHECK(k.height_max == Approx(0.0031));
+    CHECK(std::isnan(v.height_max));
+    auto one = [](const json& o, const json& s) {
+        kelvin::crossref::Options opt;
+        auto r = kelvin::crossref::cross_reference("capacitor", o, json::array({s}), opt);
+        REQUIRE(r["candidates"].size() == 1);
+        return r["candidates"][0];
+    };
+    const json c = one(spec(k), spec(v));
+    CHECK(c["height_fit"] == "fits");
+    CHECK(verdict_of(c, "height") == "pass");
+    CHECK_FALSE(has_note(c, "taller than the original"));
+    CHECK(has_note(c, "against the original's stated maximum (3.1 mm)"));
+    // The other way: the D case (3.1 mm maximum) original against the 3.1 mm stated maximum.
+    const json back = one(spec(v), spec(k));
+    CHECK(back["height_fit"] == "fits");
+    CHECK(has_note(back, "against the substitute's stated maximum (3.1 mm)"));
+}

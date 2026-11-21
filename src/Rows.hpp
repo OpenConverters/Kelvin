@@ -633,6 +633,11 @@ struct CapacitorRow : RowBase {
     double esl = kNaN();
     double temp_min_c = kNaN();
     double temp_max_c = kNaN();
+    // The body height's stated MAXIMUM (m), from the same drawing field height_m resolves
+    // (mechanical[.dimensions].height.maximum). NaN = not stated; never a nominal or a table
+    // value. A tantalum height read from a case designation is a maximum and is compared
+    // against this (owner 2026-11-21, C8). v25, no version bump.
+    double height_max = kNaN();
     bool is_production = false;
     // v23 (owner 2026-11-15): the measured curves live in the family's curve shard
     // (<family>.curves.kidx), not in the base shard; see CapacitorCurveSet and CurveSlot.

@@ -505,6 +505,7 @@ void row_io(Ar& ar, CapacitorRow& r) {
     ar.str(r.price_quotes);                // v22 (owner 2026-11-14, capacitor price)
     ar.dbl(r.dissipation_factor);          // v22 (owner 2026-11-14, ESR from tan delta)
     ar.dbl(r.dissipation_factor_frequency);
+    ar.dbl(r.height_max);                  // v25 (owner 2026-11-21, C8: stated maximum height)
 }
 
 template <class Ar>

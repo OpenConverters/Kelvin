@@ -1647,6 +1647,24 @@ std::optional<CapacitorRow> extract_capacitor(const json& env) {
                 const bool rad = l.find("radial") != std::string::npos;
                 if (ax != rad) r.lead_form = ax ? "axial" : "radial";
             }
+    // The body height's stated MAXIMUM (v25, owner 2026-11-21, C8): read from the same drawing
+    // object height_m resolved from (the nested `dimensions`, else `mechanical`), and kept only
+    // while height_m is still that field's own height (a diameter rule may have replaced it).
+    // Nothing else: no nominal, no table value.
+    if (const json* mech = obj_get(*di, "mechanical"); mech && present(r.height_m)) {
+        const json* nested = obj_get(*mech, "dimensions");
+        for (const json* src : {nested, mech}) {
+            if (!src) continue;
+            const json* h = obj_get(*src, "height");
+            if (!h) continue;
+            if (h->is_object())
+                if (auto mx = get_num(*h, "maximum"); pos(mx))
+                    if (auto hn = resolve_field(*src, "height"); hn && *hn == r.height_m &&
+                                                                 *mx >= r.height_m)
+                        r.height_max = *mx;
+            break;
+        }
+    }
     // The qualified reliability level (v20, PEAS qualifiedReliability on part), verbatim.
     if (const json* qr = obj_get(*part, "qualifiedReliability"); qr && qr->is_object()) {
         r.qualified_spec = get_str(*qr, "specification").value_or("");

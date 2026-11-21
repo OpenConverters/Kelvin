@@ -126,7 +126,9 @@ export const XREF = [
       capacitance_min: nz(r.capacitance_min), capacitance_max: nz(r.capacitance_max),
       lead_form: r.lead_form || null,
       qualified_spec: r.qualified_spec || null, qualified_grade: r.qualified_grade || null,
-      qualified_failure_rate: r.qualified_failure_rate ?? null }),
+      qualified_failure_rate: r.qualified_failure_rate ?? null,
+      // v25 (owner 2026-11-21, C8): the body height's stated maximum (m); null unstated.
+      height_max: nz(r.height_max) }),
     params: [
       { key: 'value', label: 'C', row: 'capacitance', unit: 'F' },
       { key: 'voltage', label: 'V rated', row: 'v_rated', unit: 'V' },

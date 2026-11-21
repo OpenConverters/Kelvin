@@ -6174,24 +6174,49 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             const auto oh = tantalum_case_height(capacitor_case_side(original));
             const auto sh = tantalum_case_height(capacitor_case_side(cand));
             std::vector<std::string> read;
+            bool o_designated = false, s_designated = false;
             auto fill = [&](std::optional<Dims>& d, const std::optional<CaseHeight>& h,
-                            const char* who) {
+                            const char* who, bool& designated) {
                 if (!h || (d && d->height)) return;
                 if (!d) d = Dims{};
                 d->height = h->height_m;
                 d->height_from_table = false;
+                designated = true;
                 read.push_back(std::string(who) + " " + h->designation + " (" +
                                mm(h->height_m) + " mm)");
             };
-            fill(o_dims, oh, "the original's");
-            fill(s_dims, sh, "the substitute's");
+            fill(o_dims, oh, "the original's", o_designated);
+            fill(s_dims, sh, "the substitute's", s_designated);
             if (!read.empty() && o_dims && o_dims->height && s_dims && s_dims->height) {
                 std::string what;
                 for (size_t i = 0; i < read.size(); ++i) what += (i ? ", " : "") + read[i];
+                // Owner 2026-11-21 (C8): a height read from a case designation is a MAXIMUM
+                // (the EIA 7343-31 D case is "up to 3.1 mm"), so it is compared against the
+                // other side's stated MAXIMUM height (capacitor row height_max), never its
+                // nominal: T51D156M025C0100 (case D, 3.1 mm) came back "taller" than
+                // T540D156K025DH8710's 2.8 mm nominal, whose stated maximum is 3.1 mm (Qarlos
+                // r36, seed 37541394). Where the other side states no maximum, its stated
+                // height is compared as before (the r17-L2 behaviour; whether that should be
+                // UNVERIFIED instead is an open owner question), and the note says so.
+                std::string against;
+                if (o_designated != s_designated) {
+                    std::optional<Dims>& other = o_designated ? s_dims : o_dims;
+                    const json& other_row = o_designated ? cand : original;
+                    const char* other_who = o_designated ? "the substitute's" : "the original's";
+                    const auto hmax = num(other_row, "height_max");
+                    if (hmax && *hmax > 0) {
+                        other->height = *hmax;
+                        against = std::string(", against ") + other_who + " stated maximum (" +
+                                  mm(*hmax) + " mm)";
+                    } else {
+                        against = std::string(", against ") + other_who + " stated height (" +
+                                  mm(*other->height) + " mm, no maximum on record)";
+                    }
+                }
                 notes.push_back("same land (" + str(original, "case_code") + " -> " +
                                 str(cand, "case_code") +
                                 "); the case heights differ by designation, read as " + what +
-                                " — height compared on its own axis");
+                                " (a maximum)" + against + " — height compared on its own axis");
             }
         }
         HeightFit hfit = height_fit(o_dims, s_dims);
