@@ -407,13 +407,15 @@ TEST_CASE("owner B7: B1 caps an isolator only when its electricals are unverifie
     const json d = night_b_one(orig, dur);
     CHECK(night_b_verdict(d, "isolation_voltage_V") == "unverified");
     CHECK(night_b_note(d, "withstand isolation voltages tested for different durations"));
-    // Not an isolator original: the isolator rows are not compared.
+    // Not an isolator original: the isolation row is not compared. Its operating range is
+    // (owner 2026-11-21, B11 / T1: expectation rewritten from "no temp_max_C row" to the new
+    // behaviour, a 85 degC substitute does not cover the original's 125 degC).
     const json opa = {{"mpn", "OPA-A"}, {"subtype", "operationalAmplifier"}, {"channels", 1.0},
                       {"temp_max_C", 125.0}, {"gbw", 1e6}};
     const json opb = {{"mpn", "OPA-B"}, {"lifecycle_status", "production"},
                       {"subtype", "operationalAmplifier"}, {"channels", 1.0},
                       {"temp_max_C", 85.0}, {"gbw", 1e6}};
-    CHECK(night_b_verdict(night_b_one(opa, opb), "temp_max_C").empty());
+    CHECK(night_b_verdict(night_b_one(opa, opb), "temp_max_C") == "fail");
 }
 
 TEST_CASE("owner B10: an isolator's isolation voltage stated by one record only caps",
