@@ -126,7 +126,9 @@ export const XREF = [
       capacitance_min: nz(r.capacitance_min), capacitance_max: nz(r.capacitance_max),
       lead_form: r.lead_form || null,
       qualified_spec: r.qualified_spec || null, qualified_grade: r.qualified_grade || null,
-      qualified_failure_rate: r.qualified_failure_rate ?? null }),
+      qualified_failure_rate: r.qualified_failure_rate ?? null,
+      // v25 (owner 2026-11-21, C8): the body height's stated maximum (m); null unstated.
+      height_max: nz(r.height_max) }),
     params: [
       { key: 'value', label: 'C', row: 'capacitance', unit: 'F' },
       { key: 'voltage', label: 'V rated', row: 'v_rated', unit: 'V' },
@@ -407,6 +409,11 @@ export const XREF = [
       clamping_waveform: r.clamping_waveform ?? '',
       peak_pulse_power_waveform: r.peak_pulse_power_waveform ?? '',
       peak_pulse_current_waveform: r.peak_pulse_current_waveform ?? '',
+      // v25 (Qarlos r32): the record's stated TVS / ESD polarity ('unidirectional' |
+      // 'bidirectional'); null when unstated. The ranker prefers it over the part-number decode.
+      tvs_polarity: r.tvs_polarity || null,
+      // v25 (owner 2026-11-21, C3): the zener test current Vz is stated at (A); null unstated.
+      vz_test_current: nz(r.vz_test_current),
       // v20 (Qarlos 2026-11-09): the junction temperature maximum, which the substitute must
       // reach (lower = FAIL), and the qualification the record states ('' = not stated =
       // UNKNOWN grade to the ranker, never "commercial").

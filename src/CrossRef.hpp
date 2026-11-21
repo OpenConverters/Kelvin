@@ -308,6 +308,7 @@ inline std::vector<std::string> comparison_source_fields(const std::string& cat,
     }
     if (cat == "magnetic" || cat == "chipBead") {
         if (name == "value") return {"electrical.inductance"};
+        if (name == "inductance_tolerance") return {"electrical.inductance"};
         if (name == "saturation_current")
             return {"electrical.saturationCurrents", "electrical.saturationCurrentPeak"};
         if (name == "rated_current") return {"electrical.ratedCurrents", "electrical.ratedCurrentPoints"};
@@ -737,6 +738,8 @@ inline constexpr double kUnknownTempGradePenaltyPerC = 0.002;
 // numeric terms so no single categorical miss can outweigh the primary value.
 inline constexpr double kVerdictWarnPenalty = 0.5;
 inline constexpr double kVerdictFailPenalty = 3.0;
+// Owner 2026-11-21 (C5): two lands 2x or more apart in area (either way) are a footprint FAIL.
+inline constexpr double kFootprintAreaFailRatio = 2.0;
 // Gross over-rating (owner 2026-11-13, Y4; resistor power rating added by the owner
 // 2026-11-14): a substitute whose primary voltage, current or (resistor) power rating is
 // more than kGrossOverRatingFactor times the original's costs
@@ -1407,6 +1410,12 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // A cable core's cable diameter or pass count the substitute does not state while the
     // original does (owner 2026-11-14): UNVERIFIED, capped at minor_review.
     bool cable_core_unverified = false;
+    // A transformer whose turns ratio NEITHER record states (owner 2026-11-21, C4): UNVERIFIED,
+    // capped at minor_review, with a note telling the user to confirm the ratio.
+    bool turns_ratio_unstated_both = false;
+    // Two zeners whose Vz are stated at different test currents (owner 2026-11-21, C3):
+    // zener_voltage UNVERIFIED, capped at minor_review.
+    bool zener_iz_unverified = false;
     // Primary ratings the ORIGINAL does not state and the substitute does (owner 2026-11-13,
     // Y2; is_primary_rating): each candidate is capped at minor_review with a note.
     std::vector<std::string> orig_unstated_primary;
@@ -1438,6 +1447,11 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             both_unstated_primary.push_back(l);
     };
     // Y4: one note and one small penalty per grossly over-rated primary V / A rating.
+    // The note promises only what the penalty does (Qarlos r32, seed 35132627): it said
+    // "ranked after closer-rated parts", yet SRU6013-1R0Y's 13 A VLS6045EX-1R0N-H ranked
+    // FIRST, because every closer-rated part was a smaller body (footprint WARN, a larger
+    // penalty). A penalty orders otherwise equal parts; it is not a sort tier. The same
+    // holds for the no-physical-data note below (RN73H2ETTD8763F50: 2nd of 5).
     auto gross_over_rating = [&](const std::string& key, std::optional<double> o,
                                  std::optional<double> s) {
         if (!o || !s || !(*o > 0) || !(*s > kGrossOverRatingFactor * *o)) return;
@@ -1469,7 +1483,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         char b[320];
         std::snprintf(b, sizeof b,
                       "%s %g %s is %.3gx the original's %g %s — far above what the original is "
-                      "rated for (more than %gx): %s; ranked after closer-rated parts",
+                      "rated for (more than %gx): %s; a ranking penalty, so it ranks after an "
+                      "otherwise equal closer-rated part",
                       it->second.first, *s, it->second.second, *s / *o, *o, it->second.second,
                       kGrossOverRatingFactor, likely);
         notes.push_back(b);
@@ -3068,9 +3083,30 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             cap_tol_judged = true;
             if (s_n && *s_n > 0 && s_lo && s_hi) {
                 const bool same_nominal = std::fabs(*o_n - *s_n) <= 1e-9 * std::max(*o_n, *s_n);
-                // Deviations below / above nominal, in farads (equal nominals) or as a
-                // fraction of each record's own nominal (different nominals).
-                const double o_scale = same_nominal ? 1.0 : *o_n, s_scale = same_nominal ? 1.0 : *s_n;
+                // Owner 2026-11-21 (C2): when BOTH bands are absolute (pF) bands, the absolute
+                // widths are compared in farads whatever the nominals: VJ1111D2R4CLGAT (2.4 pF
+                // +/-0.25 pF) and C0805C229CDGACTU (2.2 pF +/-0.25 pF) guarantee the same band,
+                // which the percentages (10.4 % vs 11.4 %) called looser (Qarlos r34, seed
+                // 36284646). The records state farads only, so "absolute" is read from the band
+                // itself: each record's deviations below and above its nominal both equal one
+                // of the EIA-198 absolute tolerance steps (A 0.05, B 0.1, C 0.25, D 0.5 pF),
+                // within 1e-6 relative (decimal renderings), on a nominal below 10 pF, the
+                // range those pF letters are printed for. Percentage bands keep the rule below.
+                auto absolute_band = [](double n, double lo, double hi) {
+                    if (!(n < 10e-12)) return false;
+                    auto step = [](double d) {
+                        for (double a : {0.05e-12, 0.1e-12, 0.25e-12, 0.5e-12})
+                            if (std::fabs(d - a) <= 1e-6 * a) return true;
+                        return false;
+                    };
+                    return step(n - lo) && step(hi - n);
+                };
+                const bool absolute = absolute_band(*o_n, *o_lo, *o_hi) &&
+                                      absolute_band(*s_n, *s_lo, *s_hi);
+                // Deviations below / above nominal, in farads (equal nominals, or two absolute
+                // bands) or as a fraction of each record's own nominal (different nominals).
+                const bool in_farads = same_nominal || absolute;
+                const double o_scale = in_farads ? 1.0 : *o_n, s_scale = in_farads ? 1.0 : *s_n;
                 const double o_dn = (*o_n - *o_lo) / o_scale, o_up = (*o_hi - *o_n) / o_scale;
                 const double s_dn = (*s_n - *s_lo) / s_scale, s_up = (*s_hi - *s_n) / s_scale;
                 // 1e-6 relative slack: the records' farads are decimal renderings (4.465e-11
@@ -3320,6 +3356,21 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                 supply_range(cand) +
                                 " — it will not run correctly from the original's rail");
                 return reject("supply range does not cover the original's rail");
+            }
+            // A higher supply current is a verdict, so it says so (Qarlos r34, seed 36389375:
+            // SG-8018CG 16.0000M-TJHSA0, 3.5 mA against AMPMAFB-16.0000T's 1.3 mA, carried a bare
+            // 'warn' current_consumption row and no word). Verdict, penalty and grade unchanged.
+            if (spec.key == "current_consumption" && (verdict == WARN || verdict == FAIL)) {
+                const auto oi = num(original, "current_consumption"),
+                           si = num(cand, "current_consumption");
+                if (oi && si) {
+                    char cb[240];
+                    std::snprintf(cb, sizeof cb,
+                                  "higher supply current: the substitute draws %g mA against the "
+                                  "original's %g mA — check the rail's current budget",
+                                  *si * 1000.0, *oi * 1000.0);
+                    notes.push_back(cb);
+                }
             }
             // The supply current shares the supply_key gate but is not the range: a
             // substitute that states its 1.8 V rail but no current was told "states no supply
@@ -3681,6 +3732,11 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 missing_required_data = true;
             }
         } else if (verdict == FAIL) {
+            // A rejection read off one L(I) curve says which reading rejected it.
+            if (hard_gate && spec.key == "saturation_current")
+                if (const auto one = isat::compare_one_curve(original, cand, spec.tol_factor);
+                    one.applies)
+                    notes.push_back(isat::one_curve_note(one));
             if (hard_gate)
                 return reject(spec.dir == Dir::ExactMatch
                                   ? "an identity parameter differs from the original"
@@ -3746,6 +3802,20 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 if (curves.decisive && verdict != UNVERIFIED) {
                     od = curves.rows[*curves.decisive].orig_at;
                     sd = curves.rows[*curves.decisive].sub_at;
+                } else {
+                    basis_mismatch = true;
+                }
+            } else if (const auto one = spec.key == "saturation_current"
+                                            ? isat::compare_one_curve(original, cand,
+                                                                      spec.tol_factor)
+                                            : isat::OneCurveCompare{};
+                       one.applies) {
+                // One record's L(I) curve read at the other's stated criterion (Qarlos r33,
+                // seed 35761001; compare_saturation_current).
+                notes.push_back(isat::one_curve_note(one));
+                if (one.decisive && verdict != UNVERIFIED) {
+                    od = one.rows[*one.decisive].orig_at;
+                    sd = one.rows[*one.decisive].sub_at;
                 } else {
                     basis_mismatch = true;
                 }
@@ -3958,6 +4028,61 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                     "ESR spec", Interp::LogLog, &useful_band.esl);
     }
 
+    // ── inductance tolerance (owner 2026-11-21, C1) ──────────────────────────
+    // The band each record guarantees, compared by the resistor table rule (tolerance_pct,
+    // Lower, 2x): the substitute's band equal or tighter -> PASS, up to 2x the original's ->
+    // WARN, wider -> FAIL. An asymmetric band counts by its WIDER side (owner, C1), on both
+    // records. The bands are the row's stated inductance minimum / maximum as percent below /
+    // above the nominal (tolerance_minus_pct / tolerance_plus_pct, v22); nothing is read from
+    // a part-number letter. The original states a band and the substitute none -> UNVERIFIED
+    // with a note, no cap (a secondary axis, as the capacitance band). The original states
+    // none -> not compared.
+    if (cat == "magnetic") {
+        auto wider_side = [&](const json& p) -> std::optional<double> {
+            const auto m = num(p, "tolerance_minus_pct"), pl = num(p, "tolerance_plus_pct");
+            if (!tolerance_band_stated(m, pl)) return std::nullopt;
+            return std::max(*m, *pl);
+        };
+        auto band_text = [&](const json& p) {
+            const double m = *num(p, "tolerance_minus_pct"), pl = *num(p, "tolerance_plus_pct");
+            return std::fabs(m - pl) < 0.005 ? "+/-" + plain_pct(m)
+                                             : "+" + plain_pct(pl) + " / -" + plain_pct(m);
+        };
+        const auto ot = wider_side(original), st = wider_side(cand);
+        if (ot && *ot > 0) {
+            if (st) {
+                // 1e-6 relative slack: the percentages are derived from decimal renderings of
+                // the stated henries (7.344e-09 / 7.2e-09), not a looser guarantee.
+                const double ratio = *st / *ot;
+                const char* v = ratio <= 1.0 + 1e-6 ? PASS : ratio <= 2.0 + 1e-6 ? WARN : FAIL;
+                params.push_back({{"name", "inductance_tolerance"}, {"verdict", v}});
+                if (v != PASS) {
+                    demote();
+                    ++worse;
+                    penalty += opt.gate_weight *
+                               (v == FAIL ? kVerdictFailPenalty : kVerdictWarnPenalty);
+                    notes.push_back(std::string("looser inductance tolerance: the substitute "
+                                                "guarantees ") +
+                                    band_text(cand) + " against the original's " +
+                                    band_text(original) +
+                                    (v == FAIL ? " — more than twice as wide, not a drop-in "
+                                                 "wherever the inductance sets a filter, "
+                                                 "resonance or ripple"
+                                               : " — up to twice as wide; check the circuit "
+                                                 "tolerates the wider spread"));
+                } else {
+                    note_direction(Dir::Lower, ot, st);
+                }
+            } else {
+                params.push_back({{"name", "inductance_tolerance"}, {"verdict", UNVERIFIED}});
+                notes.push_back("the original guarantees its inductance to " +
+                                band_text(original) +
+                                "; the substitute's record states no inductance band — "
+                                "confirm its tolerance from the datasheet");
+            }
+        }
+    }
+
     // ── transformer turns ratio (owner 2026-11-13, R2; W4) ───────────────────
     // MagneticRow carried the ratio but the ranker never compared it, so a 1:1.2 part and a
     // 1:2 part were the same candidate. Owner: "turns ratio can be +-15%, but with care".
@@ -4093,6 +4218,16 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                 : "the substitute's turns ratio is " + lists(s_cf) +
                                       "; the original's record states none — confirm both "
                                       "ratios match from the datasheets");
+        } else if (str(original, "device_type") == "transformer") {
+            // Stated by neither record (owner 2026-11-21, C4): the ratio a transformer exists
+            // for was never compared, so the row says so and the grade is capped at
+            // minor_review (turns_ratio_unstated_both in primary_unverified).
+            params.push_back({{"name", "turns_ratio"}, {"verdict", UNVERIFIED}});
+            turns_ratio_unstated_both = true;
+            demote();
+            notes.push_back("neither record states a turns ratio — the ratio this transformer "
+                            "exists for was not compared; confirm from both datasheets that the "
+                            "substitute's ratio matches the original's before this swap");
         }
     }
 
@@ -4767,17 +4902,45 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // polarity row at all. An unknown polarity on either side is UNVERIFIED with a note
         // saying which side could not be read; like the other one-sided unknowns of a
         // secondary nature it neither demotes nor caps (no cap existed here before either).
-        const TvsPolarity op = tvs_polarity_from_mpn(str(original, "mpn")),
-                          sp = tvs_polarity_from_mpn(str(cand, "mpn"));
+        // The record's own polarity (SAS electrical.polarity) comes first; the part-number
+        // decode is consulted only where the record is silent (Qarlos r32, seeds 35132627 /
+        // 35237356: SMF4L16AH and TESDS5V0A state "unidirectional" in their records but sit in
+        // no decoded series, so both came back "stated by neither record"). A record that
+        // contradicts its own part-number decode (none in TAS 33069cb) is not read either way:
+        // the side stays UNKNOWN with a note naming the contradiction.
+        struct SidePolarity { TvsPolarity p = TvsPolarity::Unknown; std::string src; bool conflict = false; };
+        auto side_polarity = [&](const json& o) {
+            SidePolarity sp;
+            const std::string rec = str(o, "tvs_polarity");
+            const TvsPolarity stated = rec == "unidirectional" ? TvsPolarity::Uni
+                                       : rec == "bidirectional" ? TvsPolarity::Bi
+                                                                : TvsPolarity::Unknown;
+            const TvsPolarity decoded = tvs_polarity_from_mpn(str(o, "mpn"));
+            if (stated != TvsPolarity::Unknown && decoded != TvsPolarity::Unknown &&
+                stated != decoded) {
+                sp.conflict = true;
+                return sp;
+            }
+            if (stated != TvsPolarity::Unknown) { sp.p = stated; sp.src = "stated by its record"; }
+            else if (decoded != TvsPolarity::Unknown) { sp.p = decoded; sp.src = "decoded from its part number"; }
+            return sp;
+        };
+        const SidePolarity osp = side_polarity(original), ssp = side_polarity(cand);
+        const TvsPolarity op = osp.p, sp = ssp.p;
         {
+            auto pol = [](TvsPolarity t) {
+                return std::string(t == TvsPolarity::Bi ? "bidirectional" : "unidirectional");
+            };
+            const std::string basis = "the original " + osp.src + ", the substitute " + ssp.src;
             if (op == TvsPolarity::Bi && sp == TvsPolarity::Uni) {
                 params.push_back({{"name", "polarity"}, {"verdict", FAIL}});
                 demote();
                 penalty += opt.gate_weight * kVerdictFailPenalty;
                 ++worse;
-                notes.push_back("unidirectional substitute for a bidirectional original (decoded "
-                                "from the part numbers) — it does not clamp a negative excursion, "
-                                "it conducts it as a forward diode");
+                notes.push_back("unidirectional substitute for a bidirectional original (" +
+                                basis +
+                                ") — it does not clamp a negative excursion, it conducts it as "
+                                "a forward diode");
             } else if (op == TvsPolarity::Uni && sp == TvsPolarity::Bi) {
                 // The mirror image is no silent pass either (Qarlos 2026-11-08). A
                 // unidirectional original clamps a NEGATIVE excursion as a forward diode at
@@ -4790,32 +4953,36 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 demote();
                 penalty += opt.gate_weight * kVerdictFailPenalty;
                 ++worse;
-                notes.push_back("bidirectional substitute for a unidirectional original (decoded "
-                                "from the part numbers) — a negative excursion is no longer "
-                                "clamped near -1 V by forward conduction but only at the "
-                                "substitute's reverse breakdown; confirm what the protected "
-                                "circuit tolerates below ground");
+                notes.push_back("bidirectional substitute for a unidirectional original (" +
+                                basis +
+                                ") — a negative excursion is no longer clamped near -1 V by "
+                                "forward conduction but only at the substitute's reverse "
+                                "breakdown; confirm what the protected circuit tolerates below "
+                                "ground");
             } else if (op == TvsPolarity::Unknown || sp == TvsPolarity::Unknown) {
                 params.push_back({{"name", "polarity"}, {"verdict", UNVERIFIED}});
-                auto pol = [](TvsPolarity t) {
-                    return std::string(t == TvsPolarity::Bi ? "bidirectional" : "unidirectional");
-                };
+                for (const auto* side : {&osp, &ssp})
+                    if (side->conflict)
+                        notes.push_back(std::string("the ") +
+                                        (side == &osp ? "original's" : "substitute's") +
+                                        " record states a TVS polarity its part number "
+                                        "contradicts — neither is used; confirm the polarity "
+                                        "from its datasheet");
                 if (op == TvsPolarity::Bi)
-                    notes.push_back("the original is bidirectional (decoded from its part number); "
-                                    "the substitute's polarity cannot be read from its record or "
-                                    "part number — confirm it clamps both polarities");
+                    notes.push_back("the original is bidirectional (" + osp.src +
+                                    "); the substitute's polarity cannot be read from its "
+                                    "record or part number — confirm it clamps both polarities");
                 else if (op == TvsPolarity::Uni)
-                    notes.push_back("the original is unidirectional (decoded from its part "
-                                    "number); the substitute's polarity cannot be read from its "
+                    notes.push_back("the original is unidirectional (" + osp.src +
+                                    "); the substitute's polarity cannot be read from its "
                                     "record or part number — confirm it is unidirectional too "
                                     "(a bidirectional part no longer clamps a negative "
                                     "excursion near -1 V)");
                 else if (sp != TvsPolarity::Unknown)
-                    notes.push_back("the substitute is " + pol(sp) +
-                                    " (decoded from its part number); the original's polarity "
-                                    "cannot be read from its record or part number — confirm "
-                                    "from the original's datasheet that it is " + pol(sp) +
-                                    " too before this swap");
+                    notes.push_back("the substitute is " + pol(sp) + " (" + ssp.src +
+                                    "); the original's polarity cannot be read from its record "
+                                    "or part number — confirm from the original's datasheet "
+                                    "that it is " + pol(sp) + " too before this swap");
                 else
                     notes.push_back("TVS polarity (unidirectional / bidirectional) is stated by "
                                     "neither record and decodes from neither part number — "
@@ -5072,6 +5239,18 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         std::optional<double> s_center = sc;
         if (!s_center && s_band) s_center = 0.5 * (*slo + *shi);
         auto band = [](double lo, double hi) { return volts(lo) + "-" + volts(hi) + " V"; };
+        // The test current each Vz is stated AT (owner 2026-11-21, C3): the same current (to
+        // 0.1 %, print rounding) -> compared as below; different currents -> the Vz figures
+        // are not on one basis, so the in-window verdict is UNVERIFIED and the grade capped at
+        // minor_review (a Vz outside the window is still a different zener: the web pool
+        // pre-filter drops it at exactly that edge); stated on one side only -> a note.
+        const auto o_iz = num(original, "vz_test_current"), s_iz = num(cand, "vz_test_current");
+        const bool iz_differs = o_iz && s_iz && std::fabs(*s_iz / *o_iz - 1.0) > 1e-3;
+        auto ma = [](double a) {
+            char b[32];
+            std::snprintf(b, sizeof b, "%g mA", a * 1e3);
+            return std::string(b);
+        };
         const std::string o_window = o_band ? band(*olo, *ohi)
                                      : oc   ? volts(*oc) + " V (no band on record)"
                                             : std::string();
@@ -5089,6 +5268,15 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             notes.push_back("zener voltage " + volts(*s_center) + " V is outside the original's " +
                             o_window + " — a different zener voltage, not a substitute");
             return reject("a different zener voltage");
+        } else if (iz_differs) {
+            params.push_back({{"name", "zener_voltage"}, {"verdict", UNVERIFIED}});
+            zener_iz_unverified = true;
+            demote();
+            notes.push_back("zener voltages stated at different test currents (the original's "
+                            "at " + ma(*o_iz) + ", the substitute's at " + ma(*s_iz) +
+                            ") — Vz moves with the current, so the two are not compared; "
+                            "confirm the substitute's Vz at the original's operating current "
+                            "from its datasheet");
         } else if (o_band && s_band && (*slo < *wlo || *shi > *whi)) {
             params.push_back({{"name", "zener_voltage"}, {"verdict", FAIL}});
             demote();
@@ -5102,6 +5290,15 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         } else {
             params.push_back({{"name", "zener_voltage"}, {"verdict", PASS}});
         }
+        if (wlo && s_center && (o_iz.has_value() != s_iz.has_value()))
+            notes.push_back(o_iz ? "the original's Vz is stated at " + ma(*o_iz) +
+                                       "; the substitute's record states no test current, so "
+                                       "the two Vz may not be on one basis — confirm its test "
+                                       "current from the datasheet"
+                                 : "the substitute's Vz is stated at " + ma(*s_iz) +
+                                       "; the original's record states no test current, so "
+                                       "the two Vz may not be on one basis — confirm the "
+                                       "original's test current from its datasheet");
         // A substitute whose Vz lies inside the original's window but away from its nominal
         // is a different marked voltage, and the verdicts above say nothing about it: a 6.0 V
         // 1N5233B sat at the top edge of BZV55-C5V6's 5.2-6.0 V window, 7 % above its 5.6 V,
@@ -5238,12 +5435,38 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             std::snprintf(b, sizeof b, "%g A", o ? *o : *s);
             current_rating_one_sided = true;
             demote();
+            // The silent side may still state an AMBIENT-referred drain current (the dies'
+            // ambientRatings, id_ambient_curves): "states none" read as no current at all
+            // (Qarlos r34, seed 36075188: AON2803, 3.8 A per die at 25 degC ambient, against
+            // SiS415DNT's 35 A). A different basis from a case-rated Id, so the verdict is
+            // unchanged; the note names what that record does state.
+            std::string ambient;
+            if (r.key == std::string("id")) {
+                const json& silent = o ? cand : original;
+                if (auto it = silent.find("id_ambient_curves"); it != silent.end() && it->is_array())
+                    for (const auto& c : *it) {
+                        const auto xs = c.find("x"), ys = c.find("y");
+                        if (xs == c.end() || ys == c.end() || !xs->is_array() || !ys->is_array() ||
+                            xs->empty() || xs->size() != ys->size() || !(*xs)[0].is_number() ||
+                            !(*ys)[0].is_number())
+                            continue;
+                        char ab[160];
+                        std::snprintf(ab, sizeof ab,
+                                      " (it states only an ambient-referred rating, %.3g A at "
+                                      "%g degC ambient — not the same basis as a case-rated Id)",
+                                      (*ys)[0].get<double>(), (*xs)[0].get<double>());
+                        ambient = ab;
+                        break;
+                    }
+            }
             notes.push_back(o ? std::string("the original states a ") + what + " of " + b +
-                                    "; the substitute's record states none — whether it "
+                                    "; the substitute's record states none" + ambient +
+                                    " — whether it "
                                     "carries the original's current is unknown; confirm its "
                                     "rating from the datasheet before this swap"
                               : std::string("the substitute states a ") + what + " of " + b +
-                                    "; the original's record states none, so it could not be "
+                                    "; the original's record states none" + ambient +
+                                    ", so it could not be "
                                     "weighed against the original's requirement — confirm the "
                                     "original's rating from its datasheet before this swap");
         }
@@ -5787,10 +6010,29 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 o_body = s_body;
                 dims_named_side = "original";
             }
+            // The mirror image (Qarlos r34, seed 36075188): 7M-12.000MAHJ-T, "4-SMD, No Lead"
+            // with a stated 3.2 x 2.5 mm body, took ABM3C-12.000MHZ-D4Y-T "5032 4-SMD" with no
+            // footprint word, because the generic side named no land. Its STATED length and
+            // width (both, outside the body code's tolerance in either orientation) establish
+            // that it is not the body the other side's case names: a different case.
+            std::string contradicted_side;  // the side whose stated dims contradict the other's body
+            auto dims_contradict_body = [&](const std::string& body, const std::string& case_str,
+                                            const json& p) {
+                const auto l = num(p, "length_m"), w = num(p, "width_m");
+                return timing_case_body_tokens(case_str).empty() && l && w &&
+                       !timing_body_agrees(body, l, w);
+            };
+            if (cat == "timeBase" && dims_named_side.empty()) {
+                if (o_body && !s_body && dims_contradict_body(*o_body, sc, cand))
+                    contradicted_side = "substitute";
+                else if (s_body && !o_body && dims_contradict_body(*s_body, oc, original))
+                    contradicted_side = "original";
+            }
             const bool same_timing_body = o_body && s_body && *o_body == *s_body;
             if (magnetic_case ? magnetic_case_codes_differ(oc, sc)
                               : (!oc.empty() && !sc.empty() &&
-                                 case_ids.first != case_ids.second && !generic_side &&
+                                 case_ids.first != case_ids.second &&
+                                 (!generic_side || !contradicted_side.empty()) &&
                                  !same_timing_body)) {
                 out["footprint"] = "different_case";
                 params.push_back({{"name", "footprint"}, {"verdict", WARN}});
@@ -5814,6 +6056,16 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                     if (!src.empty())
                         bodies += " (" + src[0] + (src.size() > 1 ? "; " + src[1] : "") +
                                   " — a table size, not one the record states)";
+                }
+                if (!contradicted_side.empty()) {
+                    const json& p = contradicted_side == "original" ? original : cand;
+                    char db[64];
+                    std::snprintf(db, sizeof db, "%g x %g mm", *num(p, "length_m") * 1e3,
+                                  *num(p, "width_m") * 1e3);
+                    bodies += " (the " + std::string(contradicted_side == "original" ? "substitute" : "original") +
+                              "'s case names the " +
+                              (contradicted_side == "original" ? *s_body : *o_body) +
+                              " body; the " + contradicted_side + "'s record states " + db + ")";
                 }
                 notes.push_back("different package/case (" + oc + " -> " + sc + ")" + bodies +
                                 " — different land pattern; a substitute to re-lay-out, not a "
@@ -6230,7 +6482,18 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 // original stating only a case code is left capped: whether that code counts as
                 // "no land" is an open question for the owner.) This branch is shared by every
                 // family whose footprint is the body, so the rule applies to all of them alike.
-                const bool original_states_no_land = o_pkg.empty();
+                //
+                // A generic style string with no size ("4-SMD, No Lead", "SMD") names a pad
+                // count, not a land (generic_package_names_no_land), so an original stating only
+                // such a string states no land either (owner, 2026-11-21, C14): the FA-20H
+                // 24.0000MF15Y-W3 crystal ("4-SMD, No Lead", no dimensions) capped every
+                // dimensioned candidate at minor_review while the generic twin stayed drop_in.
+                // Both the package and the case code must say nothing about a size.
+                auto says_no_land = [](const std::string& s) {
+                    return s.empty() || generic_package_names_no_land(s);
+                };
+                const bool original_states_no_land =
+                    says_no_land(str(original, "package")) && says_no_land(str(original, "case_code"));
                 if (original_states_no_land) footprint_unstated_both = true;
                 // Name what the substitute IS, so an engineer can see the two case
                 // sizes for themselves even though the ranker cannot compare them.
@@ -6264,6 +6527,30 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                             "); footprint fit is UNVERIFIED, confirm the hole pattern from the "
                             "datasheet");
         }
+        // ── footprint area ratio (owner 2026-11-21, C5) ─────────────────────────
+        // A footprint WARN (a different case, a smaller body, one case size larger, a crossed
+        // land) whose two lands differ in AREA by 2x or more, either way, is a footprint FAIL
+        // (any_fail -> major_review): at that size the part is not a near land to rework but a
+        // different board layout. Below 2x it stays the WARN it was. Every family that compares
+        // bodies, on the two complete lands the compare above used (length x width, as stated
+        // or as the case table resolved them). Penalty unchanged.
+        if (o_dims && s_dims && has_land(*o_dims) && has_land(*s_dims)) {
+            const double oa = *o_dims->length * *o_dims->width,
+                         sa = *s_dims->length * *s_dims->width;
+            const double ratio = std::max(sa / oa, oa / sa);
+            for (auto& p : params)
+                if (p.value("name", "") == "footprint" && p.value("verdict", "") == WARN &&
+                    ratio >= kFootprintAreaFailRatio * (1.0 - 1e-9)) {
+                    p["verdict"] = FAIL;
+                    char ab[96];
+                    std::snprintf(ab, sizeof ab, "%.3g", ratio);
+                    notes.push_back("footprint area " + std::string(ab) + "x " +
+                                    (sa > oa ? "larger" : "smaller") + " than the original's (" +
+                                    land_mm(*s_dims) + " vs " + land_mm(*o_dims) +
+                                    ") — 2x or more is a different board layout, not a land to "
+                                    "rework");
+                }
+        }
         // ── height / clearance, its own axis ─────────────────────────────────
         // Not part of the land pattern, so it is judged and reported separately
         // and runs whatever the footprint verdict was — a part can need a new land
@@ -6284,24 +6571,49 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             const auto oh = tantalum_case_height(capacitor_case_side(original));
             const auto sh = tantalum_case_height(capacitor_case_side(cand));
             std::vector<std::string> read;
+            bool o_designated = false, s_designated = false;
             auto fill = [&](std::optional<Dims>& d, const std::optional<CaseHeight>& h,
-                            const char* who) {
+                            const char* who, bool& designated) {
                 if (!h || (d && d->height)) return;
                 if (!d) d = Dims{};
                 d->height = h->height_m;
                 d->height_from_table = false;
+                designated = true;
                 read.push_back(std::string(who) + " " + h->designation + " (" +
                                mm(h->height_m) + " mm)");
             };
-            fill(o_dims, oh, "the original's");
-            fill(s_dims, sh, "the substitute's");
+            fill(o_dims, oh, "the original's", o_designated);
+            fill(s_dims, sh, "the substitute's", s_designated);
             if (!read.empty() && o_dims && o_dims->height && s_dims && s_dims->height) {
                 std::string what;
                 for (size_t i = 0; i < read.size(); ++i) what += (i ? ", " : "") + read[i];
+                // Owner 2026-11-21 (C8): a height read from a case designation is a MAXIMUM
+                // (the EIA 7343-31 D case is "up to 3.1 mm"), so it is compared against the
+                // other side's stated MAXIMUM height (capacitor row height_max), never its
+                // nominal: T51D156M025C0100 (case D, 3.1 mm) came back "taller" than
+                // T540D156K025DH8710's 2.8 mm nominal, whose stated maximum is 3.1 mm (Qarlos
+                // r36, seed 37541394). Where the other side states no maximum, its stated
+                // height is compared as before (the r17-L2 behaviour; whether that should be
+                // UNVERIFIED instead is an open owner question), and the note says so.
+                std::string against;
+                if (o_designated != s_designated) {
+                    std::optional<Dims>& other = o_designated ? s_dims : o_dims;
+                    const json& other_row = o_designated ? cand : original;
+                    const char* other_who = o_designated ? "the substitute's" : "the original's";
+                    const auto hmax = num(other_row, "height_max");
+                    if (hmax && *hmax > 0) {
+                        other->height = *hmax;
+                        against = std::string(", against ") + other_who + " stated maximum (" +
+                                  mm(*hmax) + " mm)";
+                    } else {
+                        against = std::string(", against ") + other_who + " stated height (" +
+                                  mm(*other->height) + " mm, no maximum on record)";
+                    }
+                }
                 notes.push_back("same land (" + str(original, "case_code") + " -> " +
                                 str(cand, "case_code") +
                                 "); the case heights differ by designation, read as " + what +
-                                " — height compared on its own axis");
+                                " (a maximum)" + against + " — height compared on its own axis");
             }
         }
         HeightFit hfit = height_fit(o_dims, s_dims);
@@ -6619,6 +6931,28 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                     " ppm off frequency (estimate, typical C0/C1)");
                 return reject("crystal specified for a different load capacitance");
             }
+        }
+        // One side states its CL, the other does not (Qarlos r33, seed 35551543:
+        // AB308-12.000MHZ-18-R50-5, an 18 pF crystal, took ECS-120-S-5PX-TR, whose record states
+        // none, with a bare UNVERIFIED load_capacitance_pF row and no word). The ceramic
+        // resonator rule below for a one-sided built-in capacitance: UNVERIFIED (the table row
+        // already says so), a note naming the stated value, no cap and no penalty.
+        if (o_cl.has_value() != s_cl.has_value()) {
+            char b[320];
+            if (o_cl)
+                std::snprintf(b, sizeof b,
+                              "the original is specified at a %g pF load capacitance; the "
+                              "substitute's record states none, so whether it oscillates on "
+                              "frequency in the original's load network is unknown — confirm "
+                              "its load capacitance from the datasheet",
+                              *o_cl * 1e12);
+            else
+                std::snprintf(b, sizeof b,
+                              "the substitute is specified at a %g pF load capacitance; the "
+                              "original's record states none — confirm the original's load "
+                              "capacitance from its datasheet before this swap",
+                              *s_cl * 1e12);
+            notes.push_back(b);
         }
     }
 
@@ -7088,11 +7422,13 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         notes.push_back(mount_unverified
                             ? "the substitute's record states no physical data at all (no case "
                               "or package, no dimensions; its board attach is noted separately) "
-                              "— its size is unknown, so it ranks after parts of a known size; "
+                              "— its size is unknown, a ranking penalty, so it ranks after an "
+                              "otherwise equal part of a known size; "
                               "confirm the package from its datasheet before this swap"
                             : "the substitute's record states no physical data at all (no case or "
                               "package, no dimensions, no mount) — its size and how it mounts are "
-                              "unknown, so it ranks after parts of a known size; confirm the "
+                              "unknown, a ranking penalty, so it ranks after an otherwise equal "
+                              "part of a known size; confirm the "
                               "package from its datasheet before this swap");
     }
     if (!both_unstated_primary.empty()) {
@@ -7269,7 +7605,8 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                     bjt_bias_unverified ||
                                     timebase_prog_order || current_rating_one_sided ||
                                     hard_rating_unverified ||
-                                    cable_core_unverified ||
+                                    cable_core_unverified || turns_ratio_unstated_both ||
+                                    zener_iz_unverified ||
                                     !orig_unstated_primary.empty() ||
                                     !both_unstated_primary.empty() || cand_no_physical_data ||
                                     ac_rating_unverified || varistor_surge_waveform_unstated;
@@ -7328,7 +7665,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
 }
 
 // Rank a candidate list for an original. Returns {category, original_verified,
-// candidates:[...]} sorted best-first (lowest penalty); no_substitute rows sink.
+// candidates:[...]} sorted best-first (best grade, then lowest penalty); no_substitute rows sink.
 //: Categories the ranker has rules for. Any other would be compared on nothing
 //: and every candidate would come back "recommended" — a 300 V varistor for a
 //: 30 V one did — so an unknown category is refused, not ranked.
@@ -7349,17 +7686,35 @@ inline json cross_reference(const std::string& category, const json& original,
     for (const auto& c : candidates) scored.push_back(score_candidate(category, original, c, opt));
     // Order: viable candidates before rejects, then exact-value candidates before
     // different-value alternatives (resistors and off-nominal zeners, "value_differs"),
-    // then penalty. The
-    // value tier is a sort key, not a penalty, so no combination of other penalties
-    // can lift a different-value part above an exact-value one.
+    // then the grade tier (drop_in, minor_review, major_review, redesign), then penalty
+    // within the grade. The value tier and the grade tier are sort keys, not penalties, so
+    // no combination of other penalties can lift a different-value part above an
+    // exact-value one, nor a worse grade above a better one: a major_review 0805 for a
+    // 008004 original (footprint FAIL) ranked first ahead of the minor_review 008004-class
+    // parts on its lower penalty (owner 2026-11-21, C13; Qarlos r36 seed 37541394). Every
+    // family; the site and the MCP both rank through here.
+    auto grade_tier = [](const json& c) {
+        const std::string g = c.value("grade", "");
+        if (g == "drop_in") return 0;
+        if (g == "minor_review") return 1;
+        if (g == "major_review") return 2;
+        if (g == "redesign") return 3;
+        if (g == "no_substitute") return 4;
+        throw std::logic_error("cross_reference: candidate '" + c.value("mpn", std::string()) +
+                               "' has no known grade ('" + g + "')");
+    };
+    for (auto& c : scored) c["_grade_tier"] = grade_tier(c);
     std::stable_sort(scored.begin(), scored.end(), [](const json& a, const json& b) {
         const bool ra = a.value("status", "") == "no_substitute",
                    rb = b.value("status", "") == "no_substitute";
         if (ra != rb) return rb;
         const bool va = a.value("value_differs", false), vb = b.value("value_differs", false);
         if (va != vb) return vb;
+        const int ga = a["_grade_tier"].get<int>(), gb = b["_grade_tier"].get<int>();
+        if (ga != gb) return ga < gb;
         return a.value("penalty", 1e18) < b.value("penalty", 1e18);
     });
+    for (auto& c : scored) c.erase("_grade_tier");
     json cands = json::array();
     for (size_t i = 0; i < scored.size() && i < opt.max_results; ++i) cands.push_back(scored[i]);
     return {{"category", category},

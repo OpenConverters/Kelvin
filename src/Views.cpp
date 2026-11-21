@@ -1194,6 +1194,15 @@ std::optional<DiodeRow> extract_diode(const json& env) {
     r.clamping_waveform = get_str(*elec, "clampingWaveform").value_or("");
     r.peak_pulse_power_waveform = get_str(*elec, "peakPulsePowerWaveform").value_or("");
     r.peak_pulse_current_waveform = get_str(*elec, "peakPulseCurrentWaveform").value_or("");
+    // TVS / ESD clamping polarity as the record states it (SAS electrical.polarity, enum
+    // unidirectional | bidirectional; the only path and the only two values the catalogue
+    // uses: 3,703 / 3,324 occurrences in TAS 33069cb). Any other string is not a polarity
+    // and stays unstated, never mapped.
+    if (auto p = get_str(*elec, "polarity"); p && (*p == "unidirectional" || *p == "bidirectional"))
+        r.tvs_polarity = *p;
+    // The zener test current Vz is specified at (SAS electrical.zenerTestCurrent, A), as
+    // stated; a non-positive number is no current and stays unstated (owner 2026-11-21, C3).
+    if (auto iz = get_num(*elec, "zenerTestCurrent"); pos(iz)) r.vz_test_current = *iz;
     // Verbatim; "" = not stated (the ranker reads that as an UNKNOWN grade, never commercial).
     r.qualification = get_str(*part, "qualification").value_or("");
     auto status = get_str(*mi, "status");
@@ -1638,6 +1647,24 @@ std::optional<CapacitorRow> extract_capacitor(const json& env) {
                 const bool rad = l.find("radial") != std::string::npos;
                 if (ax != rad) r.lead_form = ax ? "axial" : "radial";
             }
+    // The body height's stated MAXIMUM (v25, owner 2026-11-21, C8): read from the same drawing
+    // object height_m resolved from (the nested `dimensions`, else `mechanical`), and kept only
+    // while height_m is still that field's own height (a diameter rule may have replaced it).
+    // Nothing else: no nominal, no table value.
+    if (const json* mech = obj_get(*di, "mechanical"); mech && present(r.height_m)) {
+        const json* nested = obj_get(*mech, "dimensions");
+        for (const json* src : {nested, mech}) {
+            if (!src) continue;
+            const json* h = obj_get(*src, "height");
+            if (!h) continue;
+            if (h->is_object())
+                if (auto mx = get_num(*h, "maximum"); pos(mx))
+                    if (auto hn = resolve_field(*src, "height"); hn && *hn == r.height_m &&
+                                                                 *mx >= r.height_m)
+                        r.height_max = *mx;
+            break;
+        }
+    }
     // The qualified reliability level (v20, PEAS qualifiedReliability on part), verbatim.
     if (const json* qr = obj_get(*part, "qualifiedReliability"); qr && qr->is_object()) {
         r.qualified_spec = get_str(*qr, "specification").value_or("");

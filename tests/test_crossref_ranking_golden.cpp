@@ -211,7 +211,8 @@ TEST_CASE("golden: keeping the case is the true drop-in and ranks above a smalle
     CHECK(o[0] == "CASE_KEPT");  // same footprint ranks first
     CHECK(o[1] == "SMALLER");
     CHECK(grade_of("magnetic", original, cands, "CASE_KEPT") == "drop_in");
-    CHECK(grade_of("magnetic", original, cands, "SMALLER") == "minor_review");
+    // Owner decision C5 (2026-11-21): a land-area ratio >= 2x is a footprint FAIL, so major_review.
+    CHECK(grade_of("magnetic", original, cands, "SMALLER") == "major_review");
 }
 
 TEST_CASE("golden: a different IC package is a substitute, not a drop-in",
@@ -234,7 +235,8 @@ TEST_CASE("golden: a different IC package is a substitute, not a drop-in",
     REQUIRE(o.size() == 2);
     CHECK(o[0] == "SAME_PKG");  // case kept ranks first
     CHECK(grade_of("diode", original, cands, "SAME_PKG") == "drop_in");
-    CHECK(grade_of("diode", original, cands, "B340A") == "minor_review");
+    // Owner decision C5 (2026-11-21): a land-area ratio >= 2x is a footprint FAIL, so major_review.
+    CHECK(grade_of("diode", original, cands, "B340A") == "major_review");
 }
 
 TEST_CASE("golden: an established land-pattern change never outranks an unverified fit",
@@ -314,7 +316,11 @@ TEST_CASE("golden: the footprint ladder is monotone — fits < unverified < esta
     CHECK(penalty_of("UNVERIFIED") == kUnknownDimPenalty + kNoPhysicalDataPenalty);
     CHECK(penalty_of("DIFFERENT_CASE") == kUnknownDimPenalty);
     const auto pos_unverified = std::find(o.begin(), o.end(), "UNVERIFIED") - o.begin();
-    CHECK(pos_unverified > std::find(o.begin(), o.end(), "DIFFERENT_CASE") - o.begin());
+    // Owner 2026-11-21, C5 + C13 / T1: 0402 -> 0603 is a C5 area FAIL (major_review), and the
+    // grade tier ranks before penalty, so the major_review DIFFERENT_CASE now ranks after the
+    // minor_review UNVERIFIED (expectation rewritten from ">" to "<"; the rest of the ladder
+    // unchanged).
+    CHECK(pos_unverified < std::find(o.begin(), o.end(), "DIFFERENT_CASE") - o.begin());
     CHECK(pos_unverified >= 1);
     CHECK(pos_unverified <= 3);
     // The three established mismatches follow; a body that grossly overhangs the
@@ -411,7 +417,8 @@ TEST_CASE("golden: land and height are two verdicts, not one — ABT #513",
     REQUIRE(o.size() == 4);
     CHECK(o[0] == "CASE_KEPT");
     CHECK(grade_of("magnetic", original, cands, "CASE_KEPT") == "drop_in");
-    CHECK(grade_of("magnetic", original, cands, "74439346100") == "minor_review");
+    // Owner decision C5 (2026-11-21): a land-area ratio >= 2x is a footprint FAIL, so major_review.
+    CHECK(grade_of("magnetic", original, cands, "74439346100") == "major_review");
 }
 
 TEST_CASE("golden: one missing axis on the original does not blank the footprint — ABT #516",

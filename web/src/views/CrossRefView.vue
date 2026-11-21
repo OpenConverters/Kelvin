@@ -333,7 +333,8 @@ function openPart(r) {
           original's datasheet numbers against every candidate from the manufacturers you mark:
           the primary value must sit inside the category's acceptance window, critical ratings
           (V<sub>ds</sub>, V<sub>rrm</sub>, rated voltage, I<sub>sat</sub>…) gate hard, and everything
-          else prices in as a continuous penalty — lowest total penalty wins.</p>
+          else prices in as a continuous penalty. Candidates rank viable first, then exact value,
+          then best grade, then lowest total penalty.</p>
         </div>
         <div v-else-if="!result && !errorMsg" class="idle">
           <p>Mark the manufacturer(s) you want the substitute from and run

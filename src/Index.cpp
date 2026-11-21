@@ -472,6 +472,8 @@ void row_io(Ar& ar, DiodeRow& r) {
     ar.dbl(r.vf_test_current);         // v22
     ar.dbl(r.reverse_leakage);         // v22 (owner 2026-11-14, operating-point loss)
     ar.str(r.price_quotes);            // v22 (owner 2026-11-14, price)
+    ar.str(r.tvs_polarity);            // v25 (Qarlos r32: electrical.polarity)
+    ar.dbl(r.vz_test_current);         // v25 (owner 2026-11-21, C3: electrical.zenerTestCurrent)
     ar.boolean(r.is_production);
 }
 
@@ -505,6 +507,7 @@ void row_io(Ar& ar, CapacitorRow& r) {
     ar.str(r.price_quotes);                // v22 (owner 2026-11-14, capacitor price)
     ar.dbl(r.dissipation_factor);          // v22 (owner 2026-11-14, ESR from tan delta)
     ar.dbl(r.dissipation_factor_frequency);
+    ar.dbl(r.height_max);                  // v25 (owner 2026-11-21, C8: stated maximum height)
 }
 
 template <class Ar>

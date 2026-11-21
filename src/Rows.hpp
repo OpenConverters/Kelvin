@@ -535,6 +535,18 @@ struct DiodeRow : RowBase {
     // RB168VYM150FHTR) was swapped for non-automotive Schottkys with no caveat (Qarlos
     // 2026-11-09, seed 21308399). v20.
     std::string qualification;
+    // electrical.polarity of a TVS / ESD record, verbatim: "unidirectional" or "bidirectional";
+    // "" = the record does not state it (SAS: "never inferred from a part-number suffix",
+    // absent = not stated). Not carried, SMF4L16AH and TESDS5V0A, whose records state
+    // "unidirectional", came back with a polarity "stated by neither record" (Qarlos r32,
+    // seeds 35132627 / 35237356). 7,027 of 50,987 diode records state it (TAS 33069cb), 1,943
+    // of them in no decoded part-number series; none contradicts its part-number decode.
+    // v25 (not shipped yet, so no version bump).
+    std::string tvs_polarity;
+    // electrical.zenerTestCurrent (A): the current the zener voltage (breakdownVoltage) is
+    // specified AT. NaN = not stated; never a "typical" 5 mA. Two zeners' Vz are compared as
+    // stated only on a common test current (owner 2026-11-21, C3). v25, no version bump.
+    double vz_test_current = kNaN();
     bool is_production = false;
     bool no_thermal() const { return !present(rth_ja) || !present(tj_max); }
 };
@@ -621,6 +633,11 @@ struct CapacitorRow : RowBase {
     double esl = kNaN();
     double temp_min_c = kNaN();
     double temp_max_c = kNaN();
+    // The body height's stated MAXIMUM (m), from the same drawing field height_m resolves
+    // (mechanical[.dimensions].height.maximum). NaN = not stated; never a nominal or a table
+    // value. A tantalum height read from a case designation is a maximum and is compared
+    // against this (owner 2026-11-21, C8). v25, no version bump.
+    double height_max = kNaN();
     bool is_production = false;
     // v23 (owner 2026-11-15): the measured curves live in the family's curve shard
     // (<family>.curves.kidx), not in the base shard; see CapacitorCurveSet and CurveSlot.
