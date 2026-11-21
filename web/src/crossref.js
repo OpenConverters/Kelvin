@@ -515,7 +515,11 @@ export const XREF = [
       // A switch's pole/throw arrangement (SPST-NO / SPST-NC / SPDT ...) or a multiplexer's
       // ratio (8:1 / 4:1 x2 / Crosspoint/exchange ...): an identity for those two subtypes
       // (is_hard_param("analog"); Qarlos r32-33). '' -> null, NOT '' (ABT #505).
-      configuration: r.configuration || null }),
+      configuration: r.configuration || null,
+      // A digital isolator's channels per direction (owner 2026-11-21, B4): each an identity.
+      // Raw, NOT through nz(): 0 reverse channels is a stated count; unstated arrives null.
+      forward_channels: r.forward_channels ?? null,
+      reverse_channels: r.reverse_channels ?? null }),
     // For an ADC original the architecture is a hard key too, so an ADC that does not state it
     // is not a verified original (the FAE honesty rule); for a switch or a multiplexer the
     // configuration is. Other subtypes compare neither.
@@ -523,11 +527,15 @@ export const XREF = [
       ? { hardKeys: ['subtype', 'channels', 'architecture'] }
       : orig?.device_type === 'analogSwitch' || orig?.device_type === 'multiplexer'
         ? { hardKeys: ['subtype', 'channels', 'configuration'] }
-        : null),
+        : orig?.device_type === 'digitalIsolator'
+          ? { hardKeys: ['subtype', 'channels', 'forward_channels', 'reverse_channels'] }
+          : null),
     params: [
       { key: 'channels', label: 'ch', row: 'channels', unit: '' },
       { key: 'architecture', label: 'arch', row: 'architecture', str: true },
       { key: 'configuration', label: 'config', row: 'configuration', str: true },
+      { key: 'forward_channels', label: 'fwd ch', row: 'forward_channels', unit: '' },
+      { key: 'reverse_channels', label: 'rev ch', row: 'reverse_channels', unit: '' },
       { key: 'supply_min_V', label: 'Vsup min', row: 'vsupply_min', unit: 'V' },
       { key: 'supply_max_V', label: 'Vsup max', row: 'vsupply_max', unit: 'V' },
       { key: 'gbw', label: 'GBW', row: 'gain_bandwidth', unit: 'Hz' },

@@ -888,6 +888,12 @@ struct AnalogRow : RowBase {
     // (multiplexer electrical.multiplexerConfiguration: 8:1 / 4:1 x2 / Crosspoint/exchange ...),
     // as stated; "" when unstated or another subtype.
     std::string configuration;
+    // v25 (owner 2026-11-21, B4): a digital isolator's channel split, AAS digitalIsolator
+    // electrical.forwardChannels / reverseChannels, as stated (0 is a stated count); NaN when
+    // unstated or another subtype. Each is an identity of its own; `channels` of an isolator is
+    // their sum, set only when both are stated.
+    double forward_channels = kNaN();
+    double reverse_channels = kNaN();
     bool is_production = false;
 };
 

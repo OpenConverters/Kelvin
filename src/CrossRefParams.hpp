@@ -869,6 +869,14 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
     static const std::vector<ParamSpec> kAnalog = {
         {"subtype", D::ExactMatch, 0.0, std::nullopt, false, true, nullptr},
         {"channels", D::ExactMatch, 0.0, std::nullopt, false, true, nullptr},
+        // A digital isolator's channels per direction (AAS digitalIsolator
+        // electrical.forwardChannels / reverseChannels; owner 2026-11-21, B4): each an identity
+        // compared on its own — a 3/1 isolator is not a 2/2 one, though both have 4 channels.
+        // Hard keys (is_hard_param): both stated and different rejects; the substitute not
+        // stating one the original states rejects as unverifiable (exclude_missing_sub, like
+        // the channel count). Only isolator records state them.
+        {"forward_channels", D::ExactMatch, 0.0, std::nullopt, false, true, nullptr},
+        {"reverse_channels", D::ExactMatch, 0.0, std::nullopt, false, true, nullptr},
         // An ADC's conversion architecture (AAS adc electrical.architecture: SAR / deltaSigma /
         // pipeline / flash / dualSlope / folding) is an identity (Qarlos 2026-11-20): a 65 MSPS
         // pipeline AD9228 for a SAR MAX1305 has a different latency, input structure and

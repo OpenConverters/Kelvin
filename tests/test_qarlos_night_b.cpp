@@ -128,3 +128,142 @@ TEST_CASE("qarlos r32-33: the same configuration passes, a one-sided one is unve
                       {"subtype", "operationalAmplifier"}, {"channels", 1.0}};
     CHECK(night_b_verdict(night_b_one(opa, opb), "configuration").empty());
 }
+
+namespace {
+// Every analog field web/src/crossref.js projects (the analog family's spec()), for the owner's
+// 2026-11-21 rules B1 / B2 / B4: NaN and "" read as null; the isolator counts are raw (0 stated).
+json night_b_full_spec(const kelvin::AnalogRow& r) {
+    auto num = [](double v) { return std::isnan(v) ? json(nullptr) : json(v); };
+    auto pos = [](double v) { return std::isnan(v) || !(v > 0) ? json(nullptr) : json(v); };
+    auto txt = [](const std::string& s) { return s.empty() ? json(nullptr) : json(s); };
+    return {{"mpn", r.mpn},
+            {"manufacturer", r.manufacturer},
+            {"lifecycle_status", txt(r.status)},
+            {"subtype", txt(r.device_type)},
+            {"channels", pos(r.channels)},
+            {"supply_min_V", pos(r.vsupply_min)},
+            {"supply_max_V", pos(r.vsupply_max)},
+            {"gbw", pos(r.gain_bandwidth)},
+            {"slew_rate", pos(r.slew_rate)},
+            {"input_offset_voltage", num(r.input_offset_voltage)},
+            {"input_bias_current", num(r.input_bias_current)},
+            {"cmrr_db", pos(r.cmrr)},
+            {"resolution", pos(r.resolution)},
+            {"sample_rate", pos(r.sample_rate)},
+            {"offset_drift", pos(r.offset_drift)},
+            {"quiescent_current", pos(r.quiescent_current)},
+            {"propagation_delay", pos(r.propagation_delay)},
+            {"on_resistance", pos(r.on_resistance)},
+            {"rail_to_rail_input", txt(r.rail_to_rail_input)},
+            {"rail_to_rail_output", txt(r.rail_to_rail_output)},
+            {"output_stage", txt(r.output_stage)},
+            {"architecture", txt(r.architecture)},
+            {"configuration", txt(r.configuration)},
+            {"forward_channels", num(r.forward_channels)},
+            {"reverse_channels", num(r.reverse_channels)}};
+}
+json night_b_full(const std::string& mpn) { return night_b_full_spec(night_b_row(mpn)); }
+}  // namespace
+
+TEST_CASE("owner B4: a digital isolator's forward / reverse channels are identities",
+          "[qarlos-night-b][qarlos-night-b-isolator]") {
+    // The 48 isolator records state forwardChannels / reverseChannels and never
+    // numberOfChannels: each count is kept as stated (0 included), the total is their sum.
+    const auto d541 = night_b_row("DCL541H01");
+    CHECK(d541.forward_channels == 3.0);
+    CHECK(d541.reverse_channels == 1.0);
+    CHECK(d541.channels == 4.0);
+    const auto d320 = night_b_row("DCL320C00");
+    CHECK(d320.forward_channels == 2.0);
+    CHECK(d320.reverse_channels == 0.0);
+    CHECK(d320.channels == 2.0);
+    // Not an isolator: neither count is set.
+    CHECK(std::isnan(night_b_row("OP262").forward_channels));
+    CHECK(std::isnan(night_b_row("OP262").reverse_channels));
+
+    // DCL541H01 (3 forward / 1 reverse) -> DCL542H01 (2 / 2): 4 channels each, a different
+    // split, so a different pinout and direction: rejected, on the forward count first.
+    const json x = night_b_one(night_b_full("DCL541H01"), night_b_full("DCL542H01"));
+    CHECK(x["status"] == "no_substitute");
+    CHECK(night_b_verdict(x, "forward_channels") == "fail");
+    // DCL540H01 (4 / 0) -> DCL540L01 (4 / 0): both counts pass.
+    const json same = night_b_one(night_b_full("DCL540H01"), night_b_full("DCL540L01"));
+    CHECK(same["status"] != "no_substitute");
+    CHECK(night_b_verdict(same, "forward_channels") == "pass");
+    CHECK(night_b_verdict(same, "reverse_channels") == "pass");
+    CHECK(night_b_verdict(same, "channels") == "pass");
+}
+
+TEST_CASE("owner B2: an analog supply range stated by one record only caps at minor_review",
+          "[qarlos-night-b][qarlos-night-b-primary]") {
+    // Qarlos r35 seed 36808291: LTC2946 (2.7-100 V) -> ADS1014L (no supply on record) was
+    // drop_in. The resolution passes, so this is the supply rule, not B1.
+    const json c = night_b_one(night_b_full("LTC2946"), night_b_full("ADS1014L"));
+    CHECK(c["status"] != "no_substitute");
+    CHECK(night_b_verdict(c, "resolution") == "pass");
+    CHECK(night_b_verdict(c, "supply_max_V") == "unverified");
+    CHECK(c["grade"] == "minor_review");
+    CHECK(night_b_note(c, "supply range stated by one record only: the original's record states "
+                          "2.7-100 V, the substitute's none"));
+    // The other direction: the substitute states it, the original does not.
+    const json r = night_b_one(night_b_full("ADS1014L"), night_b_full("LTC2946"));
+    CHECK(r["grade"] == "minor_review");
+    CHECK(night_b_note(r, "supply range stated by one record only: the original's record states "
+                          "none, the substitute's 2.7-100 V"));
+}
+
+TEST_CASE("owner B2: an op-amp's rail-to-rail input stated by one record only caps",
+          "[qarlos-night-b][qarlos-night-b-primary]") {
+    // Qarlos r36 seed 37227207: TS462CPT (railToRailInput false) -> OP262 (not stated) was a
+    // clean drop_in.
+    const json c = night_b_one(night_b_full("TS462CPT"), night_b_full("OP262"));
+    CHECK(c["status"] != "no_substitute");
+    CHECK(night_b_verdict(c, "rail_to_rail_input") == "unverified");
+    CHECK(c["grade"] != "drop_in");
+    CHECK(night_b_note(c, "rail-to-rail input stated by one record only: the original's record "
+                          "states no, the substitute's none"));
+}
+
+TEST_CASE("owner B2: a switch's on-resistance stated by one record only caps",
+          "[qarlos-night-b][qarlos-night-b-primary]") {
+    json orig = night_b_full("ADG788");
+    orig["on_resistance"] = 2.5;  // synthetic pair, so the rule is the only difference
+    json twin = orig;
+    twin["mpn"] = "ADG788-TWIN";
+    twin["lifecycle_status"] = "production";
+    const json ok = night_b_one(orig, twin);
+    CHECK(ok["grade"] == "drop_in");
+    twin["on_resistance"] = nullptr;
+    const json c = night_b_one(orig, twin);
+    CHECK(night_b_verdict(c, "on_resistance") == "unverified");
+    CHECK(c["grade"] == "minor_review");
+    CHECK(night_b_note(c, "on-resistance stated by one record only: the original's record states "
+                          "2.5 ohm, the substitute's none"));
+}
+
+TEST_CASE("owner B1: an analog candidate with no electrical verified caps at minor_review",
+          "[qarlos-night-b][qarlos-night-b-allunv]") {
+    // Two op-amps that share only identities: the original states its GBW, the substitute its
+    // slew rate. Both rows UNVERIFIED and neither a B2 primary axis.
+    const json o = {{"mpn", "OPA-O"}, {"subtype", "operationalAmplifier"}, {"channels", 1.0},
+                    {"lifecycle_status", "production"}, {"gbw", 1e6}};
+    const json s = {{"mpn", "OPA-S"}, {"subtype", "operationalAmplifier"}, {"channels", 1.0},
+                    {"lifecycle_status", "production"}, {"slew_rate", 1e6}};
+    const json c = night_b_one(o, s);
+    CHECK(c["status"] != "no_substitute");
+    CHECK(c["grade"] == "minor_review");
+    CHECK(night_b_note(c, "no electrical parameter could be compared"));
+    // One established electrical lifts the cap.
+    json s2 = s;
+    s2["gbw"] = 1e6;
+    const json ok = night_b_one(o, s2);
+    CHECK(ok["grade"] == "drop_in");
+    CHECK(!night_b_note(ok, "no electrical parameter could be compared"));
+    // Neither record states any electrical beyond the identities: capped too.
+    json bare_o = o, bare_s = s;
+    bare_o.erase("gbw");
+    bare_s.erase("slew_rate");
+    const json b = night_b_one(bare_o, bare_s);
+    CHECK(b["grade"] == "minor_review");
+    CHECK(night_b_note(b, "neither record states an electrical parameter beyond the identities"));
+}

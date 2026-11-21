@@ -2815,9 +2815,24 @@ std::optional<AnalogRow> extract_analog(const json& env) {
         // numberOfChannels left channels unset on all 642 switch records, so the identity the
         // ranker turns on was never compared (Qarlos r32-33: MAX4742 -> TMUX9832, a 2-switch
         // part offered a 32-switch one as drop_in). Each subtype reads its own key only.
-        set_if_pos(r.channels, get_num(*elec, node->subtype == "analogSwitch"
-                                                  ? "numberOfSwitches"
-                                                  : "numberOfChannels"));
+        // A digital isolator states its channels per direction (AAS digitalIsolator
+        // electrical.forwardChannels / reverseChannels) and never numberOfChannels (owner
+        // 2026-11-21, B4). Each count is kept as stated, 0 included; the total is their sum,
+        // and only when both are stated.
+        if (node->subtype == "digitalIsolator") {
+            auto count = [&](const char* key) {
+                const auto v = get_num(*elec, key);
+                return v && *v >= 0 ? *v : kNaN();
+            };
+            r.forward_channels = count("forwardChannels");
+            r.reverse_channels = count("reverseChannels");
+            if (!std::isnan(r.forward_channels) && !std::isnan(r.reverse_channels))
+                r.channels = r.forward_channels + r.reverse_channels;
+        } else {
+            set_if_pos(r.channels, get_num(*elec, node->subtype == "analogSwitch"
+                                                      ? "numberOfSwitches"
+                                                      : "numberOfChannels"));
+        }
         set_if_pos(r.input_offset_voltage, get_num(*elec, "inputOffsetVoltage"));
         set_if_pos(r.input_bias_current, get_num(*elec, "inputBiasCurrent"));
         set_if_pos(r.gain_bandwidth, get_num(*elec, "gainBandwidthProduct"));

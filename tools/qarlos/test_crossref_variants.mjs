@@ -358,6 +358,16 @@ assert.ok(famFor('analog', { device_type: 'multiplexer' }).hardKeys.includes('co
 assert.ok(!famFor('analog', { device_type: 'operationalAmplifier' }).hardKeys.includes('configuration'))
 assert.ok(!famFor('analog', max1305).hardKeys.includes('configuration'))
 assert.equal(famFor('analog', adg1402).spec({ ...adg1402, configuration: '' }).configuration, null)
+// A digital isolator's direction split reaches the ranker as stated, 0 included, and both
+// counts are hard keys for an isolator original only (owner 2026-11-21, B4).
+const dcl320 = { mpn: 'DCL320C00', manufacturer: 'Toshiba', device_type: 'digitalIsolator',
+  channels: 2, forward_channels: 2, reverse_channels: 0 }
+assert.equal(famFor('analog', dcl320).spec(dcl320).forward_channels, 2)
+assert.equal(famFor('analog', dcl320).spec(dcl320).reverse_channels, 0)
+assert.equal(famFor('analog', adg1402).spec(adg1402).reverse_channels, null)
+assert.ok(famFor('analog', dcl320).hardKeys.includes('forward_channels'))
+assert.ok(famFor('analog', dcl320).hardKeys.includes('reverse_channels'))
+assert.ok(!famFor('analog', adg1402).hardKeys.includes('reverse_channels'))
 // A BJT's built-in bias resistors reach the ranker (v25, ABT #2445): prebiased as the row states
 // it (false = plain), R1 / R2 null when unstated, an omitted R2 as bias_r2_open; a row without
 // the v25 field projects prebiased null (unknown), never false.

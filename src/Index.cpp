@@ -640,6 +640,8 @@ void row_io(Ar& ar, AnalogRow& r) {
     ar.str(r.rail_to_rail_output);   // v24
     ar.str(r.output_stage);          // v24
     ar.str(r.configuration);         // v25 (Qarlos r32-33)
+    ar.dbl(r.forward_channels);      // v25 (owner 2026-11-21, B4)
+    ar.dbl(r.reverse_channels);      // v25 (owner 2026-11-21, B4)
     ar.boolean(r.is_production);
 }
 
