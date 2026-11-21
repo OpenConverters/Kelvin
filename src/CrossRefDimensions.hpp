@@ -1121,7 +1121,7 @@ inline std::string canonical_diode_case(const std::string& s) {
 //      Outlines for Semiconductor Devices) as cross-referenced in the manufacturers' package
 //      drawings: SOT-23 = TO-236AB, SOT-223 = TO-261AA, DPAK = TO-252AA, D2PAK = TO-263AB,
 //      TO-220 = TO-220AB, TO-247 = TO-247AC/AD (mosfet_case_groups), and here
-//      TO-92 = TO-226AA, SOT-89 = TO-243AA, TO-126 = TO-225AA.
+//      TO-92 = TO-226AA, SOT-89 = TO-243AA, TO-126 = TO-225AA (= the bare TO-225).
 // Different pad layouts are never folded: the full-pack TO-220 (TO-220F / FP / FullPAK) is its
 // own group, and vendor outlines (TO-220SIS, TO-220NIS, TSOT-23-6, SOT-23F) stay themselves.
 inline const std::vector<std::vector<std::string>>& transistor_case_groups() {
@@ -1129,7 +1129,12 @@ inline const std::vector<std::vector<std::string>>& transistor_case_groups() {
         auto g = mosfet_case_groups();
         g.push_back({"TO92", "TO226AA"});
         g.push_back({"SOT89", "TO243AA"});
-        g.push_back({"TO126", "TO225AA"});
+        // The bare "TO-225" names TO-225AA too (Qarlos r35 seed 36913020: onsemi BD681G,
+        // "TO-225-3", case 77, against BD677A "TO-126" read as a different land). JEDEC's
+        // outline index files TO-126 under TO-225AA, onsemi's case 77 drawing (10.6-11.1 x
+        // 7.4-7.8 mm, 2.29 mm pitch) is NXP's TO-126 (SOT32) body, and no other TO-225
+        // variant is in the catalogue.
+        g.push_back({"TO126", "TO225AA", "TO225"});
         return g;
     }();
     return kGroups;
@@ -1369,7 +1374,11 @@ inline std::optional<std::string> tantalum_eia_numeric_size(const std::string& c
 inline bool generic_package_names_no_land(const std::string& code) {
     static const std::set<std::string> kStyleWords = {
         "smd", "smt", "no", "lead", "leads", "flat", "non", "standard", "nonstandard",
-        "plastic", "radial", "formed", "cylindrical", "can"};
+        "plastic", "radial", "formed", "cylindrical", "can",
+        // "Module" (143 IGBT records state exactly that) covers every power-module outline
+        // alike, 62mm, EconoDUAL, PrimePACK ...: Powerex CM400HA-24H "Module" took Infineon
+        // FF600R12IP4VBOSA1 "Module" as footprint 'fits' (Qarlos r35 seed 37017749).
+        "module"};
     bool any_word = false;
     std::string tok;
     auto flush = [&]() -> bool {

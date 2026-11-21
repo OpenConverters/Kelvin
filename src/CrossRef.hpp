@@ -514,9 +514,14 @@ inline bool is_primary_rating(const std::string& cat, const std::string& key) {
 //              rated_current)
 //   mosfet     Vds, Id, Rds(on)                 every MOSFET
 //   connector  rated current (rated_current_A)  every connector; NOT rated voltage
+//   varistor   energy (energy_absorption)       metal-oxide (metalOxide) only (owner
+//                                               2026-11-21, A2; varistor_energy_applies)
+//   varistor   surge current, clamping voltage  every varistor (owner 2026-11-21, A2)
+//              (peak_surge_current,
+//               clamping_voltage)
 //
-// Every other primary axis (capacitor rated voltage, diode Vrrm, IGBT, chip bead, varistor,
-// resistor power, connector rated voltage) has no both-unknown cap. An original whose
+// Every other primary axis (capacitor rated voltage, diode Vrrm, IGBT, chip bead, varistor
+// working voltages, resistor power, connector rated voltage) has no both-unknown cap. An original whose
 // technology is not stated gives no cap on a technology-scoped axis: whether the rating exists
 // for it is unknown, and no technology is assumed.
 inline bool both_unknown_cap_applies(const std::string& cat, const std::string& key,
@@ -542,6 +547,13 @@ inline bool both_unknown_cap_applies(const std::string& cat, const std::string& 
             return t == "tvs" || t == "esd";
         if (key == "power_dissipation") return pd.count(t) > 0;
         return false;
+    }
+    // Varistor (owner 2026-11-21, A2): the energy, surge and clamping ratings stated by neither
+    // record cap the grade. The energy rating only where it is one (varistor_energy_applies:
+    // metal-oxide discs / blocks; critical_ratings skips the axis for any other original).
+    if (cat == "varistor") {
+        if (key == "energy_absorption") return t == "metalOxide";
+        return key == "peak_surge_current" || key == "clamping_voltage";
     }
     return false;
 }
@@ -5664,7 +5676,7 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                 "from the datasheet drawings");
             }
         }
-        // ── same stated case = same land (MOSFETs, diodes) ──────────────────
+        // ── same stated case = same land (MOSFETs, diodes, IGBTs, BJTs) ──────
         // A MOSFET or diode case code names a registered outline (TO-220, DPAK, SOD-323,
         // DO-214AB ...), and two records naming the same one name the same pads. The body
         // compare below must not overrule that with a box neither record states: NTP18G120
@@ -5680,12 +5692,17 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // 5 mm, lying flat) took STGW28IH125DF (case "TO-247", no mechanical block) as
         // "smaller body ... needs a new land pattern" against the TO-247 table row, whose axes
         // are width x thickness x length. One registered outline, the same pads.
-        if ((cat == "mosfet" || cat == "diode" || cat == "igbt") && !out.contains("footprint")) {
+        // BJTs too (owner 2026-11-21, A5): their case codes read the same transistor outline
+        // table (canonical_transistor_case) as the IGBTs'.
+        if ((cat == "mosfet" || cat == "diode" || cat == "igbt" || cat == "bjt") &&
+            !out.contains("footprint")) {
             const std::string oc = str(original, "case_code"), sc = str(cand, "case_code");
             auto drawn_land = [](const std::optional<Dims>& d) {
                 return d && has_land(*d) && !d->land_from_table;
             };
+            // A generic style string ("Module") names no outline, so it keeps no land.
             if (!oc.empty() && !sc.empty() && case_ids.first == case_ids.second &&
+                !generic_package_names_no_land(oc) && !generic_package_names_no_land(sc) &&
                 !(drawn_land(o_dims) && drawn_land(s_dims))) {
                 out["footprint"] = "fits";
                 params.push_back({{"name", "footprint"}, {"verdict", PASS}});

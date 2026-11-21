@@ -1784,3 +1784,111 @@ TEST_CASE("qarlos r33: a varistor's operating range is compared",
     CHECK(c["grade"] != "drop_in");
     CHECK(c["grade"] != "upgrade");
 }
+
+// ── Owner decisions A2-A5 (2026-11-21) and Qarlos rounds 35-36 ───────────────────────────────
+
+TEST_CASE("owner A2: varistor surge / clamping / energy stated by neither record cap the grade",
+          "[crossref][classes][qarlos-night-a-a2]") {
+    // Qarlos r36 seeds 37331936 / 37436665: MOV10V385Y and MOV10V175Y (no energy rating) took
+    // candidates stating none as drop_in, while candidates stating one were capped.
+    auto mov = [](const char* mpn) {
+        return json{{"mpn", mpn}, {"lifecycle_status", "production"}, {"value_si", 620.0},
+                    {"max_continuous_ac_voltage", 385.0}, {"max_continuous_dc_voltage", 505.0},
+                    {"technology", "metalOxide"}};
+    };
+    // Energy unknown on both sides; surge and clamping stated on a common basis.
+    json o = mov("MOV10V385Y"), s = mov("V385LA10CP");
+    for (json* j : {&o, &s}) {
+        (*j)["peak_surge_current"] = 3500.0;
+        (*j)["surge_waveform"] = "8/20";
+        (*j)["clamping_voltage"] = 1025.0;
+        (*j)["clamping_current"] = 25.0;
+    }
+    const json e = qx_only(cross_reference("varistor", o, json::array({s}), Options{}));
+    CHECK(e["grade"] == "minor_review");
+    CHECK(qx_note_has(e, "energy"));
+    // The same pair with the energy stated on both sides is not capped by it.
+    o["energy_absorption"] = 60.0;
+    s["energy_absorption"] = 60.0;
+    const json ok = qx_only(cross_reference("varistor", o, json::array({s}), Options{}));
+    CHECK(ok["grade"] == "drop_in");
+    // A multilayer chip varistor publishes no energy rating: its absence on both sides caps nothing.
+    json mo = o, ms = s;
+    mo["technology"] = "multiLayer";
+    ms["technology"] = "multiLayer";
+    mo.erase("energy_absorption");
+    ms.erase("energy_absorption");
+    const json ml = qx_only(cross_reference("varistor", mo, json::array({ms}), Options{}));
+    CHECK(ml["grade"] == "drop_in");
+    // Surge current unknown on both sides.
+    json o2 = o, s2 = s;
+    for (json* j : {&o2, &s2}) {
+        j->erase("peak_surge_current");
+        j->erase("surge_waveform");
+    }
+    const json su = qx_only(cross_reference("varistor", o2, json::array({s2}), Options{}));
+    CHECK(su["grade"] == "minor_review");
+    CHECK(qx_note_has(su, "peak surge current"));
+    // Clamping voltage unknown on both sides.
+    json o3 = o, s3 = s;
+    for (json* j : {&o3, &s3}) {
+        j->erase("clamping_voltage");
+        j->erase("clamping_current");
+    }
+    const json cl = qx_only(cross_reference("varistor", o3, json::array({s3}), Options{}));
+    CHECK(cl["grade"] == "minor_review");
+    CHECK(qx_note_has(cl, "clamping voltage"));
+}
+
+TEST_CASE("owner A4: Littelfuse S3 and Fuji M274 / M277 IGBT outlines are power modules",
+          "[crossref][classes][qarlos-night-a-a4]") {
+    CHECK(declares_igbt_module("S3"));
+    CHECK(declares_igbt_module("M274"));
+    CHECK(declares_igbt_module("M277"));
+    CHECK_FALSE(declares_igbt_module("S"));
+    CHECK_FALSE(declares_igbt_module("M27"));
+    CHECK_FALSE(declares_igbt_module("SOT-227B"));
+    // Fuji 2MBI300XBE065-50 (M274) against a discrete TO-247: a module offered for a discrete.
+    CHECK_FALSE(igbt_configuration_conflict("TO-247", "M274").empty());
+    CHECK_FALSE(igbt_configuration_conflict("S3", "TO-264").empty());
+}
+
+TEST_CASE("owner A5: a BJT stated case keeps its land however the records draw the box",
+          "[crossref][classes][qarlos-night-a-a5]") {
+    json original = {{"mpn", "BJT-ORIG"}, {"lifecycle_status", "production"}, {"polarity", "npn"},
+                     {"vceo", 100.0}, {"ic", 8.0}, {"case_code", "TO-220"}, {"mount", "tht"},
+                     {"length_m", 0.0157}, {"width_m", 0.0102}, {"height_m", 0.0045}};
+    json cand = {{"mpn", "BJT-SUB"}, {"lifecycle_status", "production"}, {"polarity", "npn"},
+                 {"vceo", 100.0}, {"ic", 8.0}, {"case_code", "TO-220-3"}, {"mount", "tht"}};
+    const json c = qx_only(cross_reference("bjt", original, json::array({cand}), Options{}));
+    CHECK(c["footprint"] == "fits");
+    CHECK_FALSE(qx_note_has(c, "smaller body"));
+    cand["case_code"] = "TO-247";
+    const json d = qx_only(cross_reference("bjt", original, json::array({cand}), Options{}));
+    CHECK(d["footprint"] != "fits");
+}
+
+TEST_CASE("qarlos r35: TO-225 is TO-126's JEDEC outline",
+          "[crossref][classes][qarlos-night-a-to225]") {
+    // BD677A (TO-126) -> BD681G (onsemi, "TO-225-3", case 77).
+    CHECK(case_identity("bjt", "TO-225-3") == case_identity("bjt", "TO-126"));
+    CHECK(case_identity("bjt", "TO-225") == case_identity("bjt", "TO-126"));
+    CHECK(case_identity("bjt", "TO-225AA") == case_identity("bjt", "TO-126"));
+    CHECK(case_identity("bjt", "TO-220") != case_identity("bjt", "TO-126"));
+}
+
+TEST_CASE("qarlos r35: a bare \"Module\" case string names no land",
+          "[crossref][classes][qarlos-night-a-module-case]") {
+    // Powerex CM400HA-24H ("Module", chassis) -> Infineon FF600R12IP4VBOSA1 ("Module").
+    CHECK(generic_package_names_no_land("Module"));
+    CHECK_FALSE(generic_package_names_no_land("AG-62MM"));
+    json original = {{"mpn", "CM400HA-24H"}, {"lifecycle_status", "production"}, {"vces", 1200.0},
+                     {"ic", 400.0}, {"vce_sat", 1.5}, {"tj_max", 150.0}, {"technology", "Si"},
+                     {"case_code", "Module"}, {"mount", "chassis"}};
+    json cand = {{"mpn", "FF600R12IP4VBOSA1"}, {"lifecycle_status", "production"},
+                 {"vces", 1200.0}, {"ic", 600.0}, {"vce_sat", 1.5}, {"tj_max", 150.0},
+                 {"technology", "Si"}, {"case_code", "Module"}, {"mount", "chassis"}};
+    const json c = qx_only(cross_reference("igbt", original, json::array({cand}), Options{}));
+    CHECK(c["footprint"] != "fits");
+    CHECK(qx_verdict(c, "footprint") != "pass");
+}
