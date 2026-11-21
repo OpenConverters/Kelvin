@@ -211,7 +211,8 @@ TEST_CASE("golden: keeping the case is the true drop-in and ranks above a smalle
     CHECK(o[0] == "CASE_KEPT");  // same footprint ranks first
     CHECK(o[1] == "SMALLER");
     CHECK(grade_of("magnetic", original, cands, "CASE_KEPT") == "drop_in");
-    CHECK(grade_of("magnetic", original, cands, "SMALLER") == "minor_review");
+    // Owner decision C5 (2026-11-21): a land-area ratio >= 2x is a footprint FAIL, so major_review.
+    CHECK(grade_of("magnetic", original, cands, "SMALLER") == "major_review");
 }
 
 TEST_CASE("golden: a different IC package is a substitute, not a drop-in",
@@ -234,7 +235,8 @@ TEST_CASE("golden: a different IC package is a substitute, not a drop-in",
     REQUIRE(o.size() == 2);
     CHECK(o[0] == "SAME_PKG");  // case kept ranks first
     CHECK(grade_of("diode", original, cands, "SAME_PKG") == "drop_in");
-    CHECK(grade_of("diode", original, cands, "B340A") == "minor_review");
+    // Owner decision C5 (2026-11-21): a land-area ratio >= 2x is a footprint FAIL, so major_review.
+    CHECK(grade_of("diode", original, cands, "B340A") == "major_review");
 }
 
 TEST_CASE("golden: an established land-pattern change never outranks an unverified fit",
@@ -411,7 +413,8 @@ TEST_CASE("golden: land and height are two verdicts, not one — ABT #513",
     REQUIRE(o.size() == 4);
     CHECK(o[0] == "CASE_KEPT");
     CHECK(grade_of("magnetic", original, cands, "CASE_KEPT") == "drop_in");
-    CHECK(grade_of("magnetic", original, cands, "74439346100") == "minor_review");
+    // Owner decision C5 (2026-11-21): a land-area ratio >= 2x is a footprint FAIL, so major_review.
+    CHECK(grade_of("magnetic", original, cands, "74439346100") == "major_review");
 }
 
 TEST_CASE("golden: one missing axis on the original does not blank the footprint — ABT #516",
