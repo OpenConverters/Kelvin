@@ -1868,6 +1868,22 @@ TEST_CASE("owner A3: a varistor surge current at no stated waveform on either si
     CHECK(qx_verdict(w, "peak_surge_current_basis").empty());
 }
 
+TEST_CASE("owner A12: a surge current unweighed for want of any waveform costs the WARN penalty",
+          "[crossref][classes][qarlos-night-a-a12]") {
+    // Owner 2026-11-21, A12: no waveform on either side -> UNVERIFIED at the WARN penalty; a
+    // waveform stated on one side only keeps the FAIL penalty. The two candidates differ in
+    // nothing else, so their penalties differ by exactly FAIL - WARN.
+    const json o = qx_mov("MOV-A", 6000.0, nullptr, 650.0, 50.0);
+    const json none = qx_only(cross_reference(
+        "varistor", o, json::array({qx_mov("MOV-B", 6500.0, nullptr, 650.0, 50.0)}), Options{}));
+    const json one_sided = qx_only(cross_reference(
+        "varistor", o, json::array({qx_mov("MOV-B", 6500.0, "8/20", 650.0, 50.0)}), Options{}));
+    REQUIRE(qx_verdict(none, "peak_surge_current_basis") == "unverified");
+    REQUIRE(qx_verdict(one_sided, "peak_surge_current_basis") == "unverified");
+    CHECK(none["penalty"].get<double>() + (kVerdictFailPenalty - kVerdictWarnPenalty) ==
+          Catch::Approx(one_sided["penalty"].get<double>()));
+}
+
 TEST_CASE("owner A4: Littelfuse S3 and Fuji M274 / M277 IGBT outlines are power modules",
           "[crossref][classes][qarlos-night-a-a4]") {
     CHECK(declares_igbt_module("S3"));

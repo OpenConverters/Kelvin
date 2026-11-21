@@ -2913,11 +2913,16 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                 // The TVS surge-rating rule (Alf 2026-10-25): a surge rating not weighed on a
                 // common impulse caps the grade as missing required data, not a rejection.
                 demote();
-                penalty += opt.gate_weight * kVerdictFailPenalty;
-                if (ow.empty() && sw.empty())
+                // Neither side naming a waveform costs the WARN penalty, not FAIL (owner
+                // 2026-11-21, A12): nothing is known to differ, only the basis is unstated.
+                // A one-sided or a different stated waveform keeps the TVS rule's FAIL penalty.
+                if (ow.empty() && sw.empty()) {
+                    penalty += opt.gate_weight * kVerdictWarnPenalty;
                     varistor_surge_waveform_unstated = true;
-                else
+                } else {
+                    penalty += opt.gate_weight * kVerdictFailPenalty;
                     missing_required_data = true;
+                }
                 auto at = [](const std::string& w) {
                     return w.empty() ? std::string("at no stated waveform") : "at " + w + " us";
                 };
