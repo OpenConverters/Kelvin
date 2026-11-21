@@ -522,7 +522,15 @@ export const XREF = [
       reverse_channels: r.reverse_channels ?? null,
       // An instrumentation amplifier's specified gain range, V/V (owner 2026-11-21, B5): the
       // substitute must cover it (kAnalog gain_min / gain_max).
-      gain_min: nz(r.minimum_gain), gain_max: nz(r.maximum_gain) }),
+      gain_min: nz(r.minimum_gain), gain_max: nz(r.maximum_gain),
+      // A digital isolator's electricals (owner 2026-11-21, B7): the withstand isolation
+      // voltage (V RMS) with its test duration, and the operating range. The ranker compares
+      // them for an isolator original only; the range is passed for isolators only, because the
+      // shared operating-range block judges any category's temp_min_C / temp_max_C.
+      isolation_voltage_V: nz(r.isolation_voltage_rms),
+      isolation_duration_s: nz(r.isolation_duration_s),
+      temp_min_C: r.device_type === 'digitalIsolator' ? (r.temp_min_c ?? null) : null,
+      temp_max_C: r.device_type === 'digitalIsolator' ? (r.temp_max_c ?? null) : null }),
     // For an ADC original the architecture is a hard key too, so an ADC that does not state it
     // is not a verified original (the FAE honesty rule); for a switch or a multiplexer the
     // configuration is. Other subtypes compare neither.
@@ -557,6 +565,9 @@ export const XREF = [
       { key: 'on_resistance', label: 'Ron', row: 'on_resistance', unit: 'Ω' },
       { key: 'gain_min', label: 'G min', row: 'minimum_gain', unit: 'V/V' },
       { key: 'gain_max', label: 'G max', row: 'maximum_gain', unit: 'V/V' },
+      { key: 'isolation_voltage_V', label: 'Viso', row: 'isolation_voltage_rms', unit: 'Vrms' },
+      { key: 'temp_min_C', label: 'T min', row: 'temp_min_c', unit: '°C' },
+      { key: 'temp_max_C', label: 'T max', row: 'temp_max_c', unit: '°C' },
     ],
   },
   {

@@ -923,6 +923,15 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
         // minor_review (analog_primary_axis, B2 style).
         {"gain_min", D::Lower, 0.0, 0.0, false, false, nullptr},
         {"gain_max", D::Higher, 0.0, 0.0, false, false, nullptr},
+        // A digital isolator's electricals (owner 2026-11-21, B7), so a verified isolator can
+        // reach drop_in; compared for a digital-isolator original only (CrossRef.hpp).
+        // The withstand isolation voltage (V RMS, UL 1577 / IEC 60747-17) is a minimum rating
+        // with no band: a lower one is a FAIL (a safety certification level, not a margin).
+        // Different test durations make the two figures incomparable: UNVERIFIED (CrossRef.hpp).
+        {"isolation_voltage_V", D::Higher, 0.0, 0.0, false, false, nullptr},
+        // The operating range: the resistor / magnetic rule, both ends covered with NO band.
+        {"temp_min_C", D::Lower, 0.0, 0.0, false, false, nullptr},
+        {"temp_max_C", D::Higher, 0.0, 0.0, false, false, nullptr},
     };
     static const std::vector<ParamSpec> kTimeBase = {
         {"subtype", D::ExactMatch, 0.0, std::nullopt, false, true, nullptr},
@@ -1053,6 +1062,7 @@ inline std::string param_label(const std::string& key) {
         {"on_resistance", "on-resistance"},
         {"gain_min", "minimum gain"},
         {"gain_max", "maximum gain"},
+        {"isolation_voltage_V", "withstand isolation voltage"},
         {"architecture", "conversion architecture"},
         {"configuration", "switch / multiplexer configuration"},
         {"bias_r1", "built-in base resistor R1"},

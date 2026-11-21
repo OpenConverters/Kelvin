@@ -375,6 +375,17 @@ const ina126 = { mpn: 'INA126', manufacturer: 'Texas Instruments',
 assert.equal(famFor('analog', ina126).spec(ina126).gain_min, 5)
 assert.equal(famFor('analog', ina126).spec(ina126).gain_max, 10000)
 assert.equal(famFor('analog', adg1402).spec(adg1402).gain_max, null)
+// A digital isolator's isolation rating and operating range reach the ranker (owner
+// 2026-11-21, B7); the range only for an isolator (the shared operating-range block judges it
+// in every category), a cold limit kept negative.
+const dcl540 = { ...dcl320, mpn: 'DCL540H01', isolation_voltage_rms: 5000,
+  isolation_duration_s: 60, temp_min_c: -40, temp_max_c: 110 }
+assert.equal(famFor('analog', dcl540).spec(dcl540).isolation_voltage_V, 5000)
+assert.equal(famFor('analog', dcl540).spec(dcl540).isolation_duration_s, 60)
+assert.equal(famFor('analog', dcl540).spec(dcl540).temp_min_C, -40)
+assert.equal(famFor('analog', dcl540).spec(dcl540).temp_max_C, 110)
+const opTemp = { mpn: 'OPA', device_type: 'operationalAmplifier', temp_min_c: -40, temp_max_c: 125 }
+assert.equal(famFor('analog', opTemp).spec(opTemp).temp_max_C, null)
 // A BJT's built-in bias resistors reach the ranker (v25, ABT #2445): prebiased as the row states
 // it (false = plain), R1 / R2 null when unstated, an omitted R2 as bias_r2_open; a row without
 // the v25 field projects prebiased null (unknown), never false.

@@ -407,6 +407,8 @@ inline std::vector<std::string> comparison_source_fields(const std::string& cat,
         if (name == "architecture") return {"electrical.architecture"};
         if (name == "gain_min") return {"electrical.minimumGain"};
         if (name == "gain_max") return {"electrical.maximumGain"};
+        if (name == "isolation_voltage_V") return {"electrical.isolation"};
+        if (name == "temp_min_C" || name == "temp_max_C") return kOpTemp;
         return {};
     }
     if (cat == "timeBase") {
@@ -2997,6 +2999,13 @@ inline json score_candidate(const std::string& cat, const json& original, const 
         // The conversion architecture is an ADC identity only (kAnalog).
         if (cat == "analog" && spec.key == "architecture" && str(original, "subtype") != "adc")
             continue;
+        // A digital isolator's electricals (owner 2026-11-21, B7) are compared for an isolator
+        // original only: the other analog subtypes keep their own tables.
+        if (cat == "analog" &&
+            (spec.key == "isolation_voltage_V" || spec.key == "temp_min_C" ||
+             spec.key == "temp_max_C") &&
+            str(original, "subtype") != "digitalIsolator")
+            continue;
         // The switch / multiplexer arrangement is an identity of those two subtypes only.
         if (cat == "analog" && spec.key == "configuration" &&
             str(original, "subtype") != "analogSwitch" && str(original, "subtype") != "multiplexer")
@@ -3073,8 +3082,18 @@ inline json score_candidate(const std::string& cat, const json& original, const 
             const auto o = detail::jnum(original, spec.key), s = detail::jnum(cand, spec.key);
             return o && s && std::fabs(*s - *o) < kVzGradePrintResolutionPct / 2.0;
         }();
+        // Two withstand isolation voltages tested for different durations (a 60 s UL 1577
+        // rating against a 1 s production test) are not the same figure (owner 2026-11-21, B7).
+        const bool iso_duration_differs = [&] {
+            if (cat != "analog" || spec.key != "isolation_voltage_V") return false;
+            const auto o = num(original, "isolation_duration_s"),
+                       s = num(cand, "isolation_duration_s");
+            return o && s && std::fabs(*o - *s) > 1e-9 && num(original, spec.key.c_str()) &&
+                   num(cand, spec.key.c_str());
+        }();
         const ParamOutcome outcome =
-            pin_field             ? ParamOutcome(connector_pitch.verdict)
+            iso_duration_differs  ? ParamOutcome(UNVERIFIED)
+            : pin_field           ? ParamOutcome(connector_pitch.verdict)
             : curve_ov != curve_override.end() ? curve_ov->second.outcome
             : vz_grade_same       ? ParamOutcome(PASS)
             : ripple_blind        ? ParamOutcome(UNVERIFIED)
@@ -3242,6 +3261,38 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                     : "the substitute's " + what + " is " + s_c +
                                           "; the original's record states none — confirm both "
                                           "are the same arrangement");
+            }
+        }
+        // A digital isolator's withstand isolation voltage (owner 2026-11-21, B7): name both.
+        if (cat == "analog" && spec.key == "isolation_voltage_V") {
+            const auto o_v = num(original, "isolation_voltage_V"),
+                       s_v = num(cand, "isolation_voltage_V");
+            char b[256];
+            if (iso_duration_differs) {
+                std::snprintf(b, sizeof b,
+                              "withstand isolation voltages tested for different durations: the "
+                              "original %g Vrms for %g s, the substitute %g Vrms for %g s",
+                              *o_v, *num(original, "isolation_duration_s"), *s_v,
+                              *num(cand, "isolation_duration_s"));
+                notes.push_back(std::string(b) +
+                                " — not the same rating; confirm the isolation from the "
+                                "datasheets");
+            } else if (verdict == FAIL && o_v && s_v) {
+                std::snprintf(b, sizeof b,
+                              "lower withstand isolation voltage: the substitute is rated %g "
+                              "Vrms against the original's %g Vrms",
+                              *s_v, *o_v);
+                notes.push_back(std::string(b) +
+                                " — a lower safety isolation rating, not a substitute where the "
+                                "original's rating is required");
+            } else if (verdict == UNVERIFIED && (o_v || s_v)) {
+                std::snprintf(b, sizeof b,
+                              o_v ? "the original's withstand isolation voltage is %g Vrms; the "
+                                    "substitute's record states none"
+                                  : "the substitute's withstand isolation voltage is %g Vrms; "
+                                    "the original's record states none",
+                              o_v ? *o_v : *s_v);
+                notes.push_back(std::string(b) + " — confirm it from the datasheet");
             }
         }
         // The gain range not covered (owner 2026-11-21, B5): the FAIL is the table's; the note
@@ -4172,7 +4223,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // the original only, they are UNVERIFIED and noted but neither demote nor cap the grade
     // (they used to cap at minor_review; see the table at the grade site). A stated shortfall
     // is still a FAIL from the table loop.
-    if (cat == "resistor" || cat == "magnetic" || cat == "chipBead" || cat == "diode") {
+    // A digital isolator's operating range (owner 2026-11-21, B7) takes the same notes.
+    if (cat == "resistor" || cat == "magnetic" || cat == "chipBead" || cat == "diode" ||
+        cat == "analog") {
         auto verdict_of = [&](const char* name) -> std::string {
             for (const auto& p : params)
                 if (p.value("name", "") == name) return p.value("verdict", "");

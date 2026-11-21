@@ -2847,6 +2847,12 @@ std::optional<AnalogRow> extract_analog(const json& env) {
         // electrical.minimumGain / maximumGain, resolved with the canonical resolver.
         set_if_pos(r.minimum_gain, resolve_field(*elec, "minimumGain"));
         set_if_pos(r.maximum_gain, resolve_field(*elec, "maximumGain"));
+        // A digital isolator's withstand isolation voltage and its test duration (owner
+        // 2026-11-21, B7): PEAS isolationRating electrical.isolation.
+        if (const json* iso = obj_get(*elec, "isolation"); iso && iso->is_object()) {
+            set_if_pos(r.isolation_voltage_rms, resolve_field(*iso, "withstandVoltageRms"));
+            set_if_pos(r.isolation_duration_s, resolve_field(*iso, "withstandVoltageDuration"));
+        }
         const json* supply = obj_get(*elec, "supply");
         if (supply) {
             set_if_pos(r.vsupply_min, get_num(*supply, "minimumSupplyVoltage"));
@@ -2870,6 +2876,14 @@ std::optional<AnalogRow> extract_analog(const json& env) {
             r.configuration = get_str(*elec, "switchConfiguration").value_or("");
         else if (node->subtype == "multiplexer")
             r.configuration = get_str(*elec, "multiplexerConfiguration").value_or("");
+    }
+    // Operating range (owner 2026-11-21, B7): read straight from the object, not through
+    // set_if_pos: a cold limit is negative.
+    if (const json* th = obj_get(*di, "thermal")) {
+        if (const json* t = obj_get(*th, "operatingTemperature")) {
+            if (auto v = get_num(*t, "minimum")) r.temp_min_c = *v;
+            if (auto v = get_num(*t, "maximum")) r.temp_max_c = *v;
+        }
     }
     auto status = get_str(*node->mi, "status");
     r.is_production = status.has_value() && *status == "production";

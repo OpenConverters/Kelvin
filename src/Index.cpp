@@ -644,6 +644,10 @@ void row_io(Ar& ar, AnalogRow& r) {
     ar.dbl(r.reverse_channels);      // v25 (owner 2026-11-21, B4)
     ar.dbl(r.minimum_gain);          // v25 (owner 2026-11-21, B5)
     ar.dbl(r.maximum_gain);          // v25 (owner 2026-11-21, B5)
+    ar.dbl(r.isolation_voltage_rms); // v25 (owner 2026-11-21, B7)
+    ar.dbl(r.isolation_duration_s);  // v25 (owner 2026-11-21, B7)
+    ar.dbl(r.temp_min_c);            // v25 (owner 2026-11-21, B7)
+    ar.dbl(r.temp_max_c);            // v25 (owner 2026-11-21, B7)
     ar.boolean(r.is_production);
 }
 

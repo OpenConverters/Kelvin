@@ -325,3 +325,93 @@ TEST_CASE("owner B5: a gain range stated by one record only caps at minor_review
     CHECK(night_b_note(c, "gain range stated by one record only: the original's record states "
                           "5-10000 V/V, the substitute's none"));
 }
+
+namespace {
+// The projection web/src/crossref.js passes since B7: the isolation rating with its duration,
+// and the operating range for an isolator only.
+json night_b_iso_spec(const std::string& mpn) {
+    const auto r = night_b_row(mpn);
+    json s = night_b_gain_spec(mpn);
+    auto pos = [](double v) { return std::isnan(v) || !(v > 0) ? json(nullptr) : json(v); };
+    auto num = [](double v) { return std::isnan(v) ? json(nullptr) : json(v); };
+    const bool iso = r.device_type == "digitalIsolator";
+    s["isolation_voltage_V"] = pos(r.isolation_voltage_rms);
+    s["isolation_duration_s"] = pos(r.isolation_duration_s);
+    s["temp_min_C"] = iso ? num(r.temp_min_c) : json(nullptr);
+    s["temp_max_C"] = iso ? num(r.temp_max_c) : json(nullptr);
+    return s;
+}
+}  // namespace
+
+TEST_CASE("owner B7: a digital isolator's isolation voltage and operating range are compared",
+          "[qarlos-night-b][qarlos-night-b-isoelec]") {
+    // The rows carry the stated rating, its duration and the range.
+    const auto h = night_b_row("DCL540H01");
+    CHECK(h.isolation_voltage_rms == 5000.0);
+    CHECK(h.isolation_duration_s == 60.0);
+    CHECK(h.temp_min_c == -40.0);
+    CHECK(h.temp_max_c == 110.0);
+    CHECK(std::isnan(night_b_row("DCM340H01").temp_max_c));
+    CHECK(night_b_row("DCL340H0B").isolation_voltage_rms == 3000.0);
+
+    // A same-rated twin: both electricals verified, so the B1 cap no longer applies.
+    json orig = night_b_iso_spec("DCL540H01");
+    json twin = orig;
+    twin["mpn"] = "DCL540H01-TWIN";  // a synthetic MPN in no TAS record
+    twin["lifecycle_status"] = "production";
+    const json ok = night_b_one(orig, twin);
+    CHECK(night_b_verdict(ok, "isolation_voltage_V") == "pass");
+    CHECK(night_b_verdict(ok, "temp_max_C") == "pass");
+    CHECK(ok["grade"] == "drop_in");
+    CHECK(!night_b_note(ok, "no electrical parameter could be compared"));
+
+    // DCL540H01A (-40..125 degC) -> DCL540H01 (-40..110): the hot end is not covered.
+    const json hot = night_b_one(night_b_iso_spec("DCL540H01A"), night_b_iso_spec("DCL540H01"));
+    CHECK(night_b_verdict(hot, "temp_max_C") == "fail");
+    CHECK(hot["grade"] == "major_review");
+
+    // DCL540H01 (5000 Vrms) -> DCL340H0B (3000 Vrms, also 4 / 0): a lower isolation rating.
+    const json low = night_b_one(orig, night_b_iso_spec("DCL340H0B"));
+    CHECK(night_b_verdict(low, "isolation_voltage_V") == "fail");
+    CHECK(low["grade"] == "major_review");
+    CHECK(night_b_note(low, "lower withstand isolation voltage: the substitute is rated 3000 Vrms "
+                            "against the original's 5000 Vrms"));
+
+    // DCL540H01 -> DCM340H01 (no range on record): the range is unverified, the isolation
+    // verified, so B1 does not cap.
+    const json dcm = night_b_one(orig, night_b_iso_spec("DCM340H01"));
+    CHECK(night_b_verdict(dcm, "temp_max_C") == "unverified");
+    CHECK(night_b_verdict(dcm, "isolation_voltage_V") == "pass");
+    CHECK(!night_b_note(dcm, "no electrical parameter could be compared"));
+    CHECK(night_b_note(dcm, "the substitute's record states no maximum operating temperature"));
+}
+
+TEST_CASE("owner B7: B1 caps an isolator only when its electricals are unverified",
+          "[qarlos-night-b][qarlos-night-b-isoelec]") {
+    json orig = night_b_iso_spec("DCL540H01");
+    json twin = orig;
+    twin["mpn"] = "DCL540H01-TWIN";
+    twin["lifecycle_status"] = "production";
+    twin["isolation_voltage_V"] = nullptr;
+    twin["temp_min_C"] = nullptr;
+    twin["temp_max_C"] = nullptr;
+    const json c = night_b_one(orig, twin);
+    CHECK(night_b_verdict(c, "isolation_voltage_V") == "unverified");
+    CHECK(c["grade"] == "minor_review");
+    CHECK(night_b_note(c, "no electrical parameter could be compared"));
+    // A rating tested for a different duration is not the same figure: UNVERIFIED, noted.
+    json dur = orig;
+    dur["mpn"] = "DCL540H01-1S";
+    dur["lifecycle_status"] = "production";
+    dur["isolation_duration_s"] = 1.0;
+    const json d = night_b_one(orig, dur);
+    CHECK(night_b_verdict(d, "isolation_voltage_V") == "unverified");
+    CHECK(night_b_note(d, "withstand isolation voltages tested for different durations"));
+    // Not an isolator original: the isolator rows are not compared.
+    const json opa = {{"mpn", "OPA-A"}, {"subtype", "operationalAmplifier"}, {"channels", 1.0},
+                      {"temp_max_C", 125.0}, {"gbw", 1e6}};
+    const json opb = {{"mpn", "OPA-B"}, {"lifecycle_status", "production"},
+                      {"subtype", "operationalAmplifier"}, {"channels", 1.0},
+                      {"temp_max_C", 85.0}, {"gbw", 1e6}};
+    CHECK(night_b_verdict(night_b_one(opa, opb), "temp_max_C").empty());
+}

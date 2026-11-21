@@ -900,6 +900,17 @@ struct AnalogRow : RowBase {
     // records state them (122 / 126 of them, 2026-11-21).
     double minimum_gain = kNaN();
     double maximum_gain = kNaN();
+    // v25 (owner 2026-11-21, B7): a digital isolator's withstand isolation voltage (PEAS
+    // isolationRating electrical.isolation.withstandVoltageRms, V RMS) and the duration of that
+    // test (withstandVoltageDuration, s), stated by all 48 isolator records (all 60 s); NaN
+    // when unstated.
+    double isolation_voltage_rms = kNaN();
+    double isolation_duration_s = kNaN();
+    // degC — thermal.operatingTemperature, read for every analog subtype (the cross-reference
+    // compares it for a digital-isolator original only, B7). Negative and zero are ordinary
+    // values, not absence; NaN when unstated.
+    double temp_min_c = kNaN();
+    double temp_max_c = kNaN();
     bool is_production = false;
 };
 
