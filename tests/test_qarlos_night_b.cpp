@@ -267,3 +267,61 @@ TEST_CASE("owner B1: an analog candidate with no electrical verified caps at min
     CHECK(b["grade"] == "minor_review");
     CHECK(night_b_note(b, "neither record states an electrical parameter beyond the identities"));
 }
+
+namespace {
+// The full projection plus the gain range web/src/crossref.js passes since B5 (gain_min /
+// gain_max, NaN -> null).
+json night_b_gain_spec(const std::string& mpn) {
+    const auto r = night_b_row(mpn);
+    json s = night_b_full_spec(r);
+    auto pos = [](double v) { return std::isnan(v) || !(v > 0) ? json(nullptr) : json(v); };
+    s["gain_min"] = pos(r.minimum_gain);
+    s["gain_max"] = pos(r.maximum_gain);
+    return s;
+}
+}  // namespace
+
+TEST_CASE("owner B5: an instrumentation amplifier's gain range must be covered",
+          "[qarlos-night-b][qarlos-night-b-gain]") {
+    // The rows carry the stated range (AAS minimumGain / maximumGain).
+    CHECK(night_b_row("INA126").minimum_gain == 5.0);
+    CHECK(night_b_row("INA126").maximum_gain == 10000.0);
+    CHECK(night_b_row("AD627").maximum_gain == 1000.0);
+    CHECK(night_b_row("LT1101").minimum_gain == 10.0);
+    CHECK(std::isnan(night_b_row("OP262").minimum_gain));
+
+    // INA126 (5-10000 V/V) -> AD627 (5-1000): the maximum falls short, a FAIL.
+    const json ad = night_b_one(night_b_gain_spec("INA126"), night_b_gain_spec("AD627"));
+    CHECK(night_b_verdict(ad, "gain_min") == "pass");
+    CHECK(night_b_verdict(ad, "gain_max") == "fail");
+    CHECK(ad["grade"] == "major_review");
+    CHECK(night_b_note(ad, "gain range not covered: the original is specified over 5-10000 V/V, "
+                           "the substitute over 5-1000 V/V"));
+    // INA126 -> LT1101 (10-100): short at both ends.
+    const json lt = night_b_one(night_b_gain_spec("INA126"), night_b_gain_spec("LT1101"));
+    CHECK(night_b_verdict(lt, "gain_min") == "fail");
+    CHECK(night_b_verdict(lt, "gain_max") == "fail");
+    CHECK(lt["grade"] == "major_review");
+    // The other way round AD627 (5-1000) -> INA126 (5-10000) covers it: both rows pass.
+    const json up = night_b_one(night_b_gain_spec("AD627"), night_b_gain_spec("INA126"));
+    CHECK(night_b_verdict(up, "gain_min") == "pass");
+    CHECK(night_b_verdict(up, "gain_max") == "pass");
+    CHECK(!night_b_note(up, "gain range not covered"));
+}
+
+TEST_CASE("owner B5: a gain range stated by one record only caps at minor_review",
+          "[qarlos-night-b][qarlos-night-b-gain]") {
+    json orig = night_b_gain_spec("INA126");
+    json twin = orig;
+    twin["mpn"] = "INA126-TWIN";  // a synthetic MPN in no TAS record
+    twin["lifecycle_status"] = "production";
+    const json ok = night_b_one(orig, twin);
+    CHECK(ok["grade"] == "drop_in");
+    twin["gain_min"] = nullptr;
+    twin["gain_max"] = nullptr;
+    const json c = night_b_one(orig, twin);
+    CHECK(night_b_verdict(c, "gain_max") == "unverified");
+    CHECK(c["grade"] == "minor_review");
+    CHECK(night_b_note(c, "gain range stated by one record only: the original's record states "
+                          "5-10000 V/V, the substitute's none"));
+}

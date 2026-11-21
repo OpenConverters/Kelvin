@@ -368,6 +368,13 @@ assert.equal(famFor('analog', adg1402).spec(adg1402).reverse_channels, null)
 assert.ok(famFor('analog', dcl320).hardKeys.includes('forward_channels'))
 assert.ok(famFor('analog', dcl320).hardKeys.includes('reverse_channels'))
 assert.ok(!famFor('analog', adg1402).hardKeys.includes('reverse_channels'))
+// An instrumentation amplifier's gain range reaches the ranker (owner 2026-11-21, B5); unstated
+// (NaN in the row) arrives null.
+const ina126 = { mpn: 'INA126', manufacturer: 'Texas Instruments',
+  device_type: 'instrumentationAmplifier', channels: 1, minimum_gain: 5, maximum_gain: 10000 }
+assert.equal(famFor('analog', ina126).spec(ina126).gain_min, 5)
+assert.equal(famFor('analog', ina126).spec(ina126).gain_max, 10000)
+assert.equal(famFor('analog', adg1402).spec(adg1402).gain_max, null)
 // A BJT's built-in bias resistors reach the ranker (v25, ABT #2445): prebiased as the row states
 // it (false = plain), R1 / R2 null when unstated, an omitted R2 as bias_r2_open; a row without
 // the v25 field projects prebiased null (unknown), never false.

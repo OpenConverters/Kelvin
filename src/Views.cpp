@@ -2843,6 +2843,10 @@ std::optional<AnalogRow> extract_analog(const json& env) {
         set_if_pos(r.on_resistance, get_num(*elec, "onResistance"));
         set_if_pos(r.offset_drift, get_num(*elec, "inputOffsetVoltageDrift"));
         set_if_pos(r.propagation_delay, get_num(*elec, "propagationDelay"));
+        // The specified gain range (owner 2026-11-21, B5): AAS instrumentationAmplifier
+        // electrical.minimumGain / maximumGain, resolved with the canonical resolver.
+        set_if_pos(r.minimum_gain, resolve_field(*elec, "minimumGain"));
+        set_if_pos(r.maximum_gain, resolve_field(*elec, "maximumGain"));
         const json* supply = obj_get(*elec, "supply");
         if (supply) {
             set_if_pos(r.vsupply_min, get_num(*supply, "minimumSupplyVoltage"));

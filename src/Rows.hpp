@@ -894,6 +894,12 @@ struct AnalogRow : RowBase {
     // their sum, set only when both are stated.
     double forward_channels = kNaN();
     double reverse_channels = kNaN();
+    // v25 (owner 2026-11-21, B5): the gain range an instrumentation amplifier is specified over,
+    // AAS instrumentationAmplifier electrical.minimumGain / maximumGain (V/V), each resolved with
+    // PEAS::resolve_dimensional_values; NaN when unstated. Only instrumentation-amplifier
+    // records state them (122 / 126 of them, 2026-11-21).
+    double minimum_gain = kNaN();
+    double maximum_gain = kNaN();
     bool is_production = false;
 };
 

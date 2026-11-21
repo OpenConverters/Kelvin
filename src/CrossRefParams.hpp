@@ -915,6 +915,14 @@ inline const std::vector<ParamSpec>& params_for(const std::string& category) {
         // A switch / multiplexer's on-resistance (owner 2026-11-15): lower is better, the
         // MOSFET Rds(on) band (up to 1.5x warns, beyond FAILs).
         {"on_resistance", D::Lower, 1.5, std::nullopt, false, false, nullptr},
+        // An instrumentation amplifier's specified gain range (owner 2026-11-21, B5; Qarlos
+        // INA126, 5-10000 V/V, offered AD627, 5-1000, and LT1101, 10-100, as drop-in): the
+        // substitute must COVER the original's range, so its minimum gain may be no higher and
+        // its maximum no lower, with no band (the operating-range rule) — a shortfall is a FAIL
+        // (major_review); stated by one record only it is UNVERIFIED and capped at
+        // minor_review (analog_primary_axis, B2 style).
+        {"gain_min", D::Lower, 0.0, 0.0, false, false, nullptr},
+        {"gain_max", D::Higher, 0.0, 0.0, false, false, nullptr},
     };
     static const std::vector<ParamSpec> kTimeBase = {
         {"subtype", D::ExactMatch, 0.0, std::nullopt, false, true, nullptr},
@@ -1043,6 +1051,8 @@ inline std::string param_label(const std::string& key) {
         {"max_continuous_ac_voltage", "maximum continuous AC voltage"},
         {"energy_absorption", "energy rating"},
         {"on_resistance", "on-resistance"},
+        {"gain_min", "minimum gain"},
+        {"gain_max", "maximum gain"},
         {"architecture", "conversion architecture"},
         {"configuration", "switch / multiplexer configuration"},
         {"bias_r1", "built-in base resistor R1"},

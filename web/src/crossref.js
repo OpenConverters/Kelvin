@@ -519,7 +519,10 @@ export const XREF = [
       // A digital isolator's channels per direction (owner 2026-11-21, B4): each an identity.
       // Raw, NOT through nz(): 0 reverse channels is a stated count; unstated arrives null.
       forward_channels: r.forward_channels ?? null,
-      reverse_channels: r.reverse_channels ?? null }),
+      reverse_channels: r.reverse_channels ?? null,
+      // An instrumentation amplifier's specified gain range, V/V (owner 2026-11-21, B5): the
+      // substitute must cover it (kAnalog gain_min / gain_max).
+      gain_min: nz(r.minimum_gain), gain_max: nz(r.maximum_gain) }),
     // For an ADC original the architecture is a hard key too, so an ADC that does not state it
     // is not a verified original (the FAE honesty rule); for a switch or a multiplexer the
     // configuration is. Other subtypes compare neither.
@@ -552,6 +555,8 @@ export const XREF = [
       { key: 'resolution', label: 'bits', row: 'resolution', unit: '' },
       { key: 'sample_rate', label: 'fs', row: 'sample_rate', unit: 'S/s' },
       { key: 'on_resistance', label: 'Ron', row: 'on_resistance', unit: 'Ω' },
+      { key: 'gain_min', label: 'G min', row: 'minimum_gain', unit: 'V/V' },
+      { key: 'gain_max', label: 'G max', row: 'maximum_gain', unit: 'V/V' },
     ],
   },
   {

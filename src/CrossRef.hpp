@@ -405,6 +405,8 @@ inline std::vector<std::string> comparison_source_fields(const std::string& cat,
         if (name == "sample_rate") return {"electrical.sampleRate"};
         if (name == "on_resistance") return {"electrical.onResistance"};
         if (name == "architecture") return {"electrical.architecture"};
+        if (name == "gain_min") return {"electrical.minimumGain"};
+        if (name == "gain_max") return {"electrical.maximumGain"};
         return {};
     }
     if (cat == "timeBase") {
@@ -501,7 +503,8 @@ inline bool is_primary_rating(const std::string& cat, const std::string& key) {
 // minor_review (analog_primary_one_sided in score_candidate); an established difference keeps
 // its table verdict. The supply range applies to every analog subtype, the rail-to-rail input
 // to an operational-amplifier original, the on-resistance to an analog-switch or multiplexer
-// original (the only subtypes whose records state them). Stated by neither record: no cap
+// original (the only subtypes whose records state them), the gain range (minimum / maximum
+// gain, owner 2026-11-21, B5) to an instrumentation-amplifier original. Stated by neither record: no cap
 // from this rule (the all-electricals-unverified cap, B1, may still apply).
 inline const char* analog_primary_axis(const std::string& key, const std::string& orig_subtype) {
     if (key == "supply_min_V" || key == "supply_max_V") return "supply range";
@@ -510,6 +513,9 @@ inline const char* analog_primary_axis(const std::string& key, const std::string
     if (key == "on_resistance" &&
         (orig_subtype == "analogSwitch" || orig_subtype == "multiplexer"))
         return "on-resistance";
+    // The gain range of an instrumentation amplifier (owner 2026-11-21, B5).
+    if ((key == "gain_min" || key == "gain_max") && orig_subtype == "instrumentationAmplifier")
+        return "gain range";
     return nullptr;
 }
 // Both-unknown primary cap (owner decision 2026-11-14; both_unstated_primary in
@@ -2266,6 +2272,9 @@ inline json score_candidate(const std::string& cat, const json& original, const 
     // touched by this rule.
     bool analog_primary_one_sided = false;
     std::vector<std::string> analog_primary_noted;
+    // An instrumentation amplifier's gain range not covered (owner 2026-11-21, B5): one note
+    // for the two rows.
+    bool analog_gain_short_noted = false;
     // The footprint is UNVERIFIED because NEITHER record states a land: both name only the
     // same generic package string (generic_package_names_no_land) and no dimensions, or
     // neither states any land dimension nor any package / case code at all. Reported, not
@@ -3235,6 +3244,25 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                                           "are the same arrangement");
             }
         }
+        // The gain range not covered (owner 2026-11-21, B5): the FAIL is the table's; the note
+        // names both ranges, once for the two rows.
+        if (cat == "analog" && (spec.key == "gain_min" || spec.key == "gain_max") &&
+            verdict == FAIL && !analog_gain_short_noted) {
+            analog_gain_short_noted = true;
+            auto range = [&](const json& p) {
+                char b[96];
+                const auto lo = num(p, "gain_min"), hi = num(p, "gain_max");
+                if (lo && hi) std::snprintf(b, sizeof b, "%g-%g V/V", *lo, *hi);
+                else if (lo) std::snprintf(b, sizeof b, "from %g V/V", *lo);
+                else if (hi) std::snprintf(b, sizeof b, "up to %g V/V", *hi);
+                else std::snprintf(b, sizeof b, "none stated");
+                return std::string(b);
+            };
+            notes.push_back("gain range not covered: the original is specified over " +
+                            range(original) + ", the substitute over " + range(cand) +
+                            " — a gain the design may use is outside the substitute's "
+                            "specified range");
+        }
         // Analog primary axes stated by one record only (owner 2026-11-21, B2).
         if (cat == "analog" && verdict == UNVERIFIED &&
             detail::present(original, spec.key) != detail::present(cand, spec.key)) {
@@ -3250,6 +3278,17 @@ inline json score_candidate(const std::string& cat, const json& original, const 
                             return num(p, "supply_min_V") || num(p, "supply_max_V")
                                        ? supply_range(p)
                                        : std::string("none");
+                        if (spec.key == "gain_min" || spec.key == "gain_max") {
+                            const auto lo = num(p, "gain_min"), hi = num(p, "gain_max");
+                            if (!lo && !hi) return "none";
+                            auto g = [](const std::optional<double>& v) {
+                                if (!v) return std::string("?");
+                                char b[32];
+                                std::snprintf(b, sizeof b, "%g", *v);
+                                return std::string(b);
+                            };
+                            return g(lo) + "-" + g(hi) + " V/V";
+                        }
                         if (spec.key == "on_resistance") {
                             const auto r = num(p, "on_resistance");
                             if (!r) return "none";
