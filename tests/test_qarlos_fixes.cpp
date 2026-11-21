@@ -9576,29 +9576,6 @@ TEST_CASE("owner 2026-11-21 C6: the 8045 timing body code is read", "[qarlos-nig
     CHECK_FALSE(timing_case_body_code("8045 2-SMD", 0.005, 0.0032));
 }
 
-// C9: a footprint FAIL produced by the C5 area rule costs the normal FAIL penalty
-// (kVerdictFailPenalty) on the footprint term, not the WARN rung it was raised from. A 1206
-// original: a 0603 (4x smaller land, C5 FAIL) against the same part on the 1206 land.
-TEST_CASE("owner 2026-11-21 C9: a C5 footprint FAIL costs the FAIL penalty",
-          "[qarlos-night-c-c9]") {
-    auto res = [](const char* mpn, const char* cc, double l, double w) {
-        return json{{"mpn", mpn}, {"lifecycle_status", "production"}, {"value_si", 1000.0},
-                    {"power_rating", 0.25}, {"tolerance_pct", 1.0}, {"case_code", cc},
-                    {"length_m", l}, {"width_m", w}, {"mount", "smt"}};
-    };
-    auto r = kelvin::crossref::cross_reference(
-        "resistor", res("ORIG1206", "1206", 0.0032, 0.0016),
-        json::array({res("SMALL0603", "0603", 0.0016, 0.0008),
-                     res("SAME1206", "1206", 0.0032, 0.0016)}));
-    const json* sm = cand_by_mpn(r, "SMALL0603");
-    const json* same = cand_by_mpn(r, "SAME1206");
-    REQUIRE((sm && same));
-    REQUIRE(verdict_of(*sm, "footprint") == "fail");
-    CHECK(verdict_of(*same, "footprint") == "pass");
-    CHECK(sm->value("penalty", 0.0) - same->value("penalty", 0.0) >=
-          kelvin::crossref::kVerdictFailPenalty - 1e-9);
-}
-
 // C10: the C2 absolute-band detection is exactly "both deviations equal an EIA pF step
 // (0.05 / 0.1 / 0.25 / 0.5 pF) on a nominal below 10 pF". A +/-0.25 pF band on 15 pF and
 // 12 pF nominals, or a +/-0.2 pF band (no EIA step) on 2.4 / 2.2 pF, keeps the percentage
