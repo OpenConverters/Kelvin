@@ -1682,12 +1682,11 @@ inline bool footprint_is_the_body(const std::string& category) {
 }
 
 // Categories whose package strings vary too much by series for the generic mount
-// rule to be safe (mirrors Heaviside's GFoot skip list). IGBTs are held out until TAS
-// corrects the mount data in igbts.ndjson (mechanical.assemblyType and case: most IGBT
-// records state the wrong mount, ABT #2428); the gate would reject on that bad data.
+// rule to be safe (mirrors Heaviside's GFoot skip list). IGBTs are gated: TAS 33069cb
+// corrected their mounts from each record's stated package (ABT #2428).
 inline bool mount_gate_applies(const std::string& category) {
     return !(category == "magnetic" || category == "chipBead" || category == "mosfet" ||
-             category == "diode" || category == "igbt");
+             category == "diode");
 }
 
 }  // namespace kelvin::crossref
