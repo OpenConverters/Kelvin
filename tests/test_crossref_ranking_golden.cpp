@@ -316,7 +316,11 @@ TEST_CASE("golden: the footprint ladder is monotone — fits < unverified < esta
     CHECK(penalty_of("UNVERIFIED") == kUnknownDimPenalty + kNoPhysicalDataPenalty);
     CHECK(penalty_of("DIFFERENT_CASE") == kUnknownDimPenalty);
     const auto pos_unverified = std::find(o.begin(), o.end(), "UNVERIFIED") - o.begin();
-    CHECK(pos_unverified > std::find(o.begin(), o.end(), "DIFFERENT_CASE") - o.begin());
+    // Owner 2026-11-21, C5 + C13 / T1: 0402 -> 0603 is a C5 area FAIL (major_review), and the
+    // grade tier ranks before penalty, so the major_review DIFFERENT_CASE now ranks after the
+    // minor_review UNVERIFIED (expectation rewritten from ">" to "<"; the rest of the ladder
+    // unchanged).
+    CHECK(pos_unverified < std::find(o.begin(), o.end(), "DIFFERENT_CASE") - o.begin());
     CHECK(pos_unverified >= 1);
     CHECK(pos_unverified <= 3);
     // The three established mismatches follow; a body that grossly overhangs the

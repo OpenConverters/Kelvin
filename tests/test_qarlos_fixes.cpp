@@ -5087,7 +5087,9 @@ TEST_CASE("qarlos r12 24659727: '4-SMD, No Lead' on both records is not a footpr
     c3["width_m"] = 1.6e-3;
     auto r3 = kelvin::crossref::cross_reference("timeBase", orig, json::array({c3}));
     CHECK(r3["candidates"][0]["footprint"] == "unknown");
-    CHECK(r3["candidates"][0]["grade"] == "minor_review");
+    // Owner 2026-11-21, C14 / T1: a generic package with no size counts as "no land stated",
+    // so this rung no longer caps (expectation rewritten from minor_review to drop_in).
+    CHECK(r3["candidates"][0]["grade"] == "drop_in");
 }
 
 TEST_CASE("qarlos bench 20284866: a crystal's higher ESR carries a note",
