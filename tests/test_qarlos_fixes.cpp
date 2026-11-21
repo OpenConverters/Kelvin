@@ -9747,3 +9747,36 @@ TEST_CASE("owner 2026-11-21 C13: grade tier first, then penalty", "[qarlos-night
     CHECK(c[0]["mpn"] == "GRM0115C1ER30WE11");
     CHECK(c[1]["mpn"] == "CBR08C308BAGAC");
 }
+
+// Owner 2026-11-21: Littelfuse's TP5.0SMDJ / TP8.0SMDJ series decode their polarity with the
+// SMDJ grade rule ("CA" bidirectional, "A" unidirectional). None of the 86 TAS records states
+// electrical.polarity, so TP8.0SMDJ300CA (bi) against a uni 5.0SMDJ300A was only UNVERIFIED.
+TEST_CASE("owner 2026-11-21: TP5.0SMDJ / TP8.0SMDJ polarity decodes",
+          "[qarlos-night-c-tpsmdj]") {
+    using kelvin::crossref::TvsPolarity;
+    using kelvin::crossref::tvs_polarity_from_mpn;
+    CHECK(tvs_polarity_from_mpn("TP8.0SMDJ300CA") == TvsPolarity::Bi);
+    CHECK(tvs_polarity_from_mpn("TP5.0SMDJ300CA") == TvsPolarity::Bi);
+    CHECK(tvs_polarity_from_mpn("TP5.0SMDJ300A") == TvsPolarity::Uni);
+    CHECK(tvs_polarity_from_mpn("TP5.0SMDJ10CAS") == TvsPolarity::Bi);
+    CHECK(tvs_polarity_from_mpn("TP5.0SMDJ10AS") == TvsPolarity::Uni);
+
+    json orig = tvs("TP8.0SMDJ300CA", 300.0);
+    json uni = with_status(tvs("5.0SMDJ300A", 300.0), "production");
+    auto r = kelvin::crossref::cross_reference("diode", orig, json::array({uni}));
+    const json& c = r["candidates"][0];
+    CHECK(verdict_of(c, "polarity") == "fail");
+    CHECK(has_note(c, "unidirectional substitute for a bidirectional original"));
+    CHECK(has_note(c, "the original decoded from its part number"));
+
+    // The record's own electrical.polarity is read first; the decode only fills silence.
+    orig["tvs_polarity"] = "bidirectional";
+    auto r2 = kelvin::crossref::cross_reference("diode", orig, json::array({uni}));
+    CHECK(verdict_of(r2["candidates"][0], "polarity") == "fail");
+    CHECK(has_note(r2["candidates"][0], "the original stated by its record"));
+    // A record contradicting the decode is read neither way (the existing rule).
+    orig["tvs_polarity"] = "unidirectional";
+    auto r3 = kelvin::crossref::cross_reference("diode", orig, json::array({uni}));
+    CHECK(verdict_of(r3["candidates"][0], "polarity") == "unverified");
+    CHECK(has_note(r3["candidates"][0], "contradicts"));
+}

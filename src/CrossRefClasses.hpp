@@ -745,7 +745,11 @@ inline TvsPolarity tvs_polarity_from_mpn(const std::string& mpn) {
     // code decode (39 A / 39 CA), every one agreeing with its description ("Unidirectional"
     // / "Bidirectional"); the 8 with a V-as-decimal-point code (1V5KE6V8A, 1V5KE6V8CA, ...)
     // stop at the 'V' and stay UNKNOWN, never guessed.
-    static const char* const kSeries[] = {"5.0SMDJ", "1.5SMC", "1.5SMB", "5KSMC", "1V5KE",
+    // TP5.0SMDJ / TP8.0SMDJ (Littelfuse, owner 2026-11-21): the SMDJ grade rule, "CA" bi,
+    // "A" uni. TAS 33069cb: TP5.0SMDJ 21 ...A, 21 ...CA, 17 ...AS, 17 ...CAS; TP8.0SMDJ 10
+    // ...CA; none of the 86 states electrical.polarity.
+    static const char* const kSeries[] = {"TP5.0SMDJ", "TP8.0SMDJ",
+                                          "5.0SMDJ", "1.5SMC", "1.5SMB", "5KSMC", "1V5KE",
                                           "30KPA",   "20KPA",
                                           "15KPA",   "1.5KE",  "P4SMA",  "P6SMB", "P4KE",
                                           "P6KE",    "SMAJ",   "SMBJ",   "SMCJ",  "SMDJ",
